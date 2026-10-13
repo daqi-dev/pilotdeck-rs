@@ -42,17 +42,28 @@ try {
   });
   await check('S3 compositionstart/end enter guard + shift + isComposing + keyCode229',async()=>{
     const composer=d.getElementById('composer');
-    const event=(name,opts)=>composer.dispatchEvent(new w.KeyboardEvent(name,{key:'Enter',code:'Enter',bubbles:true,cancelable:true,...opts}));
+    const event=async opts=>{
+      const before=Number(composer.dataset.keydowns);
+      const key=new w.KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true,...opts});
+      if(opts.isComposing)assert.equal(key.isComposing,true);
+      if(opts.keyCode)assert.equal(key.keyCode,opts.keyCode);
+      composer.dispatchEvent(key);
+      await waitFor(()=>Number(composer.dataset.keydowns)===before+1);await pause(30);
+    };
     const fill=value=>{composer.value=value;composer.dispatchEvent(new w.Event('input',{bubbles:true}));};
-    fill('你好');composer.dispatchEvent(new w.CompositionEvent('compositionstart',{data:'ni',bubbles:true}));await pause(30);
-    event('keydown',{});await pause(30);assert.equal(text('sent'),'0');assert.equal(composer.value,'你好');
-    composer.dispatchEvent(new w.CompositionEvent('compositionend',{data:'你好',bubbles:true}));await pause(30);
-    event('keydown',{isComposing:true});event('keydown',{keyCode:229});event('keydown',{shiftKey:true});await pause(30);
-    assert.equal(text('sent'),'0');
-    event('keydown',{});await waitFor(()=>text('sent')==='1');assert.equal(composer.value,'');
+    assert.equal(composer.dataset.composing,'false');
+    fill('你好');composer.dispatchEvent(new w.CompositionEvent('compositionstart',{data:'ni',bubbles:true}));
+    await waitFor(()=>composer.dataset.composing==='true');await pause(30);
+    await event({});assert.equal(text('sent'),'0');assert.equal(composer.value,'你好');
+    composer.dispatchEvent(new w.CompositionEvent('compositionend',{data:'你好',bubbles:true}));
+    await waitFor(()=>composer.dataset.composing==='false');await pause(30);
+    for(const opts of [{isComposing:true},{keyCode:229},{shiftKey:true}]) {
+      await event(opts);assert.equal(text('sent'),'0');assert.equal(composer.value,'你好');
+    }
+    await event({});await waitFor(()=>text('sent')==='1');assert.equal(composer.value,'');
     assert.equal(d.getElementById('composer'),composer, 'Composer DOM node retained after send');
     fill('未发送草稿');await waitFor(()=>w.localStorage.getItem('draft_input_probe:s')==='未发送草稿');
-    return {compositionEnterSent:0,committedEnterSent:1,draftSaved:true,nodeRetained:true};
+    return {compositionEnterSent:0,committedEnterSent:1,handlerMarkers:{composing:'false -> true -> false',keydowns:Number(composer.dataset.keydowns)},scope:'synthetic composition only, 未测 OS IME',draftSaved:true,nodeRetained:true};
   });
   await check('S2 projects_updated refresh',async()=>{
     await fetch(origin+'/__probe/projects');await waitFor(()=>text('sessions').includes('Probe 2'));
@@ -80,8 +91,8 @@ try {
     const stream=d.getElementById('stream'),composer=d.getElementById('composer');
     let previous=0;
     const observer=new w.MutationObserver(()=>{
-      const seq=Number(stream.dataset.received);
-      if(seq!==previous){trace.push({seq,t:performance.now(),textLength:stream.textContent.length});previous=seq;}
+      const received=Number(stream.dataset.received);
+      if(received!==previous){trace.push({seq:Number(stream.dataset.seq),received,t:performance.now(),textLength:stream.textContent.length});previous=received;}
     });
     observer.observe(stream,{attributes:true,childList:true,characterData:true,subtree:true});
     await fetch(origin+`/__probe/stream?hz=${hz}&count=${count}`);
@@ -90,7 +101,8 @@ try {
     assert(mock.stats.streams[0].count/(mock.stats.streams[0].elapsedMs/1000)>=20);
     if(count===1500)assert(mock.stats.streams[0].elapsedMs>=60_000);
     assert.equal(Number(stream.dataset.missing),0);assert.equal(trace.length,count);
-    trace.forEach((frame,i)=>assert.equal(frame.seq,i+1));
+    trace.forEach((frame,i)=>{assert.equal(frame.seq,i+1);assert.equal(frame.received,i+1);});
+    assert.deepEqual(trace.map(frame=>frame.seq),mock.stats.sent.map(frame=>frame.seq));
     assert.equal(d.getElementById('composer'),composer);assert.equal(composer.value,'未发送草稿');
     const sentMap=new Map(mock.stats.sent.map(f=>[f.seq,f.t]));
     const latency=trace.map(f=>f.t-sentMap.get(f.seq)).sort((a,b)=>a-b);

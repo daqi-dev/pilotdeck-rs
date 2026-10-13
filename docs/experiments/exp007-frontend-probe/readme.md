@@ -15,18 +15,18 @@
 - 两个 `src/main.rs` 各实现登录触发、列表渲染、composer 的 framework 原生 composition/input/key handlers、stream signal 更新、条件挂卸岛。没有把某候选的渲染绕到普通 JS DOM 写入。
 - 共用 `ui-rs/shared/core.rs`：HTTP 登录/Bearer、token 刷新、storage、主 WS、30s ping、1s→30s 退避、`watch-session`、帧序号计数、**wasm-bindgen 导出的 `TerminalBridge`** 及对 JS owner 的类型化 imports。WS closures 随连接 owner 清理，不 `forget()` 堆积重连回调。
 - `island.js` 是 xterm 适配件：保留同一个 Terminal 与 DOM root，卸载时移到 DocumentFragment，重挂归还节点和焦点；mock `/shell` init/input/output 适配留在岛边缘，没有生产 PTY。断线 clear，不自动重连；探针按钮手动重进。
-- 请求按回源契约使用 `/api/auth/login`、`/api/projects`、**`/api/projects/probe/sessions?limit=5&offset=0`**。计划的 `/api/sessions` 是概括，基线 `ui/src/utils/api.js:231` 的列表 API 是 project-scoped。主 `/ws?token=`，shell `/shell?token=`；全部服务只绑定 `127.0.0.1`，用 28xxx 端口。
-- IME：发真实 DOM `compositionstart`，随后 Enter 必须 0 次发送；`compositionend` 后独立校验 isComposing / keyCode229 / Shift+Enter 不发送，再普通 Enter 发送一次。不是仅发 synthetic keyboard 来冒充真实 IME。输入草稿保存、已有 storage 的启动恢复另测。
+- 请求按回源契约使用 `/api/auth/login`、`/api/projects`、**`/api/projects/probe/sessions?limit=5&offset=0`**。计划的 `/api/sessions` 是概括，基线 `ui/src/utils/api.js:231` 的列表 API 是 project-scoped。主 `/ws?token=`，shell `/shell?token=`；全部服务只绑定 `127.0.0.1`，端口限定 **28370–28375**（`PROBE_PORT` 可在此范围内覆盖）。
+- IME：**synthetic composition only，未测 OS IME**。DOM 层用 `new CompositionEvent`；浏览器层经 `page.evaluate` 派发 `new CompositionEvent(..., {bubbles:true})`，并核验 constructor。两候选的 `data-composing` 必须由 handler 从 false → true → false；浏览器等待标记及两个 rAF 后再测 Enter。每条 keydown 经 `data-keydowns` 确认 handler 确实触发；组合期间、独立 isComposing / keyCode229 / Shift+Enter 路径均不得发送，普通 Enter 才发送一次。输入草稿保存、已有 storage 的启动恢复另测。
 - 流式：序号 1…1500，每帧一行中文增量，nominal **25Hz**，服务器总持续 ≥60s 且实测平均 ≥20Hz。选择 25Hz 是给 Node timer 漂移留余量：初版 nominal 20Hz/1200 帧实际不足 20Hz，故没有使用那轮结果当验收数据。两候选最终运行按顺序，负载相同。
-- 接收计数是 Rust 同步入站处理；DOM 更新另由 MutationObserver 对 `data-received` 与文本记录逐帧序号。两个计数均须 1500，完整 trace 必须连续 1…1500。**DOM observer 不是浏览器 paint 帧。** jsdom 的 canvas measureText 仅给 xterm 初始化所需的固定几何桩，不把该桩当滚动/尺寸/绘制实测。
+- 接收计数是 Rust 同步入站处理；第 2 轮另暴露 **`data-seq = Frame.seq`**，MutationObserver 以 `data-received` 变化辨识一次更新，并同时记录真实 `data-seq` 与接收计数。两者均须 1…1500，trace 还须逐项匹配服务器已发序列、缺序计数为 0。首轮 trace 的 seq 实为接收计数，不能独立证明真实帧序号连续。浏览器滚动断言先要求 `scrollHeight > clientHeight > 0` 且实际 `scrollTop > 0`，再检查阅读期间位置不跳。**DOM observer 不是浏览器 paint 帧。** jsdom 的 canvas measureText 仅给 xterm 初始化所需的固定几何桩，不把该桩当滚动/尺寸/绘制实测。
 - jsdom 29 的 WS 使用 Node/undici。DOM fallback 给 global Event 的 instanceof 同时接受 jsdom Event 与 Node Event，并保留 Node constructor/brand，避免 generic input 被 Dioxus 丢弃。这是测试环境适配，不是候选生产补丁；前期因此失败的 Dioxus quick 结果未当选型失败。
 
-## 最终 S1/S3 实测
+## 首轮 S1/S3 DOM 实测（历史证据）
 
 | 指标 | Leptos | Dioxus |
 |---|---|---|
 | wasm 启动至探针 DOM（ms；单轮） | 53.29 | 50.00 |
-| compositionstart/end + Enter guard | PASS_DOM_ONLY / 组合中 0 次，结束后 1 次 | PASS_DOM_ONLY / 组合中 0 次，结束后 1 次 |
+| compositionstart/end + Enter guard（synthetic only，未测 OS IME） | PASS_DOM_ONLY / 组合中 0 次，结束后 1 次 | PASS_DOM_ONLY / 组合中 0 次，结束后 1 次 |
 | 服务器注入持续（s） | 61.539 | 61.583 |
 | 实际平均注入频率（Hz） | 24.375 | 24.357 |
 | 接收 / DOM 更新 / 缺序 | 1500 / 1500 / 0 | 1500 / 1500 / 0 |
@@ -42,13 +42,13 @@
 | 浏览器绘制、滚动、原始 37 黑盒双跑 | NOT_RUN / Chrome 启动阻塞 | NOT_RUN / Chrome 启动阻塞 |
 
 
-每个候选的 [原始结果](evidence/leptos.json)、[Dioxus 原始结果](evidence/dioxus.json) 均含 wasm SHA256；分别与 [构建清单](evidence/build.json) 一致。[Leptos trace](evidence/leptos-trace.json) / [Dioxus trace](evidence/dioxus-trace.json) 各有 1500 条 DOM 更新，逐项 seq 对账通过。没有可用截图：Chrome 未启动到页面。
+每个候选的 [原始结果](evidence/leptos.json)、[Dioxus 原始结果](evidence/dioxus.json) 均含 wasm SHA256；分别与 [构建清单](evidence/build.json) 一致。[Leptos trace](evidence/leptos-trace.json) / [Dioxus trace](evidence/dioxus-trace.json) 各有 1500 条 DOM 更新；首轮 seq 是 `data-received` 接收计数，连续性只另受 missing 检查，不能当作真实帧序号对账证据。这里保留原件与原始数字；第 2 轮验证另记。此表对应沙箱 DOM 运行，协调者首轮 Chrome 记录的效力见文末。
 
 岛十次循环每次断言 root/input 对象身份相同、detach 时不在文档、remount 时在文档、DOM activeElement 是原 terminal textarea、缓冲仍有 BUFFER_SENTINEL；最终 DOM Enter 事件产生一个 xterm onData 并经 `/shell` echo。**这里的 DOM focus 通过不等于跨文档/OS 焦点验证。**
 
 ## 构建链、资产与环境
 
-固定直接依赖：Leptos `=0.8.17`，Dioxus `=0.7.9`，wasm-bindgen `=0.2.129` / futures `=0.4.79` / web-sys 与 js-sys `=0.3.106`，gloo-net `=0.6.0`、timers `=0.3.0`、serde `=1.0.228`、serde_json `=1.0.150`；两个 Cargo.lock 入库。Dioxus 顶层是 0.7.9，锁文件的 core/html/web 等兼容子包有 0.7.10，不能误称整个依赖图只有 0.7.9。Rust `1.99.0`，node `22.22.0`。完整版本见 [环境记录](evidence/environment.json)。
+固定直接依赖：Leptos `=0.8.17`，Dioxus `=0.7.9`，wasm-bindgen `=0.2.129` / futures `=0.4.79` / web-sys 与 js-sys `=0.3.106`，gloo-net `=0.6.0`、timers `=0.3.0`、serde `=1.0.228`、serde_json `=1.0.150`；两个 Cargo.lock **已在当前 HEAD 被 Git 跟踪**（第 2 轮核验 `git ls-files --error-unmatch`；并非待 add 的未跟踪文件），构建统一使用 `--locked`。Dioxus 顶层是 0.7.9，锁文件的 core/html/web 等兼容子包有 0.7.10，不能误称整个依赖图只有 0.7.9。Rust `1.99.0`，node `22.22.0`。完整版本见 [环境记录](evidence/environment.json)。
 
 所有 cargo 都用本 worktree `_build/cargo-home`。用 `cargo install --root <worktree>/_build/tools --version … --locked` 安装：Trunk 0.21.14、dx / dioxus-cli 0.7.9（disable-telemetry）、wasm-bindgen-cli 0.2.129。Trunk release 安装有 num-traits build-script SIGKILL 两次，改 **debug 安装**成功（工具本身未优化不影响 cargo release probe 产物）；没有将该安装错误归因于 Leptos。
 
@@ -76,7 +76,7 @@
 3. dx 的工具缓存显式设 `_build/dx-home`，session cache `_build/dx-session`，避免写用户 ~/.dx。配置 resource.dev 必须显式存在；已修正。
 4. Leptos CSR 中动态 view/on_cleanup 闭包有 Send/Sync 要求，JS owner 用 SendWrapper<Rc<…>>（只在当前浏览器线程）；Dioxus props 使用 JS owner identity 的 PartialEq。两者都不允许 renderer 接管岛内部 DOM。
 
-Dev 热替换：**未测端到端热替换/状态保留，也未拿 watch 日志冒充 HMR 成功**。Chrome 的共同启动阻塞使该项无法完成。可在可启动 Chrome 的环境用 Trunk serve 的 `--address 127.0.0.1 --port 28376` / dx serve 的 `--addr 127.0.0.1 --port 28377 --open false` 补跑；dx 当前为 minimal features，devtools/HMR 配置应单独记录，不能把启用调试特征后的体积与上表混比。
+Dev 热替换：**未测端到端热替换/状态保留，也未拿 watch 日志冒充 HMR 成功**。Chrome 的共同启动阻塞使该项无法完成。可在可启动 Chrome 的环境用 Trunk serve 的 `--address 127.0.0.1 --port 28371` / dx serve 的 `--addr 127.0.0.1 --port 28372 --open false` 补跑；dx 当前为 minimal features，devtools/HMR 配置应单独记录，不能把启用调试特征后的体积与上表混比。
 
 ## S4 · 双跑与分母（明确缺测）
 
@@ -120,7 +120,7 @@ Caddy 2.10.2 mac/arm64 的官方 release archive 已对官方 SHA512 清单校�
 
 ## 复现与验证
 
-在 worktree 根，脚本不会写 resources 或用户 profile。安装工具见 `scripts/exp007/install-tools.sh`；Caddy 可用 `python3 scripts/exp007/install-caddy.py`（本次平台钉死 mac arm64）。
+在 worktree 根，脚本不会写 resources 或用户 profile。`BASELINE_UI` 可覆盖只读基线 ui 路径（须有既有 node_modules）；默认从 worktree 向祖先目录寻找 `resources/PilotDeck/ui`，不硬编码机器绝对路径。第 2 轮只使用既有工具与缓存，**不下载预编译二进制**；已有 Caddy 的来源记录属于首轮历史，不运行其下载脚本。
 
 ```sh
 python3 scripts/exp007/build.py --bundlers
@@ -152,15 +152,61 @@ python3 scripts/exp007/check.py
 
 参考只用于构建/协议方法：Leptos [CSR 部署](https://book.leptos.dev/deployment/csr.html)、Dioxus [0.7 工程设置](https://dioxuslabs.com/learn/0.7/tutorial/new_app/)、Caddy [reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) / [global options](https://caddyserver.com/docs/caddyfile/options)。选型数据来自本次实测，不来自框架宣传。
 
-## 协调者补跑：真实 Chrome 浏览器门（2026-10-14 05:20）
+## 第 2 轮本地验证（传输层替代已明示）
 
-codex 沙箱内 Chrome 无法启动，协调者在沙箱外用本机已装 Chrome（Playwright `channel: chrome`，headless，profile 在本 worktree `_tmp/chrome-profile-*`，未下载浏览器、未用用户 profile）按 `scripts/exp007/browser.mjs` 原样各跑一次：
+本轮沙箱除无法启动 Chrome 外，还拒绝 `listen(127.0.0.1:28370)`（EPERM）。两候选原版网络 DOM gates 都尝试运行，均在服务启动时受阻，未进入候选检查：[Leptos 阻塞记录](evidence/r2/leptos-network-blocked.json)、[Dioxus 阻塞记录](evidence/r2/dioxus-network-blocked.json)。未把环境阻塞算作候选失败。Chrome 门未在本轮沙箱执行，留给协调者。
 
-| 候选 | 结论 | 逐项 |
+为验证本轮修正，另在 `_tmp/r2-offline/runner.mjs` 使用真实 CSR wasm、原 mock 的 HTTP/WS handlers、真实 xterm 与 jsdom，把底层监听/连接替换为进程内传输。原版 `gates.mjs` 保留 localhost HTTP/WS 路径。**下表 PASS 仅为 `PASS_DOM_IN_PROCESS_TRANSPORT_ONLY`，不是本轮网络、Chrome、绘制、几何或 OS IME 证据**；替代传输的延迟不作选型依据。
+
+| 第 2 轮检查 | Leptos | Dioxus |
 |---|---|---|
-| Leptos 0.8.17 | **PASS_BROWSER_MACHINE_CHECKS** | 登录/存储/列表 PASS · composition 期间 Enter 守卫 PASS · xterm 生命周期 DOM/缓冲/焦点/输入 PASS · ≥20Hz 60s 计数/滚动 PASS |
-| Dioxus 0.7.9 | **FAIL** | 登录/存储/列表 PASS；**composition 期间 Enter 仍发送**（`browser.mjs:26`，`sent` 期望 `0` 实得 `1`），后续项未执行 |
+| 七组 DOM gates | 全部 PASS（进程内传输） | 全部 PASS（进程内传输） |
+| composition handler 标记 / keydown 次数 | false → true → false / 5 | false → true → false / 5 |
+| composition 范围 | synthetic composition only，未测 OS IME | 同左 |
+| 接收 / DOM 更新 / 真实 Frame.seq | 1500 / 1500 / 连续 1…1500 | 1500 / 1500 / 连续 1…1500 |
+| mock 定时负载持续 / 实际频率 | 61.440 s / 24.414 Hz | 61.497 s / 24.391 Hz |
+| xterm DOM/缓冲/焦点/输入 | 十次重挂 PASS | 十次重挂 PASS |
+| 序号负向对照（隔离 missing 检查） | 序号偏移 +1000 被真实 seq 断言拒绝，exit 1 | 同左，exit 1 |
+| wasm gzip（共同管线，含新增插桩） | 113,050 B | 210,521 B |
+| Chrome / 滚动几何 | NOT_RUN，协调者补跑 | 同左 |
 
-原件：`evidence/browser-leptos-coordinator.json`、`evidence/browser-dioxus-coordinator.json`。
+[Leptos 原始结果](evidence/r2/leptos-dom-offline.json)、[Dioxus 原始结果](evidence/r2/dioxus-dom-offline.json) 与各自 [trace](evidence/r2/leptos-dom-offline-trace.json) / [trace](evidence/r2/dioxus-dom-offline-trace.json) 的 wasm SHA256 和 [本轮 build.json](evidence/r2/build.json) 一致。序号负向对照 [Leptos](evidence/r2/leptos-negative-seq.json) / [Dioxus](evidence/r2/dioxus-negative-seq.json) 为预期 FAIL；该对照在临时 harness 内故意跳过 missing 检查，以单独确认真实 seq 断言的效力，正式 gates 没有跳过。
 
-**取舍变化**：jsdom/DOM 降级层两候选都过，真实浏览器里 Dioxus 的 IME 守卫失效——IME 是计划 004 的命门之一，据此**选定 Leptos（AI 代拍，待人复核）**。Dioxus 的失败可能是事件模型（合成事件与原生 `isComposing` 的时序）而非不可修，但不再投入。仍未覆盖：真实 OS 输入法、37 例黑盒双跑、跨壳 storage/BFCache、A 托管 patch 与 HMR——F1 不按完整验收关闭。
+共同 release 构建与 Trunk/dx `--locked` 构建均通过；两探针 wasm clippy `-D warnings` / fmt 通过；[src/ CI](evidence/r2/ci.json) 的 fmt、clippy、test 全通过（696 passed / 0 failed / 0 ignored）；[16 个 JS 模块语法检查](evidence/r2/syntax.json) 通过；[岛消息边界](evidence/r2/island-boundary.json) 验证 8 个坏 JSON/形状输入不抛错且之后合法 output 仍写入。端口范围正向 6 项、拒绝 11 项与 BASELINE_UI 覆盖检查通过。完整交接、命令及边界见 `_tmp/RESULT-r2.md`；[本轮证据 manifest](evidence/r2/manifest.json) 与首轮 manifest 独立，首轮原件哈希未改。
+
+## 协调者补跑：首轮 Chrome 结论撤回（2026-10-14，第 2 轮修订）
+
+协调者首轮在沙箱外使用本机已装 Chrome（Playwright `channel: chrome`，headless，worktree 专用 profile）各跑一次。原始记录保留，不修改：
+
+| 候选 | 首轮记录（历史原件） | 当前效力 |
+|---|---|---|
+| Leptos 0.8.17 | PASS_BROWSER_MACHINE_CHECKS | 探针已修正，旧 PASS 不能替代第 2 轮 composition/真实帧序号/滚动溢出断言；synthetic only，未测 OS IME |
+| Dioxus 0.7.9 | composition 期间 Enter 发送，FAIL；后续项未执行 | compositionstart handler 未收到正确事件类型，不能归因于 Dioxus 的 IME 缺陷；后续项仍缺测 |
+
+原件：[Leptos 协调者首轮记录](evidence/browser-leptos-coordinator.json)、[Dioxus 协调者首轮记录](evidence/browser-dioxus-coordinator.json)。
+
+**首轮「Dioxus IME FAIL → 选定 Leptos」结论因探针 bug 作废，明确撤回。** 协调者已核实 Playwright `locator.dispatchEvent('compositionstart')` 在真实 Chrome 构造的是普通 `Event`，而 Dioxus 按 `CompositionEvent` 类型过滤，故 handler 未触发。没有 handler 插桩和等待也让首轮探针缺少时序隔离。这份证据不支持淘汰 Dioxus，也不能把 Leptos 合成事件 PASS 外推为 OS IME 安全。
+
+当前口径与 [decision.md 的 F1 追加](../../research/007_frontend/decision.md#f1-exp007-复核追加2026-10-14) 统一：**暂选 Leptos（AI 代批，待人复核），依据退回同发布 profile / 同 wasm-bindgen 管线下的包体、构建可用性与其他已测项**。首轮 gzip wasm 为 111,122 B vs 210,103 B；第 2 轮插桩后为 113,050 B vs 210,521 B，仍仅支持本探针体积差异。Dioxus 保留为可用候选。F1 尚未完整验收，不能据此放行 F3。
+
+修正后的浏览器门由协调者在可启动系统 Chrome 的环境**顺序**运行，无需下载浏览器：
+
+```sh
+node scripts/exp007/browser.mjs leptos
+node scripts/exp007/browser.mjs dioxus
+```
+
+范围始终是 **synthetic composition only，未测 OS IME**。真实 OS 输入法、可感顺滑、37 例黑盒双跑、跨壳 storage/BFCache、A 托管 patch 与 HMR 仍需补测。第 2 轮沙箱未运行 Chrome；本地可执行检查与额外网络限制见 `_tmp/RESULT-r2.md`。
+
+## 协调者补跑 r2：真实 Chrome（2026-10-14 06:40）
+
+按第 2 轮修正后的 `browser.mjs`（真 `CompositionEvent`、isComposing/keyCode229/Shift 路径、data-seq、滚动前置断言），本机 Chrome、worktree 临时 profile：
+
+| 运行 | Leptos | Dioxus |
+|---|---|---|
+| 原样 `browser.mjs` | FAIL @ `browser.mjs:55` | FAIL @ `browser.mjs:55` |
+| 诊断副本（仅把 `:55` 草稿断言改为记录值，未入库） | **PASS_BROWSER_MACHINE_CHECKS**（4/4） | **PASS_BROWSER_MACHINE_CHECKS**（4/4） |
+
+`:55` 的失败两候选完全相同：组合期间的真实 Enter 两边都**未发送**（`sent=0`，`:54` 通过），但合成 composition 不会像真实 IME 那样吞掉 Enter 的默认动作，浏览器照常插入换行（草稿 `'你好\n'`）。这是探针断言与合成事件的口径问题，不是候选差异：真实 IME 下 Enter 由输入法消费。修法（待第 3 方评审确认）：该断言改为「未发送且草稿以 `你好` 开头」，或对组合内 Enter 断言 `defaultPrevented` 由候选负责——后者是产品语义选择，需人定。
+
+**结论**：在已测范围内两候选的 IME 守卫、xterm 生命周期、≥20Hz 流式与真实帧序号、滚动均无差别；选型依据只剩体积（gzip wasm Leptos 111,122 B vs Dioxus 210,103 B）与构建可用性。**暂选 Leptos（AI 代拍 #24'，待人复核）**。原件 `evidence/r2/browser-*-coordinator-{raw,diag}.json`。

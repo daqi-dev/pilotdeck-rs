@@ -123,6 +123,7 @@ pub struct Frame {
 #[derive(Clone, Default, Debug)]
 pub struct Stream {
     pub received: u32,
+    pub seq: u32,
     pub missing: u32,
     pub text: String,
 }
@@ -132,6 +133,7 @@ impl Stream {
             self.missing += 1;
         }
         self.received += 1;
+        self.seq = f.seq;
         self.text.push_str(&f.text);
     }
 }

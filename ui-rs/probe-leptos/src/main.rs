@@ -25,6 +25,7 @@ fn App() -> impl IntoView {
     let lists = RwSignal::new(String::new());
     let stream = RwSignal::new(core::Stream::default());
     let composing = RwSignal::new(false);
+    let keydowns = RwSignal::new(0u32);
     let sent = RwSignal::new(0u32);
     let shown = RwSignal::new(true);
     let island_state = RwSignal::new(String::new());
@@ -89,17 +90,20 @@ fn App() -> impl IntoView {
         <Show when=move ||logged.get()>
             <pre id="sessions">{move ||lists.get()}</pre>
             <textarea id="composer" aria-label="Message" placeholder="消息"
+                data-composing=move ||composing.get().to_string()
+                data-keydowns=move ||keydowns.get()
                 on:compositionstart=move |_|composing.set(true)
                 on:compositionend=move |_|composing.set(false)
                 on:input=move |_|core::save_draft()
                 on:keydown=move |e: web_sys::KeyboardEvent| {
+                    keydowns.update(|n| *n += 1);
                     if e.key() == "Enter" && !e.shift_key() && !composing.get_untracked() && !e.is_composing() && e.key_code() != 229 {
                         e.prevent_default();
                         if !core::composer().value().trim().is_empty() { sent.update(|n|*n+=1); core::clear_draft(); }
                     }
                 }></textarea>
             <output id="sent">{move ||sent.get()}</output>
-            <pre id="stream" data-received=move ||stream.get().received data-missing=move ||stream.get().missing>{move ||stream.get().text}</pre>
+            <pre id="stream" data-received=move ||stream.get().received data-seq=move ||stream.get().seq data-missing=move ||stream.get().missing>{move ||stream.get().text}</pre>
         </Show>
         <button id="toggle-island" on:click=toggle>"切换终端"</button>
         <button id="focus-island" on:click=move |_|focus_island.focus()>"聚焦终端"</button>

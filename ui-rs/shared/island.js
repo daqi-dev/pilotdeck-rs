@@ -32,7 +32,12 @@ export class TerminalIsland {
     const socket = new WebSocket(url);
     this.socket = socket;
     socket.onopen = () => socket.send(JSON.stringify({type:'init',projectPath:'/probe',provider:'plain-shell',isPlainShell:true,hasSession:false,cols:80,rows:10}));
-    socket.onmessage = e => { const frame=JSON.parse(e.data); if(frame.type==='output') this.terminal.write(frame.data); };
+    socket.onmessage = e => {
+      let frame;
+      try { frame = JSON.parse(e.data); }
+      catch { return; } // Malformed shell frames must not escape the event handler.
+      if (frame?.type === 'output' && typeof frame.data === 'string') this.terminal.write(frame.data);
+    };
     socket.onclose = () => { this.terminal.clear(); }; // Baseline: no automatic /shell reconnect.
   }
   snapshot() {

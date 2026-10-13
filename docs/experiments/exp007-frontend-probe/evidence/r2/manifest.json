@@ -1,0 +1,62 @@
+[
+  {
+    "file": "build.json",
+    "bytes": 980,
+    "sha256": "d3143dcbac462bba979143c2649eb2e4c5a17e401539232da1f2365d0fd9ee8d"
+  },
+  {
+    "file": "ci.json",
+    "bytes": 532,
+    "sha256": "be67c872bd5cb475e90b25add6f103ff7c1dd618278035ab24ab7afe8ba0a0fd"
+  },
+  {
+    "file": "syntax.json",
+    "bytes": 1410,
+    "sha256": "e4c23a80085d2cd22d1e34728f57a3068edb5dbc900b098902db1a0bae87e5df"
+  },
+  {
+    "file": "island-boundary.json",
+    "bytes": 91,
+    "sha256": "5b17a766c2e5bc175c5927009702dd18347e255dee738d746b352e035c5826b1"
+  },
+  {
+    "file": "leptos-dom-offline.json",
+    "bytes": 3271,
+    "sha256": "acdeb8da9e5159e8dbd4394ae9215b7cc1b79cedd57284b39ca0dff86f5c8a73"
+  },
+  {
+    "file": "leptos-dom-offline-trace.json",
+    "bytes": 93951,
+    "sha256": "111719bf927631abca2a0aff9b1413edc106a63891185f9d4d8ca5f157d84ead"
+  },
+  {
+    "file": "leptos-network-blocked.json",
+    "bytes": 634,
+    "sha256": "4afa5bc8a6b39c6216c6304a34720e696e8cc0a40d8bd321f3219fa8fc7d88d4"
+  },
+  {
+    "file": "leptos-negative-seq.json",
+    "bytes": 3128,
+    "sha256": "d468a2c6c8f0dfbc76ac46d70fbc0ec678e5271adb8bb558a7661352f29f250a"
+  },
+  {
+    "file": "dioxus-dom-offline.json",
+    "bytes": 3254,
+    "sha256": "1f62a112c8bc8194c86dc9a65b9df85a48adca615513a8a99612847d2302fed5"
+  },
+  {
+    "file": "dioxus-dom-offline-trace.json",
+    "bytes": 93971,
+    "sha256": "796fa0d66ebbcb7241d2692edb66ec8e61f2bc3dd4fde3aadd925d3021af2b0d"
+  },
+  {
+    "file": "dioxus-network-blocked.json",
+    "bytes": 634,
+    "sha256": "f59241f931a6d60a1230e066ed72d2ae56b0fc903f79ebcaede5a5ecb9cc41e3"
+  },
+  {
+    "file": "dioxus-negative-seq.json",
+    "bytes": 3139,
+    "sha256": "38f2e48242570561c4ada2461e0f796b8ee79664a8aee981cfda4a7f17e780e6"
+  }
+]
