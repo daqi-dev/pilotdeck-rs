@@ -35,13 +35,13 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 
 > **为什么拆成三条 issue**：`dev-launch` 的粒度铁律（`.claude/skills/dev-launch/SKILL.md:58`）主张「能一条就一条、一条内拆多个 PR」。这里拆开不是因为工程量，而是**三条之间隔着人的闸门**：#1 结束时人批 `acceptance.md` 并冻结尺子，#2 才能开始；#2 合并后才有二进制可量。旧迁移一个 `CORE-01` 包下整个子系统、父任务收不了口（`docs/research/003_prior-attempt/`）。**只先开 #1**，#2、#3 在前一条合并后再开。
 
-### Issue #1 · 回捞并复核尺子（≤ 1 天；超时降级，见风险 R1）
+### Issue #1 · 回捞并复核尺子（GitHub [#7](https://github.com/zhengdaqi/pilotdeck-rs/issues/7)；≤ 1 天；超时停下交人，见风险 R1）
 
 **S1 搬尺子进 `scripts/parity/`**（不新开顶层目录）
 - `verify_a9.py` → `scripts/parity/g03_compare.py`；`formal-round.py` → `scripts/parity/round.py`；`formal-bind.mjs` → `scripts/parity/bind.mjs`。
 - 每个文件头部注明来源路径与原文件 sha256；**所有写死的绝对路径改成参数或环境变量**：`PDRS_BASELINE`（默认 `resources/PilotDeck`）、`PDRS_OUT`（默认 `_tmp/<日期>-parity/`）。
 - `trace.py` / `run.py` **不复制**，从 `$PDRS_BASELINE/tools/agent-loop-parity/` 导入（与旧尺子一样用基线原版）。
-- ⚠️ **配对要改**（评审 A+B 撞车）：旧驱动只会比「native 对 X」——`formal-round.py:31-32` 的 `ts-control` 是 native 对 TS sidecar，`rust` 模式也是 native 槽对 Rust 槽；`verify_a9.py:428-429` 写死左 = native、右 = sidecar。本仓要的是 **sidecar 对 sidecar**：每一侧单独跑一遍上游 `run.py`（TS 侧用默认 sidecar，Rust 侧用 `PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND` 换成 Rust），各取 **sidecar 那一侧的 trace**，交给 `g03_compare.py` 比。`g03_compare.py` 改成接收两份同类 trace；`bind.mjs` 的「unexpected」判据随之改：TS 那一遍里 TS sidecar 是**预期的**。每轮 summary 断言两侧身份：左必须是 TS sidecar，右必须是 sha256 对得上的 Rust 二进制。
+- ⚠️ **配对要改**（评审 A+B 撞车）：旧驱动只会比「native 对 X」——`formal-round.py:31-32` 的 `ts-control` 是 native 对 TS sidecar，`rust` 模式也是 native 槽对 Rust 槽；`verify_a9.py:428-429` 写死左 = native、右 = sidecar。本仓要的是 **sidecar 对 sidecar**：每一侧单独跑一遍上游 `run.py`（TS 侧用默认 sidecar，Rust 侧用 `PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND` 换成 Rust），各取 **sidecar 那一侧的 trace**，交给 `g03_compare.py` 比。`g03_compare.py` 改成接收两份同类 trace；`bind.mjs` 的「unexpected」判据随之改：TS 那一遍里 TS sidecar 是**预期的**。每轮 summary 断言两侧身份：TS 那一遍必须是 TS sidecar；Rust 那一遍必须是 sha256 对得上的 Rust 二进制。**Issue #1 只有 TS 那一遍**（不跑 Rust），Rust 那一遍的身份断言从 Issue #2 起才用得上。
 - `round.py` 里写死的 Node 工具链路径（`formal-round.py:14`）一并参数化；`--expected-sha256` 只在 Rust 那一遍必填；round 名不再限定 `smoke*` / `control*`（`:34-37`）。
 - 跑之前一律设 `PILOT_HOME`、`TMPDIR` 指向 `PDRS_OUT` 下——用户本机有一个在用的 `~/.pilotdeck`，还有一个 PilotDeck 正占着 18789，**都不能碰**。
 
@@ -51,7 +51,7 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 - `accepted-diffs.md`：已接受差异清单。每条写：场景、差异形状、属于哪一类（原版缺陷 / 比较器规则 / 环境 / 有意差异）、依据、谁批的。初始只放 S3 校准里找到的条目。
 
 **S3 四项对照**（结果写进 `docs/experiments/exp004-ruler-recheck/readme.md`；`exp003` 留给阶段 A 的「真 `ui/server` 连代理」）
-1. **TS sidecar 自比**：`round.py --mode ts-control` 连跑 k 遍（建议 k = 5），按 G03 v1 统计每个场景 PASS 遍数 → 定出 m。
+1. **TS sidecar 自比**：`round.py --side ts` 连跑 k = 5 遍，按 G03 v1 两两比较。**默认口径：10 对两两全一致**的场景进 S（与冻结规约「k 遍全一致」的字面意思一致，最严）；**同时报告**另两种口径（以第 1 遍为基准的 4 对、相邻的 4 对）得出的 S，供人批 `acceptance.md` 时选定。trace 都留着，换口径只需离线重算，不用重跑。
 2. **逐条规则的负向对照**：G03 v1 每放宽一处（通道拆分、E1–E12 各条），各构造一对注入了对应差异的 trace，断言是**那条规则**判它 FAIL（不是「随便哪里 FAIL」）。另加**端到端**的负向对照：在一对真实 trace 里注入差异、删掉一个场景、截断一份 trace，都必须判 FAIL。放在 `scripts/parity/controls/`，`python3 scripts/parity/controls/run_all.py` 一键跑。
    ⚠️ 评审 A 指出旧 `verify_a9.py` 的 E 规则失败只「旁报」、不进总判决（`:435`），场景靠 glob 取（`:423`）——**总判决必须同时要求：53 个场景齐全、两侧身份断言通过、所有适用的 E 规则通过**。
 3. **两侧同坏**：两边都空、两边都报同样的错——必须判 FAIL。
@@ -86,7 +86,7 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 ### Issue #3 · 量分 + 对应检查（在 Issue #2 合并之后）
 
 **S6 用冻结的尺子量一遍**
-- `round.py --mode rust` 连跑 k 遍，Rust sidecar 对 TS sidecar，按 `specs/parity/acceptance.md` 判。
+- `round.py --side rust` 连跑 k 遍，Rust sidecar 对 TS sidecar，按 `specs/parity/acceptance.md` 判。
 - 得出**第一个可信分数**（一致场景数 / 53），写进 `docs/experiments/exp005-first-score/readme.md` 与 `state/board.md`。
 - 每个不一致的场景先**分诊**再动手（旧方案 `execution.md:52`）：Rust 产品 / 原版缺陷 / 比较器规则 / fixture 或环境。
 
