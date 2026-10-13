@@ -19,8 +19,8 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    if !arguments.is_empty() && arguments != ["--stdio"] {
-        eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version]");
+    if !accepts_stdio_arguments(&arguments) {
+        eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]");
         return ExitCode::from(2);
     }
     for option in [
@@ -71,5 +71,38 @@ fn main() -> ExitCode {
             report.reader_joined, report.writer_joined, report.worker_joined
         );
         ExitCode::from(3)
+    }
+}
+
+fn accepts_stdio_arguments(arguments: &[String]) -> bool {
+    arguments.is_empty()
+        || (arguments.len() == 1 && (arguments[0] == "--stdio" || !arguments[0].starts_with("--")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accepts_stdio_arguments;
+
+    #[test]
+    fn stdio_accepts_one_ignored_path_and_rejects_invalid_arguments() {
+        for arguments in [
+            vec![],
+            vec!["--stdio"],
+            vec!["/tmp/PilotDeck/dist/agent-loop-sidecar.js"],
+            vec!["relative-sidecar.js"],
+            vec!["-sidecar.js"],
+        ] {
+            let arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
+            assert!(accepts_stdio_arguments(&arguments), "{arguments:?}");
+        }
+        for arguments in [
+            vec!["--unknown"],
+            vec!["--stdio", "sidecar.js"],
+            vec!["sidecar.js", "another.js"],
+            vec!["--version", "sidecar.js"],
+        ] {
+            let arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
+            assert!(!accepts_stdio_arguments(&arguments), "{arguments:?}");
+        }
     }
 }
