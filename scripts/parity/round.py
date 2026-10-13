@@ -8,7 +8,9 @@ Identity-only bind.mjs observes spawns; production env selects the binary.
 """
 import argparse
 from contextlib import contextmanager
+import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -16,28 +18,88 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 import g03_compare as G
 
 LOCK = Path('/tmp/pdrs-parity.lock')
+LOCK_MAX_AGE = 40 * 60
+
+
+def read_owner(lock):
+    try:
+        owner = json.loads((lock / 'owner.json').read_text())
+        if type(owner['pid']) is not int or owner['pid'] <= 0 or not math.isfinite(owner['timestamp']):
+            raise ValueError('invalid lock owner')
+        return owner
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass  # A process owned by another user still holds the lock.
+    return True
 
 
 @contextmanager
-def parity_lock():
+def lock_guard(lock):
+    # Serialize mkdir/owner publication, takeover and release. Keep the guard
+    # inode stable so concurrent waiters cannot lock different guard files.
+    with lock.with_name(lock.name + '.guard').open('a') as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(guard, fcntl.LOCK_UN)
+
+
+@contextmanager
+def parity_lock(lock=LOCK, takeovers=None):
+    owner = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex}
     announced = False
     while True:
-        try:
-            LOCK.mkdir()
+        acquired = False
+        with lock_guard(lock):
+            if lock.exists():
+                previous = read_owner(lock)
+                timestamp = previous['timestamp'] if previous else lock.stat().st_mtime
+                reason = ('dead_pid' if previous and not pid_alive(previous['pid']) else
+                          'expired' if time.time() - timestamp > LOCK_MAX_AGE else None)
+                if reason:
+                    event = {'event': 'lock_takeover', 'lock': str(lock), 'reason': reason,
+                             'previous_owner': previous, 'timestamp': time.time(), 'pid': os.getpid()}
+                    shutil.rmtree(lock)
+                    print(json.dumps(event), file=sys.stderr, flush=True)
+                    if takeovers is not None:
+                        takeovers.append(event)
+            if not lock.exists():
+                lock.mkdir()
+                owner['timestamp'] = time.time()
+                try:
+                    (lock / 'owner.json').write_text(json.dumps(owner) + '\n')
+                except BaseException:
+                    shutil.rmtree(lock)
+                    raise
+                acquired = True
+        if acquired:
             break
-        except FileExistsError:
-            if not announced:
-                print(f'waiting for {LOCK}', file=sys.stderr, flush=True)
-                announced = True
-            time.sleep(2)
+        if not announced:
+            print(f'waiting for {lock}', file=sys.stderr, flush=True)
+            announced = True
+        time.sleep(2)
     try:
         yield
     finally:
-        LOCK.rmdir()
+        with lock_guard(lock):
+            # An over-age owner may finish after another process took over.
+            # It must not delete the replacement owner's lock.
+            if read_owner(lock) == owner:
+                shutil.rmtree(lock)
 
 
 def main():
@@ -49,7 +111,11 @@ def main():
     ap.add_argument('--scenario', default='all')
     ap.add_argument('--node', default=os.environ.get('PDRS_NODE', 'node'))
     ap.add_argument('--adapter-timeout-seconds', default='30')
+    ap.add_argument('--timeout-seconds', type=float, default=1500,
+                    help='run.py wall-clock timeout (default: 1500 seconds)')
     args = ap.parse_args()
+    if not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
+        ap.error('--timeout-seconds must be positive and finite')
     if not args.label or Path(args.label).name != args.label or args.label in ('.', '..'):
         ap.error('--label must be a single directory name')
     catalog = G.scenario_catalog()
@@ -83,7 +149,8 @@ def main():
            '--comparison', 'same-version', '--surface', 'gateway', '--scenario', args.scenario,
            '--output', str(out / 'artifacts'), '--adapter-timeout-seconds', args.adapter_timeout_seconds,
            '--pilotdeck-sidecar-cmd', adapter]
-    with parity_lock():
+    takeovers = []
+    with parity_lock(takeovers=takeovers):
         out.mkdir(parents=True, exist_ok=False)
         for directory in ('pilot-home', 'tmp'):
             (out / directory).mkdir()
@@ -92,10 +159,25 @@ def main():
                'baseline': str(G.BASELINE), 'candidate': str(binary), 'expected_sha256': expected,
                'inputs_sha256': {f: G.sha256(G.TOOLS / f) for f in ('run.py', 'trace.py', 'scenarios.json', 'adapters/pilotdeck_gateway_impl.mjs')},
                'driver_sha256': {p.name: G.sha256(p) for p in (Path(__file__), Path(__file__).with_name('bind.mjs'))},
-               'PILOT_HOME': env['PILOT_HOME'], 'TMPDIR': env['TMPDIR'], 'started_wall': time.time()}
+               'PILOT_HOME': env['PILOT_HOME'], 'TMPDIR': env['TMPDIR'], 'started_wall': time.time(),
+               'timeout_seconds': args.timeout_seconds, 'lock_takeovers': takeovers}
         (out / 'run.json').write_text(json.dumps(run, indent=2) + '\n')
         started = time.monotonic()
-        proc = subprocess.run(cmd, cwd=G.TOOLS, env=env, text=True, capture_output=True)
+        try:
+            proc = subprocess.run(cmd, cwd=G.TOOLS, env=env, text=True, capture_output=True,
+                                  timeout=args.timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            # TimeoutExpired may carry bytes even with text=True.
+            for filename, output in (('run.py.stdout', error.stdout), ('run.py.stderr', error.stderr)):
+                if isinstance(output, bytes):
+                    output = output.decode('utf-8', errors='replace')
+                (out / filename).write_text(output or '')
+            run.update(run_py_exit=None, elapsed_s=round(time.monotonic() - started, 3),
+                       identity_ok=False, valid_round=False, status='BLOCKED',
+                       blocked=[f'run.py timed out after {args.timeout_seconds:g} seconds'])
+            (out / 'run.json').write_text(json.dumps(run, indent=2, ensure_ascii=False) + '\n')
+            print(json.dumps({k: run[k] for k in ('side', 'label', 'status', 'blocked', 'elapsed_s', 'valid_round')}, ensure_ascii=False))
+            return 1  # parity_lock's finally releases the owned lock.
         (out / 'run.py.stdout').write_text(proc.stdout)
         (out / 'run.py.stderr').write_text(proc.stderr)
         run.update(run_py_exit=proc.returncode, elapsed_s=round(time.monotonic() - started, 3))

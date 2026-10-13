@@ -20,7 +20,19 @@ from pathlib import Path
 from typing import Any
 
 WORKTREE = Path(__file__).resolve().parents[2]
-BASELINE = Path(os.environ.get("PDRS_BASELINE", "/Users/da/ws/pilotdeck-rs/resources/PilotDeck")).resolve()
+
+
+def baseline_path() -> Path:
+    default = WORKTREE / "resources/PilotDeck"
+    if default.is_dir():
+        return default.resolve()
+    configured = os.environ.get("PDRS_BASELINE")
+    if configured and Path(configured).is_dir():
+        return Path(configured).resolve()
+    raise FileNotFoundError(f"PilotDeck baseline not found at {default}; set PDRS_BASELINE to an existing directory")
+
+
+BASELINE = baseline_path()
 TOOLS = BASELINE / "tools/agent-loop-parity"
 
 
@@ -72,63 +84,12 @@ def identity_key(r: dict[str, Any]) -> str:
     return canon(parts)
 
 
-def is_relocatable(r: dict[str, Any]) -> bool:
-    # Exactly the Original's reviewed predicate (trace.py:581-599).
-    return T._is_allowed_continuable_position_state(r)
-
-
-# ---------------------------------------------------------------- identity-key classification
-def classify(left_raw, right_raw, strict_diffs: list[dict[str, Any]]) -> dict[str, Any]:
-    L, Rr = projected(left_raw), projected(right_raw)
-    lk = defaultdict(list)
-    rk = defaultdict(list)
-    for r in L:
-        lk[identity_key(r)].append(canon(r))
-    for r in Rr:
-        rk[identity_key(r)].append(canon(r))
-    keys = set(lk) | set(rk)
-    multiplicity, value_diff, same_key_reorder, missing_on_right, extra_on_right = [], [], [], [], []
-    for k in sorted(keys):
-        a, b = lk.get(k, []), rk.get(k, [])
-        if len(a) != len(b):
-            ca, cb = Counter(a), Counter(b)
-            missing = list((ca - cb).elements())
-            extra = list((cb - ca).elements())
-            multiplicity.append({"key": json.loads(k), "left_count": len(a), "right_count": len(b)})
-            missing_on_right += [json.loads(m) for m in missing]
-            extra_on_right += [json.loads(e) for e in extra]
-        elif a != b:
-            if Counter(a) == Counter(b):
-                same_key_reorder.append({"key": json.loads(k), "count": len(a)})
-            else:
-                ca, cb = Counter(a), Counter(b)
-                value_diff.append({"key": json.loads(k), "left_only": [json.loads(x) for x in (ca - cb).elements()],
-                                   "right_only": [json.loads(x) for x in (cb - ca).elements()]})
-    # relocation pairs: strict-unmatched records (trace[i] left-only / right-only) paired by identical canonical value
-    left_only = [canon(d["left"]) for d in strict_diffs if d["right"] is None and d["left"] is not None and not d["path"].startswith("trace.partialOrder")]
-    right_only = [canon(d["right"]) for d in strict_diffs if d["left"] is None and d["right"] is not None and not d["path"].startswith("trace.partialOrder")]
-    cl, cr = Counter(left_only), Counter(right_only)
-    reloc_pairs = sum((cl & cr).values())
-    reloc_kinds = Counter()
-    for v, n in (cl & cr).items():
-        reloc_kinds[json.loads(v).get("kind") + ("/" + str(json.loads(v).get("event")) if json.loads(v).get("event") else "")] += n
-    unpaired_left = sum((cl - cr).values())
-    unpaired_right = sum((cr - cl).values())
-    matched_value_diffs = [d for d in strict_diffs if d["left"] is not None and d["right"] is not None and not d["path"].startswith("trace.partialOrder")]
-    partial_order = [d for d in strict_diffs if d["path"].startswith("trace.partialOrder")]
-    return {
-        "relocation_pairs": reloc_pairs,
-        "relocation_kinds": dict(reloc_kinds),
-        "strict_unpaired_left": unpaired_left,
-        "strict_unpaired_right": unpaired_right,
-        "strict_matched_value_diffs": len(matched_value_diffs),
-        "strict_partial_order_diffs": len(partial_order),
-        "identity_multiplicity_diffs": multiplicity,
-        "identity_value_diffs": value_diff,
-        "identity_same_key_reorder": same_key_reorder,
-        "missing_on_right": missing_on_right,
-        "extra_on_right": extra_on_right,
-    }
+# ---------------------------------------------------------------- identity multiplicity (E11)
+def identity_multiplicity_diffs(left_raw, right_raw) -> list[dict[str, Any]]:
+    left = Counter(identity_key(r) for r in projected(left_raw))
+    right = Counter(identity_key(r) for r in projected(right_raw))
+    return [{"key": json.loads(key), "left_count": left[key], "right_count": right[key]}
+            for key in sorted(left.keys() | right.keys()) if left[key] != right[key]]
 
 
 # ---------------------------------------------------------------- proposed rule (channel-split)
@@ -211,6 +172,15 @@ def rule_verdict(sid: str, left_raw, right_raw) -> dict[str, Any]:
 # ---------------------------------------------------------------- E-rules on one trace
 def idx(records, pred):
     return [i for i, r in enumerate(records) if pred(r)]
+
+
+def has_tool_call_id(value, tcid):
+    """Match structured toolCallId fields, including nested tool_result blocks."""
+    if isinstance(value, dict):
+        return value.get("toolCallId") == tcid or any(has_tool_call_id(v, tcid) for v in value.values())
+    if isinstance(value, list):
+        return any(has_tool_call_id(v, tcid) for v in value)
+    return False
 
 
 def e_rules(records: list[dict[str, Any]], side: str, sid: str) -> dict[str, Any]:
@@ -354,14 +324,12 @@ def e_rules(records: list[dict[str, Any]], side: str, sid: str) -> dict[str, Any
         scope = r.get("agentScope") or "parent"
         tcid = r.get("toolCallId")
         reqs = idx(recs, lambda q: kind(q) == "model.request" and (q.get("agentScope") or "parent") == scope)
-        before = [j for j in reqs if j < i]
         after = [j for j in reqs if j > i]
         if not after:
             continue  # terminal after tool; nothing to check
         e12n += 1
         nxt = recs[after[0]]
-        blob = canon(nxt.get("modelView", {}).get("messages"))
-        if tcid is None or str(tcid) not in blob:
+        if tcid is None or not has_tool_call_id(nxt.get("modelView", {}).get("messages"), tcid):
             e12v.append({"tool.call": i, "toolCallId": tcid, "next_request": after[0], "attempt": nxt.get("attempt")})
     res["E12"] = {"status": ("FAIL" if e12v else ("PASS" if e12n else "N/A")), "checked": e12n, "violations": e12v}
     return res
@@ -427,7 +395,7 @@ def compare_records(sid, left, right, scenario=None):
     # E10 and E11 were already enforced implicitly by the original stream comparator.
     edges["pair"] = {
         "E10": {"status": "FAIL" if any(channel["per_stream_diffs"].values()) else "PASS"},
-        "E11": {"status": "FAIL" if classify(left, right, [])["identity_multiplicity_diffs"] else "PASS"},
+        "E11": {"status": "FAIL" if identity_multiplicity_diffs(left, right) else "PASS"},
     }
     health = {"left": trace_health(sid, left, scenario), "right": trace_health(sid, right, scenario)}
     failed = sorted({name for rules in edges.values() for name, result in rules.items() if result.get("status") == "FAIL"})
@@ -459,16 +427,20 @@ def compare_directories(left_dir, right_dir, *, side_left="sidecar", side_right=
                 ledgers[name] = json.loads(ledger.read_text())
             except (OSError, ValueError):
                 ledgers[name] = {"valid_round": False}
+        elif artifact_dir(directory).name == "artifacts":
+            ledgers[name] = {"valid_round": False, "error": "new round missing run.json"}
     for sid, scenario in catalog.items():
         paths = [artifact_dir(d) / f"{sid}.pilotdeck-current-sidecar.jsonl" for d in (left_dir, right_dir)]
         try:
             left, right = [load_aligned(p, path_align) for p in paths]
             result = compare_records(sid, left, right, scenario)
-            for name, records, path in zip(("left", "right"), (left, right), paths):
-                if name not in ledgers:
-                    continue  # upstream TS captures predate the identity wrapper
-                ledger = ledgers[name]
+            for name, records in zip(("left", "right"), (left, right)):
                 proofs = [r for r in records if r.get("kind") == "harness.proof" and r.get("state") == "sidecar_identity"]
+                if name not in ledgers:
+                    if not proofs:
+                        continue  # upstream TS captures predate the identity wrapper
+                    ledgers[name] = {"valid_round": False, "error": "identity proof missing run.json"}
+                ledger = ledgers[name]
                 valid_identity = (ledger.get("valid_round") is True and ledger.get("side") in ("ts", "rust")
                     and len(proofs) == 1 and proofs[0].get("side") == ledger.get("side")
                     and proofs[0].get("sha256") == ledger.get("expected_sha256") and proofs[0].get("spawnObserved") is True)

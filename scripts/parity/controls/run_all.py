@@ -11,7 +11,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import g03_compare as G
 
-DEFAULT_SOURCE = Path('/Users/da/ws/pilotdeck-rs/_tmp/20261014-exp001/parity-run1')
+DEFAULT_SOURCE = G.WORKTREE / '_tmp/20261014-exp001/parity-run1'
 
 
 def rows(*records):
