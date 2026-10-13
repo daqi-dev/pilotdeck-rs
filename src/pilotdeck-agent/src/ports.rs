@@ -59,8 +59,6 @@ struct CancellationState {
     wake: Condvar,
     listeners: Mutex<Vec<Weak<WakeSignal>>>,
     cleanup: Mutex<CleanupCancellationState>,
-    /// A cleanup owner's total budget also caps reconciliation after dispatch.
-    reconciliation_bound: Option<Instant>,
 }
 #[derive(Debug, Default)]
 struct CleanupCancellationState {
@@ -139,18 +137,7 @@ impl Cancellation {
     /// Independent soft-cancellation scope that remains linked to owner death.
     /// Weak children cannot keep either the parent or a discarded scope alive.
     pub fn cleanup_scope(&self) -> Self {
-        self.new_cleanup_scope(None)
-    }
-    /// Cleanup must settle within its own fixed total budget, without gaining
-    /// another cancellation grace when that budget expires.
-    pub fn bounded_cleanup_scope(&self, deadline: Instant) -> Self {
-        self.new_cleanup_scope(Some(deadline))
-    }
-    fn new_cleanup_scope(&self, reconciliation_bound: Option<Instant>) -> Self {
-        let child = Self(Arc::new(CancellationState {
-            reconciliation_bound,
-            ..CancellationState::default()
-        }));
+        let child = Self::default();
         let hard_stop = {
             let mut cleanup = self.0.cleanup.lock().unwrap_or_else(|p| p.into_inner());
             cleanup.scopes.retain(|scope| scope.strong_count() > 0);
@@ -237,8 +224,7 @@ impl Cancellation {
             .is_some_and(|notice| notice.observed_at <= receipt)
     }
     pub fn reconciliation_deadline(&self, grace: std::time::Duration) -> Option<Instant> {
-        let cancellation_deadline = self
-            .0
+        self.0
             .cause
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -247,11 +233,7 @@ impl Cancellation {
                 notice
                     .reconciliation_deadline
                     .unwrap_or(notice.observed_at + grace)
-            });
-        match (self.0.reconciliation_bound, cancellation_deadline) {
-            (Some(bound), Some(deadline)) => Some(bound.min(deadline)),
-            (bound, deadline) => bound.or(deadline),
-        }
+            })
     }
     pub fn wait_until(&self, deadline: Instant) -> Option<CancelCause> {
         let state = self.0.cause.lock().unwrap_or_else(|p| p.into_inner());

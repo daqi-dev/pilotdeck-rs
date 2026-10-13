@@ -630,14 +630,13 @@ impl PendingExchange {
                 // The bound is monotonic and never extended by duplicate wakes.
                 reconciliation_deadline.get_or_insert_with(|| {
                     let grace = std::time::Duration::from_secs(5);
-                    // An expired execution deadline stops new dispatch, but
-                    // cannot also expire reconciliation of an already sent
-                    // call. Let its original ACK settle within the same fixed
-                    // cancellation budget, as for an explicit user abort.
-                    control
+                    let bound = control
                         .cancellation
                         .reconciliation_deadline(grace)
-                        .unwrap_or_else(|| std::time::Instant::now() + grace)
+                        .unwrap_or_else(|| std::time::Instant::now() + grace);
+                    control
+                        .deadline
+                        .map_or(bound, |deadline| deadline.min(bound))
                 });
             }
             let reconciliation_expired = reconciliation_deadline
