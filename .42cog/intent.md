@@ -6,12 +6,13 @@
 
 ## 收敛方向（唯一）
 
-一个用 Rust 写的 PilotDeck 后端：原版 TS 前端（`ui/`）不改一行，直接指向它就能用，行为与基线 `OpenBMB/PilotDeck@cc7c4e6`（standalone_alpha1，2026-10-13）一致。
+一个用 Rust 写的 PilotDeck gateway，替换 18789 端口上的 `pilotdeck server`：原版 `ui/`（含 `ui/server`）不改一行就能连上它，行为与基线 `OpenBMB/PilotDeck@cc7c4e6`（standalone_alpha1，2026-10-13）一致。（阶段 A；阶段 B 再替换 `ui/server`，届时回来改这一句。）
 
-怎么算数：**对拍**。同一份输入分别发给基线 TS 后端和 Rust 后端，比对协议层输出（HTTP 响应 / WebSocket 事件）。
-关联度 ＝ 对拍用例里 Rust 版通过的条数 / 总条数。每个 PR 要么让这个数变大，要么说明它为什么不变。对照物是**钉死在 cc7c4e6 的 TS 后端**，不是「最新的上游」。
+怎么算数：**对拍**。同一份脚本分别驱动基线 TS gateway 和 Rust gateway，比三样——帧与事件流、落盘目录、发给模型的请求体——**归一化后相同**才算一致。
+关联度 ＝ 由 Rust 原生处理、且对拍一致的 method 数 / gateway 全部 method 数（约 100，`resources/PilotDeck/src/gateway/protocol/frames.ts:21` 起）；还没实现的原样转发给 TS。每个 PR 要么让这个数变大，要么说明它为什么不变。对照物是**钉死在 cc7c4e6 的 TS gateway**，不是「最新的上游」。
 
-> ⚠️ 待第 6 步（调研）证实的假设：前后端之间存在一条清晰的协议边界（gateway 的 HTTP/WS），且上游 `tests/protocol`、`tests/e2e` 里有一部分能改成对着外部进程跑。证实不了就回来改这一句。
+> 依据：`docs/research/002_parity-boundary/decision.md`（2026-10-14 人拍板：先 A 后 B · 驱动用 TS · 默认修 bug · 归一化后相同）。
+> ⚠️ 待第 7 步探针证实：exp001 基线能在隔离目录里无头跑、指向 mock 模型；exp002 连接级状态允不允许按 method 切（不允许就把上面的分母改成会话 / 功能域）；exp003 真的 `ui/server` 能连上一个站在 18789 的代理。
 
 ## 真难题
 
@@ -21,8 +22,8 @@
 
 | 不做 | 为什么不做 |
 |---|---|
-| 迁移期间不加新功能、不"顺手"改行为 | 重写失控的第一原因。想到改进就记一条 issue，不当场做（demo-2/04 §六） |
-| 不重写 `ui/` 和 `apps/desktop` | 范围已定：只换后端。前端就是现成的验收工具 |
+| 迁移期间不加新功能、不"顺手"改行为——**修 bug 除外**（2026-10-14 人定「默认修」） | 重写失控的第一原因。想到改进就记一条 issue，不当场做（demo-2/04 §六）。**什么算 bug（AI 草拟，待人过目）**：基线 ① 崩溃、挂起、丢数据 ② 与它自己的类型定义、文档或测试断言相矛盾 ③ 有安全问题。三条都不沾的是「行为偏好」，记 issue、不改。修了一律记进「已接受差异」清单（第 9 步建立），写明属于哪一条 |
+| 阶段 A 不改 `ui/`（含 `ui/server`）和 `apps/desktop` | 只换 18789 上的 gateway；`ui/server` 就是现成的验收客户端。阶段 B 才动 `ui/server` |
 | 不追上游最新提交 | 参照物在动，对拍就没有意义。升级基线 = 单独一条 issue，整批升 |
 | 不照搬 TS 的模块内部结构（Bundle / 注入层层套）；**也不在移植一个模块的同时重构它** | 一致的是**协议和行为**，不是类图：模块边界与数据流照原样映射，内部按 Rust 习惯写。要重构放在移植前或移植后（`docs/research/001` 第二节第 1 条） |
 | 不自己发明协议、字段、错误格式 | 以基线 TS 实测输出为准；有疑问跑一次基线看，不猜 |
@@ -40,9 +41,9 @@
 ## 作品区
 
 - 目录：`src/`（Cargo workspace；`pilotdeck-cli` 是入口，`pilotdeck-core` 是能力，后续按模块再拆 crate）
-- 系统实际产出什么：一个 `pilotdeck` 二进制，`pilotdeck server` 起来后，原版 TS 前端指过去就能用
-- **怎么算合格（验证闭环）**：CI 三条（fmt / clippy / test）全绿 ＋ 对拍用例通过率不降 ＋ 人工用原版 UI 实测一遍
+- 系统实际产出什么：一个 `pilotdeck` 二进制，`pilotdeck server` 起在 18789 后，原版 `ui/server` 连过去就能用
+- **怎么算合格（验证闭环）**：CI 三条（fmt / clippy / test）全绿 ＋ 对拍一致的 method 数不降 ＋ 人工用原版 UI（经真 `ui/server`）实测一遍
 
 ---
 
-*`aias-meta-init` 起草于 2026-10-13，Claude 按本次重构填了草稿，收敛方向待人过目。*
+*`aias-meta-init` 起草于 2026-10-13。收敛方向：2026-10-13 人过目第一版；2026-10-14 按调研 002 的拍板改为阶段 A 版本，**待人再过目**。*
