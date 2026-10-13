@@ -65,3 +65,9 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 ---
 
 *由 `aias-meta-init` 生成于 2026-10-13。*
+
+### 资源上限（2026-10-14 人定；来自旧迁移 127 GB、会话反复中断的教训，见 `docs/research/003_prior-attempt/`）
+- 同时最多 **5 个 worktree**；**全量对拍（53 场景）同一时刻只跑 1 个**——机器负载会制造假差异（`docs/experiments/exp001-baseline-parity-run/`）。
+- `_build/` + `_tmp/` 合计 ≤ **30 GB**；开新 worktree 前先 `du -sh _build _tmp` 看一眼。
+- 单个会话 ≤ **2 小时**，到点先写交接（`state/board.md`）再退出；**没写交接的退出等于没做**。
+- 第一条 issue（回捞并复核尺子）≤ **1 天**；超时降级为「严格模式 + 已接受差异清单」先推进。
