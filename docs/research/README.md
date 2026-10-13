@@ -8,3 +8,4 @@
 | 001 | 2026-10-13 | [真实重写/移植案例](001_rewrite-case-studies.md) |
 | [002](002_parity-boundary/) | 2026-10-14 | Rust 后端怎么接上原版前端、怎么证明行为一致 |
 | [003](003_prior-attempt/) | 2026-10-14 | 之前那次 PilotDeck Rust 迁移里，哪些可以照搬、教训是什么 |
+| [005](005_phase-a-gateway/) | 2026-10-15 | 阶段 A：用 Rust 替换 18789 gateway（004 预留给阶段 C 模块对应表） |
