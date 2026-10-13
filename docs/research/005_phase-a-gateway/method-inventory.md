@@ -1,6 +1,6 @@
 # 冻结清单 · 101 个 gateway method 全分类
 
-> 2026-10-15。分母以本表为准：`resources/PilotDeck/src/gateway/protocol/frames.ts:21-122` 逐行数得 **101** 个 method（`WsGatewayMethod` 联合类型），本表每个 method 一行、逐一定分类、每行带 `路径:行号` 依据。行号相对 `resources/PilotDeck/`（基线 @ `cc7c4e6`，本 worktree 逐条回源核对；分发处行号缩写 **GWC** = `src/gateway/server/GatewayWsConnection.ts`，**IPG** = `src/gateway/client/InProcessGateway.ts`）。
+> 2026-10-14。分母以本表为准：`resources/PilotDeck/src/gateway/protocol/frames.ts:21-122` 逐行数得 **101** 个 method（`WsGatewayMethod` 联合类型），本表每个 method 一行、逐一定分类、每行带 `路径:行号` 依据。行号相对 `resources/PilotDeck/`（基线 @ `cc7c4e6`，本 worktree 逐条回源核对；分发处行号缩写 **GWC** = `src/gateway/server/GatewayWsConnection.ts`，**IPG** = `src/gateway/client/InProcessGateway.ts`）。
 > 本表是对 exp002「(a) 约 35 / (b) 约 45 / (c) 5」口径的**重审与冻结**（exp002 的名单未入仓，分母可动 → 第 1 轮评审判 P0）。重审口径见下。
 
 ## 分类口径（本轮收紧）
@@ -10,7 +10,7 @@
 - **(c) 依赖连接状态**：分发处注入或校验 `interactionBinding`。
 - **待定**：写全局状态（settings/reload/mcp/cron/skill 写、upload 生命周期、广播 `config_changed` 那批）与存储介质未逐行核的读——**一律透传**，归属等对应状态整体迁移时再定。
 
-计数：**(a) 15 · (b) 46 · (c) 4 · 待定 36 = 101**。（exp002 的「(c) 5 个」把帧类型 `hello` 计入了 method；101 枚举里 `hello` 不是 method，故此处 (c) = 4。）
+计数：**(a) 10 · (b) 46 · (c) 4 · 待定 41 = 101**（第 2 轮评审后 5 个 method 由 (a) 改待定，协调者 2026-10-14 改）。（exp002 的「(c) 5 个」把帧类型 `hello` 计入了 method；101 枚举里 `hello` 不是 method，故此处 (c) = 4。）
 
 与 exp002 口径相比的两个代表改判（评审指名）：
 - `read_session_messages`：只读盘会漏在飞事件——IPG 合并 `turnEventCoordinator` 内存轮次快照并校验 epoch（`IPG:2850-2860`），**(a) → (b)**。
