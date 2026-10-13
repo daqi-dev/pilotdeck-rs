@@ -22,7 +22,7 @@
 
 上游 adapter 的 `pilotdeck_gateway_impl.mjs:564–571` 会覆盖环境中的 sidecar COMMAND 为 process.execPath。因此 Rust 分支除设指定的生产环境变量外，还沿用旧驱动的生产 YAML module binding（`createLocalGateway.ts:630` 附近 bindingFactory 优先），args 为生产约定的一个 TS sidecarPath 参数；**不通过 spawn 拦截换二进制**。bind.mjs 只观察实际 spawn 的 command/args/pid/文件哈希，追加身份 proof。Rust 分支此 issue 未运行，其实际接入留给 Issue #2。
 
-TS5 / exp001 原料只有上游 stdio/handshake/module 生产 proof，没有二进制哈希账本；本次对这些 TS 原料的身份依据限于基线装置默认 sidecar 与该 proof。新 round 在 trace 追加 sidecar_identity，并在 run.json 断言 side、sha256 和 spawnObserved；比较器读到新 round 的账本时要求该身份 proof。
+TS5 / exp001 原料只有上游 stdio/handshake/module 生产 proof，没有二进制哈希账本；本次对这些 TS 原料的身份依据限于基线装置默认 sidecar 与该 proof。新 round 在 trace 追加 sidecar_identity，并在 run.json 断言 side、sha256 和 spawnObserved；具有 artifacts 布局或 sidecar_identity proof 的新格式输入缺少 run.json 时直接 FAIL，不降级为旧原料比较。
 
 原版 trace 的 seq 名为 `sequence`，不是抽象帧 seq；语义投影丢掉 envelope sequence，保留 logicalSequence/phase。本次保留原始 sequence 并校验连续性，不把它编造为帧级对拍。原版 ID 归一化也不是全部 ID 的一一映射，部分 toolCallId/id/callId 塌缩为同一个 `<generated-id>`。模型请求体、路径、并发工具例外及 E7 不可观测持久化时钟的完整现状写在 normalization.md；没有另造放宽规则。
 
@@ -42,7 +42,7 @@ TS5 / exp001 原料只有上游 stdio/handshake/module 生产 proof，没有二�
 | 冻结文件检查 | 已登记哈希通过；新文件未登记，明确跳过提示 |
 | 独立审查 | null；协调者填写，不代填通过 |
 
-S 外场景：无。详见 acceptance.md；若存在，每项均登记为「原版不稳定 / 待批」，尚未批准排除。`check_ruler.py` 在机器检查通过但独立审查待定时返回 2，避免把三个机器对照冒充四项验收齐全。
+S 外场景：无。详见 acceptance.md；若存在，每项均登记为「原版不稳定 / 待批」，尚未批准排除。第 1 轮评审修复后，`check_ruler.py` 要求 `fully_frozen` 才能报告机器检查通过；未登记齐全时返回 1，机器检查通过但独立审查待定时返回 2。
 
 ## 改变了哪个取舍
 
@@ -62,3 +62,22 @@ TS sidecar 自比可按回捞后的 G03 v1 通道口径校准；上游严格逐�
 - `/Users/da/ws/pilotdeck-rs/_tmp/20261014-exp001/parity-run1`、`parity-run4`，仅用于调通与真实负向对照。
 - 本 worktree `_tmp/self-compare.json`、`self-compare.md`、`controls.json`、`ruler-check.json`、`exp001-compare.json`；完整输入/代码哈希随 JSON 保存，临时控制副本不保留。
 - 新驱动单场景冒烟结果随后记入本 worktree `_tmp/RESULT.md`（`_tmp/20261014-parity/ts-pure-text-smoke/run.json`）。
+
+## 第 1 轮评审修复
+
+修复 GLM simplify 与 DeepSeek pr-ready 的全部 P1/P2：锁内保存 PID、时间戳，死 PID 或超过 40 分钟时接管并在 stderr / run.json 留下记录；run.py 默认超时 1500 秒，可用 `--timeout-seconds` 指定，超时输出 BLOCKED、保存失败账本并清锁。锁的元数据操作使用短时文件锁串行化；旧持有者结束时校验所有权，防止清掉已接管的新锁。
+
+基线优先取本 worktree 的 `resources/PilotDeck`，不存在时回退到 `PDRS_BASELINE`，均不存在则报错；离线原料默认取本 worktree `_tmp`，外部原料通过 `--source` / `--control-source` 指定。classify 缩为只计算身份 multiplicity 的函数；删掉 `is_relocatable` 和未使用的 `before`；E12 按结构化 `toolCallId` 字段精确匹配。畸形自比 JSON 统一产生结构化失败，机器通过条件纳入冻结登记。
+
+离线回归使用同一批 TS5 / exp001 原料，改前改后 controls 全过、S 均为 53；未重新采集全量对拍。独立回归对照 `scripts/parity/controls/review_r1.py` 使用独立临时锁，验证死 PID / 超龄接管、活锁等待、所有权保护、实际子进程超时与清锁、缺账本拒绝、E12 子串误命中拒绝、默认路径与畸形 JSON、冻结闸门；先重新生成 self-compare.json 再运行，避免陈旧哈希遮蔽 JSON 形状检查。逐项结果和命令记录在 `_tmp/RESULT-r1.md`。
+
+## 后续
+
+本轮按任务范围仅登记以下 P3，留待后续处理：
+
+- E10 与 `G03_channels` 来自同一流内差异；删除别名或在结果/排障说明中注明同源，避免双名混淆。
+- `_partial_order_differences` 在通道判决和 E 规则中重复计算，改为每侧计算一次再复用。
+- multiplicity 仍对两侧调用 `projected()`；后续复用既有语义投影，避免与 `channel_streams` 重复处理，同时核对归一化和排序语义。
+- `controls/run_all.py` 的 `rule_pairs()` 调用两次；保存首次结果，再取键名。
+- `bind.mjs` 每次匹配 spawn 都读取整份二进制计算摘要；加进程内摘要缓存，并约定候选二进制变化时的失效策略。
+- `g03_compare.py` 兼任比较器和公共库；后续把 `sha256`、catalog、trace_health、load_aligned 等拆到 `parity_common.py`，在冻结审批时一并处理哈希变动。

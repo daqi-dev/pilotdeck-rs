@@ -8,7 +8,7 @@ import sys
 
 import g03_compare as G
 
-DEFAULT_SOURCE = Path('/Users/da/ws/pilotdeck-rs/_tmp/20261014-ts5')
+DEFAULT_SOURCE = G.WORKTREE / '_tmp/20261014-ts5'
 
 
 def calibrate(source):
