@@ -4,6 +4,13 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-14 · Issue #7 尺子实现与 TS 五遍校准（feat/issue-7-ruler；未提交：沙箱限制）
+> **做了**：回捞 G03 v1 为 sidecar 对 sidecar；E 规则入总判决、清单强制 53 场景；隔离 round + 只观察 spawn 的身份 proof；controls / self_compare / check_ruler / check_frozen；acceptance 与 normalization 待批草稿、exp004。
+> **证据**：协调者 TS5 r1–r5 DONE；10 对全部 53/53，默认 S = 53，r1 基准 / 相邻均 53，无排除项，accepted-diffs 原样。逐规则 / 端到端负向、两侧同坏、正向对照全过；TS pure_text 单场景冒烟 identity_ok / valid_round = true。`check_ruler.py` 三个机器对照 true，independent_review = null（返回 2）；冻结哈希通过，新文件未登记跳过。
+> **边界**：不运行 Rust、不自行全量跑。上游 adapter 覆盖 COMMAND，需要生产 YAML binding 选择 Rust，未验证 Rust 分支；旧 TS 原料无二进制哈希账本；原版部分 ID 塌缩、envelope sequence 不进语义投影，已如实写入 normalization / exp004。
+> **阻碍**：Git 元数据在 worktree 外，git add/commit 无法创建 index.lock（Operation not permitted）；未暂存、未提交、未推送。各块提交消息在本 worktree `_tmp/commit-*.txt`，完整交接 `_tmp/RESULT.md`。
+> **下一步**：协调者补提交与独立评审；批准草稿后登记 FROZEN；再走 CI / 合并闸门。此轮不自行冻结、不启动 Issue #2。
+
 > ## 2026-10-14 · PR #12 / Issue #10：第 1 轮评审修改（HEAD `90c7202`，提交受阻）
 > **做了**：入口拒绝空位置参数，补真实进程退出码 2 回归测试；参数函数改名并说明路径占位契约；transport build.rs 注入 git HEAD，并跟踪 worktree HEAD、分支引用与 packed refs；CLI 继承 workspace rust-version/lints；intent 仅改布局事实句；changelog 更正段落去重；S7 精简候选仅登记到 `src/PROVENANCE.md`。
 > **验证**：指定 fmt / clippy -D warnings / test 全过，688 个测试通过；release 构建成功，`--version` 的 source 与完整 HEAD 一致；release 空串退出码 2、stdout 为空；无 git 来源回退通过；冻结规约哈希未变。逐条评审与原始输出见 `_tmp/RESULT-r1.md`。
