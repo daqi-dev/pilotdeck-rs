@@ -62,7 +62,7 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 **S5 双壳同源共存实验（新增，不过则 F3 起的共存方案回炉）**
 - **双入口托管两选项各搭一遍**：A——本地给 `ui/server` 的 `app.get('*')`（`index.js:3471`）打前缀分支的最小 patch（几行，实验用，不提交主线）；B——前置反代（caddy/nginx 任一）按前缀分流，`ui/server` 零改动。同一源下新 bundle 挂 `/probe` 前缀、其余走旧 bundle，量出两选项的改动面与运维面，记进实验文档供 F3 定夺。
 - **双向导航拦截**：旧壳点入 `/probe` 前缀页须硬跳（在旧壳 `navigate` 调用处包一层 `window.location.assign`，实验里量出实际要改几处：`AppShellV2.tsx` 的 navigate 调用点 + 各页内跳转）；新壳跳未迁路径硬跳回旧 bundle。
-- **跨壳行为实测**：① 登录态跨壳保持（`auth-token` 等 storage 键）；② 前进/后退跨壳边界（整页加载、状态由 URL+storage 重建）；③ 流式中途跨壳再返回（`watch-session` 重挂，断口部分帧不可复现）；④ composer 草稿跨壳丢失。③④ 按 `accepted-diffs.md` D1–D5 逐条对账，实测与描述不符的条目回炉改写，不静默保留。
+- **跨壳行为实测**：① 登录态跨壳保持（`auth-token` 等 storage 键）；② 前进/后退跨壳边界（整页加载、状态由 URL+storage 重建）；③ 流式中途跨壳再返回（`watch-session` 重挂，断口部分帧不可复现）；④ composer 草稿跨壳**保留**（`draft_input_<projectName>:<sessionId|'new'>` 键是共享契约，`chatStorage.ts:6-9`——旧壳本就有 localStorage 恢复/写入/离页刷新：`useChatComposerState.ts:316-321, 1621-1629, 1643-1644`；丢草稿是 bug 不是差异）。③④ 按 `accepted-diffs.md` D1–D5 逐条对账，实测与描述不符的条目回炉改写，不静默保留。
 
 **Issue F1 怎么算做完**
 - [ ] 实验文档 `docs/experiments/exp006-frontend-probe/readme.md`：两候选 IME/流式/岛生命周期三命门的同负载实测数据（截图或 trace）与选型结论、双入口托管两选项对比、导航拦截改动点数量、A 类移植 1 条的成本
@@ -88,7 +88,7 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 - **双壳共存落地（机制由 F1 S5 实测后在此定稿，两件事缺一不可）**：
   - **双入口托管**：选项 A——`ui/server` 的 `app.get('*')`（`index.js:3471`）加 `/settings` 前缀分支返回新 bundle 的 index（几行、单独评审、可回退）；选项 B——前置反代按前缀分流（`ui/server` 零改动、多一个常驻组件）。静态分流只在整页加载时生效。
   - **双向导航拦截**：旧壳是 SPA 客户端导航（`AppShellV2.tsx:387` `navigate(SETTINGS_PATH)` 等），不拦截则旧 SPA 点进设置页永远还是旧 bundle——旧壳到已迁前缀的 `navigate` 改硬跳（F1 S5 量出的改动点），新壳跳未迁路径硬跳回旧 bundle。
-  - 跨壳硬跳丢内存态（WS/流中文本/草稿/滚动）按 `accepted-diffs.md` D1–D5 执行与对账。
+  - 跨壳硬跳丢内存态（WS/流中文本/滚动）按 `accepted-diffs.md` D1–D5 执行与对账；composer 草稿键跨壳保留是验收项（契约，见 accepted-diffs 不变式），丢草稿按 bug 处理。
 - **怎么算做完**：settings 相关黑盒用例在新前端全绿（B 类走部署矩阵）；旧 bundle 对 `/settings` 前缀停返回；跨壳共享键行为验证（登录态互通——这是契约不是差异，坏了是 bug）。
 
 ### Issue F4 · 业务页组（cron / skills / files / git / tasks / 仪表盘）
@@ -134,7 +134,7 @@ node e2e/appearance.smoke.mjs && node e2e/desktop-chrome.smoke.mjs && node e2e/d
 | R1 | 两候选 IME/高频流式/岛生命周期均不过关 | F1 限 1 天、双候选同负载实测、判据写死（选型不锁死，decision a′）；全败即停交人，不硬扛 |
 | R2 | A 类 34 例移植成本失控（旧 store API 深） | F1 先量 1 条的成本再承诺；F2 出处置清单报人复核分母 |
 | R3 | 聊天面体量（≈4.8 万行）重蹈旧迁移父任务收不了口 | 放最后；只在前四条 issue 全部合并后开工；内部再按 F2 消息表分片；流式/滚动黑盒断言先行（F2） |
-| R4 | 双壳共存期状态漂移（storage 键语义变了）与跨壳丢连接态 | 键清单是契约，F1 盘点、每条 issue 验证跨壳登录态；内存态丢失按 `accepted-diffs.md` D1–D5 对账，F1 S5 实测复核 |
+| R4 | 双壳共存期状态漂移（storage 键语义变了）与跨壳丢连接态 | 键清单是契约（含 composer 草稿键 `draft_input_*`），F1 盘点、每条 issue 验证跨壳登录态与草稿保留；内存态丢失按 `accepted-diffs.md` D1–D5 对账，F1 S5 实测复核 |
 | R5 | 与阶段 A/B 并行时抢资源（全量对拍同刻只许 1 个） | 对拍跑前 `mkdir /tmp/pdrs-parity.lock` 式加锁；worktree ≤5、磁盘 ≤30 GB |
 | R6 | 误碰用户在用的 `~/.pilotdeck` 与 PilotDeck 进程 | 一律临时 `PILOT_HOME`/`TMPDIR`、高位端口，绝不 kill 用户进程（计划 001 R6 同款） |
 | R7 | e2e 与真实 `ui/server` 行为有偏差；B 类部署矩阵搭不起来；意外 skip 让主尺子虚绿 | B+D 双层验收（黑盒部署矩阵 + 真端到端）；F2 对账报告「应执行 vs 实际执行」+ `--forbid-only`；差异记「已接受差异」 |

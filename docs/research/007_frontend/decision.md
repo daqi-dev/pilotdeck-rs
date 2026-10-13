@@ -32,11 +32,11 @@
 1. 应用是单通配路由（`App.tsx:50`），`AppShellV2.tsx:79-84` 按 URL 分辨页面——「按路由」的实质是**按页面**：`/settings/*`、`/cron`、`/skills`、`/sop`、`/knowledge` 等都是整页切换。**但「跨页导航是整页加载」在旧 SPA 内不成立**（`AppShellV2.tsx:5, 73, 387` 全是客户端 `navigate`，gap §一），且 `ui/server/index.js:3471` 对全部 HTML 路由单一通配回旧 `dist/index.html`——静态按前缀选 bundle 只在整页加载时生效。因此共存机制必须是两件事，缺一不可：
    - **双入口托管**：选项 A——`ui/server` 的 `app.get('*')` 加路径前缀分支（几行改动，单独评审、可单独回退）；选项 B——前置反代按前缀分流，`ui/server` 零改动。两选项在 F1 双壳实验里实测后定（探针期用选项 B 也行，生产期倾向 A，避免多一个常驻组件）。
    - **双向导航拦截**：旧壳 `navigate` 到已迁前缀时改硬跳（`window.location.assign`，改动点集中在旧壳 `navigate` 调用处，F1 实测量出有几处）；新壳跳未迁路径时硬跳回旧 bundle。
-   - **跨壳硬跳的已知差异**（登记 `accepted-diffs.md`）：整页加载丢 SPA 内存态——主 WS `/ws` 与终端 `/shell` 连接断开重连、流式中途的增量文本靠 `watch-session` 重挂但不保证逐字连续、composer 未发送草稿丢失、滚动位置与前进后退变成整页加载（慢但行为可用）。同源 localStorage/sessionStorage 不受影响。
+   - **跨壳硬跳的已知差异**（登记 `accepted-diffs.md`）：整页加载丢 SPA 内存态——主 WS `/ws` 与终端 `/shell` 连接断开重连、流式中途的增量文本靠 `watch-session` 重挂但不保证逐字连续、滚动位置与前进后退变成整页加载（慢但行为可用）。**composer 草稿不在差异之列**——已落 localStorage（`chatStorage.ts:6-9`），跨壳保留是契约（见下第 5 条），丢了是 bug。同源 localStorage/sessionStorage 不受影响。
 2. **顺序**：探针页（登录 + 会话列表）→ **设置页**（`components/settings/` 17,384 行，表单型、无重岛，风险最低）→ 业务页组（cron/skills/files/git/tasks，`main-content-v2/`）→ **聊天面最后**（≈4.8 万行，行为最细、fixture 用例最多）→ 壳/侧栏（`app-shell/`）收尾退役 React 构建。聊天面迁完前，跨壳跳转避不开流式会话中途切壳的场景，F1 必须实测一次。
 3. 页内机制是组件岛：Rust 页面里挂 xterm/CodeMirror 岛（探针就要挂一个真终端岛验证桥）。
 4. **放弃**「整体一次性切换」（违反 must-know ③）与「按组件逐个换」（137k 行组件两两桥接的复杂度爆炸，且旧包教训是父任务收不了口——调研 003）。
-5. 双壳共存期的共享状态只有 localStorage/sessionStorage 键（`auth-token`：`api.js:29`；`pilotdeck-active-project`：`api.js:45`；主题与语言键由探针盘点），键名与语义对新前端是契约，不许改。**内存态（WS 连接、流中文本、草稿）不跨壳共享**，是已登记的已接受差异。
+5. 双壳共存期的共享状态只有 localStorage/sessionStorage 键（`auth-token`：`api.js:29`；`pilotdeck-active-project`：`api.js:45`；**composer 草稿键 `draft_input_<projectName>:<sessionId|'new'>`：`chatStorage.ts:6-9`**——旧壳本就有恢复/写入/离页刷新（`useChatComposerState.ts:316-321, 1621-1629, 1643-1644`），**草稿跨壳必须保留，丢草稿是 bug 不是差异**；主题与语言键由探针盘点），键名与语义对新前端是契约，不许改。**内存态（WS 连接、流中文本）不跨壳共享**，是已登记的已接受差异。
 
 ### (c) 对拍装置：60+10 个 e2e 用例（展开后 72 例，见 gap §三）能不能直接当验收
 
@@ -84,11 +84,11 @@
 
 ## 反对它的最强依据
 
-主尺子对新前端**今天 0 例可直接跑**（A 类 34 例耦合旧 store，B 类 9 例要部署矩阵，D 类 28 例要 mock LLM 编排）——尺子最薄的地方恰是行为最细的流式/滚动，Issue F2 若补不齐，「行为一致」的成色就要打折；共存机制（导航拦截 + 双入口托管）会动旧壳的 `navigate` 调用点与托管层，跨壳硬跳丢内存态（WS、流中文本、草稿）已登记为已接受差异但**未实测**；聊天面（≈4.8 万行）既是最大工作量又是风险最高点，若探针在 IME/stream_delta 上两候选都失败，混合方案的核心假设（Rust 壳能扛住高频流式 UI）被推翻，整个 (a) 要重拍。
+主尺子对新前端**今天 0 例可直接跑**（A 类 34 例耦合旧 store，B 类 9 例要部署矩阵，D 类 28 例要 mock LLM 编排）——尺子最薄的地方恰是行为最细的流式/滚动，Issue F2 若补不齐，「行为一致」的成色就要打折；共存机制（导航拦截 + 双入口托管）会动旧壳的 `navigate` 调用点与托管层，跨壳硬跳丢内存态（WS、流中文本）已登记为已接受差异但**未实测**（草稿属 storage 契约、跨壳须保留，同样待实测）；聊天面（≈4.8 万行）既是最大工作量又是风险最高点，若探针在 IME/stream_delta 上两候选都失败，混合方案的核心假设（Rust 壳能扛住高频流式 UI）被推翻，整个 (a) 要重拍。
 
 ## 仍未补齐的缺口
 
-① Leptos 与 Dioxus 在真实中文 IME + 高频 `stream_delta` + JS 岛生命周期下的同负载实测（F1）；② 双壳同源共存实验——双入口托管两选项、双向导航拦截改动点数量、跨壳登录态/前进后退/流式中途切壳/草稿（F1）；③ 跨壳共享的全部 localStorage/sessionStorage 键清单（F1/F2）；④ WS 入站 ~25 种消息的「类型→接收点」表（F2）；⑤ A 类 34 例的移植/改写清单（F2）；⑥ B 类部署矩阵脚本化与防 skip 对账（F2）；⑦ 流式与滚动的黑盒机器断言（F2，F5 开工前置）。
+① Leptos 与 Dioxus 在真实中文 IME + 高频 `stream_delta` + JS 岛生命周期下的同负载实测（F1）；② 双壳同源共存实验——双入口托管两选项、双向导航拦截改动点数量、跨壳登录态/前进后退/流式中途切壳/草稿保留（F1）；③ 跨壳共享的全部 localStorage/sessionStorage 键清单（F1/F2）；④ WS 入站 ~25 种消息的「类型→接收点」表（F2）；⑤ A 类 34 例的移植/改写清单（F2）；⑥ B 类部署矩阵脚本化与防 skip 对账（F2）；⑦ 流式与滚动的黑盒机器断言（F2，F5 开工前置）。
 
 ## ⚠️ 拍板的地方
 
