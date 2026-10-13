@@ -24,7 +24,47 @@ jobs:
       - name: 测试
         run: cargo test --all
       # A3 · gateway 协议 schema 静态断言：CI 没有基线目录（resources/ 不入库），
-      # check_schema.py 自动退回「快照 × method-inventory.md × schema」三方比对；基线核对只在本地跑。
+      # check_schema.py 自动退回「快照 × method-inventory.md × schema」三方比对；
+      # 基线侧一致性由下方 gateway-schema-baseline job 按冻结 commit 克隆基线钉死。
       - name: gateway 协议 schema 静态断言（A3）
         working-directory: .
         run: python3 scripts/gateway-parity/check_schema.py
+      # A3 · schema 正负例（ajv draft-07）：正例必须过、负例必须拒——含 run_get 省略 result 的线上语义。
+      # 依赖钉在 scripts/gateway-parity/package.json（ajv/ts-json-schema-generator/typescript），npm ci 可复现。
+      - name: gateway 协议 schema 正负例（ajv）
+        working-directory: scripts/gateway-parity
+        run: |
+          npm ci --no-fund
+          node validate_fixtures.mjs
+
+  # A3 · 基线三角的第三边：按冻结 commit 浅克隆 OpenBMB/PilotDeck，再生成 schema 并与已提交产物
+  # 字节比对（export_schema.mjs --check），随后跑 check_schema.py 的 L1–L3 基线核对。
+  # 没有这个 job，CI 只能防「仓内清单 ↔ 生成物」漂移，防不了「冻结基线源码 ↔ 已提交产物」漂移
+  # （schema 与快照本就是同一次生成，彼此一致不证明与基线一致）。依赖装得起（3 个钉死包 + lockfile），
+  # 不需要「跳过基线」的退路；本地仍可用 PDRS_REQUIRE_BASELINE=1 把缺基线判 FAIL。
+  gateway-schema-baseline:
+    runs-on: ubuntu-latest
+    env:
+      PILOTDECK_BASELINE_REF: cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85 # OpenBMB/PilotDeck 冻结基线（2026-10-14，schema-FROZEN.md）
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 浅克隆基线 OpenBMB/PilotDeck（冻结 commit）
+        run: |
+          git init pilotdeck-baseline
+          git -C pilotdeck-baseline remote add origin https://github.com/OpenBMB/PilotDeck.git
+          git -C pilotdeck-baseline fetch --depth 1 origin "$PILOTDECK_BASELINE_REF"
+          git -C pilotdeck-baseline checkout FETCH_HEAD
+          echo "基线 commit: $(git -C pilotdeck-baseline rev-parse HEAD)"
+      - name: 安装钉死依赖
+        working-directory: scripts/gateway-parity
+        run: npm ci --no-fund
+      - name: 再生成检查（冻结基线 × 已提交产物，字节一致）
+        run: node scripts/gateway-parity/export_schema.mjs --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline" --check
+      - name: 基线核对 L1–L3（缺基线即 FAIL）
+        run: |
+          PDRS_REQUIRE_BASELINE=1 \
+          PDRS_BASELINE="$GITHUB_WORKSPACE/pilotdeck-baseline" \
+          python3 scripts/gateway-parity/check_schema.py

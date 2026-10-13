@@ -1901,6 +1901,24 @@
       ],
       "type": "string"
     },
+    "GatewayAbortTurnInput": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "sessionKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionKey"
+      ],
+      "type": "object"
+    },
     "GatewayActiveTurnSnapshot": {
       "additionalProperties": false,
       "properties": {
@@ -2240,6 +2258,51 @@
         }
       ]
     },
+    "GatewayCloseProjectSessionsInput": {
+      "additionalProperties": false,
+      "properties": {
+        "projectKey": {
+          "type": "string"
+        },
+        "resume": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "projectKey"
+      ],
+      "type": "object"
+    },
+    "GatewayCloseProjectSessionsResult": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionKeys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessionKeys"
+      ],
+      "type": "object"
+    },
+    "GatewayCloseSessionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "sessionKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionKey"
+      ],
+      "type": "object"
+    },
     "GatewayDeferredTool": {
       "additionalProperties": false,
       "description": "Gateway-only metadata for native, plugin, or MCP tools withheld from the initial model schema.",
@@ -2253,6 +2316,21 @@
       },
       "required": [
         "name"
+      ],
+      "type": "object"
+    },
+    "GatewayDeleteSessionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "projectKey": {
+          "type": "string"
+        },
+        "sessionKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionKey"
       ],
       "type": "object"
     },
@@ -4210,6 +4288,21 @@
       ],
       "type": "object"
     },
+    "GatewayGrantSessionPermissionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "type": "string"
+        },
+        "granted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "granted"
+      ],
+      "type": "object"
+    },
     "GatewayListPermissionsInput": {
       "additionalProperties": false,
       "description": "Reads the authoritative live prompt set. A reconnect must list before responding.",
@@ -5282,6 +5375,18 @@
       ],
       "type": "object"
     },
+    "GatewayNewSessionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionKey"
+      ],
+      "type": "object"
+    },
     "GatewayOutboundAttachment": {
       "additionalProperties": false,
       "properties": {
@@ -5381,6 +5486,18 @@
       },
       "required": [
         "styles"
+      ],
+      "type": "object"
+    },
+    "GatewayPermissionDecideResult": {
+      "additionalProperties": false,
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "delivered"
       ],
       "type": "object"
     },
@@ -5537,6 +5654,18 @@
       ],
       "type": "object"
     },
+    "GatewayRecordAgentStatusMessageResult": {
+      "additionalProperties": false,
+      "properties": {
+        "recorded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "recorded"
+      ],
+      "type": "object"
+    },
     "GatewayRecoveredUserDialog": {
       "additionalProperties": false,
       "description": "A dialog preserved long enough to report that the owning Gateway process restarted. The original AgentLoop promise cannot resume. A renderer may submit an answer once; Gateway validates it and stores it as durable user context for a later, newly submitted turn.",
@@ -5598,6 +5727,18 @@
       "required": [
         "reloaded",
         "changed"
+      ],
+      "type": "object"
+    },
+    "GatewayRenameSessionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "updated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "updated"
       ],
       "type": "object"
     },
@@ -5749,6 +5890,39 @@
       ],
       "type": "object"
     },
+    "GatewayRespondElicitationResult": {
+      "additionalProperties": false,
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "delivered"
+      ],
+      "type": "object"
+    },
+    "GatewayRespondUserDialogResult": {
+      "additionalProperties": false,
+      "properties": {
+        "delivered": {
+          "type": "boolean"
+        },
+        "reason": {
+          "const": "gateway_restarted",
+          "type": "string"
+        },
+        "recovered": {
+          "const": true,
+          "description": "Gateway persisted a restart-recovery answer for the next new turn.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "delivered"
+      ],
+      "type": "object"
+    },
     "GatewayRestoreSessionTranscriptInput": {
       "additionalProperties": false,
       "properties": {
@@ -5782,6 +5956,30 @@
       "required": [
         "sessionKey",
         "importedMessages"
+      ],
+      "type": "object"
+    },
+    "GatewayResumeSessionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionKey"
+      ],
+      "type": "object"
+    },
+    "GatewayResumeSessionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionKey"
       ],
       "type": "object"
     },
@@ -6760,6 +6958,46 @@
       ],
       "type": "object"
     },
+    "GatewaySetPermissionModeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "applied"
+      ],
+      "type": "object"
+    },
+    "GatewaySetSdkSessionConfigResult": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "changed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "changed"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "changed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "changed"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "GatewaySetSessionThinkingInput": {
       "additionalProperties": false,
       "properties": {
@@ -6780,6 +7018,18 @@
       "required": [
         "sessionKey",
         "thinking"
+      ],
+      "type": "object"
+    },
+    "GatewaySetSessionThinkingResult": {
+      "additionalProperties": false,
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "applied"
       ],
       "type": "object"
     },
@@ -7256,6 +7506,18 @@
       },
       "required": [
         "agents"
+      ],
+      "type": "object"
+    },
+    "GatewayTagSessionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "updated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "updated"
       ],
       "type": "object"
     },
@@ -10836,7 +11098,9 @@
               "const": true,
               "type": "boolean"
             },
-            "result": {},
+            "result": {
+              "description": "未知载荷；实现返回 undefined 时序列化省略本键（如 run_get 查无记录）——校验允许缺省"
+            },
             "type": {
               "const": "response",
               "type": "string"
@@ -10845,8 +11109,7 @@
           "required": [
             "type",
             "id",
-            "ok",
-            "result"
+            "ok"
           ],
           "type": "object"
         },
@@ -11075,7 +11338,25 @@
       "WebReadSubagentMessagesInput",
       "WebReadSubagentMessagesResult",
       "WebReplaceLastTurnInput",
-      "WebReplaceLastTurnResult"
+      "WebReplaceLastTurnResult",
+      "GatewayAbortTurnInput",
+      "GatewayCloseProjectSessionsInput",
+      "GatewayCloseProjectSessionsResult",
+      "GatewayCloseSessionInput",
+      "GatewayDeleteSessionInput",
+      "GatewayGrantSessionPermissionResult",
+      "GatewayNewSessionResult",
+      "GatewayPermissionDecideResult",
+      "GatewayRecordAgentStatusMessageResult",
+      "GatewayRenameSessionResult",
+      "GatewayRespondElicitationResult",
+      "GatewayRespondUserDialogResult",
+      "GatewayResumeSessionInput",
+      "GatewayResumeSessionResult",
+      "GatewaySetPermissionModeResult",
+      "GatewaySetSdkSessionConfigResult",
+      "GatewaySetSessionThinkingResult",
+      "GatewayTagSessionResult"
     ],
     "source": {
       "frames.ts": {

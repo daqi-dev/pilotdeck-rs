@@ -1,0 +1,59 @@
+{
+  "$comment": "A3 · gateway 协议 schema 正负例（ajv draft-07 校验，validate_fixtures.mjs 消费）。正例 = 线上真实会出现的帧/载荷，必须过；负例 = 协议不允许的形状，必须拒。关键正例：ok:true 响应省略 result——run_get/run_reattach 查无记录时实现返回 undefined，JSON.stringify 省略该键（GatewayWsConnection.ts:187），schema 按「线上 JSON 语义」允许缺省（第 2 轮评审 P1）。",
+  "frames": {
+    "positive": [
+      { "type": "hello", "protocolVersion": "1.2", "clientName": "cli", "clientVersion": "0.1.0", "token": "t0" },
+      { "type": "hello", "protocolVersion": "9.9", "clientName": "web", "clientVersion": "x", "token": "" },
+      { "type": "hello_ok", "protocolVersion": "1.2", "serverVersion": "1.0.0", "serverInfo": { "mode": "in_process" } },
+      { "type": "hello_ok", "protocolVersion": "1.2", "serverVersion": "1.0.0", "serverInfo": { "mode": "remote", "capabilities": ["run_get", "memory_list"] } },
+      { "type": "request", "id": "r1", "method": "run_get", "params": { "runId": "run-1" } },
+      { "type": "request", "id": "r2", "method": "describe_server", "params": {} },
+      { "type": "response", "id": "r1", "ok": true, "result": { "runId": "run-1", "status": "running" } },
+      { "type": "response", "id": "r1", "ok": true },
+      { "type": "response", "id": "r3", "ok": false, "error": { "code": "CAPABILITY_UNAVAILABLE", "message": "run_get is unavailable." } },
+      { "type": "response", "id": "r4", "ok": false, "error": { "code": "X", "message": "m", "validation": { "field": "runId" }, "details": [1] } },
+      { "type": "event", "id": "r1", "seq": 0, "final": false, "event": { "type": "config_changed", "changedPaths": ["mcp.json"], "changeClasses": ["mcp"] } },
+      { "type": "event", "id": "r1", "seq": 7, "final": true, "event": { "type": "plan_mode_changed", "mode": "bypassPermissions" } },
+      { "type": "event", "id": "r1", "seq": 8, "final": true, "event": { "type": "plan_mode_changed", "mode": "future-unknown-mode" } },
+      { "type": "notification", "name": "config_changed", "payload": { "changedPaths": [] } },
+      { "type": "notification", "name": "always-on:turn-event" }
+    ],
+    "negative": [
+      { "type": "request", "id": "r1", "method": "run_gett", "params": {} },
+      { "type": "request", "id": "r1", "params": {} },
+      { "type": "request", "id": "r1", "method": "run_get" },
+      { "type": "hello", "protocolVersion": "1.2", "clientName": "cli" },
+      { "type": "hello", "protocolVersion": "1.2", "clientName": "wap", "clientVersion": "x", "token": "t" },
+      { "type": "hello_ok", "protocolVersion": "1.2", "serverVersion": "1.0.0" },
+      { "type": "response", "id": "r1", "ok": true, "result": 1, "extra": true },
+      { "type": "response", "id": "r1", "ok": false },
+      { "type": "response", "id": "r1", "ok": false, "error": { "code": 1, "message": "m" } },
+      { "type": "response", "id": "r1", "ok": true, "error": { "code": "X", "message": "m" } },
+      { "type": "event", "id": "r1", "seq": "0", "final": false, "event": { "type": "config_changed", "changedPaths": [], "changeClasses": [] } },
+      { "type": "event", "id": "r1", "seq": 0, "final": false },
+      { "type": "event", "id": "r1", "seq": 0, "final": false, "event": { "type": "not_a_real_event" } },
+      { "type": "notification", "name": 1 },
+      { "type": "pong" },
+      { "typos": "request", "id": "r1", "method": "run_get", "params": {} }
+    ]
+  },
+  "definitions": [
+    { "definition": "WsGatewayMethod", "data": "run_get", "expect": "pass" },
+    { "definition": "WsGatewayMethod", "data": "run_gett", "expect": "fail" },
+    { "definition": "GatewayChannelKey", "data": "cli", "expect": "pass" },
+    { "definition": "GatewayChannelKey", "data": "custom-future-channel", "expect": "pass" },
+    { "definition": "GatewayMode", "data": "plan", "expect": "pass" },
+    { "definition": "GatewayMode", "data": "off", "expect": "fail" },
+    { "definition": "GatewayWsClientName", "data": "sdk", "expect": "pass" },
+    { "definition": "GatewayWsClientName", "data": "wap", "expect": "fail" },
+    { "definition": "GatewayAbortTurnInput", "data": { "sessionKey": "s" }, "expect": "pass" },
+    { "definition": "GatewayAbortTurnInput", "data": { "sessionKey": "s", "runId": "r", "reason": "user" }, "expect": "pass" },
+    { "definition": "GatewayAbortTurnInput", "data": { "runId": "r" }, "expect": "fail" },
+    { "definition": "GatewayResumeSessionResult", "data": { "sessionKey": "s" }, "expect": "pass" },
+    { "definition": "GatewayResumeSessionResult", "data": {}, "expect": "fail" },
+    { "definition": "GatewayCloseProjectSessionsResult", "data": { "sessionKeys": ["a", "b"] }, "expect": "pass" },
+    { "definition": "GatewayCloseProjectSessionsResult", "data": { "sessionKeys": "a" }, "expect": "fail" },
+    { "definition": "GatewayGrantSessionPermissionResult", "data": { "granted": true, "entry": "bash:*" }, "expect": "pass" },
+    { "definition": "GatewayGrantSessionPermissionResult", "data": { "granted": "yes" }, "expect": "fail" }
+  ]
+}
