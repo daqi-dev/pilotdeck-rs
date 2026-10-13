@@ -4,7 +4,6 @@ use std::{convert::Infallible, error::Error, net::SocketAddr, sync::Arc, time::D
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bytes::Bytes;
-use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::{
     Request, Response, StatusCode, body::Incoming, header, server::conn::http1, service::service_fn,
@@ -13,27 +12,15 @@ use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
     rt::{TokioExecutor, TokioIo},
 };
-use tokio::{io::AsyncWriteExt, net::TcpListener};
-use tokio_tungstenite::{
-    WebSocketStream, connect_async_with_config,
-    tungstenite::{
-        Message,
-        handshake::derive_accept_key,
-        protocol::frame::{
-            Frame,
-            coding::{Data, OpCode},
-        },
-        protocol::{Role, WebSocketConfig},
-    },
+use tokio::{
+    io::copy_bidirectional,
+    net::{TcpListener, TcpStream},
 };
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 
 type ProxyError = Box<dyn Error + Send + Sync>;
 type Body = BoxBody<Bytes, ProxyError>;
 type HttpClient = Client<HttpConnector, Incoming>;
-
-// A1 buffers complete messages; bound both peers, including fragmented messages.
-const MAX_WS_MESSAGE: usize = 16 * 1024 * 1024;
-const MAX_WS_FRAME: usize = 4 * 1024 * 1024;
 
 struct Proxy {
     upstream: String,
@@ -155,102 +142,58 @@ impl Proxy {
             .uri()
             .path_and_query()
             .map_or("/ws", |value| value.as_str());
-        let url = format!("ws://{}{path}", self.upstream.trim_start_matches("http://"));
-        let config = websocket_config();
-        // Establish the upstream before accepting downstream. No synthetic hello/binding.
-        let (mut upstream, upstream_response) = tokio::time::timeout(
-            Duration::from_secs(10),
-            connect_async_with_config(url, Some(config), false),
-        )
+        let origin: hyper::Uri = self.upstream.parse()?;
+        let authority = origin.authority().expect("validated upstream").as_str();
+        // Hyper preserves bytes read beyond the HTTP upgrade in Upgraded.
+        // No WS codec on either peer: TS alone owns RSV/continuation/masking,
+        // control frames, close replies and application connection state.
+        let (upstream, upstream_headers) = tokio::time::timeout(Duration::from_secs(10), async {
+            let socket = TcpStream::connect(authority).await?;
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(TokioIo::new(socket)).await?;
+            tokio::spawn(async move {
+                if let Err(error) = connection.with_upgrades().await {
+                    eprintln!("upstream HTTP upgrade: {error}");
+                }
+            });
+            let mut upgrade = Request::builder()
+                .method(request.method().clone())
+                .uri(path)
+                .body(Full::new(Bytes::new()))?;
+            *upgrade.headers_mut() = request.headers().clone();
+            upgrade
+                .headers_mut()
+                .insert(header::HOST, authority.parse()?);
+            let mut response = sender.send_request(upgrade).await?;
+            if response.status() != StatusCode::SWITCHING_PROTOCOLS
+                || response
+                    .headers()
+                    .get(header::SEC_WEBSOCKET_ACCEPT)
+                    .is_none_or(|value| value.as_bytes() != accept.as_bytes())
+            {
+                return Err::<_, ProxyError>("upstream rejected websocket upgrade".into());
+            }
+            let headers = response.headers().clone();
+            let upgraded = hyper::upgrade::on(&mut response).await?;
+            Ok((upgraded, headers))
+        })
         .await??;
         let upgraded = hyper::upgrade::on(request);
         tokio::spawn(async move {
             match upgraded.await {
-                Ok(io) => {
-                    let mut downstream = WebSocketStream::from_raw_socket(
-                        TokioIo::new(io),
-                        Role::Server,
-                        Some(config),
-                    )
-                    .await;
-                    loop {
-                        // No detached sender task: leaving either arm drops both sockets.
-                        let result = tokio::select! {
-                            frame = downstream.next() => {
-                                let closing = matches!(&frame, Some(Ok(Message::Close(_))));
-                                let result = relay(frame, &mut upstream).await;
-                                if closing && result.is_ok() {
-                                    // The baseline replies 1000 even to an empty/custom
-                                    // client close. Return that upstream reply, bypassing
-                                    // Tungstenite's already queued local echo (1005/custom).
-                                    if let Err(error) = relay_close_reply(&mut upstream, &mut downstream).await {
-                                        eprintln!("WS close reply: {error}");
-                                    }
-                                }
-                                result
-                            },
-                            frame = upstream.next() => {
-                                let result = relay(frame, &mut downstream).await;
-                                if matches!(result, Ok(false)) {
-                                    let _ = upstream.flush().await;
-                                }
-                                result
-                            },
-                        };
-                        match result {
-                            Ok(true) => continue,
-                            Ok(false) => break,
-                            Err(error) => {
-                                eprintln!("WS relay: {error}");
-                                break;
-                            }
-                        }
+                Ok(downstream) => {
+                    let mut downstream = TokioIo::new(downstream);
+                    let mut upstream = TokioIo::new(upstream);
+                    if let Err(error) = copy_bidirectional(&mut downstream, &mut upstream).await {
+                        eprintln!("WS byte tunnel: {error}");
                     }
+                    // Dropping the paired streams closes both owned endpoints.
                 }
                 Err(error) => eprintln!("downstream upgrade: {error}"),
             }
         });
-        Ok(websocket_response(
-            upstream_response.into_parts().0.headers,
-            &accept,
-        ))
+        Ok(websocket_response(upstream_headers, &accept))
     }
-}
-
-async fn relay_close_reply<U, D>(
-    upstream: &mut WebSocketStream<U>,
-    downstream: &mut WebSocketStream<D>,
-) -> Result<(), ProxyError>
-where
-    U: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-    D: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while let Some(frame) = upstream.next().await {
-            let frame = frame?;
-            let closing = frame.is_close();
-            // Tungstenite forbids send() after receiving Close and has queued a
-            // local close echo. Write upstream frames directly so in-flight data
-            // precedes the real upstream close reply, without flushing that echo.
-            let frame = match frame {
-                Message::Text(data) => Frame::message(data, OpCode::Data(Data::Text), true),
-                Message::Binary(data) => Frame::message(data, OpCode::Data(Data::Binary), true),
-                Message::Ping(data) => Frame::ping(data),
-                Message::Pong(data) => Frame::pong(data),
-                Message::Close(close) => Frame::close(close),
-                Message::Frame(frame) => frame,
-            };
-            let mut wire = Vec::new();
-            frame.format(&mut wire)?;
-            // The downstream endpoint is a server: all frames stay unmasked.
-            downstream.get_mut().write_all(&wire).await?;
-            if closing {
-                return Ok::<_, ProxyError>(());
-            }
-        }
-        Err("upstream ended without a close reply".into())
-    })
-    .await?
 }
 
 fn fatal_accept_error(error: &std::io::Error) -> bool {
@@ -260,12 +203,6 @@ fn fatal_accept_error(error: &std::io::Error) -> bool {
             | std::io::ErrorKind::PermissionDenied
             | std::io::ErrorKind::Unsupported
     )
-}
-
-fn websocket_config() -> WebSocketConfig {
-    WebSocketConfig::default()
-        .max_message_size(Some(MAX_WS_MESSAGE))
-        .max_frame_size(Some(MAX_WS_FRAME))
 }
 
 fn websocket_accept(method: &hyper::Method, headers: &hyper::HeaderMap) -> Option<String> {
@@ -306,22 +243,6 @@ fn websocket_response(mut headers: hyper::HeaderMap, accept: &str) -> Response<B
     *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     *response.headers_mut() = headers;
     response
-}
-
-async fn relay<S>(
-    frame: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
-    target: &mut WebSocketStream<S>,
-) -> Result<bool, ProxyError>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    let Some(frame) = frame else {
-        return Ok(false);
-    };
-    let frame = frame?;
-    let closing = frame.is_close();
-    target.send(frame).await?;
-    Ok(!closing)
 }
 
 fn strip_hop_headers(headers: &mut hyper::HeaderMap) {
@@ -366,86 +287,62 @@ fn plain(status: StatusCode, message: &'static str) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
-    async fn large_payload_and_upstream_close_survive_relay() {
-        // In-memory transport: tests never bind another experiment port.
-        let (sender, receiver) = tokio::io::duplex(256 * 1024);
-        let mut sender = WebSocketStream::from_raw_socket(sender, Role::Server, None).await;
-        let mut receiver = WebSocketStream::from_raw_socket(receiver, Role::Client, None).await;
-        let text = Message::text("原帧".repeat(20_000));
-        assert!(relay(Some(Ok(text.clone())), &mut sender).await.unwrap());
-        assert_eq!(receiver.next().await.unwrap().unwrap(), text);
-        let close = Message::Close(Some(CloseFrame {
-            code: CloseCode::Library(4002),
-            reason: "invalid_frame".into(),
-        }));
-        assert!(!relay(Some(Ok(close.clone())), &mut sender).await.unwrap());
-        assert_eq!(receiver.next().await.unwrap().unwrap(), close);
-    }
-
-    #[tokio::test]
-    async fn client_close_receives_upstream_code_instead_of_local_echo() {
-        for original in [
-            None,
-            Some(CloseFrame {
-                code: CloseCode::Library(4444),
-                reason: "client".into(),
-            }),
-        ] {
-            let (down_io, client_io) = tokio::io::duplex(1024);
-            let (up_io, server_io) = tokio::io::duplex(1024);
-            let mut downstream =
-                WebSocketStream::from_raw_socket(down_io, Role::Server, None).await;
-            let mut client = WebSocketStream::from_raw_socket(client_io, Role::Client, None).await;
-            let mut upstream = WebSocketStream::from_raw_socket(up_io, Role::Client, None).await;
-            let mut server = WebSocketStream::from_raw_socket(server_io, Role::Server, None).await;
-            client.send(Message::Close(original.clone())).await.unwrap();
-            let incoming = downstream.next().await;
-            assert!(!relay(incoming, &mut upstream).await.unwrap());
-            // Simulate the TS server's hard-coded normal close reply.
-            let mut wire = Vec::new();
-            Frame::message(
-                Bytes::from_static(b"in-flight"),
-                OpCode::Data(Data::Text),
-                true,
-            )
-            .format(&mut wire)
-            .unwrap();
-            Frame::message(
-                Bytes::from_static(b"\x00\x01"),
-                OpCode::Data(Data::Binary),
-                true,
-            )
-            .format(&mut wire)
-            .unwrap();
-            Frame::pong(Bytes::from_static(b"pending-pong"))
-                .format(&mut wire)
-                .unwrap();
-            let reply = Some(CloseFrame {
-                code: CloseCode::Normal,
-                reason: "".into(),
-            });
-            Frame::close(reply.clone()).format(&mut wire).unwrap();
-            server.get_mut().write_all(&wire).await.unwrap();
-            relay_close_reply(&mut upstream, &mut downstream)
+    async fn byte_tunnel_preserves_nonstandard_frames_and_half_close() {
+        let (mut client, mut downstream) = tokio::io::duplex(64 * 1024);
+        let (mut upstream, mut server) = tokio::io::duplex(64 * 1024);
+        let relay = tokio::spawn(async move {
+            copy_bidirectional(&mut downstream, &mut upstream)
                 .await
-                .unwrap();
-            assert_eq!(
-                client.next().await.unwrap().unwrap(),
-                Message::text("in-flight")
-            );
-            assert_eq!(
-                client.next().await.unwrap().unwrap(),
-                Message::binary(vec![0, 1])
-            );
-            assert_eq!(
-                client.next().await.unwrap().unwrap(),
-                Message::Pong(Bytes::from_static(b"pending-pong"))
-            );
-            assert_eq!(client.next().await.unwrap().unwrap(), Message::Close(reply));
-        }
+                .unwrap()
+        });
+        // RSV text, orphan continuation, unmasked text, custom close: exact
+        // bytes reach TS; no local validation or synthesized close response.
+        let mut sent = vec![
+            0xc1,
+            0x81,
+            1,
+            2,
+            3,
+            4,
+            b'x' ^ 1,
+            0x80,
+            0x80,
+            1,
+            2,
+            3,
+            4,
+            0x81,
+            1,
+            b'x',
+            0x88,
+            0x82,
+            1,
+            2,
+            3,
+            4,
+            0x11 ^ 1,
+            0x5c ^ 2,
+        ];
+        sent.extend(vec![42; 128 * 1024]);
+        let expected = sent.clone();
+        let client_task = tokio::spawn(async move {
+            client.write_all(&sent).await.unwrap();
+            client.shutdown().await.unwrap();
+            let mut reply = Vec::new();
+            client.read_to_end(&mut reply).await.unwrap();
+            reply
+        });
+        let mut received = Vec::new();
+        server.read_to_end(&mut received).await.unwrap();
+        assert_eq!(received, expected);
+        let reply = vec![0x88, 2, 3, 232]; // actual TS close 1000, empty reason
+        server.write_all(&reply).await.unwrap();
+        server.shutdown().await.unwrap();
+        assert_eq!(client_task.await.unwrap(), reply);
+        assert_eq!(relay.await.unwrap(), (expected.len() as u64, 4));
     }
 
     #[test]
@@ -548,47 +445,6 @@ mod tests {
             assert!(!fatal_accept_error(&error));
         }
         assert!(fatal_accept_error(&std::io::ErrorKind::InvalidInput.into()));
-    }
-
-    #[tokio::test]
-    async fn frame_and_fragmented_message_limits_are_enforced() {
-        for fragmented in [false, true] {
-            let (sender, receiver) = tokio::io::duplex(64 * 1024);
-            let mut receiver =
-                WebSocketStream::from_raw_socket(receiver, Role::Client, Some(websocket_config()))
-                    .await;
-            let writer = tokio::spawn(async move {
-                let mut sender = WebSocketStream::from_raw_socket(sender, Role::Server, None).await;
-                let count = if fragmented {
-                    MAX_WS_MESSAGE / MAX_WS_FRAME + 1
-                } else {
-                    1
-                };
-                for index in 0..count {
-                    let data = vec![0; MAX_WS_FRAME + usize::from(!fragmented)];
-                    let opcode = if index == 0 {
-                        Data::Binary
-                    } else {
-                        Data::Continue
-                    };
-                    let frame = Frame::message(data, OpCode::Data(opcode), index + 1 == count);
-                    if sender.send(Message::Frame(frame)).await.is_err() {
-                        break;
-                    }
-                }
-            });
-            let error = tokio::time::timeout(Duration::from_secs(5), receiver.next())
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap_err();
-            assert!(matches!(
-                error,
-                tokio_tungstenite::tungstenite::Error::Capacity(_)
-            ));
-            writer.abort();
-            let _ = writer.await;
-        }
     }
 
     #[test]
