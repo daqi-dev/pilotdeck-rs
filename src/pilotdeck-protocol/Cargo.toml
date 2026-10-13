@@ -1,0 +1,13 @@
+[package]
+name = "pilotdeck-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+ryu-js.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "pilotdeck-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+pilotdeck-protocol.workspace = true
+uuid = { version = "=1.27.0", features = ["v4"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+pilotdeck-agent = { path = "../pilotdeck-agent" }
+tz-rs.workspace = true
+
+[lints]
+workspace = true

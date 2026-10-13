@@ -1,0 +1,14 @@
+[package]
+name = "pilotdeck-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+pilotdeck-protocol.workspace = true
+pilotdeck-tokenizer = { path = "../pilotdeck-tokenizer" }
+sha2.workspace = true
+
+[lints]
+workspace = true
