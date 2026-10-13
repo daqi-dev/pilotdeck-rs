@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+# crate 由 cargo new 建出来后自动登记到这里
+members = ["pilotdeck-cli", "pilotdeck-core"]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false

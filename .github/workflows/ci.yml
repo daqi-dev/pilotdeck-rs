@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # job 名 = 分支保护里的必需状态检查名，改这里要同步改保护规则
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # workspace 在 src/ 不在仓库根（demo/04 §4.6）
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v4
+      # rustup 读仓库根的 rust-toolchain.toml，装锁定的版本与 fmt/clippy
+      - run: rustup show active-toolchain
+      - name: 格式
+        run: cargo fmt --all --check
+      - name: lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: 测试
+        run: cargo test --all

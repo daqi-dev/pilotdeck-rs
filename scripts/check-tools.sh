@@ -96,14 +96,24 @@ echo "  **一个都没有也能干活，但你就少了一双不同来路的眼�
 #   上面那张单子里没有你这套技术栈的编译器/运行时，
 #   就会从头到尾没人发现它压根没被检查过。
 # ══════════════════════════════════════════════════════════════════
-STACK_EMPTY=1   # AI 填入 check 行时，把这行改成 STACK_EMPTY=0
+STACK_EMPTY=0
 echo
 echo "▸ 本系统专属"
-  echo "  ⚠️ 空着——初始化第三步（配置与扩展）没做完。"
-  echo "     按本系统技术栈补 check 行到 scripts/check-tools.sh，例（Rust）："
-  echo "       check rustc \"Rust 编译器\"       'rustup 装，见 rustup.rs' '同左' '同左'"
-  echo "       check cargo \"Rust 构建与包管理\" '随 rustup 一起'          '同左' '同左'"
-  echo "     填完把上面的 STACK_EMPTY=1 改成 0。"
+# Rust 侧：rustfmt / clippy 是 component，二进制名分别是 rustfmt / cargo-clippy
+check rustup       "Rust 工具链管理"   '见 rustup.rs（国内 rsproxy.cn）' '同左' '同左'
+check rustc        "Rust 编译器"       '随 rustup 一起' '同左' '同左'
+check cargo        "Rust 构建与包管理" '随 rustup 一起' '同左' '同左'
+check rustfmt      "格式检查"          'rustup component add rustfmt' '同左' '同左'
+check cargo-clippy "lint"              'rustup component add clippy'  '同左' '同左'
+# 基线侧：对拍要把 PilotDeck@cc7c4e6 的 TS 后端跑起来（engines: node >=22.13 <23，pnpm@10）
+check node         "跑 TS 基线"        'brew install node@22' '包管理器装 nodejs 22' 'scoop install nodejs-lts'
+check pnpm         "装 TS 基线依赖"    'corepack enable pnpm' '同左' '同左'
+if have node; then
+  case "$(node -v)" in
+    v22.*) ;;
+    *) echo "  ✗ node 版本 $(node -v) 不在基线要求的 22.x 内"; MISSING="$MISSING node@22" ;;
+  esac
+fi
 
 echo
 if [ "$STACK_EMPTY" = 1 ]; then
