@@ -17,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import signal
 import time
 import uuid
 
@@ -24,6 +25,7 @@ import g03_compare as G
 
 LOCK = Path('/tmp/pdrs-parity.lock')
 LOCK_MAX_AGE = 40 * 60
+LOCK_MARGIN = 5 * 60
 
 
 def read_owner(lock):
@@ -116,6 +118,10 @@ def main():
     args = ap.parse_args()
     if not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
         ap.error('--timeout-seconds must be positive and finite')
+    # 锁按年龄判陈旧、没有心跳：持锁时长必须明显短于 LOCK_MAX_AGE，否则长跑的活进程会被当成陈旧锁接管
+    # （PR #13 第 2 轮评审 P2）。
+    if args.timeout_seconds + LOCK_MARGIN >= LOCK_MAX_AGE:
+        ap.error(f'--timeout-seconds must be < {LOCK_MAX_AGE - LOCK_MARGIN:g} (LOCK_MAX_AGE - margin)')
     if not args.label or Path(args.label).name != args.label or args.label in ('.', '..'):
         ap.error('--label must be a single directory name')
     catalog = G.scenario_catalog()
@@ -164,8 +170,17 @@ def main():
         (out / 'run.json').write_text(json.dumps(run, indent=2) + '\n')
         started = time.monotonic()
         try:
-            proc = subprocess.run(cmd, cwd=G.TOOLS, env=env, text=True, capture_output=True,
-                                  timeout=args.timeout_seconds)
+            # 独立进程组：超时时连同 run.py 拉起的 node / mock 子进程一起杀掉，不留孤儿继续写 artifacts
+            # （PR #13 第 2 轮评审 P3）。
+            child = subprocess.Popen(cmd, cwd=G.TOOLS, env=env, text=True, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                stdout, stderr = child.communicate(timeout=args.timeout_seconds)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)
+                stdout, stderr = child.communicate()
+                raise subprocess.TimeoutExpired(cmd, args.timeout_seconds, output=stdout, stderr=stderr)
+            proc = subprocess.CompletedProcess(cmd, child.returncode, stdout, stderr)
         except subprocess.TimeoutExpired as error:
             # TimeoutExpired may carry bytes even with text=True.
             for filename, output in (('run.py.stdout', error.stdout), ('run.py.stderr', error.stderr)):
