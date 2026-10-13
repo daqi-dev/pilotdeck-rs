@@ -18,10 +18,7 @@ use std::{
     error::Error,
     io::Write,
     net::{Ipv4Addr, SocketAddr},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::Arc,
     time::Duration,
 };
 
@@ -48,7 +45,7 @@ use tokio_tungstenite::{
             },
             Role, WebSocketConfig,
         },
-        Message,
+        ClientRequestBuilder, Message,
     },
     WebSocketStream,
 };
@@ -62,19 +59,37 @@ const MAX_WS_MESSAGE: usize = 16 * 1024 * 1024;
 const MAX_WS_FRAME: usize = 4 * 1024 * 1024;
 
 struct FrameLog {
-    file: Mutex<std::fs::File>,
-    seq: AtomicU64,
+    sender: std::sync::mpsc::Sender<serde_json::Value>,
 }
 
 impl FrameLog {
+    /// One writer thread owns the file *and* the sequence counter, so `seq` is
+    /// always monotonic in on-disk order no matter how the relay tasks
+    /// interleave. Recording a frame never blocks a relay task on disk I/O: it
+    /// only enqueues.
+    fn open(path: &str) -> std::io::Result<Arc<FrameLog>> {
+        let mut file = std::fs::File::create(path)?;
+        let (sender, receiver) = std::sync::mpsc::channel::<serde_json::Value>();
+        std::thread::Builder::new()
+            .name("exp008-ws-log".into())
+            .spawn(move || {
+                let mut seq: u64 = 0;
+                while let Ok(mut entry) = receiver.recv() {
+                    seq += 1;
+                    entry["seq"] = serde_json::json!(seq);
+                    let _ = writeln!(file, "{entry}");
+                    let _ = file.flush();
+                }
+            })?;
+        Ok(Arc::new(FrameLog { sender }))
+    }
+
     fn tee(&self, dir: &str, payload: &[u8], opcode: &str, close: Option<(u16, &str)>) {
-        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
         let raw = match std::str::from_utf8(payload) {
             Ok(text) if opcode == "text" => serde_json::Value::String(text.to_owned()),
             _ => serde_json::Value::String(STANDARD.encode(payload)),
         };
         let mut entry = serde_json::json!({
-            "seq": seq,
             "dir": dir,
             "opcode": opcode,
             "bytes": payload.len(),
@@ -83,9 +98,7 @@ impl FrameLog {
         if let Some((code, reason)) = close {
             entry["close"] = serde_json::json!({ "code": code, "reason": reason });
         }
-        if let Ok(mut file) = self.file.lock() {
-            let _ = writeln!(file, "{entry}");
-        }
+        let _ = self.sender.send(entry);
     }
 }
 
@@ -115,10 +128,7 @@ async fn main() -> Result<(), ProxyError> {
     let authority = uri.authority().expect("validated").as_str().to_owned();
     let handler = std::env::var("EXP008_HANDLER").unwrap_or_else(|_| "ts".into());
     let frames = match std::env::var("EXP008_WS_LOG") {
-        Ok(path) if !path.is_empty() => Some(Arc::new(FrameLog {
-            file: Mutex::new(std::fs::File::create(path)?),
-            seq: AtomicU64::new(0),
-        })),
+        Ok(path) if !path.is_empty() => Some(FrameLog::open(&path)?),
         _ => None,
     };
     let proxy = Arc::new(Proxy {
@@ -227,11 +237,37 @@ impl Proxy {
             .uri()
             .path_and_query()
             .map_or("/", |value| value.as_str());
-        let url = format!("ws://{}{path}", self.upstream_ws_authority);
+        let url: hyper::Uri = format!("ws://{}{path}", self.upstream_ws_authority).parse()?;
+        // Forward the downstream handshake's end-to-end headers. The baseline
+        // authenticates `/ws` from `Authorization: Bearer` as well as `?token=`
+        // (ui/server/index.js:490-496); building the upstream from the URL alone
+        // dropped the header and turned a direct 101 into a proxy 502. The
+        // relay generates its own hop-by-hop / WS handshake headers, so those
+        // are skipped, and `Sec-WebSocket-Extensions` is not forwarded because
+        // this probe terminates WS framing on both legs and cannot honour a
+        // negotiated extension.
+        let mut builder = ClientRequestBuilder::new(url);
+        for (name, value) in request.headers() {
+            if matches!(
+                name.as_str(),
+                "host"
+                    | "connection"
+                    | "upgrade"
+                    | "sec-websocket-key"
+                    | "sec-websocket-version"
+                    | "sec-websocket-extensions"
+            ) {
+                continue;
+            }
+            builder = builder.with_header(
+                name.as_str().to_owned(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            );
+        }
         let config = websocket_config();
         let (mut upstream, upstream_response) = tokio::time::timeout(
             Duration::from_secs(10),
-            connect_async_with_config(url, Some(config), false),
+            connect_async_with_config(builder, Some(config), false),
         )
         .await??;
         let upgraded = hyper::upgrade::on(request);
@@ -258,13 +294,14 @@ impl Proxy {
                                 result
                             },
                             frame = upstream.next() => {
-                                let result = relay(frame, &mut downstream, frames.as_deref(), "u2c").await;
-                                if matches!(result, Ok(false)) {
-                                    let _ = upstream.flush().await;
-                                }
-                                result
+                                relay(frame, &mut downstream, frames.as_deref(), "u2c").await
                             },
                         };
+                        // tungstenite queues an automatic Pong when it reads a
+                        // Ping. Flush both legs every round so a long idle link
+                        // does not leave that Pong buffered until close.
+                        let _ = upstream.flush().await;
+                        let _ = downstream.flush().await;
                         match result {
                             Ok(true) => continue,
                             Ok(false) => break,

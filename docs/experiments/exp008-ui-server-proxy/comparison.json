@@ -1,18 +1,70 @@
 {
   "verdict": "PASS",
-  "left": "/Users/da/ws/pilotdeck-rs/_build/wt-b1/_tmp/20261014-exp008-r1/compare/direct",
-  "right": "/Users/da/ws/pilotdeck-rs/_build/wt-b1/_tmp/20261014-exp008-r1/compare/proxy",
+  "left": "_tmp/20261014-exp008-r2/compare/direct",
+  "right": "_tmp/20261014-exp008-r2/compare/proxy",
   "counts": {
     "left": {
-      "http": 7,
+      "http": 9,
+      "handshake": 1,
       "ws": 11,
-      "sse": 17
+      "sse": 17,
+      "close": 1
     },
     "right": {
-      "http": 7,
+      "http": 9,
+      "handshake": 1,
       "ws": 11,
-      "sse": 17
+      "sse": 17,
+      "close": 1
     }
+  },
+  "normalisation": {
+    "headerExclude": [
+      "connection",
+      "content-length",
+      "date",
+      "keep-alive",
+      "transfer-encoding",
+      "x-pilotdeck-handler"
+    ],
+    "etag": "validated against the response body (weak sha1)",
+    "clockHeader": "x-projects-revision (positive integer -> <REVISION>)",
+    "collapseKeys": [
+      "completedAt",
+      "createdAt",
+      "durationMs",
+      "expiresAt",
+      "lastActivity",
+      "mtimeMs",
+      "pid",
+      "processId",
+      "startedAt",
+      "timestamp",
+      "updatedAt"
+    ],
+    "identityKeys": [
+      "blockId",
+      "completedRunId",
+      "entryId",
+      "id",
+      "idempotencyKey",
+      "instanceId",
+      "messageId",
+      "moduleInstanceId",
+      "operationId",
+      "requestId",
+      "runId",
+      "sessionId",
+      "streamId",
+      "toolCallId",
+      "turnId"
+    ],
+    "relativeKeys": [
+      "connectionGeneration",
+      "generation",
+      "revision"
+    ],
+    "literal": "every other key and end-to-end header"
   },
   "differences": []
 }

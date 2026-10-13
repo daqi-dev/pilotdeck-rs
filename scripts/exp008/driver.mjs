@@ -8,6 +8,8 @@
 // env:   EXP008_TOKEN  (JWT; empty when local auth is disabled)
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
+import crypto from 'node:crypto';
+import http from 'node:http';
 
 const [mode, output, baseline, project, port] = process.argv.slice(2);
 const token = process.env.EXP008_TOKEN || '';
@@ -60,6 +62,52 @@ if (mode === 'chat') {
   await deadline(() => raw.some((line) => { try { const f = JSON.parse(line); return f.kind === 'complete' || f.kind === 'error'; } catch { return false; } }), 'chat-raw complete');
   save({ port, sent, raw });
   ws.close();
+} else if (mode === 'ws-handshake') {
+  // Raw HTTP upgrade so an Authorization header can be attached: the baseline
+  // accepts it for /ws (ui/server/index.js:490-496) while Node's global
+  // WebSocket cannot set request headers. run.py supplies a fixed
+  // Sec-WebSocket-Key so Sec-WebSocket-Accept is comparable across two probes.
+  const key = process.env.EXP008_WS_KEY || crypto.randomBytes(16).toString('base64');
+  const headers = {
+    Connection: 'Upgrade',
+    Upgrade: 'websocket',
+    'Sec-WebSocket-Version': '13',
+    'Sec-WebSocket-Key': key,
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (process.env.EXP008_WS_PROTOCOL) headers['Sec-WebSocket-Protocol'] = process.env.EXP008_WS_PROTOCOL;
+  const result = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: Number(port), path: '/ws', agent: false, headers });
+    req.on('upgrade', (res, socket) => {
+      socket.destroy();
+      resolve({ status: res.statusCode, headers: res.headers, key, upgraded: true });
+    });
+    req.on('response', (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, key,
+        upgraded: false, body: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  save(result);
+} else if (mode === 'ws-close') {
+  // Capture the close handshake in both directions: the code/reason we send and
+  // the code/reason the peer replies with (before this driver saved and closed
+  // without observing the reply).
+  const code = Number(process.env.EXP008_CLOSE_CODE || 4001);
+  const reason = process.env.EXP008_CLOSE_REASON || 'exp008-close';
+  const { ws } = await openSocket('/ws');
+  const observed = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ code: null, reason: null, clean: false, timeout: true }), 8000);
+    ws.addEventListener('close', (event) => {
+      clearTimeout(timer);
+      resolve({ code: event.code, reason: event.reason, clean: event.wasClean });
+    });
+    ws.close(code, reason);
+  });
+  save({ port, sentCode: code, sentReason: reason, ...observed });
 } else {
   throw new Error(`unknown mode: ${mode}`);
 }

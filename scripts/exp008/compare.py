@@ -4,27 +4,48 @@
 Compares two recorded "sides" of the same driving script:
 
     <side>/
-      http.jsonl   one {case, method, path, status, headers, body} per line
-      ws.jsonl     one {case, dir, opcode, raw} per WebSocket text frame, in order
-      sse.jsonl    one {case, index, sseId, event, data} per SSE event, in order
+      http.jsonl       one {case, method, path, status, headers, body} per line
+      handshake.jsonl  one such record for the upstream WS handshake (101)
+      ws.jsonl         one {case, dir, opcode, raw} per WebSocket text frame, in order
+      sse.jsonl        one {case, index, sseId, event, data} per SSE event, in order
+      close.jsonl      one {case, sentCode, sentReason, observedCode, observedReason}
+                       per WebSocket close handshake
 
 `direct` is the TS ui/server (13002); `proxy` is the same server reached through
 the Rust relay (13001). Both recordings are produced by `run.py` from the SAME
 isolated home and the SAME project path (`specs/parity/normalization.md`: the two
-sides must run the same output path). The comparator normalises only:
+sides must run the same output path).
 
-  * volatile envelope keys (timestamps / process / request / run ids) via a
-    per-side first-occurrence mapping so equal references stay equal and a
-    changed reference still shows up as a difference;
-  * UUIDs embedded anywhere in strings, same mapping;
-  * the absolute project root (both sides pass `--path`);
-  * response headers: hop-by-hop, `date`, `content-length`, `set-cookie`,
-    `etag` are dropped and the proxy marker `X-PilotDeck-Handler` is stripped.
+Normalisation is scoped to a field path, never global. A key is only touched
+where its name marks it as session identity or a clock:
+
+  * identity keys (`runId`, `sessionId`, `id`, `blockId`, `timeline.turnId`, ...)
+    get every embedded UUID replaced by a per-side first-occurrence reference, so
+    equal references stay equal and a changed reference still shows as a
+    difference while any non-UUID prefix (`status_`, `text_`, `web:`) is kept;
+  * clock keys (`timestamp`, `startedAt`, ...) and process keys (`pid`, ...)
+    collapse to `<VOLATILE>`;
+  * counters that are session/ordering dependent (`revision`, `generation`) are
+    compared as deltas from their first value in the same case, so a proxy that
+    skips or doubles a bump still shows up;
+  * everything else -- `used`, `displayUsed`, `ratio`, token budgets, arbitrary
+    strings and any UUID inside them -- is compared literally.
+
+Response headers: only the recomputable / hop-by-hop whitelist is dropped
+(`date`, `content-length`, `connection`, `keep-alive`, `transfer-encoding`,
+`x-pilotdeck-handler`). `set-cookie`, `etag`, `x-refreshed-token` and every
+other end-to-end header must be present and equal. `etag` is value-checked
+against the body it is supposed to summarise (`<ETAG-VALID>` when it is a real
+weak strong-hash of that body), so dropping or rewriting it is a difference
+rather than a pass. `x-projects-revision` is a wall-clock revision minted per
+request (`projects.js`); it is recorded as `<REVISION>` only when it is a
+positive integer, so a dropped or mangled revision is still a difference.
 
 Everything else is compared structurally, with a precise location for every
 difference:
 
     http[<case>] status | header.<name> | body.<path>
+    handshake[<case>] status | header.<name>
     ws[<case>] #<index>
     sse[<case>] #<index>
 
@@ -35,6 +56,8 @@ time into a copy of RIGHT and require the comparator to FAIL while naming the
 exact location. Equivalence controls (a side compared with itself) must PASS.
 """
 import argparse
+import base64
+import hashlib
 import json
 import re
 import shutil
@@ -42,37 +65,54 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Envelope keys that are volatile across two runs (subset of the frozen
-# specs/parity/normalization.md _VOLATILE_KEYS, minus `seq`, which is semantic
-# for the SSE resume anchor and must stay comparable).
-# Identity keys keep a per-side first-occurrence mapping so equal references stay
-# equal. Counter / clock / derived keys have session-dependent absolute values
-# (they must not be index-mapped, or a legitimately different revision count
-# would read as a difference); they collapse to one placeholder instead.
-COLLAPSE_KEYS = {
+CHANNELS = ('http', 'handshake', 'ws', 'sse', 'close')
+# HTTP-style channels match records by case name; the rest are ordered sequences.
+HTTP_STYLE = ('http', 'handshake')
+
+# Truly wall-clock / process values. Collapsed to a placeholder, never indexed.
+CLOCK_KEYS = {
     'timestamp', 'startedAt', 'completedAt', 'createdAt', 'updatedAt',
-    'durationMs', 'mtimeMs', 'revision', 'generation', 'connectionGeneration',
-    'used', 'displayUsed', 'ratio', 'processId', 'pid', 'operationId',
-    'idempotencyKey', 'expiresAt', 'token',
+    'durationMs', 'mtimeMs', 'lastActivity', 'expiresAt',
 }
-VOLATILE_KEYS = {
-    'timestamp', 'startedAt', 'completedAt', 'createdAt', 'updatedAt',
-    'durationMs', 'mtimeMs', 'messageId', 'requestId', 'streamId', 'runId',
-    'operationId', 'idempotencyKey', 'connectionGeneration', 'moduleInstanceId',
-    'processId', 'pid', 'entryId', 'sessionId', 'generation', 'revision',
-    'completedRunId', 'turnId', 'blockId', 'toolCallId', 'used', 'displayUsed',
-    'ratio', 'expiresAt', 'token',
+PROCESS_KEYS = {'processId', 'pid'}
+# Session identity. UUIDs embedded in these values are mapped per side; the rest
+# of the string is compared as-is.
+IDENTITY_KEYS = {
+    'id', 'runId', 'sessionId', 'messageId', 'requestId', 'streamId', 'turnId',
+    'blockId', 'toolCallId', 'completedRunId', 'entryId', 'moduleInstanceId',
+    'instanceId', 'operationId', 'idempotencyKey',
 }
-# Headers a proxy is allowed to recompute, or that carry wall-clock / request
-# identity rather than application semantics. `x-pilotdeck-handler` is the
-# proxy's own marker and is always stripped before comparing.
+# Counters whose absolute value depends on how many runs preceded this side.
+# Compared as deltas from the first value seen for the same (case, path).
+RELATIVE_KEYS = {'revision', 'generation', 'connectionGeneration'}
+
+# Headers a proxy may legitimately recompute or that are hop-by-hop. Everything
+# else is an end-to-end header and must participate in the comparison.
 HEADER_EXCLUDE = {
     'date', 'content-length', 'connection', 'keep-alive', 'transfer-encoding',
-    'x-pilotdeck-handler', 'server', 'etag', 'last-modified', 'set-cookie',
-    'x-projects-revision', 'x-request-id', 'x-refreshed-token', 'x-staffdeck-runtime',
+    'x-pilotdeck-handler',
 }
+# Per-request wall-clock revision header; validated by form, not by equality.
+CLOCK_HEADER = 'x-projects-revision'
+
 UUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
                      r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+
+
+def valid_etag(value, body):
+    """True when `value` is the Express etag of `body` (weak sha1 of the bytes)."""
+    raw = body.encode('utf-8', 'replace')
+    digest = base64.b64encode(hashlib.sha1(raw).digest()).decode('ascii').rstrip('=')
+    return value in (f'"{len(raw):x}-{digest}"', f'W/"{len(raw):x}-{digest}"')
+
+
+def normalise_header(name, value, body, normalizer):
+    if name == 'etag':
+        return '<ETAG-VALID>' if valid_etag(str(value), body) else normalizer.text(str(value))
+    if name == CLOCK_HEADER:
+        text = str(value)
+        return '<REVISION>' if text.isdigit() and int(text) > 0 else normalizer.text(text)
+    return normalizer.text(str(value))
 
 
 class Normalizer:
@@ -82,6 +122,7 @@ class Normalizer:
 
     def __init__(self, paths=()):
         self.ids = {}
+        self.bases = {}
         self.paths = sorted([str(p) for p in paths if p], key=len, reverse=True)
 
     def ref(self, category, value):
@@ -93,22 +134,38 @@ class Normalizer:
     def text(self, value):
         for path in self.paths:
             value = value.replace(path, '<PATH>')
-        return UUID_RE.sub(lambda match: self.ref('uuid', match.group(0)), value)
+        return value
 
-    def value(self, value, key=None):
+    def identity(self, value):
+        """Identity value: keep non-UUID content, map embedded UUIDs per side."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return UUID_RE.sub(lambda match: self.ref('uuid', match.group(0)), self.text(value))
+        return self.value(value)
+
+    def relative(self, case, path, value):
+        key = (case, path)
+        base = self.bases.setdefault(key, value)
+        return value - base
+
+    def value(self, value, case=None, path=()):
         if isinstance(value, dict):
             out = {}
             for name in sorted(value):
                 item = value[name]
-                if name in COLLAPSE_KEYS:
+                if name in CLOCK_KEYS or name in PROCESS_KEYS:
                     out[name] = None if item is None else '<VOLATILE>'
-                elif name in VOLATILE_KEYS:
-                    out[name] = None if item is None else self.ref(name, item)
+                elif name in IDENTITY_KEYS:
+                    out[name] = self.identity(item)
+                elif name in RELATIVE_KEYS and isinstance(item, (int, float)) \
+                        and not isinstance(item, bool):
+                    out[name] = self.relative(case, path + (name,), item)
                 else:
-                    out[name] = self.value(item, name)
+                    out[name] = self.value(item, case, path + (name,))
             return out
         if isinstance(value, list):
-            return [self.value(item, key) for item in value]
+            return [self.value(item, case, path) for item in value]
         if isinstance(value, str):
             return self.text(value)
         return value
@@ -116,6 +173,8 @@ class Normalizer:
 
 def load_jsonl(path):
     records = []
+    if not Path(path).exists():
+        return records
     for line in Path(path).read_text().splitlines():
         if line.strip():
             records.append(json.loads(line))
@@ -138,21 +197,24 @@ def http_key(record):
 
 
 def normalise_http(record, normalizer):
+    body = record.get('body', '')
     headers = {k.lower(): v for k, v in record.get('headers', {}).items()
                if k.lower() not in HEADER_EXCLUDE}
-    body = record.get('body', '')
     parsed = parse_json(body)
     return {'case': record['case'], 'method': record.get('method'),
             'path': record.get('path'), 'status': record.get('status'),
-            'headers': {k: normalizer.text(str(v)) for k, v in sorted(headers.items())},
-            'body': normalizer.value(parsed) if parsed is not None else normalizer.text(body)}
+            'headers': {k: normalise_header(k, v, body, normalizer)
+                        for k, v in sorted(headers.items())},
+            'body': normalizer.value(parsed, record['case']) if parsed is not None
+            else normalizer.text(body)}
 
 
 def normalise_ws(record, normalizer):
     raw = record.get('raw')
+    case = record.get('case', 'ws')
     parsed = parse_json(raw) if isinstance(raw, str) else None
-    body = normalizer.value(parsed) if parsed is not None else normalizer.text(str(raw))
-    return {'case': record.get('case', 'ws'), 'opcode': record.get('opcode', 'text'),
+    body = normalizer.value(parsed, case) if parsed is not None else normalizer.text(str(raw))
+    return {'case': case, 'opcode': record.get('opcode', 'text'),
             'dir': record.get('dir', 'u2c'), 'body': body}
 
 
@@ -162,7 +224,19 @@ def normalise_sse(record, normalizer):
     return {'case': record['case'], 'index': record.get('index'),
             # the SSE `id:` line is the resume anchor: semantic, never volatile.
             'sseId': record.get('sseId'), 'event': record.get('event'),
-            'data': normalizer.value(parsed) if parsed is not None else normalizer.text(str(data))}
+            'data': normalizer.value(parsed, record['case']) if parsed is not None
+            else normalizer.text(str(data))}
+
+
+def normalise_close(record, normalizer):
+    """Both directions of a WebSocket close: what the client sent and the
+    code/reason the peer replied with."""
+    return {'case': record.get('case', 'ws-close'),
+            'sent': [record.get('sentCode'),
+                     normalizer.text(str(record.get('sentReason', '')))],
+            'observed': [record.get('observedCode'),
+                         normalizer.text(str(record.get('observedReason', '')))],
+            'clean': record.get('clean')}
 
 
 # --------------------------------------------------------------- structural diff
@@ -228,58 +302,77 @@ def diff_sequences(channel, left, right, location):
     return out
 
 
-def compare_sides(left_dir, right_dir, paths=()):
-    left_norm = {'http': [], 'ws': [], 'sse': []}
-    right_norm = {'http': [], 'ws': [], 'sse': []}
-    for side, directory in (('left', left_dir), ('right', right_dir)):
-        normalizer = Normalizer(paths)
-        for channel, loader in (('http', normalise_http), ('ws', normalise_ws), ('sse', normalise_sse)):
-            target = left_norm if side == 'left' else right_norm
-            for record in load_jsonl(Path(directory) / f'{channel}.jsonl'):
-                target[channel].append(loader(record, normalizer))
-        # keep id order deterministic across sides by re-reading is unnecessary;
-        # normalisation above is already order-driven.
-
+def diff_http_style(channel, left_records, right_records):
+    """Match HTTP-style records by case name so a missing case is named."""
     diffs = []
-    # HTTP: match by case name so a missing/extra case is named explicitly.
-    left_http = {}
-    for item in left_norm['http']:
-        left_http.setdefault(item['case'], []).append(item)
-    right_http = {}
-    for item in right_norm['http']:
-        right_http.setdefault(item['case'], []).append(item)
-    for case in sorted(set(left_http) | set(right_http)):
-        if case not in left_http:
-            diffs.append({'location': f'http[{case}]', 'left': None, 'right': 'present',
+    left_by_case = {}
+    for item in left_records:
+        left_by_case.setdefault(item['case'], []).append(item)
+    right_by_case = {}
+    for item in right_records:
+        right_by_case.setdefault(item['case'], []).append(item)
+    for case in sorted(set(left_by_case) | set(right_by_case)):
+        if case not in left_by_case:
+            diffs.append({'location': f'{channel}[{case}]', 'left': None, 'right': 'present',
                           'message': 'case missing on left'})
             continue
-        if case not in right_http:
-            diffs.append({'location': f'http[{case}]', 'left': 'present', 'right': None,
+        if case not in right_by_case:
+            diffs.append({'location': f'{channel}[{case}]', 'left': 'present', 'right': None,
                           'message': 'case missing on right'})
             continue
-        for index in range(max(len(left_http[case]), len(right_http[case]))):
-            entry_left = left_http[case][index] if index < len(left_http[case]) else None
-            entry_right = right_http[case][index] if index < len(right_http[case]) else None
+        for index in range(max(len(left_by_case[case]), len(right_by_case[case]))):
+            entry_left = left_by_case[case][index] if index < len(left_by_case[case]) else None
+            entry_right = right_by_case[case][index] if index < len(right_by_case[case]) else None
             if entry_left is None or entry_right is None:
-                diffs.append({'location': f'http[{case}]', 'left': entry_left, 'right': entry_right,
-                              'message': 'record count differs'})
+                diffs.append({'location': f'{channel}[{case}]', 'left': entry_left,
+                              'right': entry_right, 'message': 'record count differs'})
                 continue
             if entry_left['status'] != entry_right['status']:
-                diffs.append({'location': f'http[{case}] status', 'left': entry_left['status'],
+                diffs.append({'location': f'{channel}[{case}] status', 'left': entry_left['status'],
                               'right': entry_right['status'], 'message': 'status differs'})
             for header in sorted(set(entry_left['headers']) | set(entry_right['headers'])):
                 if entry_left['headers'].get(header) != entry_right['headers'].get(header):
-                    diffs.append({'location': f'http[{case}] header.{header}',
+                    diffs.append({'location': f'{channel}[{case}] header.{header}',
                                   'left': entry_left['headers'].get(header),
                                   'right': entry_right['headers'].get(header),
                                   'message': 'header differs'})
-            diff_value(f'http[{case}] body', entry_left['body'], entry_right['body'], diffs)
+            diff_value(f'{channel}[{case}] body', entry_left['body'], entry_right['body'], diffs)
+    return diffs
+
+
+def compare_sides(left_dir, right_dir, paths=()):
+    left_norm = {channel: [] for channel in CHANNELS}
+    right_norm = {channel: [] for channel in CHANNELS}
+    loaders = {'http': normalise_http, 'handshake': normalise_http,
+               'ws': normalise_ws, 'sse': normalise_sse, 'close': normalise_close}
+    for side, directory in (('left', left_dir), ('right', right_dir)):
+        normalizer = Normalizer(paths)
+        for channel in CHANNELS:
+            target = left_norm if side == 'left' else right_norm
+            for record in load_jsonl(Path(directory) / f'{channel}.jsonl'):
+                target[channel].append(loaders[channel](record, normalizer))
+
+    diffs = []
+    for channel in HTTP_STYLE:
+        diffs.extend(diff_http_style(channel, left_norm[channel], right_norm[channel]))
     diffs.extend(diff_sequences('ws', left_norm['ws'], right_norm['ws'], 'ws'))
     diffs.extend(diff_sequences('sse', left_norm['sse'], right_norm['sse'], 'sse'))
+    diffs.extend(diff_sequences('close', left_norm['close'], right_norm['close'], 'close'))
     report = {'verdict': 'PASS' if not diffs else 'FAIL',
               'left': str(left_dir), 'right': str(right_dir),
               'counts': {'left': {k: len(v) for k, v in left_norm.items()},
                          'right': {k: len(v) for k, v in right_norm.items()}},
+              # Self-documenting coverage: exactly what was normalised and what
+              # was required to match literally.
+              'normalisation': {
+                  'headerExclude': sorted(HEADER_EXCLUDE),
+                  'etag': 'validated against the response body (weak sha1)',
+                  'clockHeader': CLOCK_HEADER + ' (positive integer -> <REVISION>)',
+                  'collapseKeys': sorted(CLOCK_KEYS | PROCESS_KEYS),
+                  'identityKeys': sorted(IDENTITY_KEYS),
+                  'relativeKeys': sorted(RELATIVE_KEYS),
+                  'literal': 'every other key and end-to-end header',
+              },
               'differences': diffs}
     return report
 
@@ -295,6 +388,7 @@ def _copy_side(source):
 
 def _mut_http_body(records):
     """Change one non-volatile scalar field (or add one) in a JSON HTTP body."""
+    skip = CLOCK_KEYS | PROCESS_KEYS | IDENTITY_KEYS | RELATIVE_KEYS
     for record in records:
         parsed = parse_json(record.get('body', ''))
         if not isinstance(parsed, dict) or not parsed:
@@ -302,9 +396,8 @@ def _mut_http_body(records):
         candidate = None
         for key in sorted(parsed):
             # Never mutate a volatile key: the normaliser would map both the
-            # original and injected value to a first-seen placeholder and hide
-            # the change.
-            if key in VOLATILE_KEYS or UUID_RE.search(str(key)):
+            # original and injected value to the same placeholder and hide it.
+            if key in skip or UUID_RE.search(str(key)):
                 continue
             if isinstance(parsed[key], (str, int, float, bool)):
                 candidate = key
@@ -324,6 +417,49 @@ def _mut_http_status(records):
     record = records[0]
     record['status'] = record['status'] + 1
     return record['case'], f'http[{record["case"]}] status'
+
+
+def _pick_compared_header(record, preferred=()):
+    headers = record.get('headers', {})
+    for name in preferred:
+        if name in headers and name not in HEADER_EXCLUDE:
+            return name
+    for name in sorted(headers):
+        if name not in HEADER_EXCLUDE:
+            return name
+    raise AssertionError('no comparable HTTP header available to mutate')
+
+
+def _mut_http_header_change(records):
+    for record in records:
+        name = _pick_compared_header(record, preferred=('content-type',))
+        record['headers'][name] = f'{record["headers"][name]}-INJECTED'
+        return record['case'], f'http[{record["case"]}] header.{name}'
+    raise AssertionError('no HTTP record available to mutate')
+
+
+def _mut_http_header_drop(records):
+    for record in records:
+        name = _pick_compared_header(record, preferred=('etag',))
+        del record['headers'][name]
+        return record['case'], f'http[{record["case"]}] header.{name}'
+    raise AssertionError('no HTTP record available to mutate')
+
+
+def _mut_http_add_semantic_header(records):
+    """Inject a `Set-Cookie` on one side: proves it is compared, not stripped."""
+    for record in records:
+        record['headers']['set-cookie'] = 'exp008-control=1; Path=/'
+        return record['case'], f'http[{record["case"]}] header.set-cookie'
+    raise AssertionError('no HTTP record available to mutate')
+
+
+def _mut_http_add_refresh_header(records):
+    """Inject an `X-Refreshed-Token` on one side: proves it is compared."""
+    for record in records:
+        record['headers']['x-refreshed-token'] = 'exp008-control-token'
+        return record['case'], f'http[{record["case"]}] header.x-refreshed-token'
+    raise AssertionError('no HTTP record available to mutate')
 
 
 def _mut_ws_drop_frame(records):
@@ -349,6 +485,10 @@ def _mut_sse_event(records):
 MUTATIONS = (
     ('inject:http-body-field', 'http', _mut_http_body),
     ('inject:http-status-code', 'http', _mut_http_status),
+    ('inject:http-header-change', 'http', _mut_http_header_change),
+    ('inject:http-header-drop', 'http', _mut_http_header_drop),
+    ('inject:http-set-cookie', 'http', _mut_http_add_semantic_header),
+    ('inject:http-refreshed-token', 'http', _mut_http_add_refresh_header),
     ('inject:delete-ws-frame', 'ws', _mut_ws_drop_frame),
     ('inject:change-sse-event', 'sse', _mut_sse_event),
 )

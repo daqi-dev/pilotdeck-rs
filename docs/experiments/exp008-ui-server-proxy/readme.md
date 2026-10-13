@@ -2,18 +2,18 @@
 
 2026-10-14，GitHub #25 / 计划 003 Issue B1，工作分支 `feat/b1-ui-server-proxy`。基线为只读的 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck`（commit `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`）。
 
-**结论：S1 最小 Rust 反代（HTTP / SSE / NDJSON / 整条 WS）与 S2 四进程编排成立；场景 1–4、6、8、9、10 通过。** 真 Chrome 经 Vite → Rust → TS 渲染出原版 PilotDeck 安装页并完成 register/login；只读 API、一轮 mock 模型对话、SSE/NDJSON 增量透传、直连/反代归一化帧序列、双注册/遮蔽探针均与直连一致；运行时枚举得 **263** 条唯一路由，与静态清单 264 条的差正好是未挂载的 `routes/update.js:112`。**场景 5（PTY）为本机沙箱阻塞，需在沙箱外跑**（见「未做」的哨兵命令）。**r1 补完（2026-10-14）**：`scripts/exp008/compare.py` 直连/反代录放比对（HTTP 7 / WS 11 / SSE 17，differences=[]）＋ 7 条阳性/等价对照全过——改 HTTP body 字段、改状态码、删 WS 帧、改 SSE 事件**每一种都判 FAIL 并指出是哪一处**；场景 7 的续传头/查询参数在反代层透传成立，真实 modules host 端到端续传因无 host fixture 未做（原因见下）。r1 编排 `run.py --only sse-resume,compare,controls` **退出码 0**。
+**结论：S1 最小 Rust 反代（HTTP / SSE / NDJSON / 整条 WS）与 S2 四进程编排成立；场景 1–4、6、8、9、10 通过。** 真 Chrome 经 Vite → Rust → TS 渲染出原版 PilotDeck 安装页并完成 register/login；只读 API、一轮 mock 模型对话、SSE/NDJSON 增量透传、直连/反代归一化帧序列、双注册/遮蔽探针均与直连一致；运行时枚举得 **263** 条唯一路由，与静态清单 264 条的差正好是未挂载的 `routes/update.js:112`。**场景 5（PTY）为本机沙箱阻塞，需在沙箱外跑**（见「未做」的哨兵命令）。**r1 补完（2026-10-14）**：`scripts/exp008/compare.py` 直连/反代录放比对（HTTP 7 / WS 11 / SSE 17，differences=[]）＋ 7 条阳性/等价对照全过——改 HTTP body 字段、改状态码、删 WS 帧、改 SSE 事件**每一种都判 FAIL 并指出是哪一处**；场景 7 的续传头/查询参数在反代层透传成立，真实 modules host 端到端续传因无 host fixture 未做（原因见下）。r1 编排 `run.py --only sse-resume,compare,controls` **退出码 0**。**r2 补完（2026-10-14）**：按 codex/GLM 两家评审逐条修——归一化按字段路径限定、头只剥可重算/逐跳并补改头/丢头/Set-Cookie/刷新令牌对照、反代转发上游 WS 端到端握手头（含 `Authorization`）、SSE 多行 data、`13003` 入端口审计、按进程组存活清理；`compare` HTTP 9 / 握手 1 / WS 11 / SSE 17 / close 1、`differences=[]`，`controls` 11/11，见下「r2 补完」。
 
 ## 编号与端口
 
 - 实验编号 **exp008**（计划 003 里原先写的 `exp006-ui-server-proxy` 已改成 `exp008-ui-server-proxy`；`006_phase-b-ui-server/` 是调研目录名，不改）。之前 `docs/research/006_phase-b-ui-server/route-inventory.md` 里指向 `exp006` 的对账产物路径也一并改成 `exp008`。
-- 端口只用本条线段：**Rust 反代 `13001`、TS ui/server `13002`、TS gateway `28890`、Vite `15180`**。全程未绑定 3001 / 18789（用户本机 PilotDeck 在跑），未触碰真实 `~/.pilotdeck`。
+- 端口只用本条线段：**Rust 反代 `13001`、TS ui/server `13002`、UI 路由枚举 `13003`、TS gateway `28890`、Vite `15180`**。全程未绑定 3001 / 18789（用户本机 PilotDeck 在跑），未触碰真实 `~/.pilotdeck`。`13003` 是路由枚举自起的 ui/server 监听，同上表的「仅四端口」旧说法已按 r2 更正。
 
 ## S0：隔离、回环与进程清理
 
 - 运行产物在 [\_tmp/20261014-exp008/](../../../_tmp/20261014-exp008/)：`home/`（`PILOT_HOME`，四进程统一）、`home/server-token`（0600）、`home/pilotdeck.yaml`、`home/auth.db`、`project/`（夹具）、`tmp/`（`TMPDIR`）、`workspaces/`、`chrome-profile/`（Playwright `userDataDir`，本 worktree 的 `_tmp/` 下）。
 - 四进程全部只绑 `127.0.0.1`：[listeners.json](../../../_tmp/20261014-exp008/listeners.json) 用 `lsof -a -p <自有PID> -iTCP -sTCP:LISTEN` 断言每个监听地址恰为 `127.0.0.1:<port>`，无 `0.0.0.0`/`*`。「私有回环端口」由绑定落实，不是路径 + token 的推论。
-- 进程由 Python `Popen(start_new_session=True)` 持有自有进程组；退出对自有组发 SIGTERM→SIGKILL，**从不按端口查找或杀进程**。最终 [audit.json](../../../_tmp/20261014-exp008/audit.json)：全部自有进程停止、自有组全部消失、`cleanupErrors: []`、四端口可重新绑定、监听全回环。
+- 进程由 Python `Popen(start_new_session=True)` 持有自有进程组；退出对自有组发 SIGTERM→SIGKILL，**从不按端口查找或杀进程**。`stop()` 按**自有进程组是否存活**清理，不再因组长已退出就跳过同组子进程（r2）。最终 [audit.json](../../../_tmp/20261014-exp008/audit.json)：全部自有进程停止、自有组全部消失、`cleanupErrors: []`、五端口（含 `13003`）可重新绑定、监听全回环。
 - gateway 与 ui/server 共享同一 `PILOT_HOME` 与同一 `server-token`（gateway `PILOTDECK_GATEWAY_TOKEN` / ui `PILOTDECK_GATEWAY_TOKEN_PATH` 都指向 `home/server-token`）；`PILOTDECK_CONFIG_PATH` 指向隔离 `pilotdeck.yaml`；`PILOTDECK_DISABLE_LOCAL_AUTH=0` 打开本地鉴权。未启动 supervisor，用基线 standalone unmanaged 模式；`PILOTDECK_SKIP_BROWSER_OPEN=1`。
 
 ## S1：Rust 反代
@@ -50,7 +50,7 @@
 | 5 | `/shell` PTY | **需沙箱外跑** | [pty.json](../../../_tmp/20261014-exp008/pty.json)：本机沙箱 node-pty `posix_spawnp failed`（直连与反代同样），哨兵/退出/重连**未验**；`/shell` 的 WS 双向反代已实测（`init` 到 TS、错误 `output` 帧经 Rust 回浏览器）。沙箱外命令见「复现」 |
 | 6 | SSE / NDJSON 增量 | **PASS** | [sse.json](../../../_tmp/20261014-exp008/sse.json)：注入的 `/exp008-stream/{sse,ndjson}` 经 Rust，status 200、`text/event-stream` / `application/x-ndjson`、`X-Accel-Buffering: no` 保留，首字节 0.7–0.9ms、终结事件 ~602ms（span 601.8/601.9ms），两事件不丢不并，直连/反代 body 相同 |
 | 7 | SSE 续传 `Last-Event-ID`/`afterSeq` | **反代层 PASS；真实路由待 B2** | [sse-resume.json](sse-resume.json)：注入路由四种续传输入直连==反代、从指定 id/seq 之后续传不重放不丢；真实 `GET /api/modules/staffdeck-sdk/events` 两侧同为 501（无 StaffDeck modules host），端到端续传待 B2。 |
-| 8 | 直连/反代录放比对 + 阳性对照 | **PASS** | [comparison.json](comparison.json)（HTTP 7 / WS 11 / SSE 17，differences=[]）＋ [controls.json](controls.json)（7 条全过：改 body 字段/状态码/删 WS 帧/改 SSE 事件均 FAIL 且指位置，同侧自比 PASS）；旧 [equivalence.json](../../../_tmp/20261014-exp008/equivalence.json) 仍为独立 session 的基线证 |
+| 8 | 直连/反代录放比对 + 阳性对照 | **PASS** | [comparison.json](comparison.json)（HTTP 9 / WS 11 / SSE 17 / WS 握手 1 / WS close 1，differences=[]）＋ [controls.json](controls.json)（11 条全过：改 body 字段/状态码/**改头/丢头/注入 Set-Cookie/注入 X-Refreshed-Token**/删 WS 帧/改 SSE 事件均 FAIL 且指位置，同侧自比 PASS）；旧 [equivalence.json](../../../_tmp/20261014-exp008/equivalence.json) 仍为独立 session 的基线证 |
 | 9 | 运行时枚举与静态对账 | **PASS** | [router-enumeration.json](router-enumeration.json) 263 条唯一路由；[route-reconciliation.json](route-reconciliation.json)：`onlyStatic=2`（静态把 `/api/agent` 标 `SSE`，真实注册是 `POST`）、`onlyRuntime=0`；264−263=1 即未挂载的 `routes/update.js:112`（与 `update.js:108` 同路径，去重） |
 | 10 | 路由穿透/遮蔽探针 | **PASS** | [shadow.json](../../../_tmp/20261014-exp008/shadow.json)：`/api/projects/files`（须先于 `/api/projects`）、`/api/sessions/model`（须先于 `/api/sessions`）、`/api/mcp/config/read`（被 `/api/mcp/config/:scope` 遮蔽）三条直连与经 Rust 的 status/body 一致且都带 `ts` |
 
@@ -62,12 +62,13 @@
 
 ### 比较器 `scripts/exp008/compare.py`
 
-- **录制**（`run.py` 的 `compare` 场景）：同一组请求在两侧各录一遍——**直连** TS `ui/server` `13002`，**经反代** Rust `13001`；两侧共用同一 `PILOT_HOME` 与同一 `out/project`，满足 `specs/parity/normalization.md` 的「两侧同一路径」。落 `out/compare/<side>/{http,ws,sse}.jsonl`：HTTP `{case,method,path,status,headers,body}`、WS 按连接全序帧 `{case,dir,opcode,raw}`、SSE 完整事件序列 `{case,index,sseId,event,data}`。
-- **归一化**：身份类易变键（`runId`/`sessionId`/`messageId`/`requestId` 及字符串内嵌 UUID）按**每侧首次出现顺序**映射成 `<key:N>`，引用关系保留；时钟与计数器类（`timestamp`/`revision`/`generation`/`used`/`ratio`…）塌缩成 `<VOLATILE>`——绝对计数随会话变，若也做序号映射，合法的 revision 差会被误判（这正是第一次跑出来的 `activity.revision` 假红）；`X-PilotDeck-Handler` 与 `date`/`content-length`/`x-projects-revision` 等端到端噪声头剥离；`out/project` 绝对路径替换成 `<PATH>`。SSE 事件的 `sseId` 是**续传锚点，不归一化**。
-- **判决**：结构化 diff，差异带精确位置 `http[<case>] status|header.<name>|body.<path>` / `ws[<case>] #<index>` / `sse[<case>] #<index>`；PASS 退出 0，FAIL 退出 1。本轮直连 vs 反代：**HTTP 7 / WS 11 / SSE 17，differences=[]**。
-- 只录**确定性只读** HTTP（`/health`、`/api/auth/status`、`/api/auth/user`、`/api/config`、`/api/models`、真实 modules 路由）。两侧共用一个 TS 进程，`/api/projects` 这类列表端点的 `lastActivity`/`x-projects-revision`/会话计数会随墙钟和另一侧刚建的会话漂移——在「两侧各自冷启动」装置出现前把它排除并记在这里，而不是用归一化掩盖；`lastActivity` 加进易变集合不是这个问题的解，故不靠它。
+- **录制**（`run.py` 的 `compare` 场景）：同一组请求在两侧各录一遍——**直连** TS `ui/server` `13002`，**经反代** Rust `13001`；两侧共用同一 `PILOT_HOME` 与同一 `out/project`，满足 `specs/parity/normalization.md` 的「两侧同一路径」。落 `out/compare/<side>/{http,handshake,ws,sse,close}.jsonl`：HTTP/握手 `{case,method,path,status,headers,body}`、WS 按连接全序帧 `{case,dir,opcode,raw}`、SSE 完整事件序列 `{case,index,sseId,event,data}`、WS close `{case,sentCode,sentReason,observedCode,observedReason}`（`handshake`/`close` 为 r2 新增）。
+- **归一化（r2 起按字段路径限定，不再全局抹）**：身份键（`runId`/`sessionId`/`id`/`blockId`/`timeline.turnId`…）里内嵌的 UUID 按**每侧首次出现顺序**映射成 `<uuid:N>`，前缀（`status_`/`text_`/`web:`）保留，引用关系保留；时钟键（`timestamp`/`startedAt`/`lastActivity`…）与进程键（`pid`…）塌缩 `<VOLATILE>`；会话相关计数器（`revision`/`generation`）按同 case 首个值取**相对差**（所以「漏加/多加一次 revision」仍会现形）；**其余一律逐字比**——`used`/`displayUsed`/`ratio`/token 预算不再塌缩，任意业务字符串里的 UUID 不再被替换。`out/project` 绝对路径替换成 `<PATH>`。SSE 事件的 `sseId` 是**续传锚点，不归一化**。
+- **头（r2 起只剥可重算/逐跳）**：白名单仅 `date`/`content-length`/`connection`/`keep-alive`/`transfer-encoding`/`x-pilotdeck-handler`；`set-cookie`/`x-refreshed-token`/`etag` 及其余端到端头必须参与比对。`etag` 额外按 body 重算校验（`<ETAG-VALID>`），丢了或改坏都算差异；`x-projects-revision` 是**每次请求现取墙钟**（`projects.js:70-73`），按「正整数形式」归一为 `<REVISION>`，丢失或非数字仍算差异。
+- **判决**：结构化 diff，差异带精确位置 `http[<case>] status|header.<name>|body.<path>` / `handshake[<case>] …` / `ws[<case>] #<index>` / `sse[<case>] #<index>` / `close[<case>] #<index>`；PASS 退出 0，FAIL 退出 1。r2 直连 vs 反代：**HTTP 9（含 `/api/projects` 与 `/api/projects/exp008-fixture/sessions` 同快照）/ WS 11 / SSE 17 / 握手 1 / close 1，differences=[]**。
+- 只读 HTTP 覆盖 `/health`、`/api/auth/status`、`/api/auth/user`、`/api/config`、`/api/models`、`/api/projects`、项目会话列表、真实 modules 路由。项目/会话为**同快照连读**（`readonly` 场景另断 `sameStatus/sameBody/sameHeaders` 全等，见下）；唯一随请求变的是墙钟 `X-Projects-Revision`，按上一条的形式归一处理，而不是把整个端点排除。
 
-### 阳性对照（[controls.json](controls.json)，7 条全过）
+### 阳性对照（[controls.json](controls.json)，11 条全过）
 
 在比对管线里对录制副本注入已知差异，每条都必须 FAIL 且指出位置；同侧自比必须 PASS：
 
@@ -78,6 +79,10 @@
 | `equivalence:right-vs-itself` | PASS | PASS | — |
 | `inject:http-body-field` | FAIL | FAIL | `http[health] body.installMode` |
 | `inject:http-status-code` | FAIL | FAIL | `http[health] status` |
+| `inject:http-header-change`（r2） | FAIL | FAIL | `http[health] header.content-type` |
+| `inject:http-header-drop`（r2） | FAIL | FAIL | `http[health] header.etag` |
+| `inject:http-set-cookie`（r2） | FAIL | FAIL | `http[health] header.set-cookie` |
+| `inject:http-refreshed-token`（r2） | FAIL | FAIL | `http[health] header.x-refreshed-token` |
 | `inject:delete-ws-frame` | FAIL | FAIL | `ws[chat-raw] #3` |
 | `inject:change-sse-event` | FAIL | FAIL | `sse[sse-incremental] #0` |
 
@@ -96,6 +101,29 @@
 | `?operation=preview_job_events&afterSeq=1` | `afterSeq` | 2,3,4,5 |
 
 即「续传头与查询参数由 Rust 原样转发、事件序列不丢不并不乱序」在 B1 成立；「真实 modules host 上的续传语义」待 B2 有 host fixture 后补。
+
+## r2 补完（2026-10-14）：按两家评审逐条修
+
+两家评审无 P0（codex：6×P2 + 1×P3 及 driver 附注；GLM：1×P1 + 2×P2 + 4×P3）。r2 逐条处理，**PTY 按嘱不重跑**。证据目录：`_tmp/20261014-exp008-r2/`（`readonly,compare,controls`，[audit.json](../../../_tmp/20261014-exp008-r2/audit.json)）与 `_tmp/20261014-exp008-r2-extra/`（`equivalence,routes,sse-resume`）；两次均**退出码 0**、五监听全回环、五端口全 `released`、`cleanupErrors:[]`。小体积证据已回填本目录。
+
+| 评审项 | 落点 | r2 处理 |
+|---|---|---|
+| **P1** 头白名单把 `set-cookie`/`x-refreshed-token`/`etag`/`x-request-id` 一并剥掉 | `compare.py` | 白名单只留 `date`/`content-length`/`connection`/`keep-alive`/`transfer-encoding`/`x-pilotdeck-handler`；其余端到端头全部参与比对。`etag` 按 body 重算 sha1 校验（`<ETAG-VALID>`），丢失/改坏都判差异；补改头、丢头、注入 Set-Cookie、注入 X-Refreshed-Token 四条阳性对照 |
+| **P2** 全局塌缩 `revision`/用量/`token`、任意字符串 UUID 被替换 | `compare.py` | 归一化按字段路径限定：身份键内嵌 UUID 逐侧首现映射（保留前缀）；时钟/进程键塌缩；`revision`/`generation` 取同 case **相对差**；`used`/`displayUsed`/`ratio`/token 预算**逐字比**；非身份字符串里的 UUID 不替换 |
+| **P2** 上游 WS 只用 URL 建连，丢 `Authorization` | `proxy/src/main.rs` | `ClientRequestBuilder` 转发下游端到端握手头（`Authorization`/`Origin`/`Cookie`/子协议…），只跳过逐跳与 WS 自身握手头；新增 `handshake.jsonl` 的 `ws-header-auth` 用例：固定 `Sec-WebSocket-Key`，两侧都须 101（丢头会变 401/502） |
+| **P2** 多行 SSE `data` 被覆盖，前行被改/丢仍 PASS | `run.py` | `parse_sse_events` 按规范把多条 `data:` 用 `\n` 拼接，并先把 CRLF/CR 归一为 LF |
+| **P2** 组长已退出就跳过清理，同组子进程残留 | `run.py` | `stop()` 改按**自有进程组是否存活**发 SIGTERM→SIGKILL；组仍在则记 `cleanupErrors`，不再因组长先退就跳过 |
+| **P2** 排除 `/api/projects`、算了头差却不断言 | `run.py` | `HTTP_CASES` 恢复 `/api/projects` 与项目会话同快照连读；`readonly` 用比较器同款头规则断言 `sameStatus`/`sameBody`/`sameHeaders`，并记录两侧 revision |
+| **P2** 枚举进程实际监听 `13003`，不在端口审计/回环断言 | `run.py` | `PORTS` 增 `enum:13003`（入 `ALL_PORTS` 与 released 审计），枚举起后 `lsof` 断言 `127.0.0.1:13003` 且回环 |
+| **P3** 序号在锁外自增、同步写阻塞运行线程 | `proxy/src/main.rs` | 单一日志写线程持有文件并在出队时统一编号，`tee` 只入队（先入先写，磁盘顺序与 `seq` 一致） |
+| **P3** 空闲链路的自动 Pong 只在关闭分支 flush | `proxy/src/main.rs` | 每轮 relay 后 flush 上下游两侧 |
+| **P3** `equivalence` 自带一份 scrub，双轨归一 | `run.py` | 删掉本地 scrub，改调 `compare.compare_sides`；会话 id 改 UUID 供身份映射 |
+| **P3** `BASELINE` 绝对路径硬编码、`RUST` 无自建步骤 | `run.py` | `EXP008_BASELINE_ROOT` 可覆盖默认基线根；`ensure_proxy_built()` 在二进制缺失时用 `CARGO_HOME`/`CARGO_TARGET_DIR` 自动 `cargo build --offline` |
+| codex 附注：driver 在 close 前落盘，无双向关闭码/原因对照 | `driver.mjs`/`compare.py` | 新增 `ws-close` 驱动模式与 `close.jsonl` 通道：记录发出的 code/reason 与对端回执，两侧逐字比（实测均 `4001 / exp008-close`，`clean:true`） |
+
+**一处有意取舍**：`etag` 与 `x-projects-revision` 不是逐字相等，而是按「可重算/每次请求现取墙钟」校验——前者是 body 的 sha1（body 含时钟字段时两侧合法不同），后者是 `Date.now()`。判据是「存在且自洽」：丢了、改坏、非数字都判差异。其余头（含 `set-cookie`/`x-refreshed-token`）逐字比。
+
+**r2 结果**：`compare` HTTP **9** / 握手 **1** / WS **11** / SSE **17** / close **1**，`differences=[]`；报告的 `normalisation` 块自述覆盖率（剥哪些头、塌缩/身份/相对键各是什么、其余逐字比）；`controls` **11/11**（改头、丢头、注入 Set-Cookie、注入 X-Refreshed-Token 等）；`readonly` 5 条 `sameStatus/sameBody/sameHeaders` 全真；`equivalence` 复用比较器后 10 帧 PASS；`routes` 仍 263（`static=264`，差 1 未挂载）且 `13003` 回环断言与 released 通过；`sse-resume` 四条续传用例 PASS、真实路由仍两侧同 501。`cargo fmt --check`、`clippy -D warnings` 全过。
 
 ## S3：运行时路由枚举（分母对账）
 
@@ -158,6 +186,13 @@ python3 scripts/exp008/compare.py _tmp/20261014-exp008-r1/compare/direct \
     --path "$PWD/_tmp/20261014-exp008-r1/project"
 ```
 
+r2 的评审修复（`compare`/`controls` 为必跑；`readonly` 验头断言与同快照项目用例，`routes` 验 `13003` 回环，`equivalence` 验比较器复用）：
+
+```sh
+python3 scripts/exp008/run.py --out _tmp/20261014-exp008-r2 --only readonly,compare,controls
+python3 scripts/exp008/run.py --out _tmp/20261014-exp008-r2-extra --only equivalence,routes,sse-resume
+```
+
 PTY（**只在能起 node-pty 的沙箱外环境跑**，不要在本沙箱重试）：
 
 ```sh
@@ -171,6 +206,7 @@ python3 scripts/exp008/run.py --out _tmp/20261014-exp008-pty --only pty
 - 「Rust 前置逐路由接管、未接管整条反代、浏览器 `ui/src` 一行不改」在探针层面站住了：HTTP / SSE / NDJSON / WS 都能字节透传，处理侧标记可用，分母 263 与静态对账吻合。
 - 三个需要在 B2 先解决的环境/装置问题：Express hook 不可靠（改 stack dump）、Vite 缓存需可写目录、PTY 需可起进程的环境。
 - r1 后：比较器能判差异并指位置（4 类注入必 FAIL、同侧自比 PASS），续传头/查询参数透传成立；仍未验的是 B2 的换序/丢事件/并事件/攒流对照与真实 modules host 上的续传语义。
+- r2 后：比较器归一化按字段路径限定（不再抹 revision/用量/token/任意 UUID），头只剥可重算/逐跳且补了改头/丢头对照；上游 WS 转发端到端握手头（头鉴权用例成立）；SSE 多行 data、`13003` 端口审计、按进程组清理均已补齐。
 
 ## 协调者补跑：场景 5 PTY（沙箱外，2026-10-14 04:45）
 
