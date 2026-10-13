@@ -76,7 +76,9 @@ fn main() -> ExitCode {
 
 fn accepts_stdio_arguments(arguments: &[String]) -> bool {
     arguments.is_empty()
-        || (arguments.len() == 1 && (arguments[0] == "--stdio" || !arguments[0].starts_with("--")))
+        || (arguments.len() == 1
+            && !arguments[0].is_empty()
+            && (arguments[0] == "--stdio" || !arguments[0].starts_with("--")))
 }
 
 #[cfg(test)]
@@ -96,6 +98,7 @@ mod tests {
             assert!(accepts_stdio_arguments(&arguments), "{arguments:?}");
         }
         for arguments in [
+            vec![""],
             vec!["--unknown"],
             vec!["--stdio", "sidecar.js"],
             vec!["sidecar.js", "another.js"],

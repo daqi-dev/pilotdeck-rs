@@ -14,7 +14,7 @@
 - `src/pilotdeck-cli/Cargo.toml`：移除占位 core 依赖。
 - `src/pilotdeck-cli/src/main.rs`：直接用 `env!("CARGO_PKG_VERSION")` 打印版本，保持现有输出。
 
-- `src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs`：增加参数判定辅助函数，额外接受恰好一个不以 `--` 开头的位置参数并忽略它，使 TS gateway 的 `args: [sidecarPath]` 能拉起 Rust。保留空参数、`--stdio`、`--version` 与非法参数退出码 2；增加参数矩阵回归测试和 usage 提示。
+- `src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs`：增加参数判定辅助函数，额外接受恰好一个非空且不以 `--` 开头的位置参数并忽略它，使 TS gateway 的 `args: [sidecarPath]` 能拉起 Rust。保留无参数、`--stdio`、`--version` 与非法参数退出码 2；增加参数矩阵回归测试、空串进程退出码测试和 usage 提示。
 
 - `src/pilotdeck-tokenizer/src/implementation.rs`：`include_str!` 的词表资源路径从 `../../../vendor/tiktoken-rs` 改为 `../../vendor/tiktoken-rs`；布局减少一层，嵌入的词表字节保持原样。
 - `src/Cargo.lock`：按合并后的 workspace 重新解析锁文件，移除 core、登记导入依赖，直接依赖版本仍照旧钉死。
