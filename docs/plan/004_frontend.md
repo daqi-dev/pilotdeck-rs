@@ -22,7 +22,7 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 |---|---|---|
 | 规模 | `ui/src` 841 文件、代码 136,940 行（css 15,504 行另计）；聊天面 ≈4.8 万行、设置 17,384、composition 25,697 | 调研 007 gap §一 |
 | 接口面 | HTTP 走 `utils/api.js:36-76`（40+ `/api` 前缀、动态拼接）；主 WS `/ws` 无类型 JSON（`WebSocketContext.tsx:41-46`）；终端 WS `/shell`（`shell/utils/socket.ts:4-13`） | gap §二 |
-| e2e | 15 spec 60 `test()` + 10 smoke，**循环展开后注册 72 例**：黑盒候选 37（B 9 例 env 门控真实部署 + D 28 例 mock LLM 编排）；A 类 34 例离线可跑但耦合旧 store；API 级 1；Electron smoke 3 | gap §三 |
+| e2e | 15 spec 61 `test()`（grep 行首 60 + `model-selection.spec.mjs:108` 同行 1 处）+ 10 smoke，**循环展开后注册 72 例**：黑盒候选 37（B 9 例 env 门控真实部署 + D 28 例 mock LLM 编排）；A 类 34 例离线可跑但耦合旧 store；API 级 1；Electron smoke 3 | gap §三 |
 | 重依赖 | xterm/CodeMirror/Univer/pdf.js/office 系在 Rust/Wasm 无成熟对应物；markdown 管线可 Rust 化（pulldown-cmark/syntect/katex crate） | gap §四 |
 | 旧迁移包 | P4 曾默认 Rust/Wasm UI + Wry/Tao，UI-00 探针哲学（真实 IME/焦点/PTY 先证明）；政策：第三方 JS 可留、第一方必须 Rust | `PilotDeck-Rust/docs/rust-migration-package/`（只读） |
 | 桌面端 | Electron 只 `loadURL` 到 `ui/server` 端口，对前端实现透明 | `apps/desktop/src/main.ts:622` |
