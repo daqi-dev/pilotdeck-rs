@@ -35,7 +35,7 @@
 | `main-content-v2/` | 18 | 9,921 | 各专属页：CronV2/SkillsV2/FilesV2/GitV2/TasksV2/DashboardV2 等 |
 | `app-shell/` | 15 | 4,342 | 壳与侧栏：`AppShellV2.tsx:79-84` 用 `useMatch` 解析 `/p/:name`、`/p/:name/c/:id`、`/session/:id`、`/cron`、`/settings/*` |
 | `onboarding/` | 26 | 3,927 | 首次引导 |
-| `main-content/` | 11 | 2,557 | **在用的聊天容器**：`app-shell/MainAreaV2.tsx:4` 引 `main-content/view/MainContent` |
+| `main-content/` | 11 | 2,557 | **在用的聊天容器**：`app-shell/MainAreaV2.tsx:9` 引 `main-content/view/MainContent` |
 | `shell/` | 15 | 1,873 | 终端页（xterm + `/shell` WS，见 §二） |
 | `project-creation-wizard/` | 17 | 1,796 | 建项目向导 |
 | `auth/` | 16 | 1,239 | 登录/鉴权 |
@@ -44,6 +44,8 @@
 **聊天面合计**（chat + chat-v2 + main-content + main-content-v2 的聊天部分）≈ 4.8 万行，是最大的一块；其中互有引用：`main-content-v2/RunDetail.tsx:13` 反过来引 `chat/view/subcomponents/Markdown`。
 
 **路由形态**：整个应用是**单通配路由**——`ui/src/App.tsx:50` `<Route path="*" element={<AppShellV2 />} />`（`:33-35` 注释明说 URL 变化不重挂壳）。URL 只在 `AppShellV2` 内部用 `useMatch` 分辨（`AppShellV2.tsx:79-84`）。「按路由渐进」因此可行但对象是**页面/Tab**，不是 React Router 的路由组件。
+
+**跨页导航是 SPA 客户端跳转，不是整页加载**：`AppShellV2.tsx:5` 引 `useNavigate`、`:73` 取实例，`:387`（`onShowSettings`）、`:257, :326`（项目切换）、`:358, :361`（通知跳转）等全部走 `navigate(...)`——URL 变了但**不触发整页加载**。且服务端对全部 HTML 路由是单一通配：`ui/server/index.js:3471` `app.get('*')` 一律回旧 `dist/index.html`（`:3480-3483` 存在性检查 + `sendFile`）。⇒ **「静态托管按路径前缀选 bundle」只在整页加载时生效**：不新增托管分流，旧 SPA 内点进已迁移页面时永远还是旧 bundle；反向从新壳跳未迁移页也一样。渐进共存必须补两件事：**双入口托管**（改 `app.get('*')` 加前缀分支，或前置反代分流）与**双向导航拦截**（旧壳 `navigate` 到已迁前缀时改硬跳 `window.location`，新壳跳未迁路径时硬跳回旧 bundle）。跨壳硬跳会丢 SPA 内存态（WS 连接、流式中途文本、composer 草稿、滚动位置），详见 `accepted-diffs.md`。
 
 ## 二、对后端的依赖面（浏览器侧）
 
@@ -78,23 +80,29 @@
 
 ## 三、e2e 装置盘点（对拍能不能用，取决于用例怎么驱动前端）
 
-任务简报说「46 个 Playwright 用例」；实测口径如下（2026-10-14，grep `^\s*test(` 逐文件数）：
+任务简报说「46 个 Playwright 用例」；实测口径如下（2026-10-14，grep `^\s*test(` 逐文件数 + 循环展开人工核对）：
 
-- **15 个 spec 文件、60 个 `test()`**：顶层 `ui/e2e/*.spec.mjs` 10 个文件 34 例；`ui/e2e/real/*.spec.mjs` 5 个文件 26 例。
+- **15 个 spec 文件、60 个 `test()` 调用**：顶层 `ui/e2e/*.spec.mjs` 10 个文件 34 例；`ui/e2e/real/*.spec.mjs` 5 个文件 26 例。
+- **循环展开后实际注册 72 例**：`model-selection.spec.mjs:108`（`for (const ready of [false, true]) test(...)` 同行注册 2 例）、`:193`（preset 循环 ×2）、`streaming-lifecycle.spec.mjs:94, 154`（各 ×2）、`streaming-search.spec.mjs:16, 41`（×3、×4）、`real/session.spec.mjs:35`（provider 循环 ×3）。**注意用例内层的 `for` 循环（如 `real/settings.spec.mjs:44, 51, 82`、`real/onboarding.spec.mjs:17`）不增例数。**引用计数一律以展开后的 72 为准。
 - **另有 10 个独立 smoke 脚本**（`*.smoke.mjs`，Playwright 库 API 直写、无 `test()`）：`appearance`、`desktop-chrome`、`desktop-layout-regression`、`dialog-appearance`、`file-picker`、`settings-material`、`settings-navigation-theme`、`settings-refinement`、`update-actions`、`update-download`。
 - 60 + 10 = 70 与「46」都对不上；简报的数应是某种子集口径。**以本表为准，引用时带文件名。**
 
-按「能否直接拿来给新前端当验收」分四类：
+按「新前端验收时这例怎么才能跑起来」分四类（展开后口径）：
 
-| 类 | 用例数 | 文件与证据 | 能否直接对拍 |
+| 类 | 注册数 | 文件与证据 | 怎么才能跑 |
 |---|---|---|---|
-| A. fixture 页耦合 | 24 | `streaming-lifecycle.spec.mjs`（7）、`streaming-scroll.spec.mjs`（5）、`streaming-search.spec.mjs`（3）、`model-selection.spec.mjs`（8）、`composition.spec.mjs`（1）。全部 `page.goto('/e2e/fixtures/*.html')` 或 `/composition.html`（`streaming-lifecycle.spec.mjs:18, 49`、`model-selection.spec.mjs:32`、`composition.spec.mjs:12`），fixture 页在 `ui/e2e/fixtures/*.jsx` 挂旧组件并把 store 挂到 window，用 `page.evaluate` 直接调（`streaming-lifecycle.spec.mjs:19-28`） | **不能**。断言的是旧 store API 与旧组件内部，除非 Rust 侧暴露同等测试钩子或改写成黑盒 |
-| B. 黑盒页面级（mock /api） | 9 | `formal-composition.spec.mjs`（4）、`formal-route-matrix.spec.mjs`（1）、`real-auth-composition.spec.mjs`（3）、`real-auth-native.spec.mjs`（1）。`page.goto('/settings/module/knowledge')` 等真路由（`real-auth-composition.spec.mjs:63, 72, 80`），`page.route` 伪造 `/api`，断言全用角色/文案（`real-auth-native.spec.mjs:20-38`） | **能**。任何前端只要同源同路由同文案即可跑 |
+| A. fixture 页耦合 | 34 | `streaming-lifecycle.spec.mjs`（7 例 + `:94, :154` 两处循环各 ×2 = 9）、`streaming-scroll.spec.mjs`（5）、`streaming-search.spec.mjs`（3 + `:16` ×3 + `:41` ×4 = 8）、`model-selection.spec.mjs`（8 + `:108` ×2 + `:193` ×2 = 11）、`composition.spec.mjs`（1，`:54` 循环在用例体内不增例）。全部 `page.goto('/e2e/fixtures/*.html')` 或 `/composition.html`（`streaming-lifecycle.spec.mjs:18, 49`、`model-selection.spec.mjs:32`、`composition.spec.mjs:12`），fixture 页在 `ui/e2e/fixtures/*.jsx` 挂旧组件并把 store 挂到 window，用 `page.evaluate` 直接调（`streaming-lifecycle.spec.mjs:19-28`） | **离线自跑**（vite dev 起 fixture 页、无真实后端：`streaming-lifecycle`/`model-selection` 用 `page.route` mock `/api`；`streaming-scroll`/`streaming-search`/`composition` 直驱 window store API 无网络）——但只对旧前端有效。断言的是旧 store API 与旧组件内部，新前端要跑必须先移植测试钩子或改写黑盒 |
+| B. 黑盒页面级（**env 门控的真实部署用例，非 mock**） | 9 | `formal-composition.spec.mjs`（4）、`formal-route-matrix.spec.mjs`（1）、`real-auth-composition.spec.mjs`（3）、`real-auth-native.spec.mjs`（1）。**没有一个 `page.route` mock**：四件全部 `test.skip(!process.env.*_URL)` 门控（`formal-composition.spec.mjs:6`、`formal-route-matrix.spec.mjs:5`、`real-auth-composition.spec.mjs:4, 7`、`real-auth-native.spec.mjs:4`），对着**真实部署**打真路由真 API；`real-auth-native.spec.mjs:7` 还会注册真实账号（`browser-evidence`）。另有页内二次 skip：`formal-composition.spec.mjs:8-9`（`FORMAL_REPLACEMENT` 换 profile）、`real-auth-composition.spec.mjs:53, 135, 151`（profile 三选一，单轮只执行 1/3） | **要真实部署 + env 矩阵**：跑全 9 例需起 formal/real-auth 部署并按 profile 矩阵（staffdeck/minimal/replacement）多轮设置 env。跑起来后对任何前端一视同仁（同源同路由同文案即可） |
 | C. API 级 | 1 | `history-fork.spec.mjs`（1）只用 `request` fixture 打 HTTP，不碰浏览器 | 与前端无关，属后端验收 |
-| D. 真端到端 | 26 | `ui/e2e/real/*.spec.mjs`；`real/launch.mjs:9-14` 起 ui/server + vite + gateway（高位端口 + 临时目录），`real/launch.mjs:22-23` 要求 mock LLM center 的 env | **能**（要 mock LLM 环境）。对任何被测前端一视同仁 |
-| E. smoke 脚本 | 10 | 其中 3 个起 Electron（`appearance.smoke.mjs:2, 15`、`desktop-chrome.smoke.mjs:3, 15`、`desktop-layout-regression`）；其余 chromium 直连 5187 的 fixture 页（`update-download.smoke.mjs:7, 13`） | 3 个只对桌面验收有效；7 个同 A 类 |
+| D. 真端到端 | 28 | `ui/e2e/real/*.spec.mjs` 26 个 `test()` + `real/session.spec.mjs:35` provider 循环 ×2 = 28；`real/launch.mjs:9-14` 起 ui/server + vite + gateway（高位端口 + 临时目录），`real/launch.mjs:17-19` 强制要求 mock LLM center 的 env（`PILOTDECK_E2E_LLM_CENTER_URL` / `PILOTDECK_E2E_API_KEY`，缺失即 throw），会话用例走真实 LLM 调用 | **要 mock LLM 环境 + 三进程编排**：`real/launch.mjs` 是现成编排但 vite 管线写死（`launch.mjs:13`），新前端要接入需 F2 runner 改造。跑起来后对任何被测前端一视同仁 |
+| E. smoke 脚本 | 10 | 其中 3 个起 Electron（`appearance.smoke.mjs:2, 15`、`desktop-chrome.smoke.mjs:3, 15`、`desktop-layout-regression`）；其余 chromium 直连 5187 的 fixture 页（`update-download.smoke.mjs:7, 13`） | 3 个只对桌面验收有效；7 个同 A 类（耦合旧 fixture 页） |
 
-**结论**：可直接复用的黑盒验收面 = B(9) + D(26) = **35 例**；A 类 24 例恰是行为最精细的流式滚动/生命周期/组合装配用例，机器判尺子在这些点上要**移植测试驱动**（新前端暴露同等 window 钩子）或**改写为黑盒**后才能对拍。多数用例确如简报所说用 `page.route` 伪造 `/api`（B、A、E 类）；WS 用 `page.routeWebSocket` 吞掉（`appearance.smoke.mjs:42`、`settings-material.smoke.mjs:45` 等）。
+**结论（修正版，取代早先「35 例今天就能跑」的误判）**：
+
+- 黑盒候选 = B(9) + D(28) = **37 例**，这是新前端验收分母的来源。但**按运行前提分层**：能离线自跑的黑盒 mock 用例是 **0**——B 类 9 例全要真实部署 + env 矩阵，D 类 28 例全要 mock LLM 环境 + `real/launch.mjs` 编排；「同一 mock `/api` 今天就能跑」只对 A 类成立，而 A 类耦合旧 store，新前端一个都跑不了。**新前端侧今天能直接跑的黑盒用例 = 0，尺子的可用性押在 Issue F2 的 runner（接入 launch 编排 + B 类部署矩阵脚本化）上。**
+- A 类 34 例恰是行为最精细的流式滚动/生命周期/组合装配用例，且是唯一离线可跑的一批——机器判尺子在最需要的地方（流式/滚动）最薄：F2 须先为流式与滚动补**黑盒**机器断言（不依赖旧 store 钩子），再开工 F5 聊天面。
+- **防意外 skip**：B/D 类大量 `test.skip(!env)` 与页内条件跳过，且存在弱断言——`real/session.spec.mjs:31` 控件缺失时条件点击静默通过。验收跑必须出「应执行数 vs 实际执行数」对账（72 − 显式 skip 逐条列理由），配 `--forbid-only`，对不上即红。
+- 截图：多数用例已带 `page.screenshot` 输出但无像素 diff 基线——**补基线机制、不补像素断言**（must-know ①：判语义，不判像素）。
 
 ## 四、第三方重依赖在 Rust/Wasm 生态的对应物
 
