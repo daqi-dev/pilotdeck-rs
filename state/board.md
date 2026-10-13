@@ -4,6 +4,12 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-14 · PR #12 / Issue #10：第 1 轮评审修改（HEAD `90c7202`，提交受阻）
+> **做了**：入口拒绝空位置参数，补真实进程退出码 2 回归测试；参数函数改名并说明路径占位契约；transport build.rs 注入 git HEAD，并跟踪 worktree HEAD、分支引用与 packed refs；CLI 继承 workspace rust-version/lints；intent 仅改布局事实句；changelog 更正段落去重；S7 精简候选仅登记到 `src/PROVENANCE.md`。
+> **验证**：指定 fmt / clippy -D warnings / test 全过，688 个测试通过；release 构建成功，`--version` 的 source 与完整 HEAD 一致；release 空串退出码 2、stdout 为空；无 git 来源回退通过；冻结规约哈希未变。逐条评审与原始输出见 `_tmp/RESULT-r1.md`。
+> **提交阻断**：虽然本轮声明 `.git` 可写，三次 Git 暂存（含显式 git-dir）仍被 sandbox 拒绝创建 `.git/worktrees/wt-issue10/index.lock`（Operation not permitted）；没有新提交、没有 push。8 份独立补丁与提交消息（末尾含指定 Co-Authored-By）及原地分步提交脚本见 `_tmp/r1-commit-stages/`，脚本可从当前最终工作树分步暂存提交，无须回滚工作文件；未执行。
+> **后续**：恢复实际 Git 元数据写权限后运行上述提交脚本，再重新 release 构建核对最终 HEAD；`scripts/parity/` 缺失按本轮用户指示不处理，由协调者合并 #13 后安排 rebase。
+
 > ## 2026-10-14 · Issue #10：搬入旧 Rust sidecar（分支 `feat/issue-10-import-rust`，待提交）
 > **做了**：从只读来源 `source-repository @ 0eba113` 原样取出 117 个文件，四个 crate 与 tiktoken vendor 到 `src/`；合并 workspace、排除 protocol probe、删除占位 core、保留 CLI 版本输出；sidecar 接受并忽略单个路径参数，补参数测试；`src/PROVENANCE.md` 登记全部源哈希及适配例外。
 > **验证**：Rust 1.99 release 构建 / fmt / clippy -D warnings 全过；测试 687 个全过（agent 486、transport 158、protocol 26、tokenizer 16、入口新增 1）；113 个源文件最终哈希未变，4 个例外逐项登记；无 lint 行为修改或 allow。冻结尺子未改。
