@@ -2,6 +2,14 @@
 
 > 每条只答三问：**变了什么 · 为什么变 · 对你意味着什么**。每里程碑一条，倒序追加；细节见 `state/board.md` 与 git log。
 
+## 2026-10-14 · Issue #10：意向书同步实际 crate 布局
+
+**变了什么**：意向书「作品区」同步当前 CLI 与四个 sidecar crate 的布局，移除已删除的占位 core 描述。
+
+**为什么变**：PR #12 评审发现方向文档中的布局事实仍停留在初始化阶段。
+
+**对你意味着什么**：当前布局以 `.42cog/intent.md` 的「作品区」为准。
+
 ## 2026-10-14 · Issue #10：旧 Rust sidecar 在 1.99 上过本地闸
 
 **变了什么**：四个 sidecar crate 与 tiktoken vendor 已搬入 `src/`，保留 vendor LICENSE 与全部来源哈希；workspace 合并、移除占位 core 和 probe；Rust 入口兼容 TS gateway 的单个路径参数。release、fmt、clippy 全过，687 个测试全过，无需 lint 行为适配。
