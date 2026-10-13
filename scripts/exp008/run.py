@@ -26,11 +26,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'scripts/exp008'
-BASELINE = Path('/Users/da/ws/pilotdeck-rs/resources/PilotDeck')
+BASELINE = Path(os.environ.get('EXP008_BASELINE_ROOT',
+                               '/Users/da/ws/pilotdeck-rs/resources/PilotDeck'))
 TOKEN = 'exp008-isolated-test-token'
 RUST = ROOT / '_build/exp008-target/debug/pdrs-exp008-proxy'
-PORTS = {'rust': 13001, 'ui': 13002, 'gateway': 28890, 'vite': 15180}
+PROXY_MANIFEST = ROOT / 'scripts/exp008/proxy/Cargo.toml'
+# `13003` is the route enumerator's own listener; it is owned by this run just
+# like the other four and must therefore take part in the loopback/released
+# audit.
+PORTS = {'rust': 13001, 'ui': 13002, 'enum': 13003, 'gateway': 28890, 'vite': 15180}
 ALL_PORTS = set(PORTS.values())
+# A fixed 16-byte nonce so the direct and proxied handshake probes share a
+# Sec-WebSocket-Key and their (recomputed) Sec-WebSocket-Accept is comparable.
+WS_HANDSHAKE_KEY = base64.b64encode(b'exp008-ws-probe1').decode('ascii')
+
+# Reuse the comparator's normalisation rules instead of keeping a second,
+# drifting copy (the old `equivalence` scenario had its own scrub).
+sys.path.insert(0, str(SCRIPT))
+from compare import HEADER_EXCLUDE, normalise_header, Normalizer, compare_sides  # noqa: E402
+READONLY_NORM = Normalizer()
 
 PROCESSES = []
 RESULTS = {}
@@ -41,6 +55,19 @@ STOPPED = set()
 
 def save(out, name, value):
     (out / name).write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
+
+
+def ensure_proxy_built():
+    """Build the probe binary on demand so the orchestrator is self-contained
+    instead of assuming a prior manual `cargo build`."""
+    if RUST.exists():
+        return
+    env = dict(os.environ)
+    env.setdefault('CARGO_HOME', str(ROOT / '_build/cargo-home'))
+    env.setdefault('CARGO_TARGET_DIR', str(ROOT / '_build/exp008-target'))
+    print(f'building exp008 proxy -> {RUST}', flush=True)
+    subprocess.run(['cargo', 'build', '--offline', '--manifest-path', str(PROXY_MANIFEST)],
+                   check=True, cwd=ROOT, env=env)
 
 
 def start(name, argv, env, port=None, cwd=None):
@@ -62,29 +89,45 @@ def start(name, argv, env, port=None, cwd=None):
 def stop(proc):
     if proc.pid in STOPPED:
         return
-    # A process that already exited on its own (e.g. the route enumerator) needs
-    # no signal; killpg on its gone group can still return EPERM on macOS.
-    if proc.poll() is not None:
-        STOPPED.add(proc.pid)
-        return
+
+    def group_alive():
+        try:
+            os.killpg(proc.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
     def signal_group(sig):
         try:
             os.killpg(proc.pid, sig)
         except ProcessLookupError:
             pass
+
+    # Kill by the group we created, not by the leader's liveness. A leader can
+    # exit on its own (e.g. the route enumerator) while same-group children
+    # linger; the old early return skipped them entirely. `killpg` also finds
+    # those children because the group outlives its leader.
     try:
-        signal_group(signal.SIGTERM)
-        try:
-            proc.wait(timeout=8)
-        except subprocess.TimeoutExpired:
-            pass
-        signal_group(signal.SIGKILL)
+        if group_alive():
+            signal_group(signal.SIGTERM)
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                pass
+        if group_alive():
+            signal_group(signal.SIGKILL)
         if proc.poll() is None:
             proc.wait(timeout=5)
+        if group_alive():
+            CLEANUP_ERRORS.append({'pid': proc.pid,
+                                   'error': 'process group survived SIGKILL'})
+        else:
+            STOPPED.add(proc.pid)
     except (OSError, subprocess.TimeoutExpired) as error:
         CLEANUP_ERRORS.append({'pid': proc.pid, 'error': str(error)})
-    else:
-        STOPPED.add(proc.pid)
 
 
 def assert_loopback(out, port, proc):
@@ -97,6 +140,30 @@ def assert_loopback(out, port, proc):
     save(out, 'listeners.json', LISTENERS)
     if not entry['loopbackOnly']:
         raise RuntimeError(f'owned process {proc.pid} must listen only on 127.0.0.1:{port}: {addresses}')
+
+
+def assert_loopback_when_listening(out, port, proc, timeout=30):
+    """Poll `lsof` until the owned process shows its listener, then assert it is
+    loopback-only. Used for the route enumerator, which does not answer /health
+    and whose whole lifecycle is shorter than a readiness probe."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(['lsof', '-nP', '-a', '-p', str(proc.pid), '-iTCP',
+                                 '-sTCP:LISTEN', '-Fn'], capture_output=True, text=True, timeout=5)
+        addresses = [line[1:] for line in result.stdout.splitlines() if line.startswith('n')]
+        if addresses:
+            entry = {'pid': proc.pid, 'port': port, 'addresses': addresses,
+                     'loopbackOnly': addresses == [f'127.0.0.1:{port}']}
+            LISTENERS.append(entry)
+            save(out, 'listeners.json', LISTENERS)
+            if not entry['loopbackOnly']:
+                raise RuntimeError(
+                    f'owned process {proc.pid} must listen only on 127.0.0.1:{port}: {addresses}')
+            return
+        if proc.poll() is not None:
+            raise RuntimeError(f'process {proc.pid} exited {proc.returncode} before listening on {port}')
+        time.sleep(.1)
+    raise RuntimeError(f'owned process {proc.pid} never listened on {port}')
 
 
 def wait_http(out, port, proc, path='/health'):
@@ -329,17 +396,29 @@ def scenario_readonly(out):
     for path in paths:
         direct = raw_http(PORTS['ui'], 'GET', path, headers)
         proxy = raw_http(PORTS['rust'], 'GET', path, headers)
-        proxy_headers = {k: v for k, v in proxy['headers'].items() if k != 'x-pilotdeck-handler'}
+        # Reuse the comparator's header rules so this scenario asserts the same
+        # end-to-end headers the recorder does -- including etag / set-cookie /
+        # x-refreshed-token -- instead of computing a diff it never checked.
+        direct_headers = {k.lower(): normalise_header(k.lower(), v, direct['body'].decode('utf-8', 'replace'), READONLY_NORM)
+                          for k, v in direct['headers'].items() if k.lower() not in HEADER_EXCLUDE}
+        proxy_headers = {k.lower(): normalise_header(k.lower(), v, proxy['body'].decode('utf-8', 'replace'), READONLY_NORM)
+                         for k, v in proxy['headers'].items() if k.lower() not in HEADER_EXCLUDE}
         same_status = direct['status'] == proxy['status']
         same_body = direct['body'] == proxy['body']
-        same_headers = {k: v for k, v in direct['headers'].items()
-                        if k not in ('date',)} == {k: v for k, v in proxy_headers.items() if k not in ('date',)}
+        same_headers = direct_headers == proxy_headers
         records.append({'path': path, 'directStatus': direct['status'], 'proxyStatus': proxy['status'],
                         'sameStatus': same_status, 'sameBody': same_body, 'sameHeaders': same_headers,
+                        'headerDifferences': {k: [direct_headers.get(k), proxy_headers.get(k)]
+                                              for k in sorted(set(direct_headers) | set(proxy_headers))
+                                              if direct_headers.get(k) != proxy_headers.get(k)},
+                        'directRevision': direct['headers'].get('x-projects-revision'),
+                        'proxyRevision': proxy['headers'].get('x-projects-revision'),
                         'proxyHandler': proxy['headers'].get('x-pilotdeck-handler'),
                         'directBodyPrefix': direct['body'][:200].decode('utf-8', 'replace')})
     assert all(r['sameStatus'] for r in records), f'status mismatch: {records}'
     assert all(r['sameBody'] for r in records), f'body mismatch: {[r for r in records if not r["sameBody"]]}'
+    assert all(r['sameHeaders'] for r in records), \
+        f'end-to-end header mismatch: {[r for r in records if not r["sameHeaders"]]}'
     assert all(r['proxyHandler'] == 'ts' for r in records), 'every proxied read must be tagged ts'
     assert direct_projects['status'] == 200, f'/api/projects direct failed: {direct_projects["status"]}'
     save(out, 'readonly.json', {'projectName': project_name, 'records': records})
@@ -527,6 +606,11 @@ HTTP_CASES = [
     ('auth-user', 'GET', '/api/auth/user', {}),
     ('config', 'GET', '/api/config', {}),
     ('models', 'GET', '/api/models', {}),
+    # Same-snapshot project/session reads. The only per-request value here is
+    # the wall-clock `X-Projects-Revision` header, which the comparator validates
+    # by form; the bodies are compared in full.
+    ('projects', 'GET', '/api/projects', {}),
+    ('projects-sessions', 'GET', '/api/projects/exp008-fixture/sessions', {}),
     # Scenario 7 real route: the resume header must survive the relay even when
     # no StaffDeck module host is configured (the route then answers 501).
     ('modules-job-events-resume', 'GET',
@@ -556,16 +640,28 @@ COMPARE_SESSIONS = {
 
 
 def parse_sse_events(body):
+    # SSE line endings may be LF, CR or CRLF; normalise before blocking.
+    body = body.replace('\r\n', '\n').replace('\r', '\n')
     events = []
     for block in body.split('\n\n'):
         if not block.strip():
             continue
         fields = {}
+        data_lines = []
         for line in block.split('\n'):
             if not line or line.startswith(':'):
                 continue
             name, _, value = line.partition(':')
-            fields[name] = value[1:] if value.startswith(' ') else value
+            value = value[1:] if value.startswith(' ') else value
+            if name == 'data':
+                # Per the SSE spec multiple `data:` lines are joined with \n.
+                # Overwriting instead only compared the last line, so a change
+                # or loss in an earlier line still passed.
+                data_lines.append(value)
+            else:
+                fields[name] = value
+        if data_lines:
+            fields['data'] = '\n'.join(data_lines)
         events.append(fields)
     return events
 
@@ -584,11 +680,10 @@ def write_jsonl(path, records):
 def record_http_sse(out, side, port, token):
     """Record deterministic HTTP reads and the SSE event streams for one side.
 
-    Stateful list endpoints (e.g. /api/projects) are deliberately not part of the
-    strict recording: both sides share one TS ui/server process, so their
-    wall-clock fields and session counts drift between the direct and proxied
-    read even with a perfect relay. Relay transparency is exercised on
-    deterministic reads plus the SSE streams."""
+    `/api/projects` and the session list are recorded on both sides in immediate
+    succession (same snapshot). Their only per-request value is the wall-clock
+    `X-Projects-Revision` header, which the comparator normalises by form; the
+    bodies are compared in full."""
     directory = out / 'compare' / side
     directory.mkdir(parents=True, exist_ok=True)
     auth = {'authorization': f'Bearer {token}'} if token else {}
@@ -622,6 +717,66 @@ def record_ws(out, side, port):
     return {'ws': len(ws_records)}
 
 
+def record_handshake(out, side, port, token):
+    """Record the upstream `/ws` handshake authenticated with an
+    `Authorization: Bearer` header (the baseline accepts header auth at
+    ui/server/index.js:490-496). Both sides replay the same fixed
+    Sec-WebSocket-Key, so Sec-WebSocket-Accept stays comparable."""
+    directory = out / 'compare' / side
+    directory.mkdir(parents=True, exist_ok=True)
+    driver_out = out / f'handshake-{side}.json'
+    env = build_env(out, f'handshake-{side}')
+    env['EXP008_TOKEN'] = token
+    env['EXP008_WS_KEY'] = WS_HANDSHAKE_KEY
+    proc = start(f'handshake-{side}',
+                 ['node', SCRIPT / 'driver.mjs', 'ws-handshake', driver_out, str(BASELINE),
+                  str(out / 'project'), str(port)], env, port=None, cwd=ROOT)
+    try:
+        code = proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        stop(proc)
+        raise RuntimeError(f'handshake {side} timeout') from None
+    if code:
+        raise RuntimeError(f'handshake {side} exited {code}; see handshake-{side}.log')
+    data = json.loads(driver_out.read_text())
+    if data['status'] != 101:
+        raise RuntimeError(f'ws header-auth {side} expected 101, got {data["status"]}: '
+                           f'{data.get("body", "")[:200]}')
+    record = {'case': 'ws-header-auth', 'method': 'GET', 'path': '/ws',
+              'status': data['status'],
+              'headers': {k.lower(): v for k, v in data.get('headers', {}).items()},
+              'body': data.get('body', '')}
+    write_jsonl(directory / 'handshake.jsonl', [record])
+    return record
+
+
+def record_close(out, side, port, token):
+    """Record both directions of a WebSocket close handshake: the code/reason
+    the client sends and the code/reason the peer replies with."""
+    directory = out / 'compare' / side
+    directory.mkdir(parents=True, exist_ok=True)
+    driver_out = out / f'close-{side}.json'
+    env = build_env(out, f'close-{side}')
+    env['EXP008_TOKEN'] = token
+    proc = start(f'close-{side}',
+                 ['node', SCRIPT / 'driver.mjs', 'ws-close', driver_out, str(BASELINE),
+                  str(out / 'project'), str(port)], env, port=None, cwd=ROOT)
+    try:
+        code = proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        stop(proc)
+        raise RuntimeError(f'close {side} timeout') from None
+    if code:
+        raise RuntimeError(f'close {side} exited {code}; see close-{side}.log')
+    data = json.loads(driver_out.read_text())
+    if data.get('timeout') or data.get('code') is None:
+        raise RuntimeError(f'ws-close {side} never observed a close reply: {data}')
+    record = {'case': 'ws-close', 'sentCode': data['sentCode'], 'sentReason': data['sentReason'],
+              'observedCode': data['code'], 'observedReason': data['reason'], 'clean': data['clean']}
+    write_jsonl(directory / 'close.jsonl', [record])
+    return record
+
+
 def ensure_recordings(out):
     marker = out / 'compare' / 'direct' / 'ws.jsonl'
     if marker.exists():
@@ -633,6 +788,9 @@ def ensure_recordings(out):
         record_http_sse(out, side, port, token)
     for side, port in (('direct', PORTS['ui']), ('proxy', PORTS['rust'])):
         record_ws(out, side, port)
+    for side, port in (('direct', PORTS['ui']), ('proxy', PORTS['rust'])):
+        record_handshake(out, side, port, token)
+        record_close(out, side, port, token)
 
 
 def run_compare(out, name, controls=False):
@@ -704,46 +862,25 @@ def scenario_sse_resume(out):
 
 def scenario_equivalence(out):
     # Same command through Rust and directly at the TS server, each in its own
-    # fresh session, then compare after scrubbing only volatile values.
+    # fresh session, then compared with the ONE comparator (compare_sides)
+    # instead of a second, drifting scrub. Sessions are UUIDs so the comparator's
+    # path-scoped identity mapping has something to map.
     proxy = run_driver(out, 'chat-raw', PORTS['rust'], 'equiv-proxy',
-                       extra_env={'EXP008_SESSION': 'web:exp008-equiv-proxy'})
+                       extra_env={'EXP008_SESSION': 'web:22222222-2222-4222-8222-000000000001'})
     direct = run_driver(out, 'chat-raw', PORTS['ui'], 'equiv-direct',
-                        extra_env={'EXP008_SESSION': 'web:exp008-equiv-direct'})
-    volatile_keys = {'id', 'entryId', 'sessionId', 'createdAt', 'updatedAt', 'timestamp', 'runId',
-                     'messageId', 'requestId', 'generation', 'seq', 'completedRunId', 'revision',
-                     'used', 'displayUsed', 'ratio', 'turnId', 'blockId', 'toolCallId'}
-
-    def scrub(value):
-        if isinstance(value, dict):
-            return {key: ('VOLATILE' if key in volatile_keys else scrub(item))
-                    for key, item in value.items()}
-        if isinstance(value, list):
-            return [scrub(item) for item in value]
-        return value
-
-    def normalise(lines):
-        normalised = []
-        for line in lines:
-            try:
-                frame = json.loads(line)
-            except Exception:
-                normalised.append(line)
-                continue
-            normalised.append(scrub(frame))
-        return normalised
-
-    proxy_frames = normalise(proxy['raw'])
-    direct_frames = normalise(direct['raw'])
-    differences = []
-    for index in range(max(len(proxy_frames), len(direct_frames))):
-        left = proxy_frames[index] if index < len(proxy_frames) else None
-        right = direct_frames[index] if index < len(direct_frames) else None
-        if left != right:
-            differences.append({'index': index, 'proxy': left, 'direct': right})
-    save(out, 'equivalence.json', {'proxyFrames': len(proxy_frames), 'directFrames': len(direct_frames),
-         'differences': differences[:10], 'status': 'PASS' if not differences else 'FAIL'})
-    assert not differences, f'normalised frame streams differ: {differences[:2]}'
-    return {'status': 'PASS', 'frames': len(proxy_frames)}
+                        extra_env={'EXP008_SESSION': 'web:22222222-2222-4222-8222-000000000002'})
+    directory = out / 'equivalence'
+    for side, lines in (('proxy', proxy['raw']), ('direct', direct['raw'])):
+        target = directory / side
+        target.mkdir(parents=True, exist_ok=True)
+        write_jsonl(target / 'ws.jsonl',
+                    [{'case': 'equivalence', 'dir': 'u2c', 'opcode': 'text', 'raw': line}
+                     for line in lines])
+    report = compare_sides(directory / 'direct', directory / 'proxy', [out / 'project'])
+    save(out, 'equivalence.json', {'counts': report['counts'],
+         'differences': report['differences'][:10], 'status': report['verdict']})
+    assert report['verdict'] == 'PASS', f'normalised frame streams differ: {report["differences"][:2]}'
+    return {'status': 'PASS', 'frames': report['counts']['left']['ws']}
 
 
 def scenario_shadow(out):
@@ -774,18 +911,21 @@ def scenario_routes(out):
     (enum_home / 'server-token').write_text(TOKEN + '\n')
     (enum_home / 'server-token').chmod(0o600)
     (enum_home / 'pilotdeck.yaml').write_text(
-        f"webui:\n  runtime:\n    host: 127.0.0.1\n    serverPort: 13003\n"
+        f"webui:\n  runtime:\n    host: 127.0.0.1\n    serverPort: {PORTS['enum']}\n"
         f"    databasePath: {enum_home / 'auth.db'}\n")
     enum_out = out / 'router-enumeration.json'
     env = dict(build_env(out, 'enum'),
                PILOT_HOME=str(enum_home),
                PILOTDECK_CONFIG_PATH=str(enum_home / 'pilotdeck.yaml'),
-               SERVER_PORT='13003',
+               SERVER_PORT=str(PORTS['enum']),
                EXP008_BASELINE=str(BASELINE),
                EXP008_ENUM_OUT=str(enum_out))
     proc = start('enumerate', ['node', '--import', str(SCRIPT / 'enumerate_hook.mjs'), '--import',
                  str(BASELINE / 'node_modules/tsx/dist/loader.mjs'),
-                 str(BASELINE / 'ui/server/index.js')], env, 13003, cwd=out / 'project')
+                 str(BASELINE / 'ui/server/index.js')], env, PORTS['enum'], cwd=out / 'project')
+    # 13003 is an owned listener too: assert it is loopback-only while it lives
+    # (and it is in ALL_PORTS, so the final audit checks it released).
+    assert_loopback_when_listening(out, PORTS['enum'], proc)
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         if enum_out.exists():
@@ -853,6 +993,7 @@ def main():
     parser.add_argument('--only', default='', help='comma-separated scenario names')
     args = parser.parse_args()
     out = fresh_out(args.out.resolve())
+    ensure_proxy_built()
     for port in ALL_PORTS:
         with socket.socket() as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

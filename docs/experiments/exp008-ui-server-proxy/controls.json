@@ -34,6 +34,12 @@
       "namedLocation": true,
       "differences": [
         {
+          "location": "http[health] header.etag",
+          "left": "<ETAG-VALID>",
+          "right": "W/\"b1-o8OPZ8BbLXz0bODkbXP7ZpOmias\"",
+          "message": "header differs"
+        },
+        {
           "location": "http[health] body.installMode",
           "left": "git",
           "right": "INJECTED_git",
@@ -55,6 +61,74 @@
           "left": 200,
           "right": 201,
           "message": "status differs"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "name": "inject:http-header-change",
+      "expect": "FAIL",
+      "mutated": "health",
+      "expectedLocation": "http[health] header.content-type",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "http[health] header.content-type",
+          "left": "application/json; charset=utf-8",
+          "right": "application/json; charset=utf-8-INJECTED",
+          "message": "header differs"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "name": "inject:http-header-drop",
+      "expect": "FAIL",
+      "mutated": "health",
+      "expectedLocation": "http[health] header.etag",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "http[health] header.etag",
+          "left": "<ETAG-VALID>",
+          "right": null,
+          "message": "header differs"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "name": "inject:http-set-cookie",
+      "expect": "FAIL",
+      "mutated": "health",
+      "expectedLocation": "http[health] header.set-cookie",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "http[health] header.set-cookie",
+          "left": null,
+          "right": "exp008-control=1; Path=/",
+          "message": "header differs"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "name": "inject:http-refreshed-token",
+      "expect": "FAIL",
+      "mutated": "health",
+      "expectedLocation": "http[health] header.x-refreshed-token",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "http[health] header.x-refreshed-token",
+          "left": null,
+          "right": "exp008-control-token",
+          "message": "header differs"
         }
       ],
       "passed": true
