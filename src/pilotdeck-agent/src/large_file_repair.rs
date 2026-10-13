@@ -1,5 +1,5 @@
 //! Fixed original LargeFileRepair.ts policy. No filesystem or permission authority.
-use crate::model_event_reducer::same_value;
+use crate::boundary_match::same_value;
 use crate::{
     LargeFileRepair, LargeFileRepairDecision, LargeFileRepairToolContext, ProjectionError,
     RepairStrip, ToolExecutionResult, ToolResultDisposition,

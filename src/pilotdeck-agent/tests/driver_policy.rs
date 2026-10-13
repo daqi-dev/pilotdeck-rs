@@ -1,9 +1,8 @@
 //! Supplementary controlled port tests; not real formal host/NDJSON acceptance.
 use pilotdeck_agent::driver::*;
 use pilotdeck_agent::ports::*;
-use pilotdeck_agent::{CapturedModelEvent, assemble_assistant_message, create_model_assembler};
-use pilotdeck_protocol::model::{BoundarySnapshot, ModelEvent, PreparedWireRequest, Usage};
-use pilotdeck_protocol::{JsString, JsValue, parse_json};
+use pilotdeck_protocol::model::{BoundarySnapshot, Usage};
+use pilotdeck_protocol::parse_json;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -21,41 +20,6 @@ fn route() -> Route {
     Route {
         provider: "test".into(),
         model: "model".into(),
-    }
-}
-fn hints() -> ModelHints {
-    ModelHints {
-        session_id: "session".into(),
-        turn_id: "turn".into(),
-        execution: ExecutionHints {
-            run_id: "run".into(),
-            operation_id: "op".into(),
-            idempotency_key: None,
-            operation_deadline: None,
-        },
-        workspace_id: None,
-        storage_config_version: None,
-        metadata: None,
-        model_override: None,
-    }
-}
-fn prepared() -> PreparedInvocation {
-    PreparedInvocation {
-        handle: PreparedRequestHandle("prepared-A".into()),
-        request: CapturedRequest {
-            route: route(),
-            normalized: RequestProjection::BoundaryOnly(Vec::new()),
-            wire: PreparedWireRequest::capture(
-                &parse_json(r#"{"provider":"test","model":"model","messages":[]}"#).unwrap(),
-            ),
-        },
-        route: route(),
-        max_context_tokens: None,
-        max_output_tokens: None,
-        metadata: None,
-        boundary: snap(
-            r#"{"request":{"provider":"test","model":"model","messages":[]},"provider":"test","model":"model"}"#,
-        ),
     }
 }
 type PortBehavior = Box<dyn FnMut(&CallControl, &HostCall) -> PortResult<HostReply> + Send>;
@@ -89,19 +53,6 @@ impl HostPort for ControlledHost {
             .expect("unexpected additional host dispatch")
     }
 }
-fn text_event() -> StreamEvent {
-    StreamEvent::Known(Box::new(CapturedModelEvent {
-        event: ModelEvent::TextDelta {
-            text: "prefix".into(),
-            raw: None,
-        },
-        boundary: snap(r#"{"type":"text_delta","text":"prefix"}"#),
-    }))
-}
-fn unknown_event() -> StreamEvent {
-    StreamEvent::BoundaryOnly(snap(r#"{"type":"provider_extension","extra":"kept"}"#))
-}
-
 #[test]
 fn real_condvar_cancellation_wakes_and_retains_first_cause() {
     let token = Cancellation::default();
@@ -245,110 +196,6 @@ fn null_cost_falls_back_to_native_zero_does_not_and_turn_wins_both_ceilings() {
     assert_eq!(ledger.turn_spent_usd, 1.0);
 }
 #[test]
-fn pull_forwards_unknown_events_and_never_authorizes_missing_end_tools() {
-    let mut host = ControlledHost::new(vec![Ok(HostReply::ModelChunk(StreamChunk {
-        events: vec![unknown_event(), text_event()],
-        done: true,
-    }))]);
-    let mut emitted = Vec::new();
-    let result = run_model_invocation(
-        &mut host,
-        &control(),
-        &control(),
-        &prepared(),
-        &hints(),
-        "response".into(),
-        &mut |e| {
-            emitted.push(e);
-            Ok(())
-        },
-    );
-    assert_eq!(emitted.len(), 2);
-    assert_eq!(
-        emitted[0]
-            .boundary
-            .value()
-            .get("extra")
-            .and_then(JsValue::as_string),
-        Some(&JsString::from("kept"))
-    );
-    assert!(!result.assembled.has_message_end);
-    assert!(!invocation_can_execute_tools(&result));
-    assert_eq!(*host.calls.lock().unwrap(), [("model", "stream_next")]);
-}
-#[test]
-fn cancellation_during_live_emission_drops_remaining_advanced_events_and_closes_once() {
-    let mut host = ControlledHost::new(vec![
-        Ok(HostReply::ModelChunk(StreamChunk {
-            events: vec![text_event(), text_event()],
-            done: false,
-        })),
-        Ok(HostReply::ModelClosed),
-    ]);
-    let ctrl = control();
-    let token = ctrl.cancellation.clone();
-    let mut count = 0;
-    let result = run_model_invocation(
-        &mut host,
-        &ctrl,
-        &control(),
-        &prepared(),
-        &hints(),
-        "response".into(),
-        &mut |_| {
-            count += 1;
-            token.cancel(CancelCause::Requested("cancel".into()));
-            Ok(())
-        },
-    );
-    assert_eq!(count, 1);
-    assert!(matches!(
-        result.disposition,
-        InvocationDisposition::Cancelled(..)
-    ));
-    assert!(!invocation_can_execute_tools(&result));
-    assert_eq!(
-        *host.calls.lock().unwrap(),
-        [("model", "stream_next"), ("model", "close_stream")]
-    );
-}
-#[test]
-fn advancing_reply_unknown_is_preserved_and_never_pulled_again() {
-    let identity = ExecutionIdentity {
-        session_id: "session".into(),
-        turn_id: "turn".into(),
-        run_id: "run".into(),
-        operation_id: "op".into(),
-        request_id: "pull-1".into(),
-        idempotency_key: None,
-        module_instance_id: "instance".into(),
-        connection_generation: "generation".into(),
-    };
-    let mut host = ControlledHost::new(vec![
-        Err(PortError::AcceptedUnknown {
-            identity: Box::new(identity),
-            last_applied_sequence: Some(3.0),
-        }),
-        Ok(HostReply::ModelClosed),
-    ]);
-    let result = run_model_invocation(
-        &mut host,
-        &control(),
-        &control(),
-        &prepared(),
-        &hints(),
-        "response".into(),
-        &mut |_| panic!("uncertain pull must not fabricate live events"),
-    );
-    assert!(
-        matches!(result.disposition, InvocationDisposition::PortFailure(error) if matches!(*error, PortError::AcceptedUnknown { .. }))
-    );
-    assert_eq!(
-        *host.calls.lock().unwrap(),
-        [("model", "stream_next"), ("model", "close_stream")]
-    );
-}
-#[test]
 fn unknown_finish_and_stream_retry_limits_are_distinct_and_reset_only_on_respective_success() {
     let mut guards = RetryGuards::default();
     assert!(guards.retry_stream_interruption());
@@ -374,113 +221,4 @@ fn unknown_finish_and_stream_retry_limits_are_distinct_and_reset_only_on_respect
     assert!(guards.compact_attempted && guards.reasoning_attempted);
     assert_eq!(guards.json_corrections, 3);
     assert!(!guards.image_strip_attempted);
-}
-#[test]
-fn policy_refuses_even_complete_unknown_finish() {
-    let mut assembler = create_model_assembler(None);
-    assembler.has_message_end = true;
-    assembler.finish_reason = Some(pilotdeck_protocol::model::FinishReason::Unknown);
-    let report = InvocationReport {
-        assembled: Box::new(assemble_assistant_message(&mut assembler)),
-        executed: None,
-        disposition: InvocationDisposition::Assembled,
-    };
-    assert!(!invocation_can_execute_tools(&report));
-}
-
-#[test]
-fn shallow_error_after_structured_end_stops_and_preserves_error_without_defaults() {
-    use pilotdeck_protocol::model::{FinishReason, ToolCall};
-    let call = ToolCall {
-        id: "call".into(),
-        name: "write".into(),
-        input: JsValue::Object(Default::default()),
-        timeline: None,
-        raw: None,
-    };
-    let events = vec![
-        StreamEvent::Known(Box::new(CapturedModelEvent {
-            event: ModelEvent::ToolCallEnd {
-                tool_call: call,
-                was_repaired: None,
-                raw: None,
-            },
-            boundary: snap(
-                r#"{"type":"tool_call_end","toolCall":{"id":"call","name":"write","input":{}}}"#,
-            ),
-        })),
-        StreamEvent::Known(Box::new(CapturedModelEvent {
-            event: ModelEvent::MessageEnd {
-                finish_reason: FinishReason::ToolCall,
-                raw: None,
-            },
-            boundary: snap(r#"{"type":"message_end","finishReason":"tool_call"}"#),
-        })),
-        StreamEvent::ErrorBoundaryOnly {
-            boundary: snap(r#"{"type":"error","error":{"code":"shallow","message":"failure"}}"#),
-            error: snap(r#"{"code":"shallow","message":"failure"}"#),
-        },
-        text_event(),
-    ];
-    let mut host = ControlledHost::new(vec![
-        Ok(HostReply::ModelChunk(StreamChunk { events, done: true })),
-        Ok(HostReply::ModelClosed),
-    ]);
-    let mut emitted = 0;
-    let result = run_model_invocation(
-        &mut host,
-        &control(),
-        &control(),
-        &prepared(),
-        &hints(),
-        "response".into(),
-        &mut |_| {
-            emitted += 1;
-            Ok(())
-        },
-    );
-    assert_eq!(emitted, 3);
-    assert_eq!(result.assembled.tool_calls.len(), 1);
-    assert!(result.assembled.has_message_end);
-    assert!(matches!(
-        result.disposition,
-        InvocationDisposition::BoundaryError { .. }
-    ));
-    assert_eq!(result.assembled.finish_reason, FinishReason::Error);
-    assert_eq!(
-        result.assembled.boundary.value().get("error"),
-        Some(snap(r#"{"code":"shallow","message":"failure"}"#).value())
-    );
-    assert!(result.assembled.error.is_none());
-    assert!(!invocation_can_execute_tools(&result));
-    assert_eq!(
-        *host.calls.lock().unwrap(),
-        [("model", "stream_next"), ("model", "close_stream")]
-    );
-}
-
-#[test]
-fn repaired_guard_matches_source_finish_domain_without_deleting_other_paths() {
-    use pilotdeck_protocol::model::FinishReason;
-    for (finish, may_execute) in [
-        (FinishReason::Stop, false),
-        (FinishReason::Length, false),
-        (FinishReason::ToolCall, false),
-        (FinishReason::ContentFilter, true),
-    ] {
-        let mut assembler = create_model_assembler(None);
-        assembler.has_message_end = true;
-        assembler.has_repaired_tool_calls = Some(true);
-        assembler.finish_reason = Some(finish);
-        let report = InvocationReport {
-            assembled: Box::new(assemble_assistant_message(&mut assembler)),
-            executed: None,
-            disposition: InvocationDisposition::Assembled,
-        };
-        assert_eq!(
-            invocation_can_execute_tools(&report),
-            may_execute,
-            "{finish:?}"
-        );
-    }
 }

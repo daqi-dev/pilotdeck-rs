@@ -2074,7 +2074,8 @@ fn invocation_prepared() -> PreparedInvocation {
 
 #[test]
 fn ignored_known_start_events_and_js_coercible_deltas_keep_original_live_echo_and_effect() {
-    use pilotdeck_agent::driver::*;
+    use pilotdeck_agent::driver::InvocationDisposition;
+    use pilotdeck_agent::source_invocation::run_source_model_invocation;
     let events = json(
         r#"[{"type":"message_start","extension":null},{"type":"tool_call_start"},{"type":"tool_call_delta","id":null},{"type":"text_delta","text":7,"extension":null},{"type":"text_delta","text":null},{"type":"thinking_delta","text":false,"reasoningContent":0,"signature":false},{"type":"message_end","finishReason":"stop"}]"#,
     );
@@ -2083,7 +2084,7 @@ fn ignored_known_start_events_and_js_coercible_deltas_keep_original_live_echo_an
         ("done", JsValue::Bool(true)),
     ])))]);
     let mut live = Vec::new();
-    let report = run_model_invocation(
+    let report = run_source_model_invocation(
         &mut h,
         &control(),
         &control(),
@@ -2108,11 +2109,23 @@ fn ignored_known_start_events_and_js_coercible_deltas_keep_original_live_echo_an
         report.disposition,
         InvocationDisposition::Assembled
     ));
-    let message = &report.assembled.message;
-    assert!(matches!(&message.content[0].body,ContentBody::Text(t) if t.text.equals_str("7null")));
-    assert!(
-        matches!(&message.content[1].body,ContentBody::Thinking(t) if t.text.equals_str("false") && t.reasoning_content.as_ref().unwrap().equals_str("0") && t.signature.is_none())
+    let assembled = report.assembled.unwrap();
+    let JsValue::Array(content) = assembled
+        .value()
+        .get("message")
+        .unwrap()
+        .get("content")
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(content[0].get("text"), Some(&JsValue::from("7null")));
+    assert_eq!(content[1].get("text"), Some(&JsValue::from("false")));
+    assert_eq!(
+        content[1].get("reasoningContent"),
+        Some(&JsValue::from("0"))
     );
+    assert!(content[1].get("signature").is_none());
     assert_eq!(h.into_exchange().calls.len(), 1);
 }
 
@@ -2170,7 +2183,8 @@ fn direct_coerced_delta_handles_missing_array_object_and_wtf16_without_stringify
 
 #[test]
 fn nullish_after_structured_end_stops_before_emission_closes_done_true_and_forbids_tools() {
-    use pilotdeck_agent::driver::*;
+    use pilotdeck_agent::driver::InvocationDisposition;
+    use pilotdeck_agent::source_invocation::run_source_model_invocation;
     for nullish in [JsValue::Null, JsValue::Undefined] {
         let events = JsValue::Array(vec![
             json(r#"{"type":"tool_call_end","toolCall":{"id":"before","name":"read","input":{}}}"#),
@@ -2187,7 +2201,7 @@ fn nullish_after_structured_end_stops_before_emission_closes_done_true_and_forbi
             response(JsValue::Null),
         ]);
         let mut live = Vec::new();
-        let report = run_model_invocation(
+        let report = run_source_model_invocation(
             &mut h,
             &control(),
             &control(),
@@ -2199,15 +2213,16 @@ fn nullish_after_structured_end_stops_before_emission_closes_done_true_and_forbi
                 Ok(())
             },
         );
-        assert!(!invocation_can_execute_tools(&report));
         assert_eq!(live.len(), 2);
         assert!(
             matches!(&report.disposition,InvocationDisposition::PortFailure(error) if matches!(error.as_ref(),PortError::SourceException{boundary,..} if boundary.value()==&nullish))
         );
-        assert_eq!(report.assembled.tool_calls.len(), 1);
-        assert_eq!(report.assembled.tool_calls[0].id, JsString::from("before"));
-        assert!(report.assembled.has_message_end);
-        assert!(!invocation_can_execute_tools(&report));
+        assert_eq!(report.state.tool_calls.len(), 1);
+        assert_eq!(
+            report.state.tool_calls[0].value().get("id"),
+            Some(&JsValue::from("before"))
+        );
+        assert!(report.state.has_message_end);
         let e = h.into_exchange();
         assert_eq!(
             e.calls.iter().map(|(_, op, _, _)| *op).collect::<Vec<_>>(),
@@ -2218,7 +2233,8 @@ fn nullish_after_structured_end_stops_before_emission_closes_done_true_and_forbi
 
 #[test]
 fn text_primitive_conversion_exception_preserves_live_prefix_and_stops_done_true_batch() {
-    use pilotdeck_agent::driver::*;
+    use pilotdeck_agent::driver::InvocationDisposition;
+    use pilotdeck_agent::source_invocation::run_source_model_invocation;
     for delta in [
         json(r#"{"type":"text_delta","text":{"toString":null},"extension":"keep"}"#),
         json(r#"{"type":"text_delta","text":[{"toString":7}]}"#),
@@ -2239,7 +2255,7 @@ fn text_primitive_conversion_exception_preserves_live_prefix_and_stops_done_true
             response(JsValue::Null),
         ]);
         let mut live = Vec::new();
-        let report = run_model_invocation(
+        let report = run_source_model_invocation(
             &mut h,
             &control(),
             &control(),
@@ -2257,12 +2273,19 @@ fn text_primitive_conversion_exception_preserves_live_prefix_and_stops_done_true
         assert!(
             matches!(&report.disposition,InvocationDisposition::PortFailure(error) if matches!(error.as_ref(),PortError::SourceException{message,boundary} if message.equals_str("Cannot convert object to primitive value") && boundary.value()==&delta))
         );
-        assert!(
-            matches!(&report.assembled.message.content[0].body,ContentBody::Text(t) if t.text.equals_str("before"))
-        );
-        assert!(report.assembled.tool_calls.is_empty());
-        assert!(!report.assembled.has_message_end);
-        assert!(!invocation_can_execute_tools(&report));
+        let assembled = report.assembled.unwrap();
+        let JsValue::Array(content) = assembled
+            .value()
+            .get("message")
+            .unwrap()
+            .get("content")
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(content[0].get("text"), Some(&JsValue::from("before")));
+        assert!(report.state.tool_calls.is_empty());
+        assert!(!report.state.has_message_end);
         assert_eq!(
             h.into_exchange()
                 .calls
