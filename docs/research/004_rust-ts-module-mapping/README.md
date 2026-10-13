@@ -6,7 +6,7 @@
 
 四个 crate 的 **59 个产品 `.rs` 文件**（`#[cfg(test)]` 之前，共 **26884 行**）全部对应到了 TS 源头，映射区间合计约 **16085 行**，总体比值 **1.67**——落在架构决策（`docs/changes/arch/001`「体量风险」）预告的 1.5–2 倍区间内。三档分布：**对得上 46、部分 10、对不上 3**。
 
-关键发现是「膨胀」的构成：**没有发现任何一处「Rust 多写了 TS 没有的产品功能」**。多出的约 1.1 万行分四类——
+关键发现是「膨胀」的构成：**没有新增 TS 没有的产品功能**；但**存在 Rust 独有、可能产品可见的行为**（`server.rs` 三线程与 `EXECUTION_QUEUE_FULL`、`catch_unwind`、notifications 有界队列、`model_admission` 运行时逐字段校验——DeepSeek 评审 P2），精简时须按行为差异对待。多出的约 1.1 万行分四类——
 
 1. **JS 语义/引擎等价物模拟**（最大头）：`JSON.parse/stringify` 的手写实现（codec.rs）、`JsString/JsObject/JsValue` 值语义层（protocol/lib.rs）、Node v22 `Date.parse` 的 V8 dateparser 全量移植（system_clock.rs），以及各 `*_policy.rs` 里 toFixed/join/ToPrimitive/正则的手工展开。TS 侧这些是语言与引擎原生，对应行数为 0 或个位数。
 2. **对拍期确定性防线**：stdio 的 DispatchPhase 状态机与精确字节缓存、typed reducer 的双轨校验（model_event_reducer.rs）、投影前边界校验（tool_projection.rs、tool_context_policy.rs）、宿主回包身份相关性校验。TS 靠单线程事件循环与类型系统不需要这些。
@@ -35,10 +35,13 @@
 |---|---|---|---|
 | 1 | transport/system_clock.rs（V8 dateparser 移植） | ≈797 | 精简候选 |
 | 2 | transport/stdio.rs（确定性防线） | ≈700 | 分条，部分列删除候选 |
-| 3 | agent/model_event_reducer.rs（双轨校验，未接线） | ≈511 | 删除候选 |
+| 3 | agent/model_event_reducer.rs（双轨校验） | ≈511 | 删除候选——⚠️ 辅助函数仍被 `tool_projection` / `large_file_repair` 引用，须先迁出 |
 | 4 | agent/tool_projection.rs（投影前校验层） | ≈446 | 精简候选 |
-| 5 | protocol/codec.rs（手写 JSON 解析/stringify） | ≈398 | 保留 |
+| 5 | protocol/codec.rs（手写 JSON 解析/stringify） | ≈398 | **保留**（预扫是唯一全语法校验） |
 
 ## 相关
 
 `docs/plan/001_phase-c-agent-loop-sidecar.md` S7 · `docs/changes/arch/001_phase-c-agent-loop-sidecar.md`（体量风险 R4）· `src/PROVENANCE.md` · `docs/experiments/exp005-first-score/`（S6 首个分数 50/53）
+
+
+> 精简前必须过的三道闸见 `bloat-candidates.md` 末尾「精简闸门」。评审记录：codex + DeepSeek 各一轮，无 P0，P1 已按上述更正。

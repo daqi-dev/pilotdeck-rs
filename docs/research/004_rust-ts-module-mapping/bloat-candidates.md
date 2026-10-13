@@ -21,6 +21,8 @@
 
 ## 2. `pilotdeck-transport/src/stdio.rs`（838 行 · 比值 6.1 · 部分 · 多出约 700 行）
 
+> ⚠️ **评审更正（codex P1）**：删 DispatchPhase 状态机**不等于向 TS 对齐**——`stdio.rs:328` 的准入允许未知结果之后的关流 / 取消捕获，状态机还区分「未发送」与「已发送」；直接删可能阻断清理。删之前先定义替代语义，并补「取消、部分写入、迟到回包」的专项验证。
+
 - **在做什么**：Module2.0 NDJSON 连接宿主。骨架（发 module_call、按 inReplyTo 关联响应、写行）与 TS 对应；独有的是：`DispatchPhase` 五态状态机、**精确字节**请求缓存（永不重构重发）、响应身份相关性校验（requestId/runId/operationId/binding）、`owned_containment_cleanup`/`owned_abort_capture`（model.close_stream 须持有同 preparation 的 stream_next、context.capture_turn 仅一次的有界补救）、有界队列与和解。
 - **TS 为什么没有**：TS `agentLoopSidecarServer.ts` 是无界 promise 链 + inReplyTo 匹配即 resolve，abort 即删 pending——没有确定性防线，也不需要（单线程事件循环天然串行）。
 - **删掉的风险**：这些防线让 Rust 在重复响应/abort 后回包/乱序等异常场景下「比 TS 更严格」。删掉=向 TS 的宽容形状对齐——**正是 sidecar 对 sidecar 对拍想要的**；53 场景未必覆盖这些异常，删了大概率不掉分，但需尺子证明。串行性与丢失唤醒防护（WakeSignal 配合）是线程模型必需，不能全删。
@@ -42,6 +44,8 @@
 - **建议**：**精简候选**：校验层收缩为 `debug_assert` 或删除，`ProjectionGap` 降级保留（它是「不发明数据」的保底，与 TS 的实际行为差异需先在 accepted-diffs 里登记）。
 
 ## 5. `pilotdeck-protocol/src/codec.rs`（398 行 · 比值 ∞ · 对不上 · 多出约 398 行）
+
+> ⚠️ **评审更正（codex + DeepSeek 撞车 P1）**：RawValue 预扫**不是冗余**——手写 parser 对 `null/true/false` 字面量按字节跳过（`codec.rs:151` 起），根值返回前不检查尾随内容，会放过 `nulx`、`1 2` 这类非法 JSON；预扫是**唯一的全语法校验**。⇒ 改判**保留**；若要单遍，须先把字面量与尾随校验搬进 parser 并补负例。
 
 - **在做什么**：手写迭代栈 JSON 解析（先用 serde_json RawValue 扫一遍语法再跑自写解析器，双保险）+ JS 语义 stringify（ryu-js 数字格式、数组下标键升序、undefined 省略/顶层返 None）+ 迭代深拷。
 - **TS 为什么没有**：TS 是引擎原生 `JSON.parse(line)` / `JSON.stringify`（一行）。
@@ -100,7 +104,7 @@
 | 2 | transport/stdio.rs | 部分 | 6.1 | ≈700 | 分条：校验保留，状态机/缓存/containment 列删除候选 |
 | 3 | agent/model_event_reducer.rs | 部分 | 3.4 | ≈511 | 删除候选（连 driver.rs 未接线路径） |
 | 4 | agent/tool_projection.rs | 部分 | 3.7 | ≈446 | 精简候选（校验层收缩，降级保留） |
-| 5 | protocol/codec.rs | 对不上 | ∞ | ≈398 | 保留（parse 侧可小幅精简） |
+| 5 | protocol/codec.rs | 对不上 | ∞ | ≈398 | **保留**（RawValue 预扫是唯一全语法校验，见下方评审更正） |
 | 6 | agent/tool_context_policy.rs | 部分 | 7.0 | ≈314 | 删除候选（值域防御段） |
 | 7 | protocol/lib.rs | 对不上 | 118 | ≈234 | 保留（语言适配地基） |
 | 8 | protocol/consumer.rs | 部分 | 3.6 | ≈123 | 保留 |
@@ -109,3 +113,11 @@
 | 11 | agent/request_materialization.rs | 部分 | 2.9 | ≈25 | 精简候选（可不动） |
 
 **成因分布**：11 项中没有一项是「多写了 TS 没有的产品功能」；多出行数来自四类——①引擎等价物移植（system_clock、codec、lib.rs、consumer.wire_string）；②对拍期确定性/一致性防线（stdio、model_event_reducer、tool_projection、tool_context_policy 的防御段）；③模块边界样板（execute、request_materialization）；④依赖内联展开（implementation.rs）。其中真正值得动的是 ②（约 2000 行）与 ① 的 system_clock（约 800 行），合计约占产品代码的 10%。
+
+
+## 精简闸门（评审撞车 P1，2026-10-14 协调者补）
+
+删除或精简任何一个候选之前，必须**同时**满足：
+1. **逐场景不退化**：exp005 里 PASS 的 50 个场景，删后**每一个**仍按冻结口径 5 对全 PASS（不是看总分——总分不掉也可能是场景互换）。
+2. **专项验证**：该机制防的那类异常（取消、部分写入、迟到回包、非法 JSON、超界输入……）有单元测试或注入负例，删前删后都跑。53 个场景的尺子不一定覆盖异常路径。
+3. **行为差异照登记**：若删后与 TS 行为一致化（例如不再降级保底），先在 `specs/parity/accepted-diffs.md` 写明，状态「待批」。
