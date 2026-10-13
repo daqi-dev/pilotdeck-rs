@@ -73,7 +73,7 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 
 ### Issue F2 · 对拍装置：同一组用例双跑 + 尺子补齐
 
-- **双前端 runner**：`scripts/fe-parity/run.mjs`——同一 mock 后端（或 `real/launch.mjs` 编排，vite 管线写死处 `launch.mjs:13` 参数化以接入新前端），新旧前端各跑一遍同一用例集，输出逐例 PASS/FAIL 对照表与截图基线目录（只存基线，不做像素断言）。
+- **双前端 runner**：`scripts/fe-parity/run.mjs`——同一 mock 后端（或 `real/launch.mjs` 编排，vite 管线写死处 `launch.mjs:78` spawn、端口 `:12-15`，参数化以接入新前端），新旧前端各跑一遍同一用例集，输出逐例 PASS/FAIL 对照表与截图基线目录（只存基线，不做像素断言）。
 - **B 类部署矩阵脚本化**：9 例 env 门控用例（`formal-*`、`real-auth-*`）的部署与 env 编排（含 profile 三选一矩阵：staffdeck/minimal/replacement）进 runner——不脚本化，「37 例黑盒候选」就只是纸面分母。
 - **防 skip 对账**：每次验收跑输出「应执行数 vs 实际执行数」（以展开后 72 例注册数为分母），显式 skip 逐条列理由，配 `--forbid-only`；对不上即红。弱断言补强：`real/session.spec.mjs:31` 一类「控件缺失静默通过」的条件点击改为必现断言（改用例走另开 issue、写明理由、过评审——must-know ②）。
 - **流式与滚动的黑盒机器断言**：A 类 34 例里测得最细的正是这两块，黑盒面目前为零——F2 须先补（≥20Hz 流式注入、滚动位置不跳、搜索定位），这是 F5 聊天面开工的前置条件，不是可选项。
