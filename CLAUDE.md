@@ -71,3 +71,8 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 - `_build/` + `_tmp/` 合计 ≤ **30 GB**；开新 worktree 前先 `du -sh _build _tmp` 看一眼。
 - 单个会话 ≤ **2 小时**，到点先写交接（`state/board.md`）再退出；**没写交接的退出等于没做**。
 - 第一条 issue（回捞并复核尺子）≤ **1 天**；超时降级为「严格模式 + 已接受差异清单」先推进。
+
+### 尺子不许自己改（2026-10-14；旧迁移的教训：比较器从 v2.0 改到 v2.4.1，大量轮次花在调契约上）
+- `specs/parity/` 下 `FROZEN.md` 登记过的文件，**AI 一律不改**；要改就另开 issue 写清理由，等人批。`accepted-diffs.md` 只许追加，每条要写类别与依据。
+- 定阈值（k、m）的时候**不许看 Rust 的运行结果**；Issue #1 不跑 Rust。
+- 每次提交前：`cd specs/parity && shasum -a 256 README.md` 与 `FROZEN.md` 对得上。
