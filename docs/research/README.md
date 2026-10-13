@@ -11,4 +11,4 @@
 | [007](007_frontend/) | 2026-10-14 | 前端重构（浏览器端 `ui/src` → Rust）：依赖面、重依赖对应物、改不改与怎么改的取舍 |
 | [006](006_phase-b-ui-server/) | 2026-10-14 | 阶段 B：用 Rust 替换 `ui/server`——切法、进程内 `src/`、对拍装置、鉴权、SSE、编排 |
 | [004](004_rust-ts-module-mapping/) | 2026-10-14 | 阶段 C S7：Rust↔TS 模块对应检查与膨胀候选清单 |
-| [005](005_phase-a-gateway/) | 2026-10-15 | 阶段 A：用 Rust 替换 18789 gateway |
+| [005](005_phase-a-gateway/) | 2026-10-14 | 阶段 A：用 Rust 替换 18789 gateway |
