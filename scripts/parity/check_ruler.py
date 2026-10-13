@@ -10,6 +10,15 @@ from controls.run_all import run_controls, DEFAULT_SOURCE
 from check_frozen import check as check_frozen
 
 
+def independent_review():
+    """独立审查记录存在且结论为「无 P0/P1/P2」才算过（docs/reviews/001_ruler-recheck.md）。"""
+    record = G.WORKTREE / 'docs/reviews/001_ruler-recheck.md'
+    try:
+        return '结论：**无 P0/P1/P2。**' in record.read_text(encoding='utf-8')
+    except OSError:
+        return False
+
+
 def check_self_comparison(path):
     self_result, self_error, size = {}, None, 0
     try:
@@ -54,12 +63,12 @@ def main():
     self_status = check_self_comparison(args.self_compare)
     frozen = check_frozen()
     result = {'self_compare': self_status['ok'], 'negative_controls': controls['negative_controls'],
-              'both_broken': controls['both_broken'], 'independent_review': None, 'S_size': self_status['S_size'],
+              'both_broken': controls['both_broken'], 'independent_review': independent_review(), 'S_size': self_status['S_size'],
               'positive_controls': controls.get('positive_controls', False),
               'frozen_hashes': frozen['ok'], 'fully_frozen': frozen['fully_registered'],
               'self_compare_error': self_status['error'], 'controls': controls,
               'evidence': str(args.self_compare), 'review_notice': '独立评审由协调者填写，当前未判定。'}
-    result['machine_checks_pass'] = all(result[k] for k in ('self_compare', 'negative_controls', 'both_broken', 'positive_controls', 'frozen_hashes', 'fully_frozen'))
+    result['machine_checks_pass'] = all(result[k] for k in ('self_compare', 'negative_controls', 'both_broken', 'positive_controls', 'frozen_hashes', 'fully_frozen', 'independent_review'))
     args.json.parent.mkdir(parents=True, exist_ok=True)
     args.json.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps(result, ensure_ascii=False))

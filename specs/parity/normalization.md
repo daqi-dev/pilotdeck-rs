@@ -1,8 +1,13 @@
-# 归一化口径草稿（待批）
+# 归一化口径（2026-10-14 冻结 · AI 代批，待人复核）
 
 适用基线 `PilotDeck@cc7c4e6` 的 `tools/agent-loop-parity/trace.py` 与回捞的 G03 v1。本文描述代码现状；不增加为 Rust 放行的规则。实现入口为 `scripts/parity/g03_compare.py`，原版模块通过 importlib 以 `pdrs_original_trace` 注册并加载，未复制、未修改。
 
-## 路径对齐
+## 两侧输出路径必须一字不差（硬性前提，先于一切归一化）
+
+system prompt 里嵌着运行时工作目录；**token 预算等数字是按原始路径算出来的**，事后做文本替换改不了它们。2026-10-14 两次撞上：exp001 补充（`parity-run1` 对 `parity-run4`，52/53 假不一致）与第一次量分（Rust 路径比 TS 长 34 字符，49 个失败里 44 个只差 token 预算字段）。
+⇒ **对拍的两侧必须用同一个输出路径跑**（`round.py --label cur`，跑完再改名归档）。两侧路径不同的结果**一律作废**，不得用下面的「路径对齐」去补救。
+
+## 路径对齐（只用于同路径之外的离线复查，不作判决依据）
 
 默认不替换路径。显式 `--path-align OLD=NEW` 可重复指定：解析 JSON 后，按参数顺序对两侧所有字符串值执行文字替换（包括字符串内部的模型 system prompt / JSON arguments），不改键名；再调用原版 `canonicalize`。它是文字替换，不检查路径边界，调用者须给出完整且足够具体的实验目录前缀。原始 trace 不改写。
 

@@ -4,8 +4,16 @@
 |---|---|---|---|
 | `README.md` | `f8958a3280a95df7…` | 2026-10-14（人过目） | 比什么 · 四项对照 · 阈值程序（k = 5、S 规则、\|S\| ≥ 45、分母）· 差异分诊 |
 | `accepted-diffs.md` | `653ccb1001d1b09a…` | 2026-10-14（人过目） | 表头；此后只增不删，AI 追加的条目状态为「待批」，追加不改表头 |
-| `acceptance.md` | 待 Issue #1 | — | k、m 的具体数字与 S 集合；**先交人批再冻结** |
-| `normalization.md` | 待 Issue #1 | — | 路径对齐、ID 一致映射、seq 保留、请求体规则；**先交人批再冻结** |
-| `scripts/parity/` 全部比较器与驱动代码 | 待 Issue #1 | — | 与规约一起冻结，`scripts/parity/check_frozen.py` 校验 |
+| `acceptance.md` | `b5223379e6b039e5…` | 2026-10-14（**AI 代批，待人复核**） | k = 5、S = 53（无排除）、Rust 配对规则、批准记录 |
+| `normalization.md` | `5a0c10b70a89a42a…` | 2026-10-14（**AI 代批，待人复核**） | 两侧同路径硬前提、路径对齐、ID / 时间、seq、请求体 |
+| `scripts/parity/bind.mjs` | `1b4a38037cf526c6…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/check_frozen.py` | `0cab2febdccbc371…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/check_ruler.py` | `73ae7c49d5dcc07f…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/controls/README.md` | `13845e46011a890e…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/controls/review_r1.py` | `cfb45493dfbe84a1…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/controls/run_all.py` | `fbd658f932da1a56…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/g03_compare.py` | `17e13a845aa5d8ef…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/round.py` | `16746b22a573a1f0…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/self_compare.py` | `9489d43055c43f5e…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 
-校验（Issue #1 之前）：`cd specs/parity && shasum -a 256 README.md accepted-diffs.md`，前 16 位与上表一致才算没被改过。
+校验：`python3 scripts/parity/check_frozen.py`（全部登记文件的 sha256 前缀）。**冻结后改任何一份都要另开 issue、两家评审同意、写明理由**（`CLAUDE.md` §五）。
