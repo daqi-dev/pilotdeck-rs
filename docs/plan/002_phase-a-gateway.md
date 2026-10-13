@@ -12,7 +12,7 @@ related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_p
 
 ## Context
 
-为什么这样设计见 `docs/research/005_phase-a-gateway/`（`must-know` / `gap` / `decision` / `method-inventory`，行号均已回源核对）。一句话：在 `ui/server` 与 `apps/desktop` 一行不改的前提下，Rust gateway 先以透明代理占位（实验与验收全走高位端口，绝不绑定 18789——用户本机的 PilotDeck 正占着它），配一套能机器判的对拍装置，再把冻结清单里的 (a) 类 **15** 个只读 method 逐个本地化。取舍卡五项技术项（粒度 / 装置 / 类型 / 编排 / crate）为 **AI 代拍，待人复核**；两项红线项（A1 是否提前、桌面端是否验收）**待人拍板，不代拍**（`005/decision.md` #5/#7）。
+为什么这样设计见 `docs/research/005_phase-a-gateway/`（`must-know` / `gap` / `decision` / `method-inventory`，行号均已回源核对）。一句话：在 `ui/server` 与 `apps/desktop` 一行不改的前提下，Rust gateway 先以透明代理占位（实验与验收全走高位端口，绝不绑定 18789——用户本机的 PilotDeck 正占着它），配一套能机器判的对拍装置，再把冻结清单里的 (a) 类 **10** 个只读 method 逐个本地化。取舍卡五项技术项（粒度 / 装置 / 类型 / 编排 / crate）为 **AI 代拍，待人复核**；两项红线项（A1 是否提前、桌面端是否验收）**待人拍板，不代拍**（`005/decision.md` #5/#7）。
 
 **阶段门（AI 代拍，待人复核——人 2026-10-14 夜授权 AI 代做全部判断，见 `CLAUDE.md` §五「授权扩大」）**：阶段 A **可以与阶段 C 并行**——两者替换的进程不同（C = sidecar，A = gateway），阶段 A 的对拍是「Rust gateway + TS sidecar」对「TS gateway + TS sidecar」，不依赖阶段 C 的进度。**合并进 main 的每一步仍须阶段 A 自己的对拍达标。**
 
@@ -20,7 +20,7 @@ related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_p
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| 边界与粒度 | 已定：连接 1:1 透传；(a) 类 **15** 只读可按 method 本地化（冻结清单 `005/method-inventory.md`）；(b) 46、(c) 4、待定 36 与写全局者在「轮次与会话运行时」整体迁走前一律透传 | exp002 + `005/method-inventory.md`（每行带行号）；`005/decision.md` #1 |
+| 边界与粒度 | 已定：连接 1:1 透传；(a) 类 **10** 只读可按 method 本地化（冻结清单 `005/method-inventory.md`）；(b) 46、(c) 4、待定 36 与写全局者在「轮次与会话运行时」整体迁走前一律透传 | exp002 + `005/method-inventory.md`（每行带行号）；`005/decision.md` #1 |
 | 重定向钩子 | 齐备：`PILOTDECK_GATEWAY_PORT` / `PILOTDECK_GATEWAY_URL` / `PILOTDECK_GATEWAY_TOKEN(_PATH)`，三处入口都认 env，改代码零需求 | `src/cli/pilotdeck.ts:212-223`、`ui/server/pilotdeck-bridge.js:77-81`、`ui/server/webRuntimeSupervisor.js:102-109, 214`、`apps/desktop/src/main.ts:138, 162-163` |
 | 驱动 | 现成：`GatewayWsClient`（url+token，request/stream/通知，hello 超时 10s），`src/gateway/index.ts:112-119` 一处导出；真端口测试样板 10 个 | `tests/gateway/bridge-interaction-reconnect.spec.ts:125-141` 等 |
 | 协议类型 | TS-only，无运行时 schema；101 个 method 枚举在 `frames.ts:21-122`，已全部分类并**冻结**进 `005/method-inventory.md`；协议版本 `"1.2"`（`version.ts:1`） | `005/gap.md` 2.1 |
@@ -31,7 +31,7 @@ related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_p
 
 ## 目标
 
-阶段 A 的终点（`.42cog/intent.md` 作品区）：Rust gateway 承担 18789 端口的全部职责（**验收一律在高位端口上做**，18789 是最终占位描述，不是任何实验或验收的绑定端口），原版 `ui/server` 零改动连上即可用，全部 101 个 method 与 HTTP 面由 Rust 承担、TS gateway 进程退役。**本计划覆盖到「A4 完成」为止**——(a) 类 15 个全部本地化 + 其余全量透传 + 装置冻结，拿到第一份「Rust 前置」的对拍全绿；**A4 是中间验收**（TS 退役属 A5+），会话域与轮次/交互运行时的整体迁移（深水区）届时已有实测数据，另开计划 003。
+阶段 A 的终点（`.42cog/intent.md` 作品区）：Rust gateway 承担 18789 端口的全部职责（**验收一律在高位端口上做**，18789 是最终占位描述，不是任何实验或验收的绑定端口），原版 `ui/server` 零改动连上即可用，全部 101 个 method 与 HTTP 面由 Rust 承担、TS gateway 进程退役。**本计划覆盖到「A4 完成」为止**——(a) 类 10 个全部本地化 + 其余全量透传 + 装置冻结，拿到第一份「Rust 前置」的对拍全绿；**A4 是中间验收**（TS 退役属 A5+），会话域与轮次/交互运行时的整体迁移（深水区）届时已有实测数据，另开计划 003。
 
 ## 执行步骤
 
@@ -86,11 +86,11 @@ related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_p
 ### Issue A4 · `pilotdeck-gateway` crate：透传 + (a) 类本地化（可与阶段 C 并行；合并前须本阶段 A2 装置对拍达标）
 
 **S1 crate 骨架**：`src/pilotdeck-gateway`（单 crate，AI 代拍 #6；A1 的代理代码已在此，无转正搬运）；`pilotdeck-cli` 加 `server` 子命令委派之。模块：`acceptor`（仅 `/ws` upgrade，复刻手写 WS 的可见行为——**怪癖清单**：不要求分片、continuation(0x0) 静默丢弃、RSV 不校验、回 pong、客户端 close 回 1000 不回显、unmasked 帧按异常路径断开、close code 4001/4002/4003 语义含 `GatewayWsConnection.ts:89` 的 4002 `invalid_frame`，细目见 `005/gap.md` 1.5）、`upstream`（连 TS 的客户端，帧掩码）、`http_proxy`（全量反代 + `/health` 本地）、`pairing`（连接 1:1 + 双向关闭）、`dispatch`（本地 method 白名单，其余透传）。
-**S2 (a) 类逐个本地化**：本地化清单 = `005/method-inventory.md` 冻结的 **(a) 类 15 个**（改清单=改分母，须人过目）。每个 method 一小步：读同一 `PILOT_HOME` 实现 → 场景组对拍绿 → 上游观测点录帧证明**该 method 的 request 没有转发到 TS** → 登记差异（bug 按_intent_「默认修」）。**`describe_server` 保持透传**（`gap.md` 3.4，不在 (a) 内），hello_ok 仍由 TS 生成；每迁一个在 `specs/gateway-parity/accepted-diffs.md` 对应登记。
-**S3 阶段验收（A4 = 中间验收）**：Rust 前置 + TS 后置跑全部场景。**指标（防假通过口径）**：分子 = 「**由 Rust 本地应答**且对拍一致」的 (a) 类 method 数——每个计分项须同时满足：① 响应由 Rust 生成、与 TS 侧对拍一致；② **上游观测点的录帧里没有该 method 的 request**（纯透传响应不计分，哪怕输出一致）；分母 = **15**（冻结清单）。清单里没本地化的不计分。透传面（(b)(c) 与待定）回归零差异，按整块计（exp002 的结论）。
+**S2 (a) 类逐个本地化**：本地化清单 = `005/method-inventory.md` 冻结的 **(a) 类 10 个**（改清单=改分母，须人过目）。每个 method 一小步：读同一 `PILOT_HOME` 实现 → 场景组对拍绿 → 上游观测点录帧证明**该 method 的 request 没有转发到 TS** → 登记差异（bug 按_intent_「默认修」）。**`describe_server` 保持透传**（`gap.md` 3.4，不在 (a) 内），hello_ok 仍由 TS 生成；每迁一个在 `specs/gateway-parity/accepted-diffs.md` 对应登记。
+**S3 阶段验收（A4 = 中间验收）**：Rust 前置 + TS 后置跑全部场景。**指标（防假通过口径）**：分子 = 「**由 Rust 本地应答**且对拍一致」的 (a) 类 method 数——每个计分项须同时满足：① 响应由 Rust 生成、与 TS 侧对拍一致；② **上游观测点的录帧里没有该 method 的 request**（纯透传响应不计分，哪怕输出一致）；分母 = **10**（冻结清单）。清单里没本地化的不计分。透传面（(b)(c) 与待定）回归零差异，按整块计（exp002 的结论）。
 **怎么算做完**
 - [ ] CI `check` 绿；阳性失败对照仍会 FAIL（装置没被顺手改瞎）
-- [ ] (a) 类 15 个全部本地化、对拍一致且录帧证明未转发上游；透传面回归零差异
+- [ ] (a) 类 10 个全部本地化、对拍一致且录帧证明未转发上游；透传面回归零差异
 - [ ] 人肉验收：Web UI 走通（此步不交给 AI）；**桌面端明确标注「未验收」**（`005/decision.md` #7，待人拍板）
 
 ### Issue A5 起 · 深水区（另开计划 003，本计划不展开）
@@ -134,7 +134,7 @@ node --import tsx scripts/gateway-parity/export_schema.mjs --check
 ## 拍板记录
 
 上一轮已拍（见 `002/decision.md`）：先 C 再 A 再 B · 驱动用 TS · 默认修 bug · 编排这一阶段不改入口。
-本轮技术项 AI 代拍（待人复核，详据见 `005/decision.md`）：① 粒度 = 连接 1:1 + (a) 类（冻结清单 15 个）按 method、其余透传；② 装置 = TS 驱动比三样 + driver 侧录帧 + 上游观测点 + 阳性失败对照 + 新规约；③ 类型 = TS 导 JSON Schema 冻结、Rust 手写 serde；④ 编排 = 不改入口、env + 装置自编排 + 隔离 token 文件；⑤ crate = 先单 crate `pilotdeck-gateway`、代码只留 `src/` 一份。
+本轮技术项 AI 代拍（待人复核，详据见 `005/decision.md`）：① 粒度 = 连接 1:1 + (a) 类（冻结清单 10 个）按 method、其余透传；② 装置 = TS 驱动比三样 + driver 侧录帧 + 上游观测点 + 阳性失败对照 + 新规约；③ 类型 = TS 导 JSON Schema 冻结、Rust 手写 serde；④ 编排 = 不改入口、env + 装置自编排 + 隔离 token 文件；⑤ crate = 先单 crate `pilotdeck-gateway`、代码只留 `src/` 一份。
 本轮红线项**待人拍板（不代拍）**：⑥ 阶段门——A1（只跑 exp003、不写替换代码）是否提前（`005/decision.md` #5）；⑦ 桌面端不纳入阶段 A 验收（`005/decision.md` #7）。两项未拍板前均按最严字面执行。
 
 ## 相关

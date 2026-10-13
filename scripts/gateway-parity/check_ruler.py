@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import sys
 
-from common import DEFAULT_OUT, SCRIPT, install_shutdown, parity_lock, save
+from common import DEFAULT_OUT, SCRIPT, apparatus_hashes, install_shutdown, parity_lock, save
 from compare import compare
 from run_round import run_round
 
@@ -25,10 +25,15 @@ def main():
     ap.add_argument('--lock-timeout', type=float, default=600)
     args = ap.parse_args()
     output = args.output.resolve()
+    hashes = apparatus_hashes()
     takeovers = []
     with parity_lock(args.lock_timeout, takeovers):
         for label in ['ts1', 'ts2', 'ts3', 'ts4', 'ts5', 'proxy']:
-            if not (output / label).exists():
+            if (output / label).exists():
+                archived = json.loads((output / label / 'run.json').read_text())
+                if archived.get('apparatusSha256') != hashes:
+                    raise ValueError(f'{label}: apparatus hash mismatch; choose a fresh --output')
+            else:
                 with redirect_stdout(sys.stderr):
                     run_round('rust' if label == 'proxy' else 'ts', label, output, args.baseline)
         identities = []
@@ -61,14 +66,15 @@ def main():
         while controls_path.exists():
             controls_path = output / f'controls-{index}'
             index += 1
-        controls = module.run_controls(output / 'ts1', controls_path)
+        controls = module.run_controls(output / 'ts1', controls_path, output / 'proxy')
         cases = controls.get('cases', {})
         report = {
-            'k': 5, 'pairs': comparisons,
+            'k': 5, 'pairs': comparisons, 'apparatusSha256': hashes,
             'self_compare': distinct and all(item['status'] == 'PASS' for item in comparisons),
             'distinct_ts_rounds': distinct, 'gateway_pids': identities,
-            'positive_controls': bool(cases) and all(item['passed'] for name, item in cases.items() if name != 'both-sides-bad'),
-            'same_bad_rejected': cases.get('both-sides-bad', {}).get('passed', False),
+            'positive_controls': bool(cases) and all(item['passed'] for name, item in cases.items() if not item.get('bothSides')),
+            'same_bad_rejected': bool(cases) and all(cases.get(name, {}).get('passed', False) for name in
+                                                  ('both-sides-bad', 'corrupt-fingerprint', 'both-bad-disk', 'both-bad-http', 'both-bad-wire-metadata')),
             'independent_review': None,
             'proxy_parity': proxy['status'] == 'PASS',
             'proxy_rules': [item['rule'] for item in proxy['failures']],
@@ -77,6 +83,8 @@ def main():
         }
         if not all(report[key] for key in ('self_compare', 'positive_controls', 'same_bad_rejected', 'proxy_parity')):
             report['status'] = 'FAIL'
+        if apparatus_hashes() != hashes:
+            raise ValueError('apparatus changed during run; report cannot certify mixed versions')
         save(output / 'ruler.json', report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if report['status'] == 'FAIL' else 2

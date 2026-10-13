@@ -67,17 +67,22 @@ async function rawProbe(kind: string) {
       buffer = buffer.subarray(end + 4); upgraded = true;
     }
     while (buffer.length >= 2) {
-      const opcode = buffer[0] & 15; let size = buffer[1] & 127, offset = 2;
+      const opcode = buffer[0] & 15, fin = !!(buffer[0] & 128), rsv = buffer[0] & 0x70,
+        masked = !!(buffer[1] & 128), lengthCode = buffer[1] & 127;
+      let size = lengthCode, offset = 2;
       if (size === 126) { if (buffer.length < 4) return; size = buffer.readUInt16BE(2); offset = 4; }
       if (size === 127) { if (buffer.length < 10) return; size = Number(buffer.readBigUInt64BE(2)); offset = 10; }
+      const maskOffset = offset; offset += masked ? 4 : 0;
       if (buffer.length < offset + size) return;
       const wireHex = buffer.subarray(0, offset + size).toString('hex');
-      const payload = buffer.subarray(offset, offset + size); buffer = buffer.subarray(offset + size);
+      const payload = Buffer.from(buffer.subarray(offset, offset + size));
+      if (masked) for (let i = 0; i < payload.length; i++) payload[i] ^= buffer[maskOffset + i % 4];
+      buffer = buffer.subarray(offset + size);
       let frame: any = payload.toString();
       if (opcode === 1) { try { frame = JSON.parse(frame); } catch {} }
       if (opcode === 8) frame = { code: size >= 2 ? payload.readUInt16BE() : 1005, reason: payload.subarray(2).toString() };
       replies.push({ opcode, frame });
-      record({ connection: id, direction: 'receive', wire: { opcode }, wireHex, frame });
+      record({ connection: id, direction: 'receive', wire: { opcode, fin, rsv, masked, lengthCode, payloadLength: size }, wireHex, frame });
     }
   });
   try {
@@ -93,7 +98,7 @@ async function rawProbe(kind: string) {
       const mask = Buffer.from([1, 2, 3, 4]);
       const data = Buffer.from(payload); if (masked) for (let i = 0; i < data.length; i++) data[i] ^= mask[i % 4];
       const wire = Buffer.concat(masked ? [header, mask, data] : [header, data]);
-      record({ connection: id, direction: 'send', wire: { opcode, rsv, masked }, wireHex: wire.toString('hex'), frame: payload.toString() });
+      record({ connection: id, direction: 'send', wire: { opcode, fin: true, rsv, masked, lengthCode: extended ? 126 : payload.length, payloadLength: payload.length }, wireHex: wire.toString('hex'), frame: payload.toString() });
       socket.write(wire);
     }
     if (kind === 'continuation') {

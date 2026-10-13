@@ -16,7 +16,9 @@ UUID = re.compile(r'\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', re.I)
 class Normalizer:
     def __init__(self):
         self.ids = {}
+        self.entities = {}
         self.generations = {}
+        self.generation_owners = {}
 
     def value(self, value, path=()):
         if isinstance(value, dict):
@@ -24,7 +26,14 @@ class Normalizer:
             for key, item in sorted(value.items()):
                 # Binding generation is a server-generated connection epoch.
                 if key == 'generation' and 'connectionId' in value:
-                    item = self.generations.setdefault(str(item), f'<generation-{len(self.generations) + 1}>')
+                    connection = value['connectionId']
+                    if connection in self.generations and self.generations[connection] != item:
+                        raise ValueError('same connectionId has conflicting binding generations')
+                    if item in self.generation_owners and self.generation_owners[item] != connection:
+                        raise ValueError('distinct connectionIds share a binding generation')
+                    self.generation_owners[item] = connection
+                    self.generations[connection] = item
+                    item = f'<generation:{self.value(connection)}>'
                 # Explicit protocol/transcript wall clock metadata. Business
                 # schedule fields (runAt, nextRunAt), budgets, seq remain exact.
                 elif self.clock_field(value, key) and isinstance(item, (str, int, float)):
@@ -34,25 +43,66 @@ class Normalizer:
         if isinstance(value, list):
             return [self.value(item, path + ('[]',)) for item in value]
         if isinstance(value, str):
-            return UUID.sub(lambda match: self.ids.setdefault(match.group(), f'<uuid-{len(self.ids) + 1}>'), value)
+            return UUID.sub(lambda match: self.ids.get(match.group().lower(), match.group()), value)
         return value
+
+    def bind(self, value, key):
+        """Only entity definitions assign identities; reference/list order never does."""
+        if not isinstance(value, str):
+            return
+        match = UUID.search(value)
+        if not match:
+            return
+        identity = match.group().lower()
+        label = '<uuid:' + hashlib.sha256(json.dumps(key, sort_keys=True, ensure_ascii=False).encode()).hexdigest() + '>'
+        if key in self.entities and self.entities[key] != identity:
+            raise ValueError(f'ambiguous stable entity key: {key}')
+        if identity in self.ids and self.ids[identity] != label:
+            raise ValueError(f'UUID has conflicting entity definitions: {key}')
+        self.entities[key] = identity
+        self.ids[identity] = label
+
+    def index(self, value):
+        if isinstance(value, list):
+            for item in value:
+                self.index(item)
+        elif isinstance(value, dict):
+            if {'entryId', 'turnId', 'sequence', 'type'} <= value.keys():
+                self.bind(value['entryId'], ('entry', value['turnId'], value['sequence']))
+                if value['type'].endswith('_started') and 'operationId' in value:
+                    self.bind(value.get('operationId'), ('operation', value['turnId'], value['sequence']))
+            if {'taskId', 'projectKey', 'originSessionKey', 'message', 'schedule'} <= value.keys():
+                self.bind(value['taskId'], ('task', value['projectKey'], value['originSessionKey'], value['message'],
+                                            json.dumps(value['schedule'], sort_keys=True)))
+            if value.get('type') in ('permission_request', 'elicitation_request') and 'runId' in value:
+                self.bind(value.get('requestId'), ('pending', value['type'], value['runId'], value.get('toolCallId'), value.get('toolName')))
+            if {'turnId', 'order', 'id', 'version'} <= value.keys():
+                self.bind(value['id'], ('block', value['turnId'], value['order']))
+            # Named entity definitions, including future list fixtures. Names
+            # identify the entity independently of its place in a list.
+            if 'id' in value and 'name' in value and value.get('type') not in ('request', 'response', 'event'):
+                self.bind(value['id'], ('named', value.get('type'), value.get('scope'), value['name']))
+            for item in value.values():
+                self.index(item)
 
     @staticmethod
     def clock_field(parent, key):
-        # Identify protocol/storage metadata by its enclosing record shape,
-        # not a global same-name-key eraser. Schedule/duration fields stay exact.
+        # Exact documented metadata containers, not single-name heuristics.
+        project = 'name' in parent and 'projectKey' in parent and ('path' in parent or 'fullPath' in parent)
+        cron = {'taskId', 'schedule', 'message', 'status'} <= parent.keys()
+        transcript = {'entryId', 'sequence', 'turnId', 'type'} <= parent.keys()
+        pending = 'requestId' in parent and {'ownerId', 'kind', 'toolCallId'} <= parent.keys()
+        registry = {'runId', 'ownerPid', 'acceptedAt'} <= parent.keys()
         if key == 'createdAt':
-            return any(marker in parent for marker in ('entryId', 'taskId', 'requestId')) or ('lastActivity' in parent and 'name' in parent)
+            return transcript or cron or pending or (project and 'lastActivity' in parent)
         if key == 'updatedAt':
-            return any(marker in parent for marker in ('taskId', 'firstPrompt', 'lastPrompt', 'isSnapshot')) or ('runId' in parent and 'ownerPid' in parent)
+            return cron or {'firstPrompt', 'lastPrompt'} <= parent.keys() or 'isSnapshot' in parent or registry
         if key in ('startedAt', 'completedAt'):
             return any(marker in parent for marker in ('sessionId', 'runId', 'toolCallId'))
-        if key == 'acceptedAt':
-            return 'runId' in parent and 'ownerPid' in parent
-        if key == 'ownerPid':
-            return 'runId' in parent and 'acceptedAt' in parent
+        if key in ('acceptedAt', 'ownerPid'):
+            return registry
         if key == 'lastActivity':
-            return 'projectKey' in parent or 'path' in parent or 'name' in parent
+            return project
         if key == 'mtimeMs':
             return ('path' in parent or 'relativePath' in parent) and ('kind' in parent or 'name' in parent or 'isDirectory' in parent)
         if key == 'mtime':
@@ -89,25 +139,34 @@ def transcript_projection(entries, normalizer):
 def load(path, expected=dict):
     value = json.loads(path.read_text())
     if not isinstance(value, expected):
-        raise ValueError(f'{path.name}: expected {expected.__name__}')
+        raise ValueError(f'{path.name}: expected {expected}')
     return value
 
 
 def wire_frame(row):
     data = bytes.fromhex(row['wireHex'])
-    opcode, size, offset = data[0] & 15, data[1] & 127, 2
+    if len(data) < 2:
+        raise ValueError('truncated wire header')
+    opcode, length_code, offset = data[0] & 15, data[1] & 127, 2
+    size = length_code
     if size in (126, 127):
         count = 2 if size == 126 else 8
+        if len(data) < offset + count:
+            raise ValueError('truncated extended length')
         size = int.from_bytes(data[offset:offset + count], 'big')
         offset += count
     masked = bool(data[1] & 128)
     mask = data[offset:offset + 4] if masked else b''
     offset += 4 if masked else 0
+    if len(data) < offset:
+        raise ValueError('truncated mask')
     payload = data[offset:]
     if len(payload) != size or opcode != row['wire']['opcode']:
         raise ValueError('wire bytes/header disagree')
-    if row['direction'] == 'send' and (masked != row['wire']['masked'] or data[0] & 0x70 != row['wire']['rsv']):
-        raise ValueError('wire masking/RSV metadata disagree')
+    metadata = {'opcode': opcode, 'fin': bool(data[0] & 128), 'rsv': data[0] & 0x70,
+                'masked': masked, 'lengthCode': length_code, 'payloadLength': size}
+    if metadata != row['wire']:
+        raise ValueError('wire FIN/RSV/mask/length metadata disagree')
     if masked:
         payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
     value = payload.decode('utf8', errors='replace')
@@ -118,7 +177,7 @@ def wire_frame(row):
                  'reason': payload[2:].decode('utf8', errors='replace')}
     if value != row.get('frame'):
         raise ValueError('wire bytes/decoded frame disagree')
-    return value
+    return data[:offset].hex()
 
 
 def validate(path, local_methods=()):
@@ -329,7 +388,16 @@ def validate(path, local_methods=()):
         if not any(row['connection'] == 4 and row.get('exceptionalShutdown') is True for row in raw):
             fail('G3.oracle', 'unmasked must trigger exceptional TS listener shutdown')
         if run.get('side') == 'rust':
-            upstream = [json.loads(line) for line in (path / 'upstream.jsonl').read_text().splitlines()]
+            try:
+                raw_upstream = (path / 'upstream.jsonl').read_text()
+                if not raw_upstream or not raw_upstream.endswith('\n'):
+                    raise ValueError('empty/truncated upstream recording')
+                upstream = [json.loads(line) for line in raw_upstream.splitlines()]
+                if any(not isinstance(row, dict) or ('frame' in row and not isinstance(row['frame'], dict)) for row in upstream):
+                    raise ValueError('invalid upstream row')
+            except (OSError, ValueError, TypeError) as error:
+                fail('G2.observer', str(error))
+                return frames, errors
             upstream_methods = {row.get('frame', {}).get('method') for row in upstream}
             expected = (set(READ_METHODS) - set(local_methods)) | {'submit_turn', 'permission_decide', 'cron_create'}
             if not expected.issubset(upstream_methods):
@@ -384,8 +452,33 @@ def disk(path, normalize):
     return result
 
 
-def projection(path, frames):
+def entity_normalizer(path, frames):
     normalizer = Normalizer()
+    for name in SCENARIOS:
+        for row in frames.get(name, []):
+            frame = row.get('frame')
+            if isinstance(frame, dict):
+                if frame.get('type') == 'hello_ok':
+                    normalizer.bind(frame.get('interactionBinding', {}).get('connectionId'),
+                                    ('connection', name, row['connection']))
+                if frame.get('type') == 'request':
+                    normalizer.bind(frame.get('id'), ('request', name, row['connection'], frame.get('method')))
+                normalizer.index(frame)
+    for root in ('home', 'project'):
+        for item in sorted((path / root).rglob('*')):
+            relative = item.relative_to(path).as_posix()
+            if relative.startswith(('home/logs/', 'home/telemetry/')) or not item.is_file():
+                continue
+            if item.suffix == '.json':
+                normalizer.index(load(item, (dict, list)))
+            elif item.suffix == '.jsonl':
+                for line in item.read_text().splitlines():
+                    normalizer.index(json.loads(line))
+    return normalizer
+
+
+def projection(path, frames):
+    normalizer = entity_normalizer(path, frames)
     projected = {}
     for name in SCENARIOS:
         # Preserve order per connection, including notifications; never reorder
@@ -393,8 +486,11 @@ def projection(path, frames):
         # order is explicitly outside contract. Recorder seq is checked above.
         connections = {}
         for row in frames.get(name, []):
-            connections.setdefault(str(row['connection']), []).append(normalizer.value({
-                key: value for key, value in row.items() if key not in ('seq', 'monotonicNs', 'connection', 'raw', 'wireHex')}))
+            semantic = {key: value for key, value in row.items()
+                        if key not in ('seq', 'monotonicNs', 'connection', 'raw', 'wireHex')}
+            if 'wire' in row:
+                semantic['wireHeaderHex'] = wire_frame(row)
+            connections.setdefault(str(row['connection']), []).append(normalizer.value(semantic))
         projected[name] = connections
     http = []
     for row in load(path / 'scenarios/http/http.json', list):

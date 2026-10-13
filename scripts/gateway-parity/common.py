@@ -32,6 +32,12 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def apparatus_hashes():
+    """Bind evidence and reports to every executable ruler script, not a subset."""
+    return {path.relative_to(ROOT).as_posix(): digest(path)
+            for path in sorted(SCRIPT.rglob('*')) if path.suffix in ('.py', '.mjs', '.mts')}
+
+
 def owner(lock):
     try:
         data = json.loads((lock / 'owner.json').read_text())

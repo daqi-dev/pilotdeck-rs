@@ -16,7 +16,7 @@ import sys
 import time
 import urllib.request
 
-from common import DEFAULT_OUT, READ_METHODS, ROOT, SCRIPT, SCENARIOS, digest, install_shutdown, parity_lock, save
+from common import DEFAULT_OUT, READ_METHODS, ROOT, SCRIPT, SCENARIOS, apparatus_hashes, digest, install_shutdown, parity_lock, save
 
 TOKEN = 'gateway-parity-isolated-token'
 
@@ -95,7 +95,7 @@ webui:
     listeners = []
     errors = []
     start_time = time.monotonic()
-    run = {'side': side, 'label': label, 'status': 'RUNNING', 'scenarios': {},
+    run = {'side': side, 'label': label, 'status': 'RUNNING', 'apparatusSha256': apparatus_hashes(), 'scenarios': {},
            'runtime': {'pilotHome': str(home), 'cwd': str(project), 'tmpdir': str(cur / 'tmp')},
            'ports': list(ports), 'baseline': str(baseline), 'pollWatcher': True,
            'baselineSourceSha256': digest(baseline / 'src/gateway/server/GatewayServer.ts'),
