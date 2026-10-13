@@ -33,6 +33,8 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 
 ## 执行步骤
 
+> **为什么拆成三条 issue**：`dev-launch` 的粒度铁律（`.claude/skills/dev-launch/SKILL.md:58`）主张「能一条就一条、一条内拆多个 PR」。这里拆开不是因为工程量，而是**三条之间隔着人的闸门**：#1 结束时人批 `acceptance.md` 并冻结尺子，#2 才能开始；#2 合并后才有二进制可量。旧迁移一个 `CORE-01` 包下整个子系统、父任务收不了口（`docs/research/003_prior-attempt/`）。**只先开 #1**，#2、#3 在前一条合并后再开。
+
 ### Issue #1 · 回捞并复核尺子（≤ 1 天；超时降级，见风险 R1）
 
 **S1 搬尺子进 `scripts/parity/`**（不新开顶层目录）
