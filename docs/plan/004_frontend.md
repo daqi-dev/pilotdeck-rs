@@ -62,7 +62,7 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 **S5 双壳同源共存实验（新增，不过则 F3 起的共存方案回炉）**
 - **双入口托管两选项各搭一遍**：A——本地给 `ui/server` 的 `app.get('*')`（`index.js:3471`）打前缀分支的最小 patch（几行，实验用，不提交主线）；B——前置反代（caddy/nginx 任一）按前缀分流，`ui/server` 零改动。同一源下新 bundle 挂 `/probe` 前缀、其余走旧 bundle，量出两选项的改动面与运维面，记进实验文档供 F3 定夺。
 - **双向导航拦截**：旧壳点入 `/probe` 前缀页须硬跳（在旧壳 `navigate` 调用处包一层 `window.location.assign`，实验里量出实际要改几处：`AppShellV2.tsx` 的 navigate 调用点 + 各页内跳转）；新壳跳未迁路径硬跳回旧 bundle。
-- **跨壳行为实测**：① 登录态跨壳保持（`auth-token` 等 storage 键）；② 前进/后退跨壳边界（整页加载、状态由 URL+storage 重建）；③ 流式中途跨壳再返回（`watch-session` 重挂，断口部分帧不可复现）；④ composer 草稿跨壳**保留**（`draft_input_<projectName>:<sessionId|'new'>` 键是共享契约，`chatStorage.ts:6-9`——旧壳本就有 localStorage 恢复/写入/离页刷新：`useChatComposerState.ts:316-321, 1621-1629, 1643-1644`；丢草稿是 bug 不是差异）。③④ 按 `accepted-diffs.md` D1–D5 逐条对账，实测与描述不符的条目回炉改写，不静默保留。
+- **跨壳行为实测**：① 登录态跨壳保持（`auth-token` 等 storage 键）；② 前进/后退跨壳边界（整页加载、状态由 URL+storage 重建）；③ 流式中途跨壳再返回（`watch-session` 重挂，断口部分帧不可复现）；④ 重连行为按通道分断言——主 `/ws` 断开自动重连（1s→30s 退避），终端 `/shell` 断开**不**自动重连、须手动重进（旧实现 `onclose` 只清屏：`useShellConnection.ts:174-183`）；⑤ composer 草稿跨壳**保留**（`draft_input_<projectName>:<sessionId|'new'>` 键是共享契约，`chatStorage.ts:6-9`——旧壳本就有 localStorage 恢复/写入/离页刷新：`useChatComposerState.ts:316-321, 1621-1629, 1643-1644`；丢草稿是 bug 不是差异）。③–⑤ 按 `accepted-diffs.md` D1–D5 逐条对账，实测与描述不符的条目回炉改写，不静默保留。
 
 **Issue F1 怎么算做完**
 - [ ] 实验文档 `docs/experiments/exp006-frontend-probe/readme.md`：两候选 IME/流式/岛生命周期三命门的同负载实测数据（截图或 trace）与选型结论、双入口托管两选项对比、导航拦截改动点数量、A 类移植 1 条的成本
