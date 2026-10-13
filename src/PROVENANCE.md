@@ -20,6 +20,14 @@
 - `src/pilotdeck-transport/build.rs`：构建时读取当前 git HEAD，注入 `PILOTDECK_SOURCE_COMMIT`，供 sidecar `--version` 输出；读取失败才使用 `unregistered-build`。跟踪 worktree HEAD、分支引用与 packed refs，提交或切换后重新构建会更新来源。
 - `src/Cargo.lock`：按合并后的 workspace 重新解析锁文件，移除 core、登记导入依赖，直接依赖版本仍照旧钉死。
 
+## 后续精简候选
+
+以下仅登记，留到 S7 评估；本轮不修改 tokenizer、vendor 代码或资源。
+
+- **o200k 词表重复嵌入**：`pilotdeck-tokenizer/src/implementation.rs` 的 `RANKS` 与 `vendor/tiktoken-rs/src/tiktoken_ext/openai_public.rs` 的 `o200k_base()`、`o200k_harmony()` 都嵌入约 3.6 MB 的同一词表。后续核实最终二进制是否重复携带，并评估复用 vendor ranks；直接改用 `o200k_base()` 前须验证自定义 Source 正则、普通文本与特殊 token 契约保持一致。
+- **vendor 资源裁剪**：`vendor/tiktoken-rs/assets/` 中的 `cl100k_base.tiktoken`、`p50k_base.tiktoken`、`r50k_base.tiktoken`、`encoder.json`、`vocab.bpe`（约 5 MB）是当前 sidecar 未用资源候选。S7 核查 vendor API 与编译产物后再裁剪，保留来源哈希和许可证追溯。
+- **依赖声明统一**：`pilotdeck-transport/Cargo.toml` 对 `pilotdeck-agent` 用裸 path、对 `pilotdeck-protocol` 用 workspace 表；S7 评估统一 workspace 依赖声明。
+
 ## 原始文件 sha256
 
 以下完整哈希由原样搬入阶段的 `shasum -a 256 <文件>` 生成；路径相对 `src/`。这是来源哈希，适配后的文件以上方例外清单和本仓提交链追溯。
