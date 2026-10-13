@@ -4,6 +4,12 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-14 · Issue #15 / A1 exp003（feat/a1-exp003-proxy，基于 f1bc4f5，按用户要求未提交）
+> **做了**：新增 `src/pilotdeck-gateway` 透明 WS/HTTP bin，固定依赖与 Cargo.lock；`scripts/exp003/` 三进程隔离编排、真实 UI HTTP/WS 驱动、客户端帧录制与临时比较器；readme 与研究 gap 回填。fmt/clippy/test 全 workspace 通过（core 1 + gateway 3 测试）。
+> **实测**：七项六 PASS；真实 UI 自动重放 FAIL（client close 先清 hello，bridge 丢旧 binding，重连后不发恢复请求）。19/19 帧等价 PASS；修改 hello_ok.serverVersion 的阳性对照 FAIL/exit 1/唯一差异。保存 binding 的补充驱动直连/代理都 reconnected + active snapshot，回答均 delivered=false，未冒充恢复轮次完成。
+> **意外**：修复自身 close 1000→1006/1005 的搬运缺陷；sandbox fs.watch EMFILE 导致 CLI 静默退出，最终固定夹具用显式浅层轮询（不覆盖热加载）；项目需 .cwd 注册，General 需 WORKSPACES_ROOT。基线源码和冻结尺子未改。
+> **交接**：`docs/experiments/exp003-transparent-proxy/readme.md`、`_tmp/RESULT.md`；产物 `_tmp/20261014-exp003/`，所有自有进程已停，端口只用 3301/28789/28790。协调者提交/评审；自动重放 P0 未闭合，桌面/DOM 未验收。用户明确禁止本 worker commit/push。
+
 > ## 2026-10-14 · Issue #7 尺子实现与 TS 五遍校准（feat/issue-7-ruler；未提交：沙箱限制）
 > **做了**：回捞 G03 v1 为 sidecar 对 sidecar；E 规则入总判决、清单强制 53 场景；隔离 round + 只观察 spawn 的身份 proof；controls / self_compare / check_ruler / check_frozen；acceptance 与 normalization 待批草稿、exp004。
 > **证据**：协调者 TS5 r1–r5 DONE；10 对全部 53/53，默认 S = 53，r1 基准 / 相邻均 53，无排除项，accepted-diffs 原样。逐规则 / 端到端负向、两侧同坏、正向对照全过；TS pure_text 单场景冒烟 identity_ok / valid_round = true。`check_ruler.py` 三个机器对照 true，independent_review = null（返回 2）；冻结哈希通过，新文件未登记跳过。
