@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Mutate real successful evidence; require FAIL from the corresponding rule."""
 import argparse
+import base64
 import json
 from pathlib import Path
 import shutil
@@ -27,20 +28,28 @@ def write_rows(folder, value, name='auth', footer=False):
         save(path.parent / 'complete.json', complete)
 
 
-def run_controls(source, output):
+def run_controls(source, output, proxy_source=None):
     if compare(source, source)['status'] != 'PASS':
         return {'passed': False, 'error': 'controls require a valid real source round'}
     output.mkdir(parents=True, exist_ok=False)
     results = {}
 
-    def case(name, rule, mutate, both=False):
+    def case(name, rule, mutate, both=False, prepare=None, reference_source=None):
         target = output / name
-        shutil.copytree(source, target)
+        reference = reference_source or source
+        shutil.copytree(reference, target)
+        if prepare:
+            reference = output / (name + '-reference')
+            shutil.copytree(reference_source or source, reference)
+            prepare(reference)
+            prepare(target)
+            if compare(reference, reference)['status'] != 'PASS':
+                raise ValueError(f'{name}: invalid prepared reference')
         mutate(target)
-        result = compare(target if both else source, target)
+        result = compare(target if both else reference, target)
         observed = [row['rule'] for row in result['failures']]
-        passed = result['status'] == 'FAIL' and rule in observed
-        results[name] = {'passed': passed, 'expectedRule': rule, 'observedRules': observed, 'comparison': str(target / 'comparison.json')}
+        passed = result['status'] == 'FAIL' and bool(observed) and observed[0] == rule
+        results[name] = {'passed': passed, 'expectedRule': rule, 'observedRules': observed, 'primaryRule': observed[0] if observed else None, 'bothSides': both, 'comparison': str(target / 'comparison.json')}
         save(target / 'comparison.json', result)
 
     def frame_difference(folder):
@@ -117,6 +126,85 @@ def run_controls(source, output):
         event['requestFingerprint'] = '0' * 64
         path.write_text(''.join(json.dumps(row) + '\n' for row in data))
 
+    def both_bad_disk(folder):
+        (folder / 'project/written.txt').write_text('WRONG_HTTP_DURABLE_WRITE\n')
+
+    def both_bad_http(folder):
+        path = folder / 'scenarios/http/http.json'
+        data = json.loads(path.read_text())
+        data[0]['body'] = '{"ok":false}'
+        data[0]['chunks'] = [{'base64': base64.b64encode(data[0]['body'].encode()).decode(), 'elapsedMs': 0}]
+        save(path, data)
+
+    def wire_change(folder, change, close=False):
+        data = rows(folder, 'quirks')
+        row = next(row for row in data if row.get('direction') == 'receive' and
+                   row.get('wire', {}).get('opcode') == (8 if close else 1))
+        wire = bytes.fromhex(row['wireHex'])
+        code = wire[1] & 127
+        offset = 2 + (2 if code == 126 else 8 if code == 127 else 0)
+        if change == 'mask-key':
+            old_mask = wire[offset:offset + 4]
+            encoded = wire[offset + 4:]
+            assert wire[1] & 128
+            decoded = bytes(byte ^ old_mask[i % 4] for i, byte in enumerate(encoded))
+            mask = b'abcd'
+            row['wireHex'] = (wire[:offset] + mask + bytes(byte ^ mask[i % 4] for i, byte in enumerate(decoded))).hex()
+            write_rows(folder, data, 'quirks')
+            return
+        assert not wire[1] & 128
+        payload = wire[offset:]
+        if change in (126, 127):
+            row['wireHex'] = (bytes([wire[0], change]) + len(payload).to_bytes(2 if change == 126 else 8, 'big') + payload).hex()
+            row['wire']['lengthCode'] = change
+        elif change in ('fin', 'rsv'):
+            row['wireHex'] = (bytes([wire[0] ^ (128 if change == 'fin' else 64)]) + wire[1:]).hex()
+            row['wire']['fin' if change == 'fin' else 'rsv'] = False if change == 'fin' else 64
+        elif change == 'mask':
+            mask = b'1234'
+            row['wireHex'] = (bytes([wire[0], wire[1] | 128]) + wire[2:offset] + mask +
+                              bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))).hex()
+            row['wire']['masked'] = True
+        elif change == 'metadata':
+            row['wire']['fin'] = not row['wire']['fin']
+        write_rows(folder, data, 'quirks')
+
+    def hello_fixture(folder, value):
+        data = rows(folder)
+        row = next(row for row in data if isinstance(row.get('frame'), dict) and row['frame'].get('type') == 'hello_ok')
+        row['frame']['serverInfo']['r2Fixture'] = value
+        row['raw'] = json.dumps(row['frame'])
+        write_rows(folder, data)
+
+    x = '00000000-0000-4000-8000-000000000001'
+    y = '00000000-0000-4000-8000-000000000002'
+    case('uuid-list-reorder', 'G4.frames', lambda folder: hello_fixture(folder, [y, x]),
+         prepare=lambda folder: hello_fixture(folder, [x, y]))
+    case('uuid-entity-list-reorder', 'G4.frames',
+         lambda folder: hello_fixture(folder, [{'id': y, 'name': 'second'}, {'id': x, 'name': 'first'}]),
+         prepare=lambda folder: hello_fixture(folder, [{'id': x, 'name': 'first'}, {'id': y, 'name': 'second'}]))
+    for label, shape, field in [
+        ('name-createdAt', {'name': 'business', 'createdAt': 1}, 'createdAt'),
+        ('partial-project-createdAt', {'name': 'business', 'lastActivity': 1, 'createdAt': 1}, 'createdAt'),
+        ('requestId-createdAt', {'requestId': 'business', 'createdAt': 1}, 'createdAt'),
+        ('name-lastActivity', {'name': 'business', 'lastActivity': 1}, 'lastActivity'),
+        ('projectKey-lastActivity', {'projectKey': 'business', 'lastActivity': 1}, 'lastActivity'),
+        ('partial-registry-updatedAt', {'runId': 'business', 'ownerPid': 1, 'updatedAt': 1}, 'updatedAt'),
+    ]:
+        case('business-clock-' + label, 'G4.frames',
+             lambda folder, value=shape, key=field: hello_fixture(folder, dict(value, **{key: 2})),
+             prepare=lambda folder, value=shape: hello_fixture(folder, value))
+    for label, change, close in [('126-to-127', 127, False), ('short-to-126', 126, True),
+                                 ('short-to-127', 127, True), ('fin', 'fin', False),
+                                 ('rsv', 'rsv', False), ('mask', 'mask', False)]:
+        case('reencoded-frame-' + label, 'G4.frames',
+             lambda folder, change=change, close=close: wire_change(folder, change, close))
+    case('reencoded-frame-mask-key', 'G4.frames', lambda folder: wire_change(folder, 'mask-key'),
+         prepare=lambda folder: wire_change(folder, 'mask'))
+    case('both-bad-wire-metadata', 'G2.recording', lambda folder: wire_change(folder, 'metadata'), both=True)
+    case('both-bad-disk', 'G3.oracle', both_bad_disk, both=True)
+    case('both-bad-http', 'G3.oracle', both_bad_http, both=True)
+
     case('frame-difference', 'G4.frames', frame_difference)
     case('deleted-event', 'G2.event-sequence', delete_event)
     case('changed-disk', 'G6.disk', disk_difference)
@@ -129,6 +217,15 @@ def run_controls(source, output):
     case('broken-id-reference', 'G2.link', broken_reference)
     case('corrupt-fingerprint', 'G2.recording', corrupt_fingerprint, both=True)
     case('both-sides-bad', 'G3.oracle', same_bad, both=True)
+    if proxy_source is not None:
+        if compare(proxy_source, proxy_source)['status'] != 'PASS':
+            raise ValueError('observer controls require a valid real proxy source')
+        case('missing-upstream', 'G2.observer', lambda folder: (folder / 'upstream.jsonl').unlink(),
+             reference_source=proxy_source)
+        case('empty-upstream', 'G2.observer', lambda folder: (folder / 'upstream.jsonl').write_text(''),
+             reference_source=proxy_source)
+        case('truncated-upstream', 'G2.observer', lambda folder: (folder / 'upstream.jsonl').write_text('{broken'),
+             reference_source=proxy_source)
     summary = {'passed': all(item['passed'] for item in results.values()), 'cases': results, 'source': str(source)}
     save(output / 'results.json', summary)
     return summary
@@ -138,7 +235,8 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--source', type=Path, default=DEFAULT_OUT / 'ts1')
     ap.add_argument('--output', type=Path, default=DEFAULT_OUT / 'controls')
+    ap.add_argument('--proxy-source', type=Path, help='real successful proxy round for upstream observer controls')
     args = ap.parse_args()
-    result = run_controls(args.source, args.output)
+    result = run_controls(args.source, args.output, args.proxy_source)
     print(json.dumps(result, ensure_ascii=False))
     raise SystemExit(0 if result['passed'] else 1)

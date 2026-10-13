@@ -76,3 +76,20 @@ Rust 内存 duplex 回归覆盖四种原始头、128KiB 载荷、TCP 半关闭�
 这套尺子证明的是固定八组场景的三面一致，不证明所有 101 method、生产 DOM/桌面、人肉 Web 验收、递归热加载、真实模型、并发吞吐或 TS 退役。原生 WebSocket API 录应用消息；底层 control/帧头由四个 raw probe 单独测，不声称录了所有隐式 ping/pong。
 
 重连场景显式保存旧 binding，验证协议回放；保留两侧共同的 post-reconnect answer.delivered=false 并 abort 清理。A1 的真实 UI 自动恢复缺陷仍未修复，不把协议回放称为 UI 恢复或轮次完成。SSE/NDJSON 是运输测试夹具。单个 cron task、默认单项目 SQLite 不覆盖复杂多随机文件名/多业务表的排序；扩场景后须再次 TS 五遍校准。schema 导出属于 A3，本轮结构检查不替代它。
+
+## r2 · PR #31 两家评审逐条修复
+
+本轮修复 receive 侧帧头缺口：send/receive 双向校验 opcode/FIN/RSV/mask 位及长度元数据，完整原始头部前缀（含 126/127 长度字节和四字节 mask key）加入跨侧逐字节投影，payload 仍按窄口径归一化。七种重编码阳性对照分别改变 126→127、短长度→126/127、FIN、RSV、mask 位、mask key；全部第一条命中 G4.frames，解码 payload 保持不变。
+
+时钟归一化收紧为 normalization.md 明列的项目、transcript、cron、pending、registry 容器组合，只有 name/requestId 等业务字段不再触发 createdAt/lastActivity 归一化。UUID 由稳定实体键配对，禁止首现序／列表位置赋号；未知实体 UUID 保留原文，冲突映射拒绝。纯 UUID 与具名实体列表换序都能检出。controls 从 rule in observed 改为第一条失败规则精确断言，补齐磁盘、HTTP、帧头元数据两侧同坏。upstream 缺失、为空、截断主命中 G2.observer。plan 002 的 (a) 类分母和全部数量描述已统一为 10。合成 SSE/NDJSON 路由仍只代表运输夹具，不声明生产流式 API 覆盖。
+
+全部 11 个装置 `.py/.mjs/.mts` 脚本（含三份独立解析器）的 SHA256 由 apparatusSha256 自动枚举，记录在每轮 run.json 和正式 ruler.json 中。旧档案无哈希或与当前版本不符即拒绝复用；运行过程中脚本改变也拒绝成功账本。旧正式档案的无哈希复用已实测拒绝，原件保留。
+
+当前代码离线验证结果：[offline-report.json](../../../_tmp/20261014-exp006-r2-derived/offline-report.json)，旧六轮派生副本上的 k=5 十对 TS 和 proxy 均 PASS；[全部 33 controls](../../../_tmp/20261014-exp006-r2-derived/controls-r2/results.json) 第一条失败规则全部等于 expectedRule，其中 5 项两侧同坏也全部拒绝；[安全回归](../../../_tmp/20261014-exp006-r2-safety.log) **13 tests OK**。派生副本仅从原有 wireHex 补出 wire 头部元数据，原始 wireHex、其余录帧字段和全部其他文件均未改变，报告附逐文件核验与脚本哈希。Python 编译、Node driver 语法检查、git diff --check 通过。
+
+**本轮新采集正式重跑 BLOCKED，尚未完成。** 持有共享锁后，在 run_round.py:42 预检绑定 127.0.0.1:28791 时，当前执行沙箱返回 PermissionError / Operation not permitted；没有启动任何服务，锁正常释放。原始堆栈见 [r2 正式尝试日志](../../../_tmp/20261014-exp006-r2-ruler-final-attempt.log)，当前脚本再次尝试仍同样拒绝，见 [current.log](../../../_tmp/20261014-exp006-r2-ruler-current.log)。旧证据离线复算不算本轮正式通过，没有生成伪称成功的 r2 ruler.json，也未冻结或代填独立评审 true。
+
+完整逐项交接与剩余正式重跑命令见 [_tmp/RESULT-r2.md](../../../_tmp/RESULT-r2.md)。需在允许 loopback 绑定的执行环境运行 `python3 scripts/gateway-parity/check_ruler.py --output _tmp/20261014-exp006-r2-live --lock-timeout 600`，采集新的 TS 五轮、proxy 与全部 controls。未提交，未改 state/、specs/parity/ 或只读基线。
+
+### r2 正式重跑（协调者在沙箱外执行，2026-10-14）
+codex 沙箱拒绝绑定 127.0.0.1:28791，协调者按 RESULT-r2 给出的命令原样执行 `check_ruler.py --output _tmp/20261014-exp006-r2-live`：self_compare=true、distinct_ts_rounds=true（5 个不同 gateway PID）、positive_controls=true、same_bad_rejected=true、proxy_parity=true、proxy_rules=[]、lock_takeovers=[]；11 个装置脚本 sha256 已绑进 ruler.json；status=PENDING_REVIEW（independent_review 待填）。

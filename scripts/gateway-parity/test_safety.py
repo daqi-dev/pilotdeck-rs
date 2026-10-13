@@ -12,7 +12,7 @@ import time
 import unittest
 
 from common import MAX_AGE, guard, owner, parity_lock, save
-from compare import Normalizer, compare
+from compare import Normalizer, compare, wire_frame
 from observer import Decoder
 
 
@@ -134,6 +134,68 @@ class Safety(unittest.TestCase):
         x = '00000000-0000-4000-8000-000000000001'
         y = '00000000-0000-4000-8000-000000000002'
         self.assertNotEqual(Normalizer().value([x, x]), Normalizer().value([x, y]))
+
+    def test_uuid_definitions_pair_by_entity_not_list_position(self):
+        x, y, z, w = [f'00000000-0000-4000-8000-{i:012d}' for i in range(1, 5)]
+        a, b = Normalizer(), Normalizer()
+        left = [{'id': x, 'name': 'alpha'}, {'id': y, 'name': 'beta'}]
+        right = [{'id': w, 'name': 'beta'}, {'id': z, 'name': 'alpha'}]
+        a.index(left)
+        b.index(right)
+        self.assertEqual(a.value([x, y]), b.value([z, w]))
+        self.assertNotEqual(a.value([x, y]), b.value([w, z]))
+        self.assertNotEqual(Normalizer().value([x, y]), Normalizer().value([y, x]))
+        with self.assertRaises(ValueError):
+            a.index({'id': z, 'name': 'alpha'})
+
+    def test_binding_generation_cannot_change_on_same_entity(self):
+        n = Normalizer()
+        n.value({'connectionId': 'fixed-connection', 'generation': 1})
+        with self.assertRaises(ValueError):
+            n.value({'connectionId': 'fixed-connection', 'generation': 2})
+        with self.assertRaises(ValueError):
+            n.value({'connectionId': 'another-connection', 'generation': 1})
+
+    def test_clock_container_boundaries(self):
+        shapes = [({'name': 'business'}, ('createdAt', 'lastActivity')),
+                  ({'requestId': 'business'}, ('createdAt',)),
+                  ({'name': 'business', 'lastActivity': 1}, ('createdAt',)),
+                  ({'projectKey': 'business'}, ('lastActivity',)),
+                  ({'taskId': 'business'}, ('createdAt', 'updatedAt')),
+                  ({'runId': 'business', 'ownerPid': 1}, ('updatedAt',)),
+                  ({'runId': 'business'}, ('acceptedAt',)),
+                  ({'firstPrompt': 'business'}, ('updatedAt',))]
+        for parent, fields in shapes:
+            for field in fields:
+                with self.subTest(parent=parent, field=field):
+                    self.assertNotEqual(Normalizer().value(dict(parent, **{field: 1})),
+                                        Normalizer().value(dict(parent, **{field: 2})))
+        containers = [({'projectKey': 'p', 'fullPath': 'p', 'name': 'n', 'lastActivity': 1}, 'createdAt'),
+                      ({'projectKey': 'p', 'path': 'p', 'name': 'n'}, 'lastActivity'),
+                      ({'ownerId': 's', 'kind': 'question', 'toolCallId': 't', 'requestId': 'r'}, 'createdAt'),
+                      ({'runId': 'r', 'ownerPid': 1, 'acceptedAt': 1}, 'updatedAt')]
+        for parent, field in containers:
+            self.assertEqual(Normalizer().value(dict(parent, **{field: 1})),
+                             Normalizer().value(dict(parent, **{field: 2})))
+
+    def test_receive_header_prefix_and_metadata_are_exact(self):
+        for code, extension in [(2, b''), (126, b'\x00\x02'), (127, (2).to_bytes(8, 'big'))]:
+            for first in (0x81, 0x01, 0xc1):
+                for mask in (b'', b'1234'):
+                    payload = b'{}'
+                    if mask:
+                        payload = bytes(byte ^ mask[i % 4] for i, byte in enumerate(payload))
+                    header = bytes([first, code | (128 if mask else 0)]) + extension + mask
+                    row = {'direction': 'receive', 'wireHex': (header + payload).hex(), 'frame': {},
+                           'wire': {'opcode': 1, 'fin': bool(first & 128), 'rsv': first & 0x70,
+                                    'masked': bool(mask), 'lengthCode': code, 'payloadLength': 2}}
+                    self.assertEqual(wire_frame(row), header.hex())
+                    row['wire']['masked'] = not bool(mask)
+                    with self.assertRaises(ValueError):
+                        wire_frame(row)
+        for data in ('', '81', '817e00', '817f0000', '8182'):
+            with self.assertRaises(ValueError):
+                wire_frame({'wireHex': data})
 
 
 if __name__ == '__main__':
