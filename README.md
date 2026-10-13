@@ -59,3 +59,8 @@ bash scripts/check-tools.sh --mirrors  # 装不上时的国内镜像
 这份 README 是给人看的门面：README 说这是什么，`CLAUDE.md` 说该怎么干。
 
 *由 `aias-meta-init` 生成于 2026-10-13。*
+
+## 来源与许可
+
+本仓库是 [OpenBMB/PilotDeck](https://github.com/OpenBMB/PilotDeck) 后端的 Rust 重写，基线为 `standalone_alpha1` 分支的 `cc7c4e6`（2026-10-13）。
+上游以 AGPL-3.0 发布，本仓库作为其衍生作品同样以 **AGPL-3.0-only** 发布，全文见 [`LICENSE`](LICENSE)。
