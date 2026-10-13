@@ -38,7 +38,7 @@
 4. **放弃**「整体一次性切换」（违反 must-know ③）与「按组件逐个换」（137k 行组件两两桥接的复杂度爆炸，且旧包教训是父任务收不了口——调研 003）。
 5. 双壳共存期的共享状态只有 localStorage/sessionStorage 键（`auth-token`：`api.js:29`；`pilotdeck-active-project`：`api.js:45`；**composer 草稿键 `draft_input_<projectName>:<sessionId|'new'>`：`chatStorage.ts:6-9`**——旧壳本就有恢复/写入/离页刷新（`useChatComposerState.ts:316-321, 1621-1629, 1643-1644`），**草稿跨壳必须保留，丢草稿是 bug 不是差异**；主题与语言键由探针盘点），键名与语义对新前端是契约，不许改。**内存态（WS 连接、流中文本）不跨壳共享**，是已登记的已接受差异。
 
-### (c) 对拍装置：60+10 个 e2e 用例（展开后 72 例，见 gap §三）能不能直接当验收
+### (c) 对拍装置：61 个 spec 用例（循环展开后注册 72 例）+ 10 个 smoke（见 gap §三）能不能直接当验收
 
 **AI 代拍：分四类、按运行前提分层，不能一刀切（待人复核）。**
 
