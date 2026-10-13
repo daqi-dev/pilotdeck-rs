@@ -54,8 +54,9 @@
      不要预先设想，等踩到第一次坑再补一条——名字就叫那次坑的名字。 -->
 
 ### 坑：合并提交暴露真实邮箱（2026-10-13）
-GitHub 网页/默认合并生成的 merge commit 用账号主邮箱，不用本地设的 noreply（`4172dc2` 就是这样）。仓库是公开的。
-⇒ **合并一律 `gh pr merge --rebase --delete-branch`**：保留原提交的 noreply 作者，历史也是线性的。
+GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 noreply：`--merge` 的 merge commit 作者是它（原 `4172dc2`），`--rebase` 虽保留作者，**提交者**也换成它（`c720725`、`cfd7841`）。仓库是公开的。
+⇒ 根治靠账号设置（人做）：GitHub Settings → Emails 勾「Keep my email addresses private」。没勾之前，**合并后 `git log --format='%ae %ce' -3` 核一眼**，别假定。
+⇒ 合并方式用 `gh pr merge --rebase --delete-branch`（历史线性），但它**不**解决邮箱问题——2026-10-14 实测推翻了上一版这条规则。
 
 ## 六、约定
 
