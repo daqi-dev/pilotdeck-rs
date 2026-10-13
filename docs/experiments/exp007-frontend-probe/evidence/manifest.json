@@ -1,0 +1,107 @@
+[
+  {
+    "file": "baseline-dom.json",
+    "bytes": 2378,
+    "sha256": "77090d2e82a4174eacb7d309f9c7ca4a373fd2cbd631d369234e9df54ed22966"
+  },
+  {
+    "file": "build.json",
+    "bytes": 978,
+    "sha256": "ea3b1620e7508b156dd468539022a87b2f1e0feaf39d667c4fba03a6b2fe879a"
+  },
+  {
+    "file": "caddy-shutdown.log",
+    "bytes": 2322,
+    "sha256": "a2ed91216a56c2adcfde44dd80161b813abb6480abfe9adb22e9219f21768ee1"
+  },
+  {
+    "file": "chrome-launch.log",
+    "bytes": 4070,
+    "sha256": "eeee916a6d3c07151c3e54b86f15163584583c03ca2b7897f77c6609e11a46cc"
+  },
+  {
+    "file": "ci.json",
+    "bytes": 532,
+    "sha256": "8beb0f019efa13aa5ff0240186a111716e64d3df67a7eb800509eec980ff296b"
+  },
+  {
+    "file": "coexist.json",
+    "bytes": 1576,
+    "sha256": "006d496148665a8e095846cc117f462e9b4591def6897c793c95d83fb12740cd"
+  },
+  {
+    "file": "dioxus-restore.json",
+    "bytes": 189,
+    "sha256": "3555a94ab9e47a6bfea6ed24a1398e98409c152e66c06d6a4a3a3168956a2c98"
+  },
+  {
+    "file": "dioxus-trace.json",
+    "bytes": 71020,
+    "sha256": "8ac554ad905d3f4d392ae06204151c8c9f675f9e173e47b92d6bde2ef8f3ea92"
+  },
+  {
+    "file": "dioxus.json",
+    "bytes": 3049,
+    "sha256": "7cf95a60c8ed6b5b119ac66a45bee2b3bc52ff2e638a06a2d467632999802fd7"
+  },
+  {
+    "file": "e2e-inventory.json",
+    "bytes": 21868,
+    "sha256": "ec92ab97a0aeb95e5c85d56f1c3e924bae7dd5a51f2fe3eb8fd09a4e80ebc6d4"
+  },
+  {
+    "file": "environment.json",
+    "bytes": 349,
+    "sha256": "9a9864ec5b212098aaa54c8af7887ab4a97a17b8ed04395c8f12e8d4e350cc63"
+  },
+  {
+    "file": "frozen.json",
+    "bytes": 2920,
+    "sha256": "e4fac6786c31b0e11f40d8bba56ef68c5128a887ac90b568fa56723ea6794d97"
+  },
+  {
+    "file": "history-refresh.json",
+    "bytes": 3110,
+    "sha256": "3008c490dc1f10e84420d2101426779b0ff00883627f02b25b1f32650f751ae6"
+  },
+  {
+    "file": "leptos-restore.json",
+    "bytes": 189,
+    "sha256": "d96d9406b384a07666c03cdb799f6723d8447c3e97fe9c4407e7b9d83769e519"
+  },
+  {
+    "file": "leptos-trace.json",
+    "bytes": 71049,
+    "sha256": "77861cbaa874c6e5f964ec94a1ea455d54d965b5e8371a08edaec788529e6c1a"
+  },
+  {
+    "file": "leptos.json",
+    "bytes": 3044,
+    "sha256": "0307d0c2f0447d4f81da4168691a52a1b5a36b3cf1984a5ffe1cbc4b17022fb3"
+  },
+  {
+    "file": "navigation.json",
+    "bytes": 1586,
+    "sha256": "2a3f18d42bdb212fe61ce3af38b4aabc32401b733ec62654c65796f62c0b625d"
+  },
+  {
+    "file": "storage.json",
+    "bytes": 56434,
+    "sha256": "2342782c9d23780b0e7badf17e988342390270018d952cea55eeb10ebd694a9f"
+  },
+  {
+    "file": "stream-gap.json",
+    "bytes": 338,
+    "sha256": "9c55fe88db81e4e29284d5b561e1269528870e40e958d61ce91955e5cb690fc0"
+  },
+  {
+    "file": "validation.log",
+    "bytes": 72318,
+    "sha256": "3efcf9add9a4b9d5ce161540e01cdbffca7eb81c13fb67b6c0babc7c20492e78"
+  },
+  {
+    "file": "xterm.json",
+    "bytes": 235,
+    "sha256": "5e41cb6a1a76c9f6d6017ae6e5e9685a839f0a59c1a44640c05d9319c669733d"
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "candidate": "leptos",
+  "profile": "/Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/chrome-profile-leptos",
+  "channel": "chrome",
+  "checks": [
+    {
+      "name": "login/storage/lists",
+      "status": "PASS"
+    },
+    {
+      "name": "composition event enter guard",
+      "status": "PASS",
+      "nativeOSIME": false
+    },
+    {
+      "name": "xterm lifetime DOM/buffer/focus/input",
+      "status": "PASS",
+      "cycles": 10
+    },
+    {
+      "name": ">=20Hz 60s count/scroll",
+      "status": "PASS",
+      "received": 1500,
+      "DOMFrames": 1500,
+      "actualHz": 23.997550793839626,
+      "scrollRange": [
+        80,
+        80
+      ],
+      "maxAnimationFrameGapMs": 16.80000000000291,
+      "jankVerdict": "Frame timings recorded; perceptible smoothness requires human review"
+    }
+  ],
+  "nativeOSIME": false,
+  "status": "PASS_BROWSER_MACHINE_CHECKS"
+}

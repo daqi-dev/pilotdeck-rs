@@ -1,0 +1,10 @@
+{
+  "rust": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "node": "v22.22.0",
+  "trunk": "trunk 0.21.14",
+  "dx": "dioxus 0.7.9 (bfcc111)",
+  "wasmBindgen": "wasm-bindgen 0.2.129",
+  "caddy": "v2.10.2 h1:g/gTYjGMD0dec+UgMw8SnfmJ3I9+M2TdvoRL/Ovu6U8=",
+  "chromeInstalled": "155.0.8059.40",
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
+}

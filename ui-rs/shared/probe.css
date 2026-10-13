@@ -1,0 +1,6 @@
+body { font: 16px system-ui; max-width: 900px; margin: 2rem auto; background: #14202a; color: #eee; }
+button, input, textarea { font: inherit; margin: .4rem; padding: .5rem; }
+textarea { display: block; width: 90%; height: 70px; }
+#stream { overflow: auto; height: 220px; white-space: pre-wrap; overflow-anchor: none; }
+#terminal-host { height: 220px; }
+pre { background: #0b1219; padding: 1rem; }

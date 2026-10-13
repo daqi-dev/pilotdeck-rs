@@ -1,0 +1,2007 @@
+{
+  "scannedFiles": 769,
+  "callSites": 197,
+  "productionCallSites": 125,
+  "literalAndConstantKeys": [
+    "localStorage:PILOTDECK_GITHUB_STARS",
+    "localStorage:PILOTDECK_HIDE_GITHUB_STAR",
+    "localStorage:activeTab",
+    "localStorage:auth-token",
+    "localStorage:codeEditorFontSize",
+    "localStorage:codeEditorLineNumbers",
+    "localStorage:codeEditorShowMinimap",
+    "localStorage:codeEditorTheme",
+    "localStorage:codeEditorWordWrap",
+    "localStorage:pilotdeck-model",
+    "localStorage:pilotdeck-settings",
+    "localStorage:pilotdeck:dashboard-panel-width",
+    "localStorage:pilotdeck:files-assistant-width",
+    "localStorage:pilotdeck:files-panel-layout",
+    "localStorage:pilotdeck:files-panel-order",
+    "localStorage:sidebar-v2-projects-conversations-split",
+    "localStorage:sidebar-v2-projects-conversations-split-v2",
+    "localStorage:sidebar-v2-width",
+    "localStorage:tasks-enabled",
+    "localStorage:theme",
+    "localStorage:themeMode",
+    "localStorage:ultrarag_enterprise_agent_scope",
+    "localStorage:userLanguage",
+    "sessionStorage:pendingSessionId",
+    "sessionStorage:pilotdeck-active-project",
+    "sessionStorage:pilotdeck:ui-diagnostics"
+  ],
+  "dynamicProductionCalls": 38,
+  "coverage": "All direct storage calls and simple aliases in ui/src AST; dynamic key expressions retained, runtime branches/third-party calls not proven exhaustive",
+  "calls": [
+    {
+      "path": "src/components/app-shell/AppShellV2.tsx",
+      "line": 76,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "pilotdeck-active-project",
+      "kind": "literal",
+      "argument": "'pilotdeck-active-project'",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/AppShellV2.tsx",
+      "line": 163,
+      "area": "sessionStorage",
+      "method": "setItem",
+      "key": "pilotdeck-active-project",
+      "kind": "literal",
+      "argument": "'pilotdeck-active-project'",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/AppShellV2.tsx",
+      "line": 164,
+      "area": "sessionStorage",
+      "method": "removeItem",
+      "key": "pilotdeck-active-project",
+      "kind": "literal",
+      "argument": "'pilotdeck-active-project'",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/MainAreaV2.test.tsx",
+      "line": 103,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/app-shell/MainAreaV2.test.tsx",
+      "line": 141,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck:customSessionTitles",
+      "kind": "literal",
+      "argument": "'pilotdeck:customSessionTitles'",
+      "test": true
+    },
+    {
+      "path": "src/components/app-shell/MainAreaV2.test.tsx",
+      "line": 155,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck:customSessionTitles",
+      "kind": "literal",
+      "argument": "'pilotdeck:customSessionTitles'",
+      "test": true
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.test.tsx",
+      "line": 64,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.test.tsx",
+      "line": 114,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "sidebar-v2-width",
+      "kind": "literal",
+      "argument": "'sidebar-v2-width'",
+      "test": true
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.tsx",
+      "line": 316,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "sidebar-v2-projects-conversations-split-v2",
+      "kind": "resolved constant",
+      "argument": "SIDEBAR_SPLIT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.tsx",
+      "line": 317,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "sidebar-v2-projects-conversations-split",
+      "kind": "literal",
+      "argument": "'sidebar-v2-projects-conversations-split'",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.tsx",
+      "line": 338,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "sidebar-v2-width",
+      "kind": "resolved constant",
+      "argument": "SIDEBAR_WIDTH_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.tsx",
+      "line": 374,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "sidebar-v2-width",
+      "kind": "resolved constant",
+      "argument": "SIDEBAR_WIDTH_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.tsx",
+      "line": 391,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "sidebar-v2-projects-conversations-split-v2",
+      "kind": "resolved constant",
+      "argument": "SIDEBAR_SPLIT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.tsx",
+      "line": 458,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "sidebar-v2-width",
+      "kind": "resolved constant",
+      "argument": "SIDEBAR_WIDTH_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/SidebarV2.tsx",
+      "line": 1443,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "sidebar-v2-width",
+      "kind": "resolved constant",
+      "argument": "SIDEBAR_WIDTH_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/app-shell/useSessionIndicators.test.tsx",
+      "line": 6,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/auth/context/AuthContext.tsx",
+      "line": 21,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "resolved constant",
+      "argument": "AUTH_TOKEN_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/auth/context/AuthContext.tsx",
+      "line": 24,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "auth-token",
+      "kind": "resolved constant",
+      "argument": "AUTH_TOKEN_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/auth/context/AuthContext.tsx",
+      "line": 28,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "auth-token",
+      "kind": "resolved constant",
+      "argument": "AUTH_TOKEN_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/chat-v2/SopWaitBanner.tsx",
+      "line": 200,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/chat-v2/SopWaitBanner.tsx",
+      "line": 206,
+      "area": "sessionStorage",
+      "method": "setItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/chat-v2/SopWaitBanner.tsx",
+      "line": 207,
+      "area": "sessionStorage",
+      "method": "removeItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 13,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 94,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 96,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 99,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 102,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 104,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 113,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "savedKey",
+      "kind": "dynamic/expression",
+      "argument": "savedKey",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 116,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "newKey",
+      "kind": "dynamic/expression",
+      "argument": "newKey",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 120,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "savedKey",
+      "kind": "dynamic/expression",
+      "argument": "savedKey",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.commands.test.tsx",
+      "line": 121,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "newKey",
+      "kind": "dynamic/expression",
+      "argument": "newKey",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.ts",
+      "line": 1282,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "pendingSessionId",
+      "kind": "literal",
+      "argument": "'pendingSessionId'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.ts",
+      "line": 1545,
+      "area": "sessionStorage",
+      "method": "removeItem",
+      "key": "pendingSessionId",
+      "kind": "literal",
+      "argument": "'pendingSessionId'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatComposerState.ts",
+      "line": 1909,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "pendingSessionId",
+      "kind": "literal",
+      "argument": "'pendingSessionId'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatModelSelection.test.tsx",
+      "line": 19,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "composer-model-last-sent",
+      "kind": "resolved constant",
+      "argument": "GLOBAL_MODEL_SELECTION_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatModelSelection.test.tsx",
+      "line": 28,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatModelSelection.test.tsx",
+      "line": 39,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "composer-model-global",
+      "kind": "literal",
+      "argument": "'composer-model-global'",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatModelSelection.test.tsx",
+      "line": 130,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "composer-model-last-sent",
+      "kind": "resolved constant",
+      "argument": "GLOBAL_MODEL_SELECTION_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatModelSelection.test.tsx",
+      "line": 206,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatPermissionMode.test.tsx",
+      "line": 16,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatPermissionMode.test.tsx",
+      "line": 28,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "permissionMode-default",
+      "kind": "literal",
+      "argument": "'permissionMode-default'",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatPermissionMode.test.tsx",
+      "line": 29,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "permissionMode-old-session",
+      "kind": "literal",
+      "argument": "'permissionMode-old-session'",
+      "test": true
+    },
+    {
+      "path": "src/components/chat/hooks/useChatProviderState.ts",
+      "line": 104,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck-model",
+      "kind": "literal",
+      "argument": "'pilotdeck-model'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatProviderState.ts",
+      "line": 148,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck-model",
+      "kind": "literal",
+      "argument": "'pilotdeck-model'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatProviderState.ts",
+      "line": 155,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck-model",
+      "kind": "literal",
+      "argument": "'pilotdeck-model'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatRealtimeHandlers.ts",
+      "line": 951,
+      "area": "sessionStorage",
+      "method": "setItem",
+      "key": "pendingSessionId",
+      "kind": "literal",
+      "argument": "'pendingSessionId'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatRealtimeHandlers.ts",
+      "line": 1045,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "pendingSessionId",
+      "kind": "literal",
+      "argument": "'pendingSessionId'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/hooks/useChatRealtimeHandlers.ts",
+      "line": 1054,
+      "area": "sessionStorage",
+      "method": "removeItem",
+      "key": "pendingSessionId",
+      "kind": "literal",
+      "argument": "'pendingSessionId'",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/utils/chatStorage.ts",
+      "line": 14,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/utils/chatStorage.ts",
+      "line": 22,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "k",
+      "kind": "dynamic/expression",
+      "argument": "k",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/utils/chatStorage.ts",
+      "line": 26,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/utils/chatStorage.ts",
+      "line": 37,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/chat/utils/chatStorage.ts",
+      "line": 45,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/code-editor/hooks/useCodeEditorSettings.ts",
+      "line": 10,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "storageKey",
+      "kind": "dynamic/expression",
+      "argument": "storageKey",
+      "test": false
+    },
+    {
+      "path": "src/components/code-editor/hooks/useCodeEditorSettings.ts",
+      "line": 19,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "CODE_EDITOR_STORAGE_KEYS.wordWrap",
+      "kind": "dynamic/expression",
+      "argument": "CODE_EDITOR_STORAGE_KEYS.wordWrap",
+      "test": false
+    },
+    {
+      "path": "src/components/code-editor/hooks/useCodeEditorSettings.ts",
+      "line": 23,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "CODE_EDITOR_STORAGE_KEYS.fontSize",
+      "kind": "dynamic/expression",
+      "argument": "CODE_EDITOR_STORAGE_KEYS.fontSize",
+      "test": false
+    },
+    {
+      "path": "src/components/code-editor/hooks/useCodeEditorSettings.ts",
+      "line": 46,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "CODE_EDITOR_STORAGE_KEYS.theme",
+      "kind": "dynamic/expression",
+      "argument": "CODE_EDITOR_STORAGE_KEYS.theme",
+      "test": false
+    },
+    {
+      "path": "src/components/code-editor/hooks/useCodeEditorSettings.ts",
+      "line": 50,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "CODE_EDITOR_STORAGE_KEYS.wordWrap",
+      "kind": "dynamic/expression",
+      "argument": "CODE_EDITOR_STORAGE_KEYS.wordWrap",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/ErrorBoundary.test.tsx",
+      "line": 5,
+      "area": "sessionStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.test.tsx",
+      "line": 151,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.test.tsx",
+      "line": 158,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.test.tsx",
+      "line": 219,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck:files-assistant-width",
+      "kind": "literal",
+      "argument": "'pilotdeck:files-assistant-width'",
+      "test": true
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 85,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck:files-panel-layout",
+      "kind": "resolved constant",
+      "argument": "FILES_PANEL_LAYOUT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 95,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck:files-panel-order",
+      "kind": "resolved constant",
+      "argument": "FILES_PANEL_ORDER_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 161,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck:files-assistant-width",
+      "kind": "resolved constant",
+      "argument": "FILES_ASSISTANT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 175,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck:dashboard-panel-width",
+      "kind": "resolved constant",
+      "argument": "TOOL_PANEL_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 594,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck:dashboard-panel-width",
+      "kind": "resolved constant",
+      "argument": "TOOL_PANEL_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 610,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck:files-assistant-width",
+      "kind": "resolved constant",
+      "argument": "FILES_ASSISTANT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 621,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck:files-panel-layout",
+      "kind": "resolved constant",
+      "argument": "FILES_PANEL_LAYOUT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/MainContent.tsx",
+      "line": 622,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck:files-panel-order",
+      "kind": "resolved constant",
+      "argument": "FILES_PANEL_ORDER_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/main-content/view/memory/MemoryPanel.tsx",
+      "line": 38,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "resolved constant",
+      "argument": "AUTH_TOKEN_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/project-creation-wizard/components/FolderBrowserModal.test.tsx",
+      "line": 42,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/project-creation-wizard/components/FolderBrowserModal.test.tsx",
+      "line": 104,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/project-creation-wizard/components/FolderBrowserModal.test.tsx",
+      "line": 122,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck.folder-picker.v1:1",
+      "kind": "literal",
+      "argument": "'pilotdeck.folder-picker.v1:1'",
+      "test": true
+    },
+    {
+      "path": "src/components/project-creation-wizard/components/FolderBrowserModal.test.tsx",
+      "line": 160,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck.folder-picker.v1:1",
+      "kind": "literal",
+      "argument": "'pilotdeck.folder-picker.v1:1'",
+      "test": true
+    },
+    {
+      "path": "src/components/project-creation-wizard/components/FolderBrowserModal.test.tsx",
+      "line": 171,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/project-creation-wizard/components/FolderBrowserModal.tsx",
+      "line": 23,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/components/project-creation-wizard/components/FolderBrowserModal.tsx",
+      "line": 67,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "storageKey",
+      "kind": "dynamic/expression",
+      "argument": "storageKey",
+      "test": false
+    },
+    {
+      "path": "src/components/project-creation-wizard/data/workspaceApi.ts",
+      "line": 116,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 37,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorWordWrap",
+      "kind": "literal",
+      "argument": "\"codeEditorWordWrap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 38,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorShowMinimap",
+      "kind": "literal",
+      "argument": "\"codeEditorShowMinimap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 39,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorLineNumbers",
+      "kind": "literal",
+      "argument": "\"codeEditorLineNumbers\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 41,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorFontSize",
+      "kind": "literal",
+      "argument": "\"codeEditorFontSize\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 63,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck-settings",
+      "kind": "literal",
+      "argument": "\"pilotdeck-settings\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 70,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorTheme",
+      "kind": "literal",
+      "argument": "\"codeEditorTheme\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 71,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorWordWrap",
+      "kind": "literal",
+      "argument": "\"codeEditorWordWrap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 72,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorShowMinimap",
+      "kind": "literal",
+      "argument": "\"codeEditorShowMinimap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 76,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorLineNumbers",
+      "kind": "literal",
+      "argument": "\"codeEditorLineNumbers\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 80,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorFontSize",
+      "kind": "literal",
+      "argument": "\"codeEditorFontSize\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 88,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck-settings",
+      "kind": "literal",
+      "argument": "\"pilotdeck-settings\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/shared/hooks/useSettingsController.ts",
+      "line": 91,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck-settings",
+      "kind": "literal",
+      "argument": "\"pilotdeck-settings\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 12,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 19,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 21,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 80,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "themeMode",
+      "kind": "literal",
+      "argument": "'themeMode'",
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 81,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 101,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 120,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/appearance/appearance.test.tsx",
+      "line": 162,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": true
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 9,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorWordWrap",
+      "kind": "literal",
+      "argument": "\"codeEditorWordWrap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 10,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorShowMinimap",
+      "kind": "literal",
+      "argument": "\"codeEditorShowMinimap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 11,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorLineNumbers",
+      "kind": "literal",
+      "argument": "\"codeEditorLineNumbers\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 12,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "codeEditorFontSize",
+      "kind": "literal",
+      "argument": "\"codeEditorFontSize\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 19,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorTheme",
+      "kind": "literal",
+      "argument": "\"codeEditorTheme\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 20,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorWordWrap",
+      "kind": "literal",
+      "argument": "\"codeEditorWordWrap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 21,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorShowMinimap",
+      "kind": "literal",
+      "argument": "\"codeEditorShowMinimap\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 22,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorLineNumbers",
+      "kind": "literal",
+      "argument": "\"codeEditorLineNumbers\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/EditorPreferencesSections.tsx",
+      "line": 23,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "codeEditorFontSize",
+      "kind": "literal",
+      "argument": "\"codeEditorFontSize\"",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/HostPreferencesSections.tsx",
+      "line": 9,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck-settings",
+      "kind": "resolved constant",
+      "argument": "SETTINGS_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/HostPreferencesSections.tsx",
+      "line": 21,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck-settings",
+      "kind": "resolved constant",
+      "argument": "SETTINGS_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/general/HostPreferencesSections.tsx",
+      "line": 22,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "pilotdeck-settings",
+      "kind": "resolved constant",
+      "argument": "SETTINGS_KEY",
+      "test": false
+    },
+    {
+      "path": "src/components/settings/view/privacy/index.test.tsx",
+      "line": 18,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "pilotdeck-settings",
+      "kind": "literal",
+      "argument": "'pilotdeck-settings'",
+      "test": true
+    },
+    {
+      "path": "src/components/shell/utils/socket.ts",
+      "line": 6,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/host-contract-helpers.test.ts",
+      "line": 14,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/host-contract-helpers.test.ts",
+      "line": 28,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/host-contract-helpers.test.ts",
+      "line": 30,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/public-host-mapping.test.ts",
+      "line": 69,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/public-host-mapping.test.ts",
+      "line": 78,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/public-host-mapping.test.ts",
+      "line": 85,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/publish-runtime-integration.test.tsx",
+      "line": 17,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/useApproverSession.test.tsx",
+      "line": 11,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/useApproverSession.test.tsx",
+      "line": 11,
+      "area": "sessionStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/DistillPage.tsx",
+      "line": 619,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "kind": "dynamic/expression",
+      "argument": "`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/DistillPage.tsx",
+      "line": 879,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "kind": "dynamic/expression",
+      "argument": "`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/DistillPage.tsx",
+      "line": 2568,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "kind": "dynamic/expression",
+      "argument": "`${DISTILL_REWRITE_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/DistillPage.tsx",
+      "line": 7824,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/DistillPage.tsx",
+      "line": 7875,
+      "area": "sessionStorage",
+      "method": "removeItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/DistillPage.tsx",
+      "line": 7889,
+      "area": "sessionStorage",
+      "method": "setItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/DistillPage.tsx",
+      "line": 7897,
+      "area": "sessionStorage",
+      "method": "removeItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/FormalHostContractHelpers.ts",
+      "line": 16,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "resolved constant",
+      "argument": "ENTERPRISE_AGENT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/FormalHostContractHelpers.ts",
+      "line": 21,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "resolved constant",
+      "argument": "ENTERPRISE_AGENT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/FormalHostContractHelpers.ts",
+      "line": 44,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "resolved constant",
+      "argument": "ENTERPRISE_AGENT_STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/KnowledgePage.tsx",
+      "line": 150,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "kind": "dynamic/expression",
+      "argument": "`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/KnowledgePage.tsx",
+      "line": 259,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "kind": "dynamic/expression",
+      "argument": "`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/KnowledgePage.tsx",
+      "line": 1242,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "kind": "dynamic/expression",
+      "argument": "`${KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY}:${TENANT_ID}`",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/copy-page.test.tsx",
+      "line": 31,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/copy-page.test.tsx",
+      "line": 37,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/copy-page.test.tsx",
+      "line": 74,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/copy-page.test.tsx",
+      "line": 88,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/copy-scope.ts",
+      "line": 14,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "AGENT_SCOPE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "AGENT_SCOPE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/copy-scope.ts",
+      "line": 48,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "AGENT_SCOPE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "AGENT_SCOPE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/knowledge-host-adapter.test.tsx",
+      "line": 141,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/knowledge-host-adapter.test.tsx",
+      "line": 153,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "ultrarag_enterprise_agent_scope",
+      "kind": "literal",
+      "argument": "'ultrarag_enterprise_agent_scope'",
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/skills-host-adapter.test.tsx",
+      "line": 106,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/composition/modules/staffdeck/vendor/skills-host-adapter.test.tsx",
+      "line": 120,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/contexts/TasksSettingsContext.jsx",
+      "line": 25,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "tasks-enabled",
+      "kind": "literal",
+      "argument": "'tasks-enabled'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/TasksSettingsContext.jsx",
+      "line": 36,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "tasks-enabled",
+      "kind": "literal",
+      "argument": "'tasks-enabled'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/TasksSettingsContext.jsx",
+      "line": 52,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "tasks-enabled",
+      "kind": "literal",
+      "argument": "'tasks-enabled'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/ThemeContext.jsx",
+      "line": 11,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "themeMode",
+      "kind": "literal",
+      "argument": "'themeMode'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/ThemeContext.jsx",
+      "line": 11,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "theme",
+      "kind": "literal",
+      "argument": "'theme'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/ThemeContext.jsx",
+      "line": 44,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/contexts/ThemeContext.jsx",
+      "line": 70,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "themeMode",
+      "kind": "literal",
+      "argument": "'themeMode'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/ThemeContext.jsx",
+      "line": 71,
+      "area": "localStorage",
+      "method": "removeItem",
+      "key": "theme",
+      "kind": "literal",
+      "argument": "'theme'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/ThemeContext.jsx",
+      "line": 72,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "theme",
+      "kind": "literal",
+      "argument": "'theme'",
+      "test": false
+    },
+    {
+      "path": "src/contexts/WebSocketContext.modelMemory.test.tsx",
+      "line": 23,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/contexts/WebSocketContext.modelMemory.test.tsx",
+      "line": 25,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/contexts/WebSocketContext.modelMemory.test.tsx",
+      "line": 30,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "composer-model-last-sent",
+      "kind": "resolved constant",
+      "argument": "GLOBAL_MODEL_SELECTION_KEY",
+      "test": true
+    },
+    {
+      "path": "src/contexts/WebSocketContext.modelMemory.test.tsx",
+      "line": 33,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "composer-model-last-sent",
+      "kind": "resolved constant",
+      "argument": "GLOBAL_MODEL_SELECTION_KEY",
+      "test": true
+    },
+    {
+      "path": "src/contexts/WebSocketContext.modelMemory.test.tsx",
+      "line": 37,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/contexts/WebSocketContext.modelMemory.test.tsx",
+      "line": 44,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "composer-model-last-sent",
+      "kind": "resolved constant",
+      "argument": "GLOBAL_MODEL_SELECTION_KEY",
+      "test": true
+    },
+    {
+      "path": "src/hooks/useGitHubStars.ts",
+      "line": 16,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "PILOTDECK_HIDE_GITHUB_STAR",
+      "kind": "resolved constant",
+      "argument": "DISMISS_KEY",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useGitHubStars.ts",
+      "line": 27,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "PILOTDECK_GITHUB_STARS",
+      "kind": "resolved constant",
+      "argument": "CACHE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useGitHubStars.ts",
+      "line": 48,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "PILOTDECK_GITHUB_STARS",
+      "kind": "resolved constant",
+      "argument": "CACHE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useGitHubStars.ts",
+      "line": 64,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "PILOTDECK_HIDE_GITHUB_STAR",
+      "kind": "resolved constant",
+      "argument": "DISMISS_KEY",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useInterfacePreferences.ts",
+      "line": 7,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "INTERFACE_PREFERENCES_KEY",
+      "kind": "dynamic/expression",
+      "argument": "INTERFACE_PREFERENCES_KEY",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useInterfacePreferences.ts",
+      "line": 24,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "INTERFACE_PREFERENCES_KEY",
+      "kind": "dynamic/expression",
+      "argument": "INTERFACE_PREFERENCES_KEY",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useLocalStorage.jsx",
+      "line": 16,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useLocalStorage.jsx",
+      "line": 31,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useProjectsState.activity.test.tsx",
+      "line": 21,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/hooks/useProjectsState.creation.test.tsx",
+      "line": 38,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/hooks/useProjectsState.ts",
+      "line": 255,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "activeTab",
+      "kind": "literal",
+      "argument": "'activeTab'",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useProjectsState.ts",
+      "line": 284,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "activeTab",
+      "kind": "literal",
+      "argument": "'activeTab'",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useUiPreferences.ts",
+      "line": 69,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useUiPreferences.ts",
+      "line": 86,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "storageKey",
+      "kind": "dynamic/expression",
+      "argument": "storageKey",
+      "test": false
+    },
+    {
+      "path": "src/hooks/useUiPreferences.ts",
+      "line": 162,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "storageKey",
+      "kind": "dynamic/expression",
+      "argument": "storageKey",
+      "test": false
+    },
+    {
+      "path": "src/i18n/config.js",
+      "line": 53,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "userLanguage",
+      "kind": "literal",
+      "argument": "'userLanguage'",
+      "test": false
+    },
+    {
+      "path": "src/i18n/config.js",
+      "line": 124,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "userLanguage",
+      "kind": "literal",
+      "argument": "'userLanguage'",
+      "test": false
+    },
+    {
+      "path": "src/lib/appearanceRuntime.ts",
+      "line": 7,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "LIGHT_APPEARANCE_KEY",
+      "kind": "dynamic/expression",
+      "argument": "LIGHT_APPEARANCE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/lib/appearanceRuntime.ts",
+      "line": 59,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "themeMode",
+      "kind": "literal",
+      "argument": "'themeMode'",
+      "test": false
+    },
+    {
+      "path": "src/lib/appearanceRuntime.ts",
+      "line": 59,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "theme",
+      "kind": "literal",
+      "argument": "'theme'",
+      "test": false
+    },
+    {
+      "path": "src/lib/customNames.ts",
+      "line": 27,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/lib/customNames.ts",
+      "line": 37,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "key",
+      "kind": "dynamic/expression",
+      "argument": "key",
+      "test": false
+    },
+    {
+      "path": "src/lib/uiDiagnostics.test.ts",
+      "line": 3,
+      "area": "sessionStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/lib/uiDiagnostics.test.ts",
+      "line": 10,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "pilotdeck:ui-diagnostics",
+      "kind": "literal",
+      "argument": "'pilotdeck:ui-diagnostics'",
+      "test": true
+    },
+    {
+      "path": "src/lib/uiDiagnostics.ts",
+      "line": 10,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "pilotdeck:ui-diagnostics",
+      "kind": "resolved constant",
+      "argument": "STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/lib/uiDiagnostics.ts",
+      "line": 12,
+      "area": "sessionStorage",
+      "method": "setItem",
+      "key": "pilotdeck:ui-diagnostics",
+      "kind": "resolved constant",
+      "argument": "STORAGE_KEY",
+      "test": false
+    },
+    {
+      "path": "src/utils/api.js",
+      "line": 29,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    },
+    {
+      "path": "src/utils/api.js",
+      "line": 37,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    },
+    {
+      "path": "src/utils/api.js",
+      "line": 45,
+      "area": "sessionStorage",
+      "method": "getItem",
+      "key": "pilotdeck-active-project",
+      "kind": "literal",
+      "argument": "'pilotdeck-active-project'",
+      "test": false
+    },
+    {
+      "path": "src/utils/api.js",
+      "line": 67,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    },
+    {
+      "path": "src/utils/api.js",
+      "line": 277,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    },
+    {
+      "path": "src/utils/uploadFormData.spec.ts",
+      "line": 18,
+      "area": "localStorage",
+      "method": "clear",
+      "key": "*",
+      "kind": "dynamic/expression",
+      "argument": null,
+      "test": true
+    },
+    {
+      "path": "src/utils/uploadFormData.spec.ts",
+      "line": 22,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": true
+    },
+    {
+      "path": "src/utils/uploadFormData.spec.ts",
+      "line": 36,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": true
+    },
+    {
+      "path": "src/utils/uploadFormData.ts",
+      "line": 35,
+      "area": "localStorage",
+      "method": "setItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    },
+    {
+      "path": "src/utils/uploadFormData.ts",
+      "line": 44,
+      "area": "localStorage",
+      "method": "getItem",
+      "key": "auth-token",
+      "kind": "literal",
+      "argument": "'auth-token'",
+      "test": false
+    }
+  ]
+}

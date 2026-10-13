@@ -1,0 +1,68 @@
+{
+  "status": "PASS_DOM_ONLY",
+  "checks": [
+    {
+      "entry": "navigate",
+      "status": "PASS",
+      "actualReactRouter": true,
+      "action": {
+        "url": "http://127.0.0.1:28370/probe/leptos/",
+        "replace": false
+      }
+    },
+    {
+      "entry": "link",
+      "status": "PASS",
+      "actualReactRouter": true,
+      "action": {
+        "url": "http://127.0.0.1:28370/probe/leptos/",
+        "replace": false
+      }
+    },
+    {
+      "entry": "navlink",
+      "status": "PASS",
+      "actualReactRouter": true,
+      "action": {
+        "url": "http://127.0.0.1:28370/probe/leptos/",
+        "replace": false
+      }
+    },
+    {
+      "entry": "prefix boundary /probex remains old shell",
+      "status": "PASS"
+    },
+    {
+      "entry": "back",
+      "status": "PASS",
+      "nativeJsdomHistory": true,
+      "action": {
+        "url": "http://127.0.0.1:28370/probe/leptos/",
+        "replace": true
+      }
+    },
+    {
+      "entry": "forward",
+      "status": "PASS",
+      "nativeJsdomHistory": true,
+      "action": {
+        "url": "http://127.0.0.1:28370/probe/leptos/",
+        "replace": true
+      }
+    },
+    {
+      "entry": "new shell -> unmigrated URL",
+      "status": "PASS",
+      "action": {
+        "url": "http://127.0.0.1:28370/settings",
+        "replace": false
+      }
+    },
+    {
+      "entry": "same-origin history does not alter storage keys",
+      "status": "PASS",
+      "realCrossDocumentReload": false
+    }
+  ],
+  "limit": "hardNavigate calls recorded, actual browser reload/BFCache/scroll/focus restoration unverified"
+}

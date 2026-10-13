@@ -1,0 +1,14 @@
+[application]
+name = "probe-dioxus"
+default_platform = "web"
+[web.app]
+title = "F1 Dioxus probe"
+base_path = "probe/dioxus"
+[web.resource]
+style = ["/vendor/xterm.css", "/shared/probe.css"]
+script = ["/vendor/xterm.js"]
+[web.resource.dev]
+style = []
+script = []
+[web.wasm_opt]
+level = "0"

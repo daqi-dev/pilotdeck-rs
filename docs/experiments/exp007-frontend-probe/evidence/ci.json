@@ -1,0 +1,38 @@
+[
+  {
+    "name": "root-fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--check"
+    ],
+    "exitCode": 0,
+    "seconds": 0.37
+  },
+  {
+    "name": "root-clippy",
+    "command": [
+      "cargo",
+      "clippy",
+      "--all-targets",
+      "--locked",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exitCode": 0,
+    "seconds": 19.418
+  },
+  {
+    "name": "root-test",
+    "command": [
+      "cargo",
+      "test",
+      "--all",
+      "--locked"
+    ],
+    "exitCode": 0,
+    "seconds": 50.769
+  }
+]

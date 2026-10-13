@@ -101,3 +101,11 @@
 | b | 渐进方式 | 按路由/页面 · 按组件岛 · 整体 | **按页面**（探针→设置→业务页→聊天→壳），页内组件岛；共存靠**双入口托管 + 双向导航拦截**（托管选项 A 改 `app.get('*')` 前缀分支 / 选项 B 前置反代，F1 实测定）；跨壳丢连接态入 accepted-diffs | 待人 |
 | c | e2e 当验收 | 直接全用 · 只用黑盒 · 全部重写 | **黑盒候选 37 例当主尺子分母**（B 9 例要部署矩阵 + D 28 例要 mock LLM 编排，均非「今天零环境可跑」，可用性押 F2 runner）；A 类 34 例移植/改写前不计分母；防 skip 对账 + 流式/滚动黑盒断言补齐后才验收；截图只做基线 | 待人 |
 | d | Electron | 不动 · 同步换 Wry/Tao · 退役桌面 | **不动**；桌面验证 = 3 个 Electron smoke 在新前端下照常过；Wry/Tao 另开 issue | 待人 |
+
+## F1 exp007 复核追加（2026-10-14）
+
+**a′ 暂选 Leptos 0.8.17（AI 代批，待人复核）**：两候选真实 CSR wasm 在 DOM 降级层均通过 composition 事件、≥20Hz/≥60s 接收与 DOM 更新逐帧对账、真 xterm 十次挂卸保留 DOM/缓冲/焦点/输入。Leptos 在相同发布 profile / wasm-bindgen 管线下 gzip wasm 更小（111,122 B vs Dioxus 0.7.9 的 210,103 B），其入选依据是本探针的体积与构建可用性，**不是 islands SSR 论证，也不是“信号天然不卡”**。详情与 trace 见 [exp007](../../experiments/exp007-frontend-probe/readme.md)。
+
+系统 Chrome 在当前 sandbox 中 SIGABRT，真实绘制/滚动、浏览器跨壳状态与正式黑盒双跑尚未验证，**F1 不标完成，不凭暂选放行 F3 生产页面迁移**。两候选没有被证明全败；无需按“两败”条款重拍混合方向，需换到允许启动系统 Chrome 的环境补证据。
+
+b 的探针结论：Caddy 2.10.2 前置反代 B 已用真实旧 Vite 入口 + 两 Rust 静态入口与 HTTP/WS 做实验，导航原语与 history traversal 拦截在 DOM 级覆盖。A 未搭真实 `ui/server` patch 环境；生产共存方式暂不定稿。D1–D5 以 [accepted-diffs 的 F1 追加表](accepted-diffs.md#f1-exp007-对账与修订2026-10-14追加当前有效口径) 为当前口径，均未以完整跨壳浏览器实测转正。
