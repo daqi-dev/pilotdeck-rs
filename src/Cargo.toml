@@ -1,9 +1,31 @@
 [workspace]
 resolver = "3"
-# crate 由 cargo new 建出来后自动登记到这里
-members = ["pilotdeck-cli", "pilotdeck-core"]
+exclude = ["vendor/tiktoken-rs"]
+members = [
+    "pilotdeck-cli",
+    "pilotdeck-agent",
+    "pilotdeck-transport",
+    "pilotdeck-protocol",
+    "pilotdeck-tokenizer",
+]
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.93"
+version = "0.1.0"
 license = "AGPL-3.0-only"
+license-file = "../LICENSE"
 publish = false
+
+[workspace.dependencies]
+serde_json = { version = "=1.0.151", features = ["raw_value"] }
+ryu-js = "=1.0.3"
+sha2 = "=0.10.9"
+tz-rs = { version = "=0.7.3", default-features = false, features = ["alloc"] }
+pilotdeck-protocol = { path = "pilotdeck-protocol" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
