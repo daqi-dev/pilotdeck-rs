@@ -1,0 +1,8 @@
+{
+  "candidate": "leptos",
+  "status": "PASS_BOOTSTRAP_DOM_ONLY",
+  "tokenRetained": true,
+  "draftRestored": true,
+  "activeProjectRetained": true,
+  "browserCrossDocumentReload": false
+}

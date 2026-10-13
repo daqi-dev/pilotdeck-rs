@@ -1,0 +1,91 @@
+{
+  "scope": "A history refresh transplant sample, baseline manual-reconcile fixture",
+  "newCandidates": "NOT_RUN: probe has no production chat/history reconciliation",
+  "nativeGeometry": false,
+  "stages": [
+    {
+      "stage": 1,
+      "oneImage": true,
+      "oneQuery": true,
+      "thoughtBeforeAnswer": null,
+      "messageRows": [
+        {
+          "key": "no-project:new-session:message-user-text_gateway_echo",
+          "text": "图片与压缩排列回归04:40Processed 0s"
+        },
+        {
+          "key": "no-project:new-session:message-assistant-__streaming_thinking_s_run:1791924032557:nh5bjk",
+          "text": "Thought process压缩前：已确认左边是红色方块，右边是蓝色圆形。Compacting context..."
+        }
+      ]
+    },
+    {
+      "stage": 2,
+      "oneImage": true,
+      "oneQuery": true,
+      "thoughtBeforeAnswer": true,
+      "messageRows": [
+        {
+          "key": "no-project:new-session:message-user-text_gateway_echo",
+          "text": "图片与压缩排列回归04:40Processed 0s"
+        },
+        {
+          "key": "no-project:new-session:message-assistant-__streaming_thinking_s_run:1791924032557:nh5bjk",
+          "text": "Thought process压缩前：已确认左边是红色方块，右边是蓝色圆形。Compacted context"
+        },
+        {
+          "key": "no-project:new-session:message-assistant-live-answer",
+          "text": "压缩后：继续回答，图片确认完成。"
+        }
+      ]
+    },
+    {
+      "stage": 3,
+      "oneImage": true,
+      "oneQuery": true,
+      "thoughtBeforeAnswer": true,
+      "messageRows": [
+        {
+          "key": "no-project:new-session:message-user-persisted-user",
+          "text": "图片与压缩排列回归04:40Processed 0s"
+        },
+        {
+          "key": "no-project:new-session:message-assistant-__streaming_thinking_s_run:1791924032557:nh5bjk",
+          "text": "Thought process压缩前：已确认左边是红色方块，右边是蓝色圆形。Compacted context"
+        },
+        {
+          "key": "no-project:new-session:message-assistant-persisted-answer",
+          "text": "压缩后：继续回答，图片确认完成。"
+        }
+      ]
+    }
+  ],
+  "status": "FAIL",
+  "error": "Error: DOM condition timeout after 5000ms\n    at waitFor (file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/scripts/exp007/dom-env.mjs:35:9)\n    at async file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/scripts/exp007/history-refresh.mjs:28:4",
+  "failureDOM": {
+    "text": "回放完成预期：一份图片提问 → 思考 → 压缩 → 回答；各阶段顺序不变。图片与压缩排列回归04:40Processed 0s压缩后：继续回答，图片确认完成。04:40",
+    "buttons": [
+      {
+        "text": "回放完成",
+        "expanded": null
+      },
+      {
+        "text": "",
+        "expanded": null
+      },
+      {
+        "text": "",
+        "expanded": null
+      },
+      {
+        "text": "Processed 0s",
+        "expanded": "false"
+      },
+      {
+        "text": "",
+        "expanded": null
+      }
+    ]
+  },
+  "elapsedMs": 5993.046666
+}

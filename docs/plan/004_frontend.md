@@ -40,7 +40,7 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 **选「登录 + 会话列表」当探针页的理由**：登录是最小完整面（`/api/auth/*` + token 进 localStorage）；会话列表同时压到 HTTP（`/api/projects`、`/api/sessions`）与主 WS（`watch-session`/`projects_updated`），且黑盒用例对 `/` 路由已有覆盖（`real-auth-composition.spec.mjs:91`）。
 
 **S1 选型不锁死：双候选同负载实测**
-- `src/`（或独立 `ui-rs/` crate，位置在 S1 里定并记入本计划补丁）起 Leptos CSR 工程与 Dioxus CSR 工程各一：`trunk`/`dx` 构建，产物均为纯静态资产；构建链、wasm 体积、dev 热替换记录进实验文档。
+- 独立 `ui-rs/probe-leptos/` 与 `ui-rs/probe-dioxus/` 工程（各带自己的 `[workspace]`，不加入 `src/` workspace）起 Leptos CSR 工程与 Dioxus CSR 工程各一：`trunk`/`dx` 构建，产物均为纯静态资产；构建链、wasm 体积、dev 热替换记录进实验文档。
 - **同一探针代码（S2–S3）两候选各实现一遍**（探针页小，重复成本可控；共享的岛桥接与 mock 装置复用），判据完全相同，按实测结果定稿——初选 Leptos 仅为探针排序，不是结论。早先「Leptos islands 官方路径」「信号天然不掉帧」的依据不成立（islands 属 SSR 场景，我们的是 CSR SPA 反向挂 JS 岛），已撤回，见 decision (a′)。
 
 **S2 探针页实现**
@@ -65,11 +65,11 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 - **跨壳行为实测**：① 登录态跨壳保持（`auth-token` 等 storage 键）；② 前进/后退跨壳边界（整页加载、状态由 URL+storage 重建）；③ 流式中途跨壳再返回（`watch-session` 重挂，断口部分帧不可复现）；④ 重连行为按通道分断言——主 `/ws` 断开自动重连（1s→30s 退避），终端 `/shell` 断开**不**自动重连、须手动重进（旧实现 `onclose` 只清屏：`useShellConnection.ts:174-183`）；⑤ composer 草稿跨壳**保留**（`draft_input_<projectName>:<sessionId|'new'>` 键是共享契约，`chatStorage.ts:6-9`——旧壳本就有 localStorage 恢复/写入/离页刷新：`useChatComposerState.ts:316-321, 1621-1629, 1643-1644`；丢草稿是 bug 不是差异）。③–⑤ 按 `accepted-diffs.md` D1–D5 逐条对账，实测与描述不符的条目回炉改写，不静默保留。
 
 **Issue F1 怎么算做完**
-- [ ] 实验文档 `docs/experiments/exp006-frontend-probe/readme.md`：两候选 IME/流式/岛生命周期三命门的同负载实测数据（截图或 trace）与选型结论、双入口托管两选项对比、路由/历史层拦截的入口覆盖验证（`navigate`/`Link`/`NavLink`/前进后退逐类过一遍）、A 类移植 1 条的成本
+- [ ] 实验文档 `docs/experiments/exp007-frontend-probe/readme.md`：两候选 IME/流式/岛生命周期三命门的同负载实测数据（截图或 trace）与选型结论、双入口托管两选项对比、路由/历史层拦截的入口覆盖验证（`navigate`/`Link`/`NavLink`/前进后退逐类过一遍）、A 类移植 1 条的成本
 - [ ] `accepted-diffs.md` D1–D5 逐条实测对账完成（对不上的条目已改写或移除）
 - [ ] 探针页在黑盒 e2e 子集上与旧前端同判（或差异逐条有解释）
 - [ ] 拍板栏 a′ 复核完成（人或晨报追认）
-- [ ] CI `check` 绿（探针代码进 `src/` workspace，照常 fmt/clippy/test）
+- [ ] CI `check` 绿（`src/` workspace 保持不纳入 wasm；探针独立执行 fmt / wasm-target clippy / 实验 runner，命令与结果见 exp007）
 
 ### Issue F2 · 对拍装置：同一组用例双跑 + 尺子补齐
 

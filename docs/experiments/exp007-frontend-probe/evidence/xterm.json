@@ -1,0 +1,16 @@
+{
+  "version": "5.5.0",
+  "license": "MIT",
+  "assets": [
+    {
+      "asset": "lib/xterm.js",
+      "bytes": 289441,
+      "gzip": 67245
+    },
+    {
+      "asset": "css/xterm.css",
+      "bytes": 5559,
+      "gzip": 2071
+    }
+  ]
+}

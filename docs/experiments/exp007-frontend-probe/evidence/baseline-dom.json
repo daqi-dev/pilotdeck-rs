@@ -1,0 +1,107 @@
+{
+  "kind": "Baseline original LoginForm/AuthProvider/WebSocketProvider/api modules, isolated DOM fixture",
+  "fullProduct": false,
+  "checks": [
+    {
+      "name": "S2 login/token/authenticated project and session requests",
+      "status": "PASS"
+    },
+    {
+      "name": "S2 projects_updated refresh",
+      "status": "PASS"
+    },
+    {
+      "name": "D1 original main WS automatically reconnects",
+      "status": "PASS",
+      "delayMs": 1016.2389579999999
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/auth/status",
+      "method": "GET",
+      "authorization": null
+    },
+    {
+      "path": "/api/auth/login",
+      "method": "POST",
+      "authorization": null
+    },
+    {
+      "path": "/api/user/onboarding-status",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/api/auth/status",
+      "method": "GET",
+      "authorization": null
+    },
+    {
+      "path": "/api/projects",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/api/auth/user",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/api/projects/probe/sessions",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/api/user/onboarding-status",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/__probe/projects",
+      "method": "GET",
+      "authorization": null
+    },
+    {
+      "path": "/api/projects",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/api/projects/probe/sessions",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/__probe/close",
+      "method": "GET",
+      "authorization": null
+    },
+    {
+      "path": "/api/projects",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    },
+    {
+      "path": "/api/projects/probe/sessions",
+      "method": "GET",
+      "authorization": "Bearer f1-probe-token"
+    }
+  ],
+  "outbound": [
+    {
+      "type": "watch-session",
+      "sessionId": "s",
+      "path": "/ws",
+      "t": 605.513458
+    },
+    {
+      "type": "watch-session",
+      "sessionId": "s",
+      "path": "/ws",
+      "t": 1637.607333
+    }
+  ],
+  "domErrors": [],
+  "status": "PASS_DOM_ONLY"
+}

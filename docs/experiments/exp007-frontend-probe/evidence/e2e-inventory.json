@@ -1,0 +1,510 @@
+{
+  "registered": 72,
+  "errors": [],
+  "tests": [
+    {
+      "file": "composition.spec.mjs",
+      "title": "profile assembly, replacement, interactions and layout",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "formal-composition.spec.mjs",
+      "title": "formal Knowledge query and citation resolution",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "formal-composition.spec.mjs",
+      "title": "formal SOP lifecycle resumes through the real StaffDeck runtime",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "formal-composition.spec.mjs",
+      "title": "formal SOP and Skills routes follow the active composition",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "formal-composition.spec.mjs",
+      "title": "formal replacement Knowledge switches frontend and backend implementation",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "formal-route-matrix.spec.mjs",
+      "title": "formal undefined routes follow the generated composition",
+      "expectedStatus": "skipped",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "history-fork.spec.mjs",
+      "title": "history fork API carries prior transcript and exposes entryId on user messages",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "general and project defaults match configuration and sending is blocked while loading",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "manual selection survives sending, completion and reload",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "explicit Auto stays selected without a composer execution banner",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "unavailable configured models block sending and the picker still allows recovery",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "new conversations and projects inherit the last accepted send, while unsent choices stay local",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "settings/help commands work with model ready=false, via click and keyboard",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "settings/help commands work with model ready=true, via click and keyboard",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "accepted model choices synchronize across tabs while existing sessions retain their model",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "response model appears before time only with the response hover actions",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "the mint model menu keeps white surfaces and follows the active accent",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "model-selection.spec.mjs",
+      "title": "the blue model menu keeps white surfaces and follows the active accent",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-TREE-001 opens file workbench and navigates seeded files",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-TREE-002 refresh and search controls update the tree",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-EDIT-001 edits and saves a real file",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-PREVIEW-001 closes file preview and assistant panel",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-LANG-001 language selection and navigation",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-PROVIDER-001 selects OpenAI, Anthropic and Gemini providers",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-CONN-001 real connection form controls and model selection",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-NAV-002 back and completion controls are real",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-SIDEBAR-001 creates and selects a new conversation",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-SIDEBAR-003 expands navigation and opens settings/skills",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-MODEL-001 selects each configured real model",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-COMPOSER-001 real openai chat",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-COMPOSER-001 real anthropic chat",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-COMPOSER-001 real google chat",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-HEADER-002 opens and closes conversation search",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-MSG-003 destructive confirmation can be cancelled",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-NAV-001 visits every settings menu",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-GENERAL-001 toggles visible general controls and persists",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-MODEL-001 exercises model pool provider controls",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-AGENT-001 exercises agent settings controls",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-MCP-001 opens MCP extension and exercises modal cancel",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-ADV-001 validates raw configuration actions",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-ABOUT-001 checks update and returns to app",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-LIST-001 refreshes and selects a skill",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-SCOPE-001 switches user and project scope",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-CREATE-001 opens and cancels create modal",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-EDIT-001 opens editor and exercises save/cancel controls",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-IMPORT-001 opens import modal and cancels without writing",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real-auth-composition.spec.mjs",
+      "title": "authenticated StaffDeck profile persists settings and queries the real Knowledge runtime",
+      "expectedStatus": "skipped",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real-auth-composition.spec.mjs",
+      "title": "authenticated minimal profile keeps disabled module routes and requests inert",
+      "expectedStatus": "skipped",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real-auth-composition.spec.mjs",
+      "title": "authenticated replacement profile sends saved result limits to its replacement runtime",
+      "expectedStatus": "skipped",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "real-auth-native.spec.mjs",
+      "title": "native Settings reads, saves, reloads, and authenticates runtime/config calls",
+      "expectedStatus": "skipped",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "history refresh preserves thinking and compaction order and a single image query",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "short thinking ignores upward wheels, then global resume restores the inner tail",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "upward wheels over short thinking yield to the scrollable conversation",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "stream search waits for the visible match",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "stream search waits for the visible match and respects cancellation",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "historical sessions open at the bottom with auto follow disabled and preserve revisits",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "subagent drains completion text while following the bottom",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "subagent drains completion text while preserving the reader",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-lifecycle.spec.mjs",
+      "title": "completion snapshot refresh preserves the mounted thinking viewport and its reading state",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-scroll.spec.mjs",
+      "title": "small upward gestures win over text streaming and explicit resume follows again",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-scroll.spec.mjs",
+      "title": "thinking retains its viewport, expansion and reading position through tools and completion",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-scroll.spec.mjs",
+      "title": "web fetch has one status in plan mode and empty results finish it; parallel calls remain distinct",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-scroll.spec.mjs",
+      "title": "stream updates do not repeatedly recenter an existing search match",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-scroll.spec.mjs",
+      "title": "prepending virtualized history while streaming preserves the visible message anchor",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "search locates a phrase spanning text and a link",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "search locates a hidden Markdown URL",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "search locates a virtualized distant result without a highlight",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "search fallback waits for the rendered tail while the stream remains open",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "search fallback waits for the rendered tail after the backend completes",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "search fallback waits for the rendered tail with user cancellation",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "search fallback waits for the rendered tail before its first animation frame",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    },
+    {
+      "file": "streaming-search.spec.mjs",
+      "title": "subagent search retains message-level fallback for hidden link URLs",
+      "expectedStatus": "passed",
+      "execution": "NOT_RUN",
+      "reason": "Chrome launch blocked; deployed B/D environments absent or original fixture coupled"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "status": "PASS_TRANSPORT_ONLY",
+  "oldCount": 20,
+  "newCount": 44,
+  "missing": [
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31
+  ],
+  "watchSessionMessages": 2,
+  "limit": "mock does not replay stream deltas; real cross-document navigation and persisted completed history are unverified"
+}

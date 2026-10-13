@@ -1,0 +1,87 @@
+{
+  "ok": true,
+  "fully_registered": true,
+  "checked": {
+    "README.md": {
+      "ok": true,
+      "sha256": "f8958a3280a95df7c9e2032247b3803dd383e30b033b49292540af302cb4a6e5",
+      "expected_prefix": "f8958a3280a95df7",
+      "mode": "full-file"
+    },
+    "accepted-diffs.md": {
+      "ok": true,
+      "sha256": "653ccb1001d1b09a1003952a291c2ca4bd3f511ff187704398f7768c6d2a97c0",
+      "expected_prefix": "653ccb1001d1b09a",
+      "mode": "full-file"
+    },
+    "acceptance.md": {
+      "ok": true,
+      "sha256": "b5223379e6b039e5ae9c70015db9582babdd8d52da8a077533893cf1d2b5fda7",
+      "expected_prefix": "b5223379e6b039e5",
+      "mode": "full-file"
+    },
+    "normalization.md": {
+      "ok": true,
+      "sha256": "5a0c10b70a89a42aa7808f2a0520116e557a4614545f3662fc19dccff1568450",
+      "expected_prefix": "5a0c10b70a89a42a",
+      "mode": "full-file"
+    },
+    "scripts/parity/bind.mjs": {
+      "ok": true,
+      "sha256": "1b4a38037cf526c6225e69bb4faeb24835d9390f37bed3becb0f8b0f8fd6bfd3",
+      "expected_prefix": "1b4a38037cf526c6",
+      "mode": "full-file"
+    },
+    "scripts/parity/check_frozen.py": {
+      "ok": true,
+      "sha256": "0cab2febdccbc371d7c7023ce575bf372c7c037cf8bf0388fc71bd2f654e6582",
+      "expected_prefix": "0cab2febdccbc371",
+      "mode": "full-file"
+    },
+    "scripts/parity/check_ruler.py": {
+      "ok": true,
+      "sha256": "73ae7c49d5dcc07f0461752ea9f976196565e663964c6169b33c43f2880c8cb3",
+      "expected_prefix": "73ae7c49d5dcc07f",
+      "mode": "full-file"
+    },
+    "scripts/parity/controls/README.md": {
+      "ok": true,
+      "sha256": "13845e46011a890ecdbc2e2de96a4fb4cf7bfe091c22fb67250bef135575be09",
+      "expected_prefix": "13845e46011a890e",
+      "mode": "full-file"
+    },
+    "scripts/parity/controls/review_r1.py": {
+      "ok": true,
+      "sha256": "cfb45493dfbe84a1eb090c1c91fc84deac56cb8cf726cb785123389d04f2177a",
+      "expected_prefix": "cfb45493dfbe84a1",
+      "mode": "full-file"
+    },
+    "scripts/parity/controls/run_all.py": {
+      "ok": true,
+      "sha256": "fbd658f932da1a567d6878f1edb350808748965121a760f89befaa7072f7df38",
+      "expected_prefix": "fbd658f932da1a56",
+      "mode": "full-file"
+    },
+    "scripts/parity/g03_compare.py": {
+      "ok": true,
+      "sha256": "17e13a845aa5d8ef5904150e7d06c0a7ecb041608a897b6b72ada158dac265d6",
+      "expected_prefix": "17e13a845aa5d8ef",
+      "mode": "full-file"
+    },
+    "scripts/parity/round.py": {
+      "ok": true,
+      "sha256": "16746b22a573a1f0b2620c8d065544d0cfa5f3f94dbfae4e0ca0bc2e838f1d20",
+      "expected_prefix": "16746b22a573a1f0",
+      "mode": "full-file"
+    },
+    "scripts/parity/self_compare.py": {
+      "ok": true,
+      "sha256": "9489d43055c43f5e95d39132197f54ecdd7ea6eca7da68d11080ff07477a1769",
+      "expected_prefix": "9489d43055c43f5e",
+      "mode": "full-file"
+    }
+  },
+  "unregistered_skipped": [],
+  "notice": null,
+  "errors": []
+}

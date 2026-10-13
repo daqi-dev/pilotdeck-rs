@@ -1,0 +1,5 @@
+[build]
+public_url = "/probe/leptos/"
+filehash = false
+[tools]
+wasm_bindgen = "0.2.129"

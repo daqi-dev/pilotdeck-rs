@@ -1,0 +1,1175 @@
+COMMAND OUTPUT fmt-leptos.log
+
+COMMAND OUTPUT fmt-dioxus.log
+
+COMMAND OUTPUT clippy-leptos.log
+    Checking probe-leptos v0.1.0 (<worktree>/ui-rs/probe-leptos)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.73s
+
+COMMAND OUTPUT clippy-dioxus.log
+    Checking probe-dioxus v0.1.0 (<worktree>/ui-rs/probe-dioxus)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.59s
+
+COMMAND OUTPUT js-check.log
+PASS baseline-dom.mjs
+PASS baseline.mjs
+PASS browser.mjs
+PASS coexist.mjs
+PASS dom-env.mjs
+PASS env.mjs
+PASS gates.mjs
+PASS history-refresh.mjs
+PASS list-tests.config.mjs
+PASS mock.mjs
+PASS navigation.mjs
+PASS restore.mjs
+PASS storage.mjs
+PASS stream-gap.mjs
+
+COMMAND OUTPUT root-fmt.log
+
+COMMAND OUTPUT root-clippy.log
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded lazy_static v1.5.1
+  Downloaded bit-set v0.8.0
+  Downloaded pin-utils v0.1.1
+  Downloaded bit-vec v0.8.0
+  Downloaded ryu-js v1.0.3
+  Downloaded uuid v1.27.0
+  Downloaded hyper-util v0.1.17
+  Downloaded hyper v1.7.0
+  Downloaded tz-rs v0.7.3
+  Downloaded fancy-regex v0.17.0
+  Downloaded tokio-macros v2.6.1
+  Downloaded bstr v1.13.1
+  Downloaded zerocopy v0.8.62
+  Downloaded tokio v1.48.0
+   Compiling libc v0.2.190
+    Checking itoa v1.0.18
+    Checking memchr v2.8.3
+    Checking cfg-if v1.0.5
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling zmij v1.0.23
+    Checking typenum v1.20.1
+   Compiling serde_core v1.0.229
+   Compiling serde_json v1.0.151
+    Checking aho-corasick v1.1.5
+    Checking regex-syntax v0.8.11
+    Checking crypto-common v0.1.7
+    Checking block-buffer v0.10.4
+    Checking ryu-js v1.0.3
+    Checking digest v0.10.7
+    Checking cpufeatures v0.2.17
+    Checking bit-vec v0.8.0
+    Checking regex-automata v0.4.18
+   Compiling anyhow v1.0.104
+    Checking base64 v0.22.1
+    Checking bit-set v0.8.0
+    Checking pilotdeck-protocol v0.1.0 (<worktree>/src/pilotdeck-protocol)
+    Checking fancy-regex v0.17.0
+    Checking bstr v1.13.1
+    Checking regex v1.13.1
+    Checking rustc-hash v2.1.3
+    Checking lazy_static v1.5.1
+    Checking sha2 v0.10.9
+    Checking tiktoken-rs v0.12.0 (<worktree>/src/vendor/tiktoken-rs)
+   Compiling proc-macro2 v1.0.107
+    Checking pilotdeck-tokenizer v0.1.0 (<worktree>/src/pilotdeck-tokenizer)
+    Checking pilotdeck-agent v0.1.0 (<worktree>/src/pilotdeck-agent)
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling getrandom v0.4.3
+    Checking core-foundation-sys v0.8.7
+    Checking iana-time-zone v0.1.65
+   Compiling pilotdeck-transport v0.1.0 (<worktree>/src/pilotdeck-transport)
+    Checking chrono v0.4.45
+    Checking uuid v1.27.0
+    Checking tz-rs v0.7.3
+    Checking bytes v1.10.1
+   Compiling syn v2.0.119
+   Compiling getrandom v0.3.4
+   Compiling zerocopy v0.8.62
+    Checking pin-project-lite v0.2.17
+    Checking http v1.5.0
+    Checking futures-core v0.3.34
+   Compiling httparse v1.10.1
+    Checking errno v0.3.14
+    Checking signal-hook-registry v1.4.8
+    Checking rand_core v0.9.5
+   Compiling tokio-macros v2.6.1
+    Checking ppv-lite86 v0.2.21
+   Compiling syn v3.0.9
+    Checking socket2 v0.6.5
+    Checking mio v1.2.4
+   Compiling thiserror v2.0.21
+    Checking pin-utils v0.1.1
+   Compiling thiserror-impl v2.0.21
+    Checking tokio v1.48.0
+    Checking rand_chacha v0.9.0
+    Checking http-body v1.1.0
+   Compiling futures-macro v0.3.31
+    Checking once_cell v1.21.4
+    Checking try-lock v0.2.5
+    Checking futures-task v0.3.34
+    Checking slab v0.4.12
+    Checking futures-sink v0.3.34
+    Checking futures-util v0.3.31
+    Checking want v0.3.2
+    Checking tracing-core v0.1.36
+    Checking rand v0.9.5
+    Checking futures-channel v0.3.34
+    Checking sha1 v0.10.7
+    Checking log v0.4.34
+    Checking atomic-waker v1.1.2
+    Checking smallvec v1.16.3
+    Checking utf-8 v0.7.6
+    Checking data-encoding v2.11.1
+    Checking httpdate v1.0.3
+    Checking hyper v1.7.0
+    Checking tungstenite v0.28.0
+    Checking tracing v0.1.44
+    Checking tower-service v0.3.3
+    Checking tokio-tungstenite v0.28.0
+    Checking hyper-util v0.1.17
+    Checking http-body-util v0.1.3
+    Checking pilotdeck-gateway v0.1.0 (<worktree>/src/pilotdeck-gateway)
+    Checking pilotdeck-cli v0.1.0 (<worktree>/src/pilotdeck-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.36s
+
+COMMAND OUTPUT root-test.log
+   Compiling itoa v1.0.18
+   Compiling libc v0.2.190
+   Compiling memchr v2.8.3
+   Compiling cfg-if v1.0.5
+   Compiling zmij v1.0.23
+   Compiling serde_core v1.0.229
+   Compiling aho-corasick v1.1.5
+   Compiling serde_json v1.0.151
+   Compiling regex-syntax v0.8.11
+   Compiling typenum v1.20.1
+   Compiling ryu-js v1.0.3
+   Compiling generic-array v0.14.7
+   Compiling regex-automata v0.4.18
+   Compiling pilotdeck-protocol v0.1.0 (<worktree>/src/pilotdeck-protocol)
+   Compiling bit-vec v0.8.0
+   Compiling bit-set v0.8.0
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling base64 v0.22.1
+   Compiling bstr v1.13.1
+   Compiling regex v1.13.1
+   Compiling fancy-regex v0.17.0
+   Compiling digest v0.10.7
+   Compiling anyhow v1.0.104
+   Compiling cpufeatures v0.2.17
+   Compiling lazy_static v1.5.1
+   Compiling rustc-hash v2.1.3
+   Compiling sha2 v0.10.9
+   Compiling tiktoken-rs v0.12.0 (<worktree>/src/vendor/tiktoken-rs)
+   Compiling core-foundation-sys v0.8.7
+   Compiling iana-time-zone v0.1.65
+   Compiling num-traits v0.2.19
+   Compiling pilotdeck-tokenizer v0.1.0 (<worktree>/src/pilotdeck-tokenizer)
+   Compiling pilotdeck-agent v0.1.0 (<worktree>/src/pilotdeck-agent)
+   Compiling getrandom v0.4.3
+   Compiling pilotdeck-transport v0.1.0 (<worktree>/src/pilotdeck-transport)
+   Compiling uuid v1.27.0
+   Compiling chrono v0.4.45
+   Compiling tz-rs v0.7.3
+   Compiling bytes v1.10.1
+   Compiling pin-project-lite v0.2.17
+   Compiling http v1.5.0
+   Compiling futures-core v0.3.34
+   Compiling zerocopy v0.8.62
+   Compiling getrandom v0.3.4
+   Compiling errno v0.3.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling rand_core v0.9.5
+   Compiling httparse v1.10.1
+   Compiling mio v1.2.4
+   Compiling socket2 v0.6.5
+   Compiling pin-utils v0.1.1
+   Compiling tokio v1.48.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling http-body v1.1.0
+   Compiling futures-task v0.3.34
+   Compiling once_cell v1.21.4
+   Compiling try-lock v0.2.5
+   Compiling slab v0.4.12
+   Compiling futures-sink v0.3.34
+   Compiling futures-util v0.3.31
+   Compiling want v0.3.2
+   Compiling tracing-core v0.1.36
+   Compiling thiserror v2.0.21
+   Compiling rand v0.9.5
+   Compiling futures-channel v0.3.34
+   Compiling sha1 v0.10.7
+   Compiling log v0.4.34
+   Compiling httpdate v1.0.3
+   Compiling atomic-waker v1.1.2
+   Compiling utf-8 v0.7.6
+   Compiling data-encoding v2.11.1
+   Compiling smallvec v1.16.3
+   Compiling tungstenite v0.28.0
+   Compiling hyper v1.7.0
+   Compiling tracing v0.1.44
+   Compiling tower-service v0.3.3
+   Compiling hyper-util v0.1.17
+   Compiling tokio-tungstenite v0.28.0
+   Compiling http-body-util v0.1.3
+   Compiling pilotdeck-gateway v0.1.0 (<worktree>/src/pilotdeck-gateway)
+   Compiling pilotdeck-cli v0.1.0 (<worktree>/src/pilotdeck-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.42s
+     Running unittests src/lib.rs (<worktree>/_build/ci-target/debug/deps/pilotdeck_agent-14d04a07ac62fece)
+
+running 76 tests
+test ports::cleanup_cancellation_tests::cleanup_scopes_have_no_strong_ownership_cycle ... ok
+test turn::capture_responsibility_tests::absent_capture_hook_never_dispatches_an_effect ... ok
+test ports::cleanup_cancellation_tests::cleanup_scope_retains_hard_stop_before_and_after_registration ... ok
+test turn::capture_responsibility_tests::capture_cancelled_is_not_reclassified_as_known_failure ... ok
+test turn::capture_responsibility_tests::capture_known_source_failure_remains_advisory ... ok
+test ports::cleanup_cancellation_tests::cleanup_pending_wait_wakes_on_later_owner_retirement ... ok
+test source_model_reducer::language_regressions::finite_and_nonfinite_js_number_strings_preserve_source_form ... ok
+test turn::capture_responsibility_tests::capture_reply_for_another_operation_is_invalid ... ok
+test source_model_reducer::language_regressions::numeric_string_grammar_and_radix_rounding_do_not_use_parsefloat ... ok
+test turn::capture_responsibility_tests::capture_unknown_retains_full_owner_and_sequence_without_replay ... ok
+test turn::aborted_stream_branch_tests::stream_threw_under_parity_cancel_omits_status ... ok
+test turn::aborted_stream_branch_tests::stream_completed_quiet_reason_omits_status ... ok
+test turn::aborted_stream_branch_tests::stream_threw_timeout_reason_omits_status ... ok
+test turn::ordinary_model_error_recovery_tests::accepted_unknown_probe_identity_remains_terminal_and_special_action_is_not_faked_giveup ... ok
+test turn::compact_callback_timeline_tests::falsy_compaction_id_does_not_allocate_or_overwrite_callback_timeline ... ok
+test turn::ordinary_model_error_recovery_tests::source_probe_giveup_falsy_future_and_known_exception_do_not_retry ... ok
+test turn::ordinary_model_error_source_tests::ordinary_error_retains_raw_details_message_utf16_and_truthy_hint ... ok
+test turn::compact_callback_timeline_tests::callback_compaction_reuses_position_and_overwrites_stale_timeline ... ok
+test turn::aborted_stream_branch_tests::stream_completed_then_parity_cancel_emits_status ... ok
+test turn::ordinary_model_error_source_tests::prompt_patterns_apply_js_coercion_and_only_ascii_nonunicode_case_fold ... ok
+test turn::ordinary_model_error_source_tests::reasoning_retry_gate_uses_exact_words_case_and_source_whitespace ... ok
+test turn::ordinary_model_error_terminal_order_tests::late_status_exception_preserves_prior_phases_and_prevents_capture_completion ... ok
+test turn::ordinary_model_error_source_tests::prompt_classification_preserves_nullish_default_vs_falsy_hint ... ok
+test turn::ordinary_model_error_source_tests::regex_coercion_exception_occurs_only_after_source_shortcircuits ... ok
+test turn::owning_cancel_branch_tests::owning_loop_top_prearmed_quiet_reason_omits_status ... ok
+test turn::owning_cancel_branch_tests::owning_abort_during_prepare_emits_one_status_without_model_request ... ok
+test turn::ordinary_model_error_terminal_order_tests::accepted_capture_unknown_retains_identity_and_never_publishes_completion ... ok
+test turn::ordinary_model_error_terminal_order_tests::ordinary_terminal_has_source_order_and_omits_prior_structured_output ... ok
+test turn::owning_cancel_branch_tests::owning_loop_top_prearmed_cancel_emits_one_status_without_model_request ... ok
+test turn::owning_cancel_branch_tests::owning_stream_throw_with_surfaced_reason_still_omits_status ... ok
+test turn::owning_cancel_branch_tests::owning_stream_throw_while_aborted_omits_turn_aborted_status ... ok
+test turn::owning_cancel_branch_tests::owning_stream_completed_then_abort_emits_exactly_one_turn_aborted_status ... ok
+test turn::owning_cancel_branch_tests::owning_stream_completed_with_non_surfaced_reason_omits_status ... ok
+test turn::owning_ordinary_recovery_tests::control_no_retry_when_disabled_or_other_code ... ok
+test turn::owning_ordinary_recovery_tests::profile_2_two_completed_calls_project_one_message_with_two_results ... ok
+test turn::owning_ordinary_recovery_tests::profile_10_host_tool_result_unknown_fails_closed_after_one_dispatch ... ok
+test turn::owning_ordinary_recovery_tests::control_durable_failure_is_not_swallowed_or_retried ... ok
+test turn::owning_ordinary_recovery_tests::control_accepted_unknown_is_not_downgraded_or_replayed ... ok
+test turn::owning_ordinary_recovery_tests::profile_1_one_completed_call_projects_missing_result_then_terminal_error ... ok
+test turn::owning_reactive_recovery_tests::add_empty_reasoning_content_markers_fixtures_rc1_to_rc8 ... ok
+test turn::owning_ordinary_recovery_tests::profile_7_durable_assistant_rejection_stops_before_projection ... ok
+test turn::owning_reactive_recovery_tests::is_missing_reasoning_content_error_three_positive_five_negative ... ok
+test turn::owning_ordinary_recovery_tests::profile_5_json_disabled_does_not_retry ... ok
+test turn::owning_reactive_recovery_tests::model_error_target_js_or_fallback ... ok
+test turn::owning_ordinary_recovery_tests::profile_9_durable_pair_unknown_preserves_accepted_unknown ... ok
+test turn::owning_ordinary_recovery_tests::profile_6_json_other_code_does_not_retry ... ok
+test turn::owning_ordinary_recovery_tests::profile_8_durable_pair_rejection_stops_before_json_retry ... ok
+test turn::owning_ordinary_recovery_tests::profile_3_json_three_errors_then_success_on_fourth_model_call ... ok
+test turn::owning_ordinary_recovery_tests::profile_4_json_fourth_error_exhausts_three_corrections_and_fails ... ok
+test turn::owning_reactive_recovery_tests::n9_compact_guard_blocked_after_truncate_falls_through ... ok
+test turn::owning_reactive_recovery_tests::n5_probe_after_compact_carries_has_attempted_compact ... ok
+test turn::owning_reactive_recovery_tests::p02b_falsy_error_target_falls_back_to_decision_route ... ok
+test turn::owning_reactive_recovery_tests::p01_adjust_attempt_scope ... ok
+test turn::owning_reactive_recovery_tests::p03_adjust_second_blocked ... ok
+test turn::owning_reactive_recovery_tests::n4_give_up_unknown_kind_probe_failure_and_absent_port_fall_through ... ok
+test turn::owning_reactive_recovery_tests::p02_adjust_hard_cap_error_target ... ok
+test turn::owning_ordinary_recovery_tests::control_json_self_correct_limit_is_exactly_three ... ok
+test turn::owning_reactive_recovery_tests::p05_compact_with_output_cap ... ok
+test turn::owning_reactive_recovery_tests::fatal_compaction_errors_propagate_not_truncate ... ok
+test turn::owning_reactive_recovery_tests::p09_strip_images_once ... ok
+test turn::owning_reactive_recovery_tests::p10_max_output_phase_a_bump ... ok
+test turn::owning_reactive_recovery_tests::strip_images_from_messages_fixtures_si1_to_si3 ... ok
+test turn::owning_reactive_recovery_tests::p07_compact_error_terminal ... ok
+test turn::pre_model_abort_tests::capture_unknown_prevents_known_completion ... ok
+test turn::owning_reactive_recovery_tests::p10b_phase_a_without_bump_consumes_guard_then_phase_b_then_adjust_blocked ... ok
+test turn::pre_model_abort_tests::pending_unknown_prevents_capture_and_known_completion ... ok
+test turn::owning_reactive_recovery_tests::truncate_head_preserving_checkpoint_fixtures_th1_to_th12 ... ok
+test turn::pre_model_abort_tests::known_pre_model_cancel_retains_messages_and_creates_result_before_status_capture ... ok
+test turn::owning_reactive_recovery_tests::p08_truncate_twice_then_give_up ... ok
+test turn::pre_model_abort_tests::quiet_source_abort_reason_omits_status ... ok
+test turn::pre_model_abort_tests::transport_loss_retirement_and_existing_unknown_do_not_create_cancel_result ... ok
+test turn::owning_reactive_recovery_tests::p04_compact_compacted ... ok
+test turn::owning_reactive_recovery_tests::p12_reasoning_content_once ... ok
+test turn::owning_reactive_recovery_tests::p06_compact_fallback_truncate_three_variants ... ok
+test turn::owning_ordinary_recovery_tests::control_no_tool_dispatch_after_model_error_for_profiles_1_to_9 ... ok
+test turn::owning_reactive_recovery_tests::p11_max_output_phase_b_fifty_times_then_phase_c ... ok
+
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/budget_terminal.rs (<worktree>/_build/ci-target/debug/deps/budget_terminal-e98d53451da50cc1)
+
+running 26 tests
+test exact_large_binary_integer_not_shortest_decimal ... ok
+test adjacent_half_neighbors_are_not_float_multiply_rounded ... ok
+test binary_half_ties_round_up_not_even ... ok
+test exponent_threshold_and_maximum_finite ... ok
+test absent_or_unreached_selected_limit_is_caller_invariant ... ok
+test both_reached_turn_has_strict_priority ... ok
+test empty_text_and_thinking_do_not_fabricate_safe_message ... ok
+test nonfinite_to_fixed_is_not_json_null ... ok
+test malformed_nullish_blocks_raise_original_type_error ... ok
+test absent_nonarray_content_is_source_empty_not_invalid ... ok
+test all_ecmascript_whitespace_is_empty_but_nel_is_not ... ok
+test normalized_mismatch_does_not_reclassify_successful_source_boundary ... ok
+test null_message_without_tools_throws_read_content ... ok
+test joined_nullish_text_is_empty_without_dropping_fields ... ok
+test array_text_nested_nullish_join_semantics ... ok
+test no_tool_inference_from_raw_content_changes_owner_count ... ok
+test signed_zero_and_negative_underflow ... ok
+test safe_output_is_detached_from_original_own_extensions ... ok
+test ordinary_object_text_is_visible_and_own_noncallable_to_string_throws ... ok
+test number_and_bool_text_source_join_coerces_and_retains_raw ... ok
+test task_branch_uses_total_spent_and_exact_hint ... ok
+test thinking_filter_exception_precedes_text_coercion_exception ... ok
+test source_budget_error_detail_undefined_and_route_units ... ok
+test remove_only_thinking_preserve_media_unknown_slots ... ok
+test unexecuted_tools_suppress_before_malformed_message_read ... ok
+test thinking_with_invalid_text_is_never_coerced ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cancellation.rs (<worktree>/_build/ci-target/debug/deps/cancellation-15e4bded7e0ad81f)
+
+running 2 tests
+test later_observation_and_duplicate_cancel_cannot_extend_the_first_budget ... ok
+test terminal_owner_fixed_deadline_survives_later_observation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/compaction_persistence.rs (<worktree>/_build/ci-target/debug/deps/compaction_persistence-521c5de7a3ab9a59)
+
+running 17 tests
+test null_compact_fails_before_replacement_capture ... ok
+test callback_absence_skips_invalid_snapshot_and_map_without_erasing_replacement ... ok
+test missing_snapshot_is_boundary_construction_error_not_transport_unknown ... ok
+test metadata_boundary_error_precedes_map_and_retains_acknowledged_replacement ... ok
+test markers_only_modify_callback_copy_and_preserve_existing_slots_and_extensions ... ok
+test exact_metadata_order_own_undefined_and_stringify_omission ... ok
+test all_falsy_results_skip_persistence_but_empty_record_does_not ... ok
+test explicit_checkpoint_false_zero_and_string_are_not_replaced ... ok
+test primitive_messages_are_spread_not_fabricated_canonical_messages ... ok
+test truthy_primitive_result_and_snapshot_do_not_invent_missing_fields ... ok
+test result_error_null_prevents_summary_success_but_does_not_set_outer_error ... ok
+test checkpoint_strict_true_differs_from_cache_truthiness ... ok
+test target_null_is_owned_and_undefined_is_absent ... ok
+test primitive_metadata_spread_handles_wtf16_arrays_and_numeric_key_order ... ok
+test only_truthy_outer_error_appends_final_budget_fields_in_order ... ok
+test summary_nullish_fallback_preserves_explicit_nonboolean_values ... ok
+test map_and_null_message_errors_are_persistence_payload_phase ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/compaction_terminal.rs (<worktree>/_build/ci-target/debug/deps/compaction_terminal-b50ea15ed0ad0ced)
+
+running 14 tests
+test late_trim_error_keeps_fully_constructed_details_for_prior_owner_phases ... ok
+test nested_diagnostics_extensions_own_undefined_numeric_keys_and_proto_are_unchanged ... ok
+test emergency_error_never_impersonates_canonical_model_error_action_branch ... ok
+test status_top_level_undefined_is_pruned_but_raw_error_diagnostics_is_owned ... ok
+test nullish_compact_is_early_error_before_error_or_status_plan_exists ... ok
+test normal_error_exact_fields_and_distinct_emergency_vs_visible_hints ... ok
+test non_js_whitespace_0085_and_zero_width_200b_are_not_trimmed ... ok
+test trim_is_ecmascript_whitespace_preserves_untrimmed_i18n_and_provider_message ... ok
+test wtf16_message_and_snapshot_diagnostics_are_preserved_without_lossy_conversion ... ok
+test missing_and_null_error_fallback_preserve_distinct_raw_details_code ... ok
+test whitespace_only_uses_trim_fallback_while_empty_string_uses_truthy_fallback ... ok
+test truthy_numeric_boolean_array_object_are_later_trim_errors_not_outer_errors ... ok
+test falsy_error_values_are_retained_in_error_but_status_uses_generic_message ... ok
+test optional_result_diagnostics_handles_nullish_and_primitive_values_without_throw ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/driver_policy.rs (<worktree>/_build/ci-target/debug/deps/driver_policy-ce6180eda0231e36)
+
+running 12 tests
+test null_cost_falls_back_to_native_zero_does_not_and_turn_wins_both_ceilings ... ok
+test source_cost_zero_overrides_native_and_missing_estimate_falls_back_before_turn_ceiling ... ok
+test source_cost_unknown_keeps_ledger_unchanged_and_exact_usage_reaches_host ... ok
+test real_condvar_cancellation_wakes_and_retains_first_cause ... ok
+test policy_refuses_even_complete_unknown_finish ... ok
+test advancing_reply_unknown_is_preserved_and_never_pulled_again ... ok
+test successful_compaction_reply_cannot_override_owner_abort ... ok
+test unknown_finish_and_stream_retry_limits_are_distinct_and_reset_only_on_respective_success ... ok
+test repaired_guard_matches_source_finish_domain_without_deleting_other_paths ... ok
+test pull_forwards_unknown_events_and_never_authorizes_missing_end_tools ... ok
+test cancellation_during_live_emission_drops_remaining_advanced_events_and_closes_once ... ok
+test shallow_error_after_structured_end_stops_and_preserves_error_without_defaults ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/early_stream_recovery.rs (<worktree>/_build/ci-target/debug/deps/early_stream_recovery-b8c6aa5bb23b49ab)
+
+running 29 tests
+test malformed_assembled_null_throws_before_any_counter_changes ... ok
+test later_method_misuse_is_target_precondition_error_not_source_classification ... ok
+test explicit_tool_phase_clears_even_when_calls_empty ... ok
+test exhaustion_structured_shortcircuits_all_safe_message_access ... ok
+test interruption_preempts_unknown_without_resetting_its_counter ... ok
+test late_status_error_occurs_after_successful_safe_message_projection ... ok
+test custom_finish_and_missing_end_never_use_unknown_recovery ... ok
+test nonarray_content_uses_original_message_content_empty_fallback ... ok
+test nonmatching_gate_resets_only_when_reached ... ok
+test all_prompt_literals_and_kinds_match_fixed_source ... ok
+test partial_message_keeps_media_extensions_and_raw_utf16 ... ok
+test primitive_truthy_interruption_preserves_lax_source_branch ... ok
+test source_filter_rejects_null_block_without_silently_normalizing ... ok
+test source_trim_keeps_zero_width_space_and_removes_ecma_whitespace ... ok
+test structured_clear_and_late_prompt_error_have_distinct_phases ... ok
+test source_error_truthiness_controls_unknown_gate ... ok
+test terminal_error_phase_primitive_conversion_precedes_safe_message ... ok
+test structured_interruption_clears_but_unknown_does_not ... ok
+test terminal_error_retains_full_model_error_extensions_and_details ... ok
+test source_text_array_join_nullish_numeric_object_coercion ... ok
+test text_interruption_retries_twice_then_exhausts ... ok
+test unknown_structured_retry_still_projects_without_thinking_first ... ok
+test unknown_retries_twice_then_exhausts_and_owns_undefined_details ... ok
+test unknown_structured_retry_shortcircuits_text_conversion_after_filter ... ok
+test stream_idle_timeout_source_specific_action_is_selected ... ok
+test unknown_status_default_has_shallow_pruning_and_fixed_action ... ok
+test status_preserves_own_null_and_nested_undefined_params ... ok
+test tool_prompt_maps_all_calls_before_slice_but_coerces_only_three_names ... ok
+test model_status_all_action_branches_follow_source_precedence ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/large_file_repair.rs (<worktree>/_build/ci-target/debug/deps/large_file_repair-b30ef9634a3ec3b5)
+
+running 26 tests
+test boundary_missing_name_and_own_undefined_name_differ_from_undefined_entry ... ok
+test boundary_after_file_write_keeps_post_phase_zero_attempt_and_wtf16_path ... ok
+test boundary_name_only_recovery_matches_typed_decision_exactly ... ok
+test boundary_some_short_circuits_after_first_write_before_later_nullish ... ok
+test any_post_truncation_flag_or_length_matches_without_required_issues ... ok
+test boundary_and_typed_truncation_share_the_same_independent_ten_budget ... ok
+test boundary_truncation_minimal_name_needs_no_id_or_input_and_preserves_echo ... ok
+test literal_pre_prompt_matches_original_filter_boolean_output ... ok
+test boundary_some_runs_before_ten_cap_and_still_throws_after_cap ... ok
+test boundary_truncation_property_set_membership_is_strict_not_string_coercion ... ok
+test boundary_nonwrite_before_nullish_keeps_prior_pending_and_recovery_count ... ok
+test boundary_multiple_writes_increment_only_one_truncation_and_not_pre_attempts ... ok
+test ordinary_edits_after_write_do_not_start_recovery_original_regression ... ok
+test post_truncation_uses_zero_then_current_post_count_without_increment ... ok
+test post_draft_permission_codes_always_excluded_even_with_pending_and_truncation ... ok
+test boundary_nullish_first_throws_exact_source_typeerror_without_consuming_budget ... ok
+test five_pre_attempts_keep_exact_line_limits_strips_and_stop_reason ... ok
+test source_record_writes_happens_before_risk_and_keeps_partial_state_on_exception ... ok
+test five_post_attempts_are_separate_and_stop_preserves_existing_file_reason ... ok
+test typed_admission_matches_mandatory_boundary_and_rejects_contradiction_before_state_change ... ok
+test raw_regex_tostring_and_property_errors_keep_source_short_circuit_order ... ok
+test recent_paths_are_exact_nonempty_record_strings_mru_dedup_five ... ok
+test successful_write_clears_episode_even_with_unrelated_error_without_resetting_counters ... ok
+test pre_required_issues_and_flags_follow_source_specific_branch_order ... ok
+test truncation_budget_ten_does_not_consume_pre_or_post_attempts ... ok
+test unicode_regex_fold_only_ascii_kelvin_and_long_s_without_utf16_loss ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/ordinary_error_recovery.rs (<worktree>/_build/ci-target/debug/deps/ordinary_error_recovery-ba8460a8b99683ed)
+
+running 9 tests
+test disabled_skips_code_property_but_enabled_exhausted_still_reads_it ... ok
+test json_correction_is_strict_enabled_and_exactly_three_with_exact_prompt ... ok
+test other_codes_and_coercible_arrays_do_not_spend_json_retry_budget ... ok
+test original_name_property_and_primitive_conversion_errors_stay_source_errors ... ok
+test wtf16_name_timestamp_and_permission_are_lossless_without_truncation ... ok
+test duplicate_and_open_ids_retain_each_raw_call_without_minting_authority ... ok
+test full_missing_result_preserves_source_advice_fields_order_and_timestamps ... ok
+test missing_and_null_fields_are_not_repaired_or_admission_rejected ... ok
+test raw_name_templates_follow_join_and_number_semantics ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/output_recovery.rs (<worktree>/_build/ci-target/debug/deps/output_recovery-f54accd00695b610)
+
+running 26 tests
+test empty_predicates_shortcircuit_bad_message_when_error_or_calls_exist ... ok
+test exact_repaired_and_first_empty_prompts_are_distinct ... ok
+test first_empty_then_two_continuations_then_third_consecutive_exhaustion ... ok
+test empty_after_repaired_continuation_uses_total_branch_without_first_flag ... ok
+test empty_after_bump_only_still_is_first_empty_branch ... ok
+test empty_length_clamp_differs_from_repaired_bump_and_preserves_defined_zero ... ok
+test empty_status_uses_initial_request_and_retains_lax_null_utf16 ... ok
+test empty_cap_event_only_when_defined_and_not_equal_to_previous ... ok
+test impossible_bump_consumes_guard_before_continuation_count ... ok
+test empty_status_prunes_only_top_undefined_and_defers_bad_request_until_status ... ok
+test full_filter_precedes_text_join_coercion ... ok
+test large_file_decision_preserves_all_counters_and_does_not_strip_dirty_assistant ... ok
+test large_file_stop_is_returned_unchanged_without_policy_terminal_effects ... ok
+test malformed_empty_content_is_source_exception_not_message_content_fallback ... ok
+test no_fallthrough_reset_of_any_of_four_state_fields ... ok
+test bump_limits_and_nonfinite_semantics_match_original ... ok
+test numeric_boolean_and_object_text_are_join_coerced_not_emptied ... ok
+test repaired_selection_preempts_error_and_bad_message_before_any_counter_mutation ... ok
+test source_error_falsy_null_and_undefined_allow_empty_retry ... ok
+test token_bump_is_one_shot_without_prompt_or_total_recovery_increment ... ok
+test thinking_only_and_single_nullish_text_are_empty ... ok
+test whitespace_and_multiple_nullish_texts_are_not_empty ... ok
+test repaired_gate_requires_exact_original_finish_labels ... ok
+test repaired_continuation_reaches_fifty_then_exhausts_without_dirty_text ... ok
+test total_fifty_preempts_consecutive_limit_and_increments_consecutive_first ... ok
+test repaired_status_keeps_nonstring_truthy_message_and_nullish_hint_rules ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/output_recovery_extension.rs (<worktree>/_build/ci-target/debug/deps/output_recovery_extension-de19acb3a47b4d1b)
+
+running 15 tests
+test genuine_defined_bump_strips_error_pair_before_routed_cap_without_prompt ... ok
+test fractional_explicit_bump_is_not_floored_or_defaulted ... ok
+test non_length_visible_stage_preserves_consecutive_empty_count ... ok
+test nullish_error_access_throws_before_flag_with_original_boundary ... ok
+test cap_boundary_matrix_never_invents_same_or_overflow_bump ... ok
+test strict_other_error_code_does_not_consume_output_attempt ... ok
+test repaired_and_residual_share_one_attempt_and_total_with_visible ... ok
+test reactive_consumption_survives_later_source_failure_and_suppresses_bump ... ok
+test unavailable_bump_consumes_guard_before_future_explicit_cap ... ok
+test visible_stage_does_not_revalidate_already_durable_message_or_request ... ok
+test visible_text_never_doubles_or_mutates_retry_guards ... ok
+test visible_length_resets_consecutive_before_next_empty_without_new_owner ... ok
+test fifty_visible_then_residual_falls_through_but_can_still_use_unspent_bump ... ok
+test genuine_exhaustion_does_not_become_repaired_error_or_visible_warning ... ok
+test visible_exhausted_status_exact_warning_order_and_deferred_inputs ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pure_helpers.rs (<worktree>/_build/ci-target/debug/deps/pure_helpers-7632d430892e4a4b)
+
+running 19 tests
+test empty_response_and_model_truthiness_do_not_generate_ids_or_metadata ... ok
+test lax_pdf_fields_keep_full_boundary_and_do_not_fabricate_typed_media ... ok
+test contradiction_is_rejected_before_buffer_flush_and_raw_echo_mismatch ... ok
+test file_template_keeps_utf16_and_js_truthiness_without_lossy_decode ... ok
+test error_preserves_prefix_extensions_without_fabricating_message_end ... ok
+test main_json_and_file_differ_from_supplemental_full_object_stringify ... ok
+test null_optional_echo_fields_normalize_none_without_losing_own_null ... ok
+test literal_tool_text_and_start_delta_do_not_create_calls ... ok
+test empty_aggregate_and_empty_result_have_distinct_original_fallbacks ... ok
+test all_declared_content_variants_and_error_disposition_match_boundaries ... ok
+test tool_capture_contradictions_and_original_file_coercion_failure_are_distinct ... ok
+test pairing_consumes_fifo_duplicates_ignores_extra_and_calls_missing_only_once ... ok
+test original_block_identity_and_interleaved_signature_reasoning_flush ... ok
+test usage_addition_preserves_absent_zero_and_own_undefined ... ok
+test media_selected_fields_and_raw_sanitization_preserve_extensions_and_presence ... ok
+test supplemental_order_and_empty_supplemental_are_preserved ... ok
+test undefined_json_and_unknown_kind_are_successful_boundary_only_not_errors_or_dropped ... ok
+test utf16_trim_collision_and_full_call_extensions_survive_repeat_assembly ... ok
+test deep_extensions_and_utf16_snapshot_are_detached_from_mutable_input ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+     Running tests/request_assembly.rs (<worktree>/_build/ci-target/debug/deps/request_assembly-03bc00da67f0f6f9)
+
+running 43 tests
+test ack_abort_keeps_refreshed_catalog_and_makes_no_context_call ... ok
+test cancellation_during_context_ack_keeps_source_notice_before_abort_barrier ... ok
+test catalog_refresh_precedes_context_and_replaces_only_after_success ... ok
+test cache_native_recursive_depth_profile_is_explicit_unfinished_scope ... ok
+test ask_tools_use_exact_allow_list_mcp_read_only_and_schema_override ... ok
+test adjacent_assistant_merge_preserves_metadata_overlay_and_discards_top_extensions ... ok
+test compaction_subagent_pre_route_ignores_parent_config_but_reserved_caps_follow_route ... ok
+test cache_invalid_iterable_and_multi_tool_collation_have_distinct_failures_after_notice ... ok
+test compaction_routes_keep_source_joined_key_collisions_and_latest_snapshot ... ok
+test compaction_combined_limits_override_output_and_supply_context_fallback ... ok
+test cache_recent_breakpoints_keep_final_three_non_system_original_indices ... ok
+test default_shim_retains_undefined_preview_and_instruction_notice ... ok
+test exact_raw_prepared_messages_tools_cache_breakpoints_and_request_metadata_survive ... ok
+test cache_rebuild_includes_plan_reminder_after_inline_media_finalization ... ok
+test invalid_block_clone_fails_after_catalog_before_context_without_empty_fabrication ... ok
+test joined_nul_caps_use_latest_whole_entry_but_subagent_baseline_stays_exact_pair ... ok
+test instructions_notice_precedes_finalizer_failures_and_propagates_observer_error ... ok
+test joined_nul_keys_keep_utf16_surrogates_and_do_not_conflate_replacement_characters ... ok
+test joined_nul_metadata_last_replacement_keeps_first_slot_for_provider_protocol ... ok
+test metadata_uses_first_provider_protocol_exact_route_cache_and_combined_cap_priority ... ok
+test lax_messages_and_primitive_blocks_follow_own_spread_rules ... ok
+test orphan_prefix_null_context_source_exception_is_visible_not_silently_clamped ... ok
+test plan_reminder_follows_context_and_suppresses_plain_breakpoints ... ok
+test cache_zero_one_tool_profiles_do_not_invent_name_validation_or_mutate_tools ... ok
+test prepared_prompt_truthiness_is_separate_from_nullish_config_fallback ... ok
+test preview_suppression_skips_observer_and_retains_null_prepared_error_precedence ... ok
+test no_context_uses_tool_pair_safe_suffix_and_no_host_calls ... ok
+test preview_none_false_true_and_notification_flag_are_independent ... ok
+test stable_serialization_is_distinct_from_ordered_json_replay_identity ... ok
+test shallow_prepared_null_missing_messages_and_wrong_reply_are_not_fabricated ... ok
+test stable_serialization_preserves_undefined_join_slots_and_nonfinite_json_numbers ... ok
+test generation_remains_lossless_and_never_contributes_to_cache_fingerprint ... ok
+test media_profiles_fail_visibly_but_inline_nested_refs_and_cache_are_preserved ... ok
+test prompt_blocks_duplicate_names_and_elicitation_requires_both_flags ... ok
+test suppressed_notice_cannot_replace_finalizer_error_but_default_notice_error_can ... ok
+test suppressed_media_cache_and_context_ack_cancellation_make_no_notice ... ok
+test recovery_caps_follow_attempt_requested_session_baseline_hard_and_model_min_floor ... ok
+test thinking_override_and_stream_fields_are_exact_and_immutable ... ok
+test stable_serialization_sorts_utf16_keys_and_hashes_escaped_lone_surrogates ... ok
+test null_context_fractional_index_exception_and_nonfinite_comparisons_are_exact ... ok
+test whitespace_addenda_preserve_original_text_empty_custom_prompt_and_coordinates ... ok
+test tool_call_prevents_merge_and_own_undefined_input_survives_clone ... ok
+test six_actual_original_cache_plan_profiles_match_frozen_hash_and_own_generation ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/request_materialization.rs (<worktree>/_build/ci-target/debug/deps/request_materialization-4d69f21c2e98649b)
+
+running 16 tests
+test apply_caps_nullish_request_fails_before_spread_or_route_replacement ... ok
+test attempt_override_presence_enlarges_prepared_smaller_cap ... ok
+test missing_vs_own_undefined_cap_and_original_insertion_slots_survive ... ok
+test integer_key_order_own_proto_and_unpaired_utf16_keys_remain_lossless ... ok
+test budget_nullish_preview_errors_before_any_result_not_empty_normalization ... ok
+test budget_merges_exactly_five_preview_fields_preserving_controls_and_slots ... ok
+test budget_base_primitive_spread_is_not_a_schema_rejection ... ok
+test prepared_finite_positive_cap_is_floored_and_never_enlarged_without_override ... ok
+test prepared_window_explicit_null_caches_remain_null ... ok
+test absent_preview_fields_become_own_undefined_not_stale_base_values ... ok
+test current_cap_replaces_lax_nonpositive_nonfinite_prepared_values ... ok
+test missing_current_cap_does_not_floor_or_validate_prepared_raw_values ... ok
+test raw_numeric_apply_preserves_math_min_nan_and_signed_zero_semantics ... ok
+test prepared_window_retains_prompt_tools_output_controls_and_extensions ... ok
+test route_labels_preserve_wtf16_and_do_not_coerce_to_replacement_utf8 ... ok
+test prepared_window_nullish_candidate_is_routed_object_before_field_reads ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/session_state_projection.rs (<worktree>/_build/ci-target/debug/deps/session_state_projection-2a9ba16233ce57cf)
+
+running 17 tests
+test map_validation_uses_js_entries_order_before_write_validation ... ok
+test cap_snapshot_omits_empty_split_segments_and_empty_optional_arrays ... ok
+test calibration_validation_precedes_caps_and_fields_are_ordered ... ok
+test allowed_validation_precedes_file_maps_and_set_retains_first_slot ... ok
+test nullish_omits_state_and_empty_object_restores_empty_state ... ok
+test file_top_level_and_map_types_reject_source_invalid_shapes ... ok
+test cap_numeric_validation_precedes_provider_and_required_persistent_check ... ok
+test invalid_path_error_keeps_wtf16 ... ok
+test joined_nul_collisions_replace_value_keep_first_slot_and_snapshot_source_split ... ok
+test independent_factory_twenty_invalid_seed_model_counterexamples ... ok
+test own_undefined_optional_but_null_rejected ... ok
+test object_entries_numeric_order_and_proto_owned_key ... ok
+test seed_typeof_numbers_keep_nan_infinity_signed_zero_and_ignore_other_optionals ... ok
+test snapshot_is_detached_from_later_typed_mutation ... ok
+test positive_finite_domain_rejects_all_nonpositive_and_nonfinite_numbers ... ok
+test wtf16_route_is_nonempty_and_preserved_and_unknown_fields_are_projected_out ... ok
+test write_entry_required_strings_allow_empty_and_optional_numbers_are_not_finite_guarded ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/source_model_reducer.rs (<worktree>/_build/ci-target/debug/deps/source_model_reducer-76b7e8f516151a5b)
+
+running 18 tests
+test block_id_truthy_response_coercion_and_flush_error_leave_buffer ... ok
+test create_truthiness_and_exact_initial_own_key_order ... ok
+test own_undefined_tool_fields_null_error_and_empty_text_remain_distinct ... ok
+test lax_tool_spreads_keep_utf16_indices_type_override_and_property_slots ... ok
+test late_null_call_and_invalid_trim_keep_prior_flush_and_unnormalized_calls ... ok
+test reducer::language_regressions::finite_and_nonfinite_js_number_strings_preserve_source_form ... ok
+test later_own_undefined_fields_keep_first_assignment_order ... ok
+test reducer::language_regressions::numeric_string_grammar_and_radix_rounding_do_not_use_parsefloat ... ok
+test ignored_tags_primitives_and_lax_start_shapes_are_exact_noops ... ok
+test signature_null_throws_after_text_and_reasoning_and_prior_flush ... ok
+test thinking_reasoning_exception_retains_same_event_text_before_signature ... ok
+test text_exception_after_thinking_flush_retains_committed_block_and_signature_reset ... ok
+test usage_all_own_undefined_differs_initial_missing_and_atomic_throw ... ok
+test nonstring_signatures_follow_actual_length_relational_effect ... ok
+test delayed_ids_trim_utf16_collisions_and_falsy_ids_without_fabricating_input ... ok
+test usage_js_plus_null_boolean_string_array_nonfinite_and_signed_zero ... ok
+test text_js_string_coercion_keeps_wtf16_and_iterative_deep_array_join ... ok
+test open_model_finish_error_presence_and_truthiness_are_preserved ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/timeline.rs (<worktree>/_build/ci-target/debug/deps/timeline-ed4b7c16df80a07a)
+
+running 27 tests
+test allocation_update_and_empty_id_predecessor_match_source ... ok
+test empty_predecessor_property_is_appended_when_provisional_was_created_without_it ... ok
+test missing_wrapped_message_exception_does_not_invent_own_undefined_property ... ok
+test lax_primitives_preserve_original_no_op_paths_without_invented_empty_objects ... ok
+test detected_calls_partial_prefix_and_assignment_rhs_follow_source_order ... ok
+test malformed_and_native_binding_inputs_are_explicit_errors_not_empty_annotations ... ok
+test boundary_position_and_update_preserve_own_undefined_after_provisional_commit ... ok
+test existing_nonnull_timeline_skips_allocator_even_for_lax_direct_id ... ok
+test immutable_annotation_preserves_extensions_and_unknown_event_exactly ... ok
+test committed_first_tool_has_own_undefined_previous_id_appended_after_revision ... ok
+test nullish_later_block_preserves_previous_input_mutation_and_stops_before_queue ... ok
+test numeric_map_keys_are_not_coerced_to_strings_and_predecessors_keep_numbers ... ok
+test null_and_own_undefined_timeline_evaluate_once_then_durable_echo_is_unchanged ... ok
+test provisional_slots_do_not_enter_chain_until_commit_and_do_not_rewind_tail ... ok
+test primitive_no_queue_control_does_not_allocate_and_tostring_failure_is_type_error ... ok
+test primitive_assignment_allocates_rhs_before_exact_type_error_and_retains_prefix ... ok
+test nullish_delta_length_and_event_type_exact_source_exceptions_do_not_allocate ... ok
+test source_exact_noniterable_and_inner_getter_failures_preserve_boundary ... ok
+test request_retry_retires_provisional_only_preserving_gaps_offsets_and_last_boundary ... ok
+test string_iterables_preserve_source_code_point_assignment_errors_and_empty_noop ... ok
+test result_reference_compaction_and_steer_share_durable_live_slots ... ok
+test source_template_ids_preserve_missing_null_numeric_and_wtf16_values ... ok
+test wrapped_message_failure_returns_partial_event_and_keeps_all_remaining_blocks ... ok
+test stream_boundaries_only_for_source_kinds_and_never_for_empty_block_id ... ok
+test string_offsets_use_js_addition_and_never_numeric_parse ... ok
+test utf16_offsets_and_revisions_share_live_and_durable_coordinates ... ok
+test start_and_complete_only_tool_frames_both_reserve_before_later_text ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tool_context.rs (<worktree>/_build/ci-target/debug/deps/tool_context-3dc106c0bd285882)
+
+running 20 tests
+test accepted_unknown_and_cancellation_preserve_target_owner_responsibility ... ok
+test diagnostics_are_ignored_and_raw_message_extensions_remain_complete ... ok
+test missing_projection_aggregate_and_wrong_reply_tag_are_candidate_invariants ... ok
+test legacy_fallback_links_canonical_projection_instances_only_before_override ... ok
+test known_throw_before_assignment_uses_legacy_append_and_never_retries ... ok
+test cancelled_before_call_has_zero_host_effect_but_known_ack_is_not_discarded ... ok
+test absent_capability_appends_projection_without_host_effect ... ok
+test nullish_applied_reply_throws_before_assignment_and_falls_back ... ok
+test advertised_context_receives_original_fields_and_ordered_duplicate_id_supplements ... ok
+test partial_assignment_length_error_catch_uses_assigned_push_target ... ok
+test primitive_applied_result_has_undefined_messages_without_early_source_invalid_error ... ok
+test slice_or_spread_error_pushes_projection_to_returned_array_not_original_history ... ok
+test string_returned_history_slice_spread_uses_utf16_and_code_point_iteration ... ok
+test absent_null_undefined_appended_keeps_returned_messages_without_tail_replacement ... ok
+test partial_assignment_fallback_does_not_link_different_supplied_appended_instances ... ok
+test source_length_numeric_and_string_comparisons_do_not_tighten_open_objects ... ok
+test typed_reply_retains_matching_full_boundary_extensions ... ok
+test supplement_binding_truncates_counts_and_keeps_unbound_projection ... ok
+test open_messages_and_falsy_nonnull_appended_are_deferred_without_invented_arrays ... ok
+test supplied_arrays_only_reattach_when_length_fits_including_empty_arrays ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tool_error_recovery.rs (<worktree>/_build/ci-target/debug/deps/tool_error_recovery-d66571f5c24e74a8)
+
+running 26 tests
+test details_haystack_is_strings_only_and_permission_precedes_type ... ok
+test ascii_digit_regex_and_multiple_match_action ... ok
+test bash_timeout_precedes_background_and_retains_three_actions ... ok
+test evidence_first_two_lines_are_sliced_before_dedup ... ok
+test dot_regex_does_not_cross_line_terminators ... ok
+test empty_issue_message_falls_back_but_whitespace_is_truthy ... ok
+test exact_message_assembly_order ... ok
+test invalid_actions_changed_file ... ok
+test clean_path_only_first_dollar_optional_dot ... ok
+test invalid_actions_file_snapshot_before_schema ... ok
+test all_schema_action_shapes ... ok
+test issue_defaults_arrays_and_unknown_code ... ok
+test legacy_regex_i_does_not_unicode_fold_kelvin ... ok
+test issue_priority_required_beats_earlier_invalid_type ... ok
+test own_advice_order_and_optional_absence ... ok
+test original_header_filter_crlf_and_lone_cr_preserved ... ok
+test raw_details_null_undefined_and_unknown_extensions_are_not_policy_mutated ... ok
+test special_summary_does_not_use_evidence ... ok
+test number_evidence_preserves_nan_infinity_and_negative_zero ... ok
+test web_invalid_input_overrides_stage ... ok
+test web_timeout_class_does_not_change_status_actions ... ok
+test web_fetch_status_groups_and_secondary_stage ... ok
+test whitespace_ecmascript_feff_included_nel_excluded ... ok
+test seventeen_codes_classify_before_generic_haystack ... ok
+test summary_220_and217_utf16_can_split_surrogate ... ok
+test original_2000_utf16_boundary_and_total_count ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/tool_failure_recovery.rs (<worktree>/_build/ci-target/debug/deps/tool_failure_recovery-5846427e7f7e839d)
+
+running 22 tests
+test fallthrough_does_not_allow_terminal_construction ... ok
+test all_invalid_nonmutating_query_short_circuits_and_preserves_throw_order ... ok
+test failure_class_changes_repeated_fingerprint_and_arrays_are_not_recovery_records ... ok
+test invalid_template_throw_precedes_any_circuit_mutation ... ok
+test filter_reads_all_types_before_any_key_template_conversion ... ok
+test annotation_failure_does_not_commit_new_fingerprint_or_mutate_inputs ... ok
+test duplicates_within_batch_annotate_matching_errors_and_leave_success_unchanged ... ok
+test changed_invalid_message_renews_grace_even_after_prior_grace_consumed ... ok
+test late_terminal_error_and_status_keep_source_order_and_own_undefined ... ok
+test invalid_fingerprint_ignores_class_and_sorts_name_message_with_duplicates ... ok
+test late_status_truthiness_nullish_hint_and_type_errors_are_separate ... ok
+test primitive_metadata_string_spread_preserves_utf16_units ... ok
+test same_invalid_group_gets_third_turn_grace_then_fourth_turn_stop ... ok
+test templates_keep_array_join_nullish_and_js_numeric_strings ... ok
+test noninvalid_some_throw_retains_source_partial_resets_not_output_reset_success ... ok
+test first_falsy_content_discards_rest_and_nontext_is_preserved_after_prefix ... ok
+test mixed_known_errors_reset_invalid_fields_but_retain_annotation_fingerprint ... ok
+test metadata_and_recovery_spreads_keep_numeric_keys_and_empty_reason ... ok
+test string_content_iteration_keeps_pair_and_single_surrogate_as_items ... ok
+test unique_then_same_batch_annotations_preserve_boundary_order_and_optional_keys ... ok
+test utf16_sort_and_duplicate_keys_are_not_scalar_or_set_fingerprints ... ok
+test text_templates_preserve_null_missing_and_unpaired_surrogate ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/usage_fallback.rs (<worktree>/_build/ci-target/debug/deps/usage_fallback-577524b1849480b0)
+
+running 26 tests
+test finite_array_index_is_own_usage_value ... ok
+test finite_unknown_provider_extension_shortcircuits_malformed_message ... ok
+test lax_nonfinite_estimate_is_preserved_without_invented_validation ... ok
+test deferred_capture_detaches_original_usage_and_message ... ok
+test malformed_content_preserves_source_map_errors ... ok
+test join_noncallable_to_string_throws_after_successful_map ... ok
+test nonfinite_or_nested_numbers_do_not_shortcut ... ok
+test all_map_entries_precede_earlier_text_join_failure ... ok
+test defined_zero_input_is_retained_even_with_zero_output ... ok
+test input_plus_positive_output_field_order_and_total_match_source ... ok
+test nontext_blocks_still_contribute_newline_slots ... ok
+test null_undefined_and_absent_text_join_empty_entries ... ok
+test ordinary_object_text_uses_default_string_conversion ... ok
+test positive_output_counts_are_injected_not_inferred_from_text ... ok
+test primitive_unknown_blocks_map_to_empty_instead_of_getting_rejected ... ok
+test primitive_usage_is_boxed_without_numeric_own_values ... ok
+test provider_zero_negative_and_fractional_are_all_finite ... ok
+test special_token_spellings_remain_ordinary_response_text ... ok
+test text_coercion_has_js_numeric_boolean_and_array_spelling ... ok
+test text_nonfinite_numeric_spelling_differs_from_tool_json ... ok
+test text_thinking_and_whitespace_are_kept_without_trim ... ok
+test tool_json_preserves_js_key_order_and_undefined_rules ... ok
+test tool_other_falsy_values_are_not_nullish_defaults ... ok
+test tool_string_is_used_verbatim_while_nullish_becomes_empty_object ... ok
+test zero_output_and_absent_input_return_original_usage_verbatim ... ok
+test utf16_text_keeps_unpaired_surrogate_tool_json_escapes_it ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (<worktree>/_build/ci-target/debug/deps/pilotdeck-c4bc3e5fcae1f403)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (<worktree>/_build/ci-target/debug/deps/pilotdeck_gateway-afac9602c81e6155)
+
+running 8 tests
+test tests::transient_accept_errors_do_not_stop_listener ... ok
+test tests::upstream_upgrade_headers_survive_with_downstream_accept_key ... ok
+test tests::http_hop_headers_do_not_remove_end_to_end_headers ... ok
+test tests::malformed_client_handshakes_are_rejected_before_upstream_connect ... ok
+test tests::client_close_receives_upstream_code_instead_of_local_echo ... ok
+test tests::large_payload_and_upstream_close_survive_relay ... ok
+test tests::missing_client_key_returns_http_400 ... ok
+test tests::frame_and_fragmented_message_limits_are_enforced ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (<worktree>/_build/ci-target/debug/deps/pilotdeck_protocol-7bfa3d38b6727e8b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/codec.rs (<worktree>/_build/ci-target/debug/deps/codec-a8366d51e19d8b76)
+
+running 13 tests
+test canonical_index_key_boundaries_are_not_generic_numeric_sorting ... ok
+test duplicate_keys_keep_first_slot_and_last_value_including_surrogates ... ok
+test clone_preserves_own_undefined_banned_field_before_wire_omission ... ok
+test cloned_tree_is_independent_and_preserves_property_order ... ok
+test js_numbers_preserve_binary64_and_ecmascript_format ... ok
+test missing_undefined_null_have_distinct_presence_and_serialization ... ok
+test parse_rejects_illegal_json_not_js_expression_syntax ... ok
+test utf16_escape_and_raw_unicode_roundtrip_without_replacement ... ok
+test deterministic_finite_random_numbers_roundtrip_exact_bits ... ok
+test every_utf16_code_unit_matches_real_node_well_formed_json_stringify ... ok
+test finite_random_numbers_match_real_node_binary64_json_oracle ... ok
+test deeply_nested_valid_malformed_clone_debug_eq_drop_on_small_stack ... ok
+test large_inputs_have_no_unannounced_eight_mib_limit_or_quadratic_lookup ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests/model_admission.rs (<worktree>/_build/ci-target/debug/deps/model_admission-fa61bf8b94aa42cc)
+
+running 13 tests
+test binding_error_precedence_version_then_each_nonempty_field ... ok
+test admission_detaches_echoes_but_ordinary_content_clone_shares_them ... ok
+test capabilities_keep_duplicates_empty_list_and_lax_optional_fields_detached ... ok
+test admission_raw_echo_is_not_mutated_by_the_original_owner ... ok
+test binding_ids_use_nonempty_utf16_without_lossy_decoding ... ok
+test hello_binding_comparison_checks_all_four_fields ... ok
+test request_capture_isolates_every_owned_request_field_and_nested_tool_result ... ok
+test capabilities_mismatch_precedes_invalid_method_checks ... ok
+test wire_snapshot_keeps_extensions_presence_wtf16_key_order_and_negative_zero ... ok
+test unsupported_version_interpolation_uses_js_nullish_number_and_array_rules ... ok
+test version_object_conversion_failure_is_type_error_before_binding_failure ... ok
+test capabilities_only_accept_original_five_exact_names ... ok
+test deep_boundary_and_provider_echo_capture_clone_and_drop_without_recursion ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (<worktree>/_build/ci-target/debug/deps/pilotdeck_tokenizer-85fa61265491f1b4)
+
+running 6 tests
+test implementation::tests::text_encoder_replaces_lone_surrogates_and_retains_pairs ... ok
+test implementation::tests::source_whitespace_is_explicit_and_no_unicode_casefold ... ok
+test implementation::tests::source_three_digit_branch_prevents_long_numeric_merge ... ok
+test implementation::tests::source_nel_is_not_whitespace_before_symbol_branch ... ok
+test implementation::tests::source_feff_is_whitespace_before_symbol_branch ... ok
+test implementation::tests::source_contractions_use_ascii_cases_not_long_s_fold ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/ordinary.rs (<worktree>/_build/ci-target/debug/deps/ordinary-93a4dc402b94f8b3)
+
+running 10 tests
+test empty_is_zero ... ok
+test paired_surrogate_matches_same_unicode_scalar ... ok
+test original_rank_single_word_and_two_pieces ... ok
+test surrounding_whitespace_is_not_trimmed ... ok
+test three_digit_groups_are_preserved ... ok
+test ordinary_special_spellings_are_not_special_tokens ... ok
+test lone_surrogates_are_textencoder_replacement_not_erased ... ok
+test multiple_scripts_and_combining_marks_are_not_normalized ... ok
+test concurrency_uses_immutable_bpe_and_equivalent_regex_clones ... ok
+test bounded_adversarial_dense_text_is_deterministic_and_not_zero ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running unittests src/lib.rs (<worktree>/_build/ci-target/debug/deps/pilotdeck_transport-e1266e8c3d4bdfad)
+
+running 10 tests
+test default_factory::calibration_lookup_tests::joined_key_collision_returns_the_original_baseline_route ... ok
+test default_factory::calibration_lookup_tests::empty_route_labels_suppress_even_a_present_map_entry ... ok
+test server::known_terminal_error_tests::constructed_terminal_error_code_sets_outer_unknown_without_fabricating_acceptance ... ok
+test server::known_terminal_error_tests::diagnostic_code_does_not_supply_a_thrown_error_code_or_terminal_property ... ok
+test stdio::reconciliation_tests::delayed_waiter_uses_expired_owner_bound_and_retains_accepted_identity ... ok
+test stdio::reconciliation_tests::reader_cached_unknown_fences_new_effect_before_notification_waiter_observes_it ... ok
+test stdio::reconciliation_tests::already_known_ack_wins_over_expired_reconciliation_bound ... ok
+test stdio::reconciliation_tests::writer_rejects_already_queued_effect_with_prior_unknown_identity ... ok
+test stdio::reconciliation_tests::cleanup_requires_owned_handle_and_exact_execution_and_never_replays_close ... ok
+test stdio::reconciliation_tests::reply_reader_freezes_cancel_ack_order_before_a_late_waiter ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/pilotdeck-agent-loop-sidecar.rs (<worktree>/_build/ci-target/debug/deps/pilotdeck_agent_loop_sidecar-3dfbe6098e56844e)
+
+running 1 test
+test tests::stdio_accepts_one_ignored_path_and_rejects_invalid_arguments ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bounded_capture.rs (<worktree>/_build/ci-target/debug/deps/bounded_capture-f6218d3871913ff3)
+
+running 13 tests
+test bounded_capture_requested_then_retired_before_capture ... ok
+test bounded_capture_requested_then_connection_close ... ok
+test bounded_capture_owning_pending_model_requested_ack ... ok
+test bounded_capture_during_tool_requested ... ok
+test bounded_capture_requested_then_retired_during_capture ... ok
+test bounded_capture_uncancelled_unknown_stays_closed ... ok
+test bounded_capture_absent_never_dispatches ... ok
+test bounded_capture_during_tool_deadline ... ok
+test bounded_capture_known_error_preserves_original ... ok
+test bounded_capture_connection_close_preserves_original ... ok
+test bounded_capture_owning_pending_model_deadline_ack ... ok
+test bounded_capture_unknown_preserves_both_receipts ... ok
+test bounded_capture_pending_expires_without_replay ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.13s
+
+     Running tests/context_boundary.rs (<worktree>/_build/ci-target/debug/deps/context_boundary-9fbed29df1e52656)
+
+running 6 tests
+test all_canonical_optionals_preserve_source_positions_and_false_empty_zero ... ok
+test tool_schema_has_original_name_description_input_schema_order_and_undefined_description ... ok
+test normal_source_raw_order_and_undefined_survive_until_json_encoding ... ok
+test preview_true_and_durable_step_are_appended_without_native_cancellation_authority ... ok
+test protocol_labels_and_run_mode_own_undefined_are_not_defaulted_by_transport ... ok
+test budget_projection_omits_only_unsupplied_preview_slot_while_normal_keeps_it ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/error_boundaries.rs (<worktree>/_build/ci-target/debug/deps/error_boundaries-c7230455fe09e945)
+
+running 11 tests
+test independent_103_104_catalog_container_has_specific_array_error ... ok
+test route_mismatch_is_checked_after_source_snapshot_validation ... ok
+test independent_101_102_duplicate_and_empty_catalog_share_original_descriptor_error ... ok
+test independent_096_098_cache_capability_messages_do_not_convert_null_to_missing ... ok
+test metadata_own_undefined_optional_and_null_token_limits_preserve_original_acceptance ... ok
+test missing_metadata_and_missing_tools_have_source_errors_not_generic_field_errors ... ok
+test independent_091_092_protocol_messages_preserve_exact_consumer_error ... ok
+test module_failure_and_unknown_outcome_still_precede_success_shape ... ok
+test catalog_object_available_and_unicode_names_are_source_valid_with_raw_retained ... ok
+test metadata_order_route_then_scalar_limits_then_nested_limits_then_protocol_then_cache ... ok
+test source_safe_positive_metadata_limits_do_not_admit_nan_infinity_fraction_or_unsafe ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/factory_payload.rs (<worktree>/_build/ci-target/debug/deps/factory_payload-9e041fb827d085d8)
+
+running 21 tests
+test defaults_use_supplied_cwd_and_json_task_fallback ... ok
+test final_null_operation_id_and_noncallable_to_string_are_distinct ... ok
+test canonical_message_metadata_keeps_false_empty_and_fork_subset ... ok
+test host_methods_filter_unknown_values_without_dedup_or_defaults ... ok
+test js_string_coercion_keeps_utf16_arrays_and_nonfinite_number_names ... ok
+test media_projection_preserves_fractional_sizes_and_filters_bad_pdf ... ok
+test explicit_override_messages_own_undefined_null_and_empty_never_fall_back ... ok
+test block_raw_null_inputs_and_nested_result_fifo_are_canonicalized ... ok
+test data_url_regex_is_case_sensitive_nonempty_and_not_base64_validation ... ok
+test metadata_shallow_order_overwrite_and_own_undefined_are_detached ... ok
+test nullish_precedence_does_not_skip_invalid_or_empty_present_values ... ok
+test model_override_route_requirements_and_finite_negative_parameters ... ok
+test descriptor_caps_use_set_order_but_duplicate_tool_names_remain ... ok
+test positive_integer_factory_fields_allow_unsafe_integers_but_not_nan ... ok
+test retained_seed_model_and_raw_message_boundaries_are_deep_detached ... ok
+test permission_opaque_rules_and_all_or_nothing_directories_are_not_grants ... ok
+test thinking_and_tool_choice_preserve_false_and_strict_names ... ok
+test timeline_accepts_negative_unsafe_integer_and_empty_ids_without_extensions ... ok
+test subagent_validation_order_and_undefined_null_distinction ... ok
+test thinking_and_reference_blocks_select_only_original_fields ... ok
+test proto_metadata_requires_separate_native_graph_projection ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/host_contract.rs (<worktree>/_build/ci-target/debug/deps/host_contract-e53b022108f2a499)
+
+running 52 tests
+test absent_methods_and_cancelled_control_do_not_dispatch ... ok
+test completed_batch_id_error_keeps_unpaired_utf16_identifier ... ok
+test admission_preserves_lax_media_metadata_and_all_nine_canonical_content_variants ... ok
+test consumer_signature_type_error_is_not_transport_unknown_and_preserves_partial_state ... ok
+test batches_require_ordered_ids_and_single_execute_has_the_required_tag ... ok
+test budget_null_cost_is_absent_zero_is_present_and_optional_extensions_remain_raw ... ok
+test completed_batch_rejection_preserves_identity_exact_source_message_and_no_replay ... ok
+test ack_first_failure_only_rechecks_abort_when_the_stdio_consumer_throws ... ok
+test context_normalized_projection_retains_materialization_diagnostics_cache_and_boundary ... ok
+test eager_stream_open_known_boundary_is_forwarded_without_a_pull_done_requirement ... ok
+test context_result_presence_distinguishes_missing_from_own_undefined_and_persist_ack_is_only_ack ... ok
+test lifecycle_unknown_and_lax_known_effects_are_retained_not_dropped ... ok
+test direct_coerced_delta_handles_missing_array_object_and_wtf16_without_stringifying_live_event ... ok
+test full_request_fields_cache_echo_and_numeric_coordinates_are_not_lost ... ok
+test known_unprojectable_fields_are_successful_raw_stream_boundaries_not_unknown_effects ... ok
+test ignored_known_start_events_and_js_coercible_deltas_keep_original_live_echo_and_effect ... ok
+test known_failed_batch_returns_module_results_with_independent_clocks_and_raw_details ... ok
+test failed_batch_maps_known_permission_code_and_omits_falsy_module_details ... ok
+test malformed_envelope_stays_accepted_unknown_despite_tool_payload ... ok
+test lifecycle_all_known_effects_have_typed_views_and_opaque_values_are_preserved ... ok
+test malformed_success_after_accepted_advancing_or_effect_call_is_unknown_not_retryable_error ... ok
+test module_error_precedes_payload_shape_and_shallow_provider_errors_are_preserved ... ok
+test live_catalog_uses_original_defaults_exact_true_flags_and_preserves_entry_boundary ... ok
+test metadata_callback_is_required_only_when_advertised_and_must_match_prepared_route ... ok
+test open_finish_reply_reaches_source_invocation_and_retains_live_boundary ... ok
+test live_catalog_rejects_empty_duplicate_utf16_and_nonobject_entries ... ok
+test nullish_after_structured_end_stops_before_emission_closes_done_true_and_forbids_tools ... ok
+test plan_todo_lax_source_valid_snapshot_has_boundary_only_not_fake_diagnostics ... ok
+test metadata_checks_route_and_safe_positive_limits_but_prepared_limits_are_filtered ... ok
+test plan_observer_terminal_properties_are_assigned_only_after_successful_string_conversion ... ok
+test permission_keeps_false_zero_null_and_array_reason_while_rejecting_null_reason ... ok
+test prepared_lazy_pull_and_close_keep_same_handle_and_raw_request ... ok
+test all_twenty_four_tags_effects_and_reply_associations_are_exercised ... ok
+test pure_assembly_projection_keeps_canonical_error_and_repaired_presence ... ok
+test open_fields_and_lax_structured_call_reduce_without_fabricated_tool_defaults ... ok
+test plan_todo_replays_history_ignores_stale_outer_lists_and_recomputes_history_diagnostics ... ok
+test source_budget_cost_keeps_usage_extensions_and_absence_at_same_wire_method ... ok
+test pure_projection_gap_is_explicit_and_never_fabricates_empty_normal_message_or_unknown_effect ... ok
+test plan_todo_fallback_does_not_swallow_original_invalid_shape_or_trim_exceptions ... ok
+test pure_source_assembly_projection_keeps_open_finish_and_exact_source_boundary ... ok
+test stdio_failure_recording_string_exception_maps_plain_transport_results_without_replay ... ok
+test unknown_failed_batch_does_not_sample_clocks_synthesize_or_replay ... ok
+test prepared_and_materialized_lax_object_requests_preserve_raw_and_external_route ... ok
+test unknown_live_events_and_lax_known_error_have_distinct_preserved_boundaries ... ok
+test unknown_outcome_uses_bound_owner_identity_and_never_retries ... ok
+test usage_null_is_a_later_source_getter_exception_after_live_prefix_not_transport_uncertainty ... ok
+test unprojectable_events_do_not_relax_outer_reply_or_accepted_identity_checks ... ok
+test whole_lax_context_values_successfully_admit_without_fake_defaults ... ok
+test single_tool_cancellation_matches_original_regex_boundaries_and_code_precedence ... ok
+test whole_lax_tool_results_keep_every_boundary_but_all_batch_ids_are_checked_first ... ok
+test terminal_capability_failure_precedes_record_failure_and_preserves_catch_provenance ... ok
+test text_primitive_conversion_exception_preserves_live_prefix_and_stops_done_true_batch ... ok
+
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/launch_arguments.rs (<worktree>/_build/ci-target/debug/deps/launch_arguments-9a6b5a841ddb6799)
+
+running 1 test
+test empty_positional_argument_exits_with_usage_error ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+
+     Running tests/server_owner.rs (<worktree>/_build/ci-target/debug/deps/server_owner-d14ac922703ad0bd)
+
+running 11 tests
+test expired_inclusive_deadline_never_invokes_factory_or_accepts_stream ... ok
+test malformed_input_has_original_error_and_does_not_poison_next_hello ... ok
+test actual_wire_handshake_has_exact_binding_and_separate_capabilities ... ok
+test duplicate_terminal_is_cached_without_reexecuting_factory ... ok
+test same_call_ack_after_cancel_settles_without_another_host_dispatch ... ok
+test explicit_unknown_retains_accepted_call_sequence_in_terminal ... ok
+test eof_retires_pending_worker_without_waiting_forever ... ok
+test unsupported_date_profile_fails_visibly_and_is_not_ignored ... ok
+test deadline_does_not_replace_unresolved_accepted_call_identity ... ok
+test accepted_deadline_returns_unknown_and_freezes_pending_effect ... ok
+test status_and_cancel_reader_remain_live_during_real_pending_host_exchange ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.02s
+
+     Running tests/system_clock.rs (<worktree>/_build/ci-target/debug/deps/system_clock-01b33555ab3a1056)
+
+running 34 tests
+test day_overflow_uses_gregorian_rollover_without_rejecting_february31 ... ok
+test explicit_offsets_and_invalid_inputs_never_invoke_local_resolver ... ok
+test former_gap_handles_historical_offset_seconds_without_rounding_to_minutes ... ok
+test former_gap_offset_preserves_wall_minutes_milliseconds_and_transition_edges ... ok
+test former_fold_half_open_endpoints_and_millisecond_neighbors ... ok
+test former_gap_half_open_endpoints_preserve_wall_milliseconds ... ok
+test fixed_footer_uses_each_actual_offset_not_a_global_shanghai_constant ... ok
+test extended_year_zero_sign_and_timeclip_limits_are_exact ... ok
+test clip_proof_uses_all_actual_footer_offsets_and_retains_viable_candidates ... ok
+test fraction_scanner_uses_v8_nine_significant_digit_value_and_length ... ok
+test frozen7_exact_additional_original_inputs_distinguish_bare_time_from_date_prefix ... ok
+test frozen29_actual_node22_shanghai_observations ... ok
+test independent_datefresh_045_extreme_fixed_footer_survives_chrono_range ... ok
+test independent543_fold_end_and_future_gap_counterexamples_exact_original_bits ... ok
+test iso_date_only_defaults_to_utc_but_date_time_defaults_local ... ok
+test checked_timezone_parser_rejects_truncation_indices_order_and_bad_footer ... ok
+test future_recurring_rule_uses_real_year_and_former_policy_at_boundaries ... ok
+test iso_requires_fixed_width_and_irrecoverable_time_grammar ... ok
+test iso_timezone_extensions_and_offsets_are_subtracted_in_seconds ... ok
+test legacy_double_colon_final_time_separator_and_sign_rejection_are_preserved ... ok
+test legacy_named_month_prefixes_case_and_comments_preserve_composer_order ... ok
+test legacy_two_digit_years_and_single_numeric_strings_follow_source_padding ... ok
+test non_hour_and_full_day_forward_gaps_keep_the_former_rule ... ok
+test legacy_ampm_utc_abbreviations_and_signed_offsets_match_v8_keywords ... ok
+test official_arm64_node_build_smi32_and_unsigned_timezone_wrap_are_source_exact ... ok
+test production_wall_clock_has_real_epoch_and_parseable_utc_millisecond_iso ... ok
+test missing_footer_remains_a_gap_but_valid_recurring_rules_are_resolved ... ok
+test pure_iso_formatter_covers_negative_epoch_extended_years_and_roundtrip ... ok
+test system_timezone_lookup_never_admits_user_paths_or_parent_traversal ... ok
+test twenty_four_hour_rolls_day_but_rejects_nonzero_tail ... ok
+test tzif_range_projection_still_obeys_before_utc_clip_and_source_time_clip ... ok
+test recurring_nonnorthern_and_nonhour_rules_keep_former_offsets ... ok
+test utf16_nul_terminates_input_and_unpaired_words_are_classified_without_lossy_utf8 ... ok
+test valid_local_profile_errors_propagate_instead_of_disabling_deadlines ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pilotdeck_agent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pilotdeck_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pilotdeck_tokenizer
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pilotdeck_transport
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

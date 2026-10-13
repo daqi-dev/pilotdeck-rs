@@ -1,0 +1,14 @@
+{
+  "candidate": "dioxus",
+  "profile": "/Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/chrome-profile-dioxus",
+  "channel": "chrome",
+  "checks": [
+    {
+      "name": "login/storage/lists",
+      "status": "PASS"
+    }
+  ],
+  "nativeOSIME": false,
+  "status": "FAIL",
+  "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n'1' !== '0'\n\n    at file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/scripts/exp007/browser.mjs:26:56"
+}

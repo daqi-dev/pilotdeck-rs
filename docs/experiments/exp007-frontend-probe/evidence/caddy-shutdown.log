@@ -1,0 +1,18 @@
+{"level":"info","ts":1791925201.261214,"msg":"maxprocs: Leaving GOMAXPROCS=10: CPU quota undefined"}
+{"level":"info","ts":1791925201.261268,"msg":"GOMEMLIMIT is updated","package":"github.com/KimMachineGun/automemlimit/memlimit","GOMEMLIMIT":30923764531,"previous":9223372036854775807}
+{"level":"info","ts":1791925201.261346,"msg":"using config from file","file":"<worktree>/scripts/exp007/Caddyfile"}
+{"level":"info","ts":1791925201.262298,"msg":"adapted config to JSON","adapter":"caddyfile"}
+{"level":"warn","ts":1791925201.26244,"logger":"admin","msg":"admin endpoint disabled"}
+{"level":"info","ts":1791925201.262483,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"srv0"}
+{"level":"info","ts":1791925201.262495,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0x140002b2f80"}
+{"level":"warn","ts":1791925201.26266,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":"127.0.0.1:28375"}
+{"level":"warn","ts":1791925201.2626681,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":"127.0.0.1:28375"}
+{"level":"info","ts":1791925201.262673,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+{"level":"info","ts":1791925201.262817,"msg":"autosaved config (load with --resume flag)","file":"<worktree>/_build/caddy-config/caddy/autosave.json"}
+{"level":"info","ts":1791925201.262829,"msg":"serving initial configuration"}
+{"level":"info","ts":1791925201.267244,"logger":"tls","msg":"storage cleaning happened too recently; skipping for now","storage":"FileStorage:<worktree>/_build/caddy-data/caddy","instance":"241d5108-765b-4687-bef7-09bb37fa0e72","try_again":1792011601.267243,"try_again_in":86399.999999834}
+{"level":"info","ts":1791925201.2673779,"logger":"tls","msg":"finished cleaning storage units"}
+{"level":"info","ts":1791925203.4769611,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
+{"level":"warn","ts":1791925203.477001,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
+{"level":"info","ts":1791925203.477035,"logger":"http","msg":"servers shutting down; grace period initiated","duration":2}
+{"level":"info","ts":1791925203.477121,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}

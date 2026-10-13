@@ -1,0 +1,10 @@
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+export const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+export const baseline = process.env.BASELINE_UI || '/Users/da/ws/pilotdeck-rs/resources/PilotDeck/ui';
+export const requireUI = createRequire(`${baseline}/package.json`);
+export const evidence = resolve(root, '_tmp/exp007');
+export const port = Number(process.env.PROBE_PORT || 28370);
+if (!((port >= 28000 && port <= 28999) || (port >= 3300 && port <= 3399))) throw new Error('Probe requires a 28xxx or 33xx port');
+export const origin = `http://127.0.0.1:${port}`;
