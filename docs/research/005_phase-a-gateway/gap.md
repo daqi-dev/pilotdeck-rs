@@ -58,3 +58,15 @@
 |---|---|---|
 | **exp003**：真 `ui/server` 连站在别的端口的透明代理 | 命门 1 的「放行」条件；exp002 全部结论建立 在读源码上，运行时行为（重连、重放、HTTP 面）没验证过 | 若走不通，代理架构与「前端不改一行」都要重想 |
 | **exp004**（已在计划 001 排给阶段 C）：尺子复核 | 阶段门：C 达标才进 A 的代码迁移 | 决定 A4 何时开工 |
+
+## 四、exp003 实测回填（2026-10-14，Issue #15 / A1）
+
+详证：[exp003 readme](../../experiments/exp003-transparent-proxy/readme.md)。未重新调研或改动冻结 method 清单。
+
+- **1.1 / 1.3 已实证**：原版 standalone ui/server 经 Rust 前置连通、hello_ok 原帧可见；项目/会话/历史与文本轮次通过。隔离还必须设置 `WORKSPACES_ROOT` 与 `DATABASE_PATH`，注册真实项目需 `.cwd` 标记。
+- **1.2 保留 P0，修正“重连后会自动重放”的断言**：真实 bridge 能退避重连，但 `GatewayWsClient.ts:93-100` 在 disconnect handlers 前清掉 hello；`RemoteGateway.ts:111-112` 不再提供旧 binding，bridge `:255-258, :2127-2130` 无法保存退休 binding，实测未发 reconnect_interaction / active_turn_snapshot。不能按预期存在恢复流程就声称其运行成功。
+- **3.1 / 3.2 补充边界证据**：驱动提前保存旧 binding，直连与代理都得到 `outcome=reconnected`、原 pending requestId 与 `active=true`。后续 elicitation answer 两侧均 delivered=false；待单独定因修复，不宣称轮次恢复完成。
+- **1.4 已实证主要路由与流式搬运**：health、local-token、web 项目/文件读写、带 Bearer/principal 的 POST module-host/describe 均通过，未鉴权 401 保留。测试专用 SSE/NDJSON route 验证增量返回，未把它当实际 module-host 全操作覆盖；生产 UI 静态资源缺少构建，未验收。
+- **1.5 补充标准库 close 的实际陷阱**：立即 drop 导致正常 close 1000→1006，仅 flush 自动回显导致空 close→1005。Rust 现取上游实际 close reply 写回；空/custom client close 均得到 TS 的 1000，4001/4002/4003 的 code/reason 原样返回。protocol_mismatch 的具体 code 是 **4001**。RSV/continuation/unmasked 原有怪癖未在 A1 闭合。
+- **装置证据**：相同官方客户端场景各录 19 条，最终零差异；修改 hello_ok.serverVersion 的阳性对照得到 FAIL / exit 1 / 唯一帧差异。只有 A1 临时帧比较口径，A2 全量装置缺口仍未关闭。
+- **环境限制**：macOS managed sandbox 原生 fs.watch 报 EMFILE，并可经 CLI uncaughtException handler 静默 exit 1。最终夹具明确用 preload 浅层 stat 轮询替代，未修改基线源码；递归扩展热加载不在验证结论内。
