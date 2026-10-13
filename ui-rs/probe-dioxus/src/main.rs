@@ -18,6 +18,7 @@ fn App() -> Element {
     let mut lists = use_signal(String::new);
     let mut stream = use_signal(core::Stream::default);
     let mut composing = use_signal(|| false);
+    let mut keydowns = use_signal(|| 0u32);
     let mut sent = use_signal(|| 0u32);
     let mut shown = use_signal(|| true);
     let mut island_state = use_signal(String::new);
@@ -67,10 +68,12 @@ fn App() -> Element {
         if logged() {
             pre { id: "sessions", "{lists}" }
             textarea { id: "composer", "aria-label": "Message", placeholder: "消息",
+                "data-composing": "{composing}", "data-keydowns": "{keydowns}",
                 oncompositionstart: move |_|composing.set(true),
                 oncompositionend: move |_|composing.set(false),
                 oninput: move |_|core::save_draft(),
                 onkeydown: move |e: KeyboardEvent| {
+                    keydowns += 1;
                     let legacy_ime = e.data().downcast::<web_sys::KeyboardEvent>().is_some_and(|raw|raw.key_code()==229);
                     if e.key() == Key::Enter && !e.modifiers().contains(Modifiers::SHIFT) && !*composing.peek() && !e.is_composing() && !legacy_ime {
                         e.prevent_default();
@@ -79,7 +82,7 @@ fn App() -> Element {
                 }
             }
             output { id: "sent", "{sent}" }
-            pre { id: "stream", "data-received": "{stream.read().received}", "data-missing": "{stream.read().missing}", "{stream.read().text}" }
+            pre { id: "stream", "data-received": "{stream.read().received}", "data-seq": "{stream.read().seq}", "data-missing": "{stream.read().missing}", "{stream.read().text}" }
         }
         button { id: "toggle-island", onclick: move |_| { if shown() { toggle_island.detach(); } shown.set(!shown()); }, "切换终端" }
         button { id: "focus-island", onclick: move |_|focus_island.focus(), "聚焦终端" }

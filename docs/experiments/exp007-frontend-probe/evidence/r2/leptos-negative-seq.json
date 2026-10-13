@@ -1,0 +1,85 @@
+{
+  "candidate": "leptos",
+  "environment": "jsdom + actual wasm CSR + real xterm + in-process HTTP/WS replacement; NO NETWORK EVIDENCE",
+  "nativeIME": false,
+  "paint": false,
+  "geometry": false,
+  "checks": [
+    {
+      "name": "S2 login, token, authenticated projects and sessions",
+      "status": "PASS",
+      "elapsedMs": 65.06141599999995,
+      "paths": [
+        "/api/auth/login",
+        "/api/auth/login",
+        "/api/projects",
+        "/api/projects/probe/sessions"
+      ],
+      "watchSession": true
+    },
+    {
+      "name": "S3 compositionstart/end enter guard + shift + isComposing + keyCode229",
+      "status": "PASS",
+      "elapsedMs": 303.74670799999996,
+      "compositionEnterSent": 0,
+      "committedEnterSent": 1,
+      "handlerMarkers": {
+        "composing": "false -> true -> false",
+        "keydowns": 5
+      },
+      "scope": "synthetic composition only, 未测 OS IME",
+      "draftSaved": true,
+      "nodeRetained": true
+    },
+    {
+      "name": "S2 projects_updated refresh",
+      "status": "PASS",
+      "elapsedMs": 13.666458000000034,
+      "projectsRevision": 2
+    },
+    {
+      "name": "S3 xterm mount/unmount/remount buffer, DOM identity, focus, input",
+      "status": "PASS",
+      "elapsedMs": 1288.864,
+      "cycles": 10,
+      "rootRetained": true,
+      "inputRetained": true,
+      "focusRetained": true,
+      "bufferRetained": true,
+      "inputs": 1,
+      "snapshot": {
+        "lines": [
+          "BUFFER_SENTINEL",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "inputs": 1,
+        "focused": true,
+        "connected": true
+      }
+    },
+    {
+      "name": "S3 stream_delta >=20Hz 60s receive AND observed DOM frame accounting",
+      "status": "FAIL",
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n1001 !== 1\n\n    at file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:104:38\n    at Array.forEach (<anonymous>)\n    at file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:104:11\n    at async check (file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:16:77)\n    at async file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:90:3"
+    }
+  ],
+  "workload": {
+    "hz": 25,
+    "count": 50
+  },
+  "startedAt": "2026-10-13T21:29:42.752Z",
+  "domErrors": [],
+  "wasmSHA256": "c034dea6a4b1f9ec7fa5eb4b123bf5c08ce3517c5fc2d6b810151a4279659b94",
+  "initMs": 48.495834,
+  "status": "FAIL",
+  "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n1001 !== 1\n\n    at file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:104:38\n    at Array.forEach (<anonymous>)\n    at file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:104:11\n    at async check (file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:16:77)\n    at async file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/r2-offline/gates.mjs:90:3",
+  "finishedAt": "2026-10-13T21:29:46.589Z"
+}

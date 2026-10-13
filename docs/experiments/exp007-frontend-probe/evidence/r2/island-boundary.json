@@ -1,0 +1,5 @@
+{
+  "status": "PASS",
+  "malformedFramesIgnored": 8,
+  "validOutputAfterMalformed": true
+}

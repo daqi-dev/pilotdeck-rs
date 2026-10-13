@@ -1,0 +1,119 @@
+{
+  "candidate": "leptos",
+  "environment": "jsdom + actual wasm CSR + real xterm + in-process HTTP/WS replacement; NO NETWORK EVIDENCE",
+  "nativeIME": false,
+  "paint": false,
+  "geometry": false,
+  "checks": [
+    {
+      "name": "S2 login, token, authenticated projects and sessions",
+      "status": "PASS",
+      "elapsedMs": 64.86637500000006,
+      "paths": [
+        "/api/auth/login",
+        "/api/auth/login",
+        "/api/projects",
+        "/api/projects/probe/sessions"
+      ],
+      "watchSession": true
+    },
+    {
+      "name": "S3 compositionstart/end enter guard + shift + isComposing + keyCode229",
+      "status": "PASS",
+      "elapsedMs": 311.04537500000004,
+      "compositionEnterSent": 0,
+      "committedEnterSent": 1,
+      "handlerMarkers": {
+        "composing": "false -> true -> false",
+        "keydowns": 5
+      },
+      "scope": "synthetic composition only, 未测 OS IME",
+      "draftSaved": true,
+      "nodeRetained": true
+    },
+    {
+      "name": "S2 projects_updated refresh",
+      "status": "PASS",
+      "elapsedMs": 14.821874999999977,
+      "projectsRevision": 2
+    },
+    {
+      "name": "S3 xterm mount/unmount/remount buffer, DOM identity, focus, input",
+      "status": "PASS",
+      "elapsedMs": 1314.134416,
+      "cycles": 10,
+      "rootRetained": true,
+      "inputRetained": true,
+      "focusRetained": true,
+      "bufferRetained": true,
+      "inputs": 1,
+      "snapshot": {
+        "lines": [
+          "BUFFER_SENTINEL",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "inputs": 1,
+        "focused": true,
+        "connected": true
+      }
+    },
+    {
+      "name": "S3 stream_delta >=20Hz 60s receive AND observed DOM frame accounting",
+      "status": "PASS",
+      "elapsedMs": 61445.639624999996,
+      "received": 1500,
+      "observedDOMFrames": 1500,
+      "missing": 0,
+      "domLatencyMs": {
+        "p50": 0.4467079999994894,
+        "p95": 0.6586660000029951,
+        "p99": 0.9596659999988333,
+        "max": 2.109083000003011
+      },
+      "maxDOMGapMs": 45.593166999999085,
+      "server": {
+        "hz": 25,
+        "count": 1500,
+        "elapsedMs": 61440.317583
+      },
+      "scroll": "UNVERIFIED: jsdom has no layout/scroll geometry",
+      "jank": "UNVERIFIED: jsdom has no browser paint"
+    },
+    {
+      "name": "D1 main WS reconnect + 1s..30s backoff formula + 30s ping",
+      "status": "PASS",
+      "elapsedMs": 1010.7208339999997,
+      "reconnectMs": 1010.4839579999971,
+      "watchReattached": true,
+      "pingObserved": 2,
+      "backoffFormula": true,
+      "failedHandshakeLadder": "not exercised"
+    },
+    {
+      "name": "D2 shell close does not automatically reconnect",
+      "status": "PASS",
+      "elapsedMs": 2240.851625000003,
+      "observedMs": 2200,
+      "connections": 1,
+      "manualReentryConnected": true
+    }
+  ],
+  "workload": {
+    "hz": 25,
+    "count": 1500
+  },
+  "startedAt": "2026-10-13T21:27:36.184Z",
+  "domErrors": [],
+  "wasmSHA256": "c034dea6a4b1f9ec7fa5eb4b123bf5c08ce3517c5fc2d6b810151a4279659b94",
+  "initMs": 48.579624999999965,
+  "status": "PASS_DOM_IN_PROCESS_TRANSPORT_ONLY",
+  "finishedAt": "2026-10-13T21:28:42.703Z"
+}

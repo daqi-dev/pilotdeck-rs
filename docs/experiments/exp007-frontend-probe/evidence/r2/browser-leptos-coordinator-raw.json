@@ -1,0 +1,15 @@
+{
+  "candidate": "leptos",
+  "profile": "/Users/da/ws/pilotdeck-rs/_build/wt-f1/_tmp/chrome-profile-leptos",
+  "channel": "chrome",
+  "checks": [
+    {
+      "name": "login/storage/lists",
+      "status": "PASS"
+    }
+  ],
+  "nativeOSIME": false,
+  "compositionScope": "synthetic composition only, 未测 OS IME",
+  "status": "FAIL",
+  "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n'你好\\n' !== '你好'\n\n    at file:///Users/da/ws/pilotdeck-rs/_build/wt-f1/scripts/exp007/browser.mjs:55:9"
+}

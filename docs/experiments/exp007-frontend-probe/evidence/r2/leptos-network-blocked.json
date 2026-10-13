@@ -1,0 +1,16 @@
+{
+  "candidate": "leptos",
+  "environment": "jsdom + actual wasm CSR + real xterm + localhost HTTP/WS",
+  "nativeIME": false,
+  "paint": false,
+  "geometry": false,
+  "checks": [],
+  "workload": {
+    "hz": 25,
+    "count": 1500
+  },
+  "startedAt": "2026-10-13T21:26:28.809Z",
+  "status": "FAIL",
+  "error": "Error: listen EPERM: operation not permitted 127.0.0.1:28370\n    at Server.setupListenHandle [as _listen2] (node:net:1918:21)\n    at listenInCluster (node:net:1997:12)\n    at node:net:2206:7\n    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)",
+  "finishedAt": "2026-10-13T21:26:28.813Z"
+}
