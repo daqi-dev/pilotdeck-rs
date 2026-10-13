@@ -43,7 +43,7 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 
 ### Issue B1 · 探针：Rust 反代站在高位端口前，真浏览器经它访问 TS `ui/server` 一切照常（可立即开工，与 A/C 并行）
 
-**S1 最小 Rust 反代**（实验代码住 `_tmp/<日期>-exp006/`，不进 `src/`——B3 才建 crate）
+**S1 最小 Rust 反代**（实验代码住 `_tmp/<日期>-exp008/`，不进 `src/`——B3 才建 crate）
 - 单 bin：`tokio` + `hyper`（HTTP 全量反代，含 body 流式）+ `tokio-tungstenite`（WS upgrade 后双向逐帧搬运、双向传播 close）。监听 `127.0.0.1:13001`，上游 `http://127.0.0.1:13002`。
 - 三件事必须做对：① HTTP 逐跳头剥离、`X-Forwarded-*` 不乱加；② SSE / NDJSON body **不缓冲**、逐块转发（保留 `text/event-stream`、`Content-Type: application/x-ndjson`、`X-Accel-Buffering: no`，`index.js:1043-1046`）；③ WS 全帧 tee 到 jsonl（方向 + 单调序号 + 原文）。
 - 第四件：**运行时枚举**——隔离 env 下加载真 `ui/server`（或反代 bin 提供 `--dump-routes`），dump Express router stack + 加载期 hook，产出 `router-enumeration.json`，与 `006/route-inventory.md` 对账（做法见 `route-inventory.md` §10）。
@@ -57,7 +57,7 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 - Rust 反代：`13001 → 13002`。
 - **就绪断言**：起完先断言 `<tmp>/home/server-token` 存在且 `0600`、bridge 的 `PILOTDECK_GATEWAY_TOKEN_PATH` 指向它、四个进程的 `PILOT_HOME` 展开为同一绝对路径；否则场景 4（一轮对话）会因 gateway 鉴权失败假红。**再断言监听地址为回环**：`lsof -nP -iTCP:13001,13002 -sTCP:LISTEN`（或 `ss -ltn`）只出现 `127.0.0.1`，不得出现 `0.0.0.0`/`*`——「私有回环端口」是绑定保证，不是路径与 token 的推论。
 
-**S3 过场景并落盘结论** → `docs/experiments/exp006-ui-server-proxy/readme.md`
+**S3 过场景并落盘结论** → `docs/experiments/exp008-ui-server-proxy/readme.md`
 1. 静态：`GET /`（经 Rust）返回 UI；`/memory-dashboard` 可达。
 2. 鉴权：`/api/auth/status` → `register` → `login` 发 JWT，浏览器 localStorage 存 token；带 token 的 `/api/auth/user` 通过。
 3. 只读 API：`/api/projects`、`/api/projects/:p/sessions`、`/api/sessions/:id/messages`、`/api/config`、`/api/models` 经 Rust 结果与直连一致。
@@ -70,14 +70,14 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 10. 路由穿透探针：`GET /api/projects/files`（`:547` 先于 `:589`）、`GET /api/sessions/model`（`:637` 先于 `:640`）、`GET /api/mcp/config/read`（被 `mcp.js:36` 遮蔽）各断言实际命中的 handler，经 Rust 与直连一致。
 
 **怎么算做完**
-- [ ] exp006 readme 各条场景各有证据（帧日志片段 / 截图路径 / SSE chunk 元数据）；失败场景如实记录并给出对架构的影响
+- [ ] exp008 readme 各条场景各有证据（帧日志片段 / 截图路径 / SSE chunk 元数据）；失败场景如实记录并给出对架构的影响
 - [ ] `router-enumeration.json` 与静态清单对账完成，`only-static` / `only-runtime` 差异逐条给原因，回填 `006/route-inventory.md`
 - [ ] 全程未占用 3001 / 18789、未触碰真实 `~/.pilotdeck`、未 kill 用户进程（端口与目录清单写进 readme）
 - [ ] 若有「读源码没料到」的行为差异（Express 路由优先级、SSE 缓冲、WS close 语义、gateway token 共享），逐条记入 readme「意外」节并回填 `006/gap.md`
 
 ### Issue B2 · 对拍装置（B1 合并后）
 
-**S1 录制反代 + 运行时枚举**：在浏览器与被测入口之间放录制层（可与 B1 反代同一 bin）：落 (method, path, query, 去 token 值的 header, body) 与 (status, header, body / 流分块 + 每块 byte offset 与到达时刻；分块仅诊断) 到 jsonl；WS 按连接落全帧（含录放层单调 `seq`）。录制层读响应头 `X-PilotDeck-Handler`（`rust|ts`）标记处理侧，比对时剥离；分母来自 B1 的 `enumerate_routes.mjs`。**S2 场景集与覆盖矩阵**：从 `ui/e2e` 里不 mock 后端的支线 + exp006 场景提炼，先 6 个基础场景（鉴权、项目/会话只读、一轮对话（mock 模型）、断线重连 watch、配置写+广播、上传+SSE）；**同时为每条由 Rust 接管的路由登记 ≥1 条直接 HTTP 用例或显式豁免**（`{route, reason, approver}`），形成「路由 × 用例」矩阵，遗漏即 FAIL；续传、PTY 哨兵/退出/重连、双注册/遮蔽探针各入场景。**S3 比对器**：HTTP 结构化 diff（ID 一致映射、时间/随机字段归一化，剥离 `X-PilotDeck-Handler`）；WS **先比同一连接内全序帧序列（`seq` 保留断言），再比按 `type` 的结构 + 确定字段**；SSE **完整事件序列（不丢/不并/不乱序）+ 事件到达延迟上界**（`read()` 分块元数据仅诊断，不作硬门）；落盘目录快照 diff；**处理侧覆盖检查**（读 `X-PilotDeck-Handler` 与矩阵，缺用例即 FAIL）。**S4 规约与对照**：`specs/ui-server-parity/{acceptance,normalization,accepted-diffs}.md` 草稿（**不动** `specs/parity/`）——`acceptance.md` 写「路由 × 用例覆盖矩阵」硬门，`normalization.md` 写 WS `seq` 全序与 SSE 完整事件 / 到达延迟口径；`controls/` 阳性对照（注入 HTTP 头差异 / **交换同一连接两帧顺序** / 删一帧 WS / **对 SSE 丢一个事件 / 并两个事件 / 把整条流攒到结束才发** / 截断 SSE / 改一处落盘 → 必 FAIL）；四项对照（自比 k 遍 / 逐规则负向 / 两侧同坏 / 双谱系评审）照计划 001 S3 结构做，`check_ruler.py` 输出 JSON 全 true。
+**S1 录制反代 + 运行时枚举**：在浏览器与被测入口之间放录制层（可与 B1 反代同一 bin）：落 (method, path, query, 去 token 值的 header, body) 与 (status, header, body / 流分块 + 每块 byte offset 与到达时刻；分块仅诊断) 到 jsonl；WS 按连接落全帧（含录放层单调 `seq`）。录制层读响应头 `X-PilotDeck-Handler`（`rust|ts`）标记处理侧，比对时剥离；分母来自 B1 的 `enumerate_routes.mjs`。**S2 场景集与覆盖矩阵**：从 `ui/e2e` 里不 mock 后端的支线 + exp008 场景提炼，先 6 个基础场景（鉴权、项目/会话只读、一轮对话（mock 模型）、断线重连 watch、配置写+广播、上传+SSE）；**同时为每条由 Rust 接管的路由登记 ≥1 条直接 HTTP 用例或显式豁免**（`{route, reason, approver}`），形成「路由 × 用例」矩阵，遗漏即 FAIL；续传、PTY 哨兵/退出/重连、双注册/遮蔽探针各入场景。**S3 比对器**：HTTP 结构化 diff（ID 一致映射、时间/随机字段归一化，剥离 `X-PilotDeck-Handler`）；WS **先比同一连接内全序帧序列（`seq` 保留断言），再比按 `type` 的结构 + 确定字段**；SSE **完整事件序列（不丢/不并/不乱序）+ 事件到达延迟上界**（`read()` 分块元数据仅诊断，不作硬门）；落盘目录快照 diff；**处理侧覆盖检查**（读 `X-PilotDeck-Handler` 与矩阵，缺用例即 FAIL）。**S4 规约与对照**：`specs/ui-server-parity/{acceptance,normalization,accepted-diffs}.md` 草稿（**不动** `specs/parity/`）——`acceptance.md` 写「路由 × 用例覆盖矩阵」硬门，`normalization.md` 写 WS `seq` 全序与 SSE 完整事件 / 到达延迟口径；`controls/` 阳性对照（注入 HTTP 头差异 / **交换同一连接两帧顺序** / 删一帧 WS / **对 SSE 丢一个事件 / 并两个事件 / 把整条流攒到结束才发** / 截断 SSE / 改一处落盘 → 必 FAIL）；四项对照（自比 k 遍 / 逐规则负向 / 两侧同坏 / 双谱系评审）照计划 001 S3 结构做，`check_ruler.py` 输出 JSON 全 true。
 
 **怎么算做完**
 - [ ] `python3 scripts/ui-server-parity/check_ruler.py` 四项全 true，结果进 `docs/experiments/exp007-ui-server-parity-device/`

@@ -1,0 +1,98 @@
+{
+  "injectedResume": {
+    "resume-none": {
+      "expectedSeq": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "direct": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "proxy": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "resumeSource": [
+        "none"
+      ]
+    },
+    "resume-header": {
+      "expectedSeq": [
+        3,
+        4,
+        5
+      ],
+      "direct": [
+        3,
+        4,
+        5
+      ],
+      "proxy": [
+        3,
+        4,
+        5
+      ],
+      "resumeSource": [
+        "header"
+      ]
+    },
+    "resume-lastEventId": {
+      "expectedSeq": [
+        5
+      ],
+      "direct": [
+        5
+      ],
+      "proxy": [
+        5
+      ],
+      "resumeSource": [
+        "lastEventId"
+      ]
+    },
+    "resume-afterSeq": {
+      "expectedSeq": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "direct": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "proxy": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "resumeSource": [
+        "afterSeq"
+      ]
+    }
+  },
+  "realRoute": {
+    "direct": {
+      "status": 501,
+      "body": "{\"error\":{\"code\":\"SOP_MANAGEMENT_UNAVAILABLE\",\"message\":\"StaffDeck public SOP management is not configured.\"}}"
+    },
+    "proxy": {
+      "status": 501,
+      "body": "{\"error\":{\"code\":\"SOP_MANAGEMENT_UNAVAILABLE\",\"message\":\"StaffDeck public SOP management is not configured.\"}}"
+    }
+  },
+  "realRouteResumable": false
+}

@@ -1,0 +1,23 @@
+{
+  "staticRegistrationRows": 270,
+  "runtimeRouteCount": 263,
+  "runtimeUniqueCount": 263,
+  "onlyStatic": [
+    {
+      "method": "GET",
+      "path": "/api/agent",
+      "label": "SSE",
+      "reason": "path present under another method label"
+    },
+    {
+      "method": "GET",
+      "path": "/api/agent",
+      "label": "SSE",
+      "reason": "path present under another method label"
+    }
+  ],
+  "onlyRuntime": [],
+  "onlyStaticCount": 2,
+  "onlyRuntimeCount": 0,
+  "note": "Static inventory counts 264 registrations including the unmounted createUpdateRouter POST /api/update/restart; runtime stack sees 263."
+}

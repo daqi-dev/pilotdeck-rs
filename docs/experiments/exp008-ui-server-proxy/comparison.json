@@ -1,0 +1,18 @@
+{
+  "verdict": "PASS",
+  "left": "/Users/da/ws/pilotdeck-rs/_build/wt-b1/_tmp/20261014-exp008-r1/compare/direct",
+  "right": "/Users/da/ws/pilotdeck-rs/_build/wt-b1/_tmp/20261014-exp008-r1/compare/proxy",
+  "counts": {
+    "left": {
+      "http": 7,
+      "ws": 11,
+      "sse": 17
+    },
+    "right": {
+      "http": 7,
+      "ws": 11,
+      "sse": 17
+    }
+  },
+  "differences": []
+}

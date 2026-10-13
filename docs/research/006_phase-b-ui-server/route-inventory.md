@@ -465,7 +465,9 @@
 5. 与本文静态清单按 `(method, fullPath, definition)` 对账，报告 `only-static` / `only-runtime` / `path-mismatch`；
 6. **以枚举为准**回填本文；差异逐条给原因（链式漏计、工厂实例化、条件分支、未挂载、遮蔽）。
 
-**对账产物**：`docs/experiments/exp006-ui-server-proxy/router-enumeration.json`（B1 首跑），并在 B2 起每次接管后重跑。
+**对账产物**：`docs/experiments/exp008-ui-server-proxy/router-enumeration.json`（B1 首跑），并在 B2 起每次接管后重跑。
+
+**B1 首跑结果（2026-10-14，exp008）**：运行时 dump `app._router.stack` 得 **263 条唯一 (method, path)**，与本节静态 264 条注册的差正好是 1——`routes/update.js:112` 的 `createUpdateRouter` 工厂路由**未挂载**，且与已挂载的 `update.js:108` 路径重复，去重后只剩 1 条。逐条对账的 `only-static` 仅剩静态清单里两条把 `/api/agent` 标成 `SSE` 的行（真实注册是 `POST`，属方法标签差异），`only-runtime` 为 0；详见 `docs/experiments/exp008-ui-server-proxy/route-reconciliation.json`。挂载前缀由 `layer.regexp` 还原（Express 4.22 的 Router 实例原型与 `express.Router.prototype` 不同，加载期 hook 拦不到，见 exp008 readme「意外」）。
 
 ## 11. 共享资源分组（迁移组）
 
