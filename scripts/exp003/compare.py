@@ -31,19 +31,35 @@ def normalize(path):
         return item
 
     result = []
+    errors = []
     previous = 0
-    for line in path.read_text().splitlines():
-        row = json.loads(line)
-        assert row['seq'] > previous, 'recorder sequence must be strictly monotonic'
-        previous = row['seq']
-        if 'raw' in row:
-            assert json.loads(row['raw']) == row['frame'], 'recorded raw frame and parsed frame disagree'
-        # URL, monotonic clock and redundant raw JSON bytes stay in the evidence;
-        # ordered semantic frames are compared after parsing JSON only.
-        result.append({'connection': row['connection'], 'direction': row['direction'],
-                       'frame': value(row.get('frame', row.get('close')))})
-    assert result, 'empty recordings are never a PASS'
-    return result
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as error:
+        return [], [{'error': str(error)}]
+    for number, line in enumerate(lines, 1):
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError('recorder row must be an object')
+            if not isinstance(row.get('seq'), int) or row['seq'] <= previous:
+                raise ValueError('recorder sequence must be strictly monotonic')
+            previous = row['seq']
+            if 'raw' in row:
+                try:
+                    parsed = json.loads(row['raw'])
+                except (ValueError, TypeError) as error:
+                    raise ValueError(f'recorded raw frame is not JSON: {error}') from error
+                if parsed != row['frame']:
+                    raise ValueError('recorded raw frame and parsed frame disagree')
+            # Raw and all recorder metadata remain in the original evidence.
+            result.append({'connection': row['connection'], 'direction': row['direction'],
+                           'frame': value(row.get('frame', row.get('close')))})
+        except (ValueError, KeyError, TypeError) as error:
+            errors.append({'line': number, 'error': str(error)})
+    if not result:
+        errors.append({'error': 'empty/invalid recordings are never a PASS'})
+    return result, errors
 
 
 def main():
@@ -52,8 +68,11 @@ def main():
     parser.add_argument('right', type=Path)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
-    left, right = normalize(args.left), normalize(args.right)
-    differences = [{'index': index, 'left': a, 'right': b}
+    left, left_errors = normalize(args.left)
+    right, right_errors = normalize(args.right)
+    differences = [{'side': side, **error} for side, errors in [('left', left_errors), ('right', right_errors)]
+                   for error in errors]
+    differences += [{'index': index, 'left': a, 'right': b}
                    for index, (a, b) in enumerate(zip(left, right)) if a != b]
     if len(left) != len(right):
         differences.append({'lengths': [len(left), len(right)]})
