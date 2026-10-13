@@ -32,7 +32,7 @@
 1. 应用是单通配路由（`App.tsx:50`），`AppShellV2.tsx:79-84` 按 URL 分辨页面——「按路由」的实质是**按页面**：`/settings/*`、`/cron`、`/skills`、`/sop`、`/knowledge` 等都是整页切换。**但「跨页导航是整页加载」在旧 SPA 内不成立**（`AppShellV2.tsx:5, 73, 387` 全是客户端 `navigate`，gap §一），且 `ui/server/index.js:3471` 对全部 HTML 路由单一通配回旧 `dist/index.html`——静态按前缀选 bundle 只在整页加载时生效。因此共存机制必须是两件事，缺一不可：
    - **双入口托管**：选项 A——`ui/server` 的 `app.get('*')` 加路径前缀分支（几行改动，单独评审、可单独回退）；选项 B——前置反代按前缀分流，`ui/server` 零改动。两选项在 F1 双壳实验里实测后定（探针期用选项 B 也行，生产期倾向 A，避免多一个常驻组件）。
    - **双向导航拦截**：旧壳 `navigate` 到已迁前缀时改硬跳（`window.location.assign`，改动点集中在旧壳 `navigate` 调用处，F1 实测量出有几处）；新壳跳未迁路径时硬跳回旧 bundle。
-   - **跨壳硬跳的已知差异**（登记 `accepted-diffs.md`）：整页加载丢 SPA 内存态——主 WS `/ws` 与终端 `/shell` 连接断开重连、流式中途的增量文本靠 `watch-session` 重挂但不保证逐字连续、滚动位置与前进后退变成整页加载（慢但行为可用）。**composer 草稿不在差异之列**——已落 localStorage（`chatStorage.ts:6-9`），跨壳保留是契约（见下第 5 条），丢了是 bug。同源 localStorage/sessionStorage 不受影响。
+   - **跨壳硬跳的已知差异**（登记 `accepted-diffs.md`）：整页加载丢 SPA 内存态——主 WS `/ws` 断开**自动重连**（1s 起、×2、封顶 30s，`WebSocketContext.tsx:48-50, 172-186`）；终端 `/shell` 断开**不自动重连**、`onclose` 只清屏，须手动重进终端（`useShellConnection.ts:174-183`，`shell/utils/socket.ts:4-13` 无重连逻辑——早先「两条通道都按退避重连」的表述不符源，已改）；流式中途的增量文本靠 `watch-session` 重挂但不保证逐字连续；滚动位置与前进后退变成整页加载（慢但行为可用）。**composer 草稿不在差异之列**——已落 localStorage（`chatStorage.ts:6-9`），跨壳保留是契约（见下第 5 条），丢了是 bug。同源 localStorage/sessionStorage 不受影响。
 2. **顺序**：探针页（登录 + 会话列表）→ **设置页**（`components/settings/` 17,384 行，表单型、无重岛，风险最低）→ 业务页组（cron/skills/files/git/tasks，`main-content-v2/`）→ **聊天面最后**（≈4.8 万行，行为最细、fixture 用例最多）→ 壳/侧栏（`app-shell/`）收尾退役 React 构建。聊天面迁完前，跨壳跳转避不开流式会话中途切壳的场景，F1 必须实测一次。
 3. 页内机制是组件岛：Rust 页面里挂 xterm/CodeMirror 岛（探针就要挂一个真终端岛验证桥）。
 4. **放弃**「整体一次性切换」（违反 must-know ③）与「按组件逐个换」（137k 行组件两两桥接的复杂度爆炸，且旧包教训是父任务收不了口——调研 003）。
