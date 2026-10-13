@@ -17,6 +17,7 @@
 - `src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs`：增加参数判定辅助函数，额外接受恰好一个非空且不以 `--` 开头的位置参数并忽略它，使 TS gateway 的 `args: [sidecarPath]` 能拉起 Rust。保留无参数、`--stdio`、`--version` 与非法参数退出码 2；增加参数矩阵回归测试、空串进程退出码测试和 usage 提示。
 
 - `src/pilotdeck-tokenizer/src/implementation.rs`：`include_str!` 的词表资源路径从 `../../../vendor/tiktoken-rs` 改为 `../../vendor/tiktoken-rs`；布局减少一层，嵌入的词表字节保持原样。
+- `src/pilotdeck-transport/build.rs`：构建时读取当前 git HEAD，注入 `PILOTDECK_SOURCE_COMMIT`，供 sidecar `--version` 输出；读取失败才使用 `unregistered-build`。跟踪 worktree HEAD、分支引用与 packed refs，提交或切换后重新构建会更新来源。
 - `src/Cargo.lock`：按合并后的 workspace 重新解析锁文件，移除 core、登记导入依赖，直接依赖版本仍照旧钉死。
 
 ## 原始文件 sha256

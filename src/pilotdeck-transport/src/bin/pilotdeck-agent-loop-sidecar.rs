@@ -15,7 +15,7 @@ fn main() -> ExitCode {
         println!(
             "pilotdeck-agent-loop-sidecar {} implementation=rust wire=2.0 source={}",
             env!("CARGO_PKG_VERSION"),
-            option_env!("PILOTDECK_SOURCE_COMMIT").unwrap_or("unregistered-build")
+            env!("PILOTDECK_SOURCE_COMMIT")
         );
         return ExitCode::SUCCESS;
     }
