@@ -1,3 +1,3 @@
 fn main() {
-    println!("pilotdeck {}", pilotdeck_core::version());
+    println!("pilotdeck {}", env!("CARGO_PKG_VERSION"));
 }

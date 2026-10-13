@@ -10,4 +10,3 @@ name = "pilotdeck"
 path = "src/main.rs"
 
 [dependencies]
-pilotdeck-core = { path = "../pilotdeck-core" }

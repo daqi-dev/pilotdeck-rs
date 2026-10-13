@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use std::{collections::HashSet, sync::OnceLock};
 use tiktoken_rs::CoreBPE;
 
-const RANKS: &str = include_str!("../../../vendor/tiktoken-rs/assets/o200k_base.tiktoken");
+const RANKS: &str = include_str!("../../vendor/tiktoken-rs/assets/o200k_base.tiktoken");
 // ECMAScript WhiteSpace + LineTerminator, unlike Rust Unicode White_Space:
 // U+FEFF belongs here; U+0085 does not. Nested regex character classes retain
 // the surrounding Source union/negation without changing branch precedence.
