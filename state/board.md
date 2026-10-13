@@ -8,7 +8,8 @@
 > **做了**：PR #5 合并 · 旧 sidecar 源码找到（旧现场 `build/source-repository` @ `0eba113`，产品约 2.7 万行 + 测试约 2.6 万行）· `docs/changes/arch/001` · `docs/plan/001`（Issue #1 尺子 / #2 搬代码 / #3 量分 + 对应检查）· `specs/parity/` 冻结（README `f8958a32…`、accepted-diffs `653ccb10…`）· 双谱系评审 1 轮：无 P0，P1 六条（4 条两谱系撞车）全部处理 → `docs/reviews/001_plan-phase-c.md`。
 > **人定**：worktree ≤ 5（AI 加「全量对拍串行」、磁盘 30 GB）· 改 Rust 入口接受路径参数 · 阈值程序按推荐（k = 5、\|S\| ≥ 45、分母 53 − 原版不稳定）。
 > **方法缺口（新增）**：⑫ `dev-docs` 与 `aias-meta-research` 的调研目录约定不一致（findings/sources vs NNN_slug/）⑬ 主会话差点把未经人看过的规则直接标成「冻结」——**冻结前必须有一次人过目**，已改。
-> **下一步**：开 issue #1 → 起草发车指令 → ⛔ 停。
+> **issue #1 = GitHub [#7](https://github.com/zhengdaqi/pilotdeck-rs/issues/7)**（回捞 G03 v1 尺子并复核，不跑 Rust）。交接盲测两路：都能说出第一步与怎么算做完；暴露的 3 处矛盾（CLAUDE.md 降级口径、S1 身份断言、5 遍自比的配对口径）已改。
+> **下一步（人来下）**：在 `~/ws/pilotdeck-rs` 开**新会话**，发 `/dev-launch` 发车指令（准备阶段到此为止，AI 不自己发车）。
 
 > ## 2026-10-14 第五轮 · 第 7 步探针 + 调研 003（分支 research/003-prior-attempt）
 > **做了**：PR #4 合并（main @ 25c6b21）· exp002（连接级状态：阶段 A 只有约 35 个只读 method 能按 method 切）· exp001（原样跑上游 `tools/agent-loop-parity/`：53 场景 0 BLOCKED、自检 54/54；native vs TS sidecar 31 个稳定差异；TS sidecar 自比 35/53）· 人改定**先 C 再 A 再 B**，intent 改为阶段 C 版（待人过目）· 调研 003（用户旧迁移：方案 + 执行现场），双谱系评审 1 轮，3 条 P1 已处理。
