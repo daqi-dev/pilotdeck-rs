@@ -1,11 +1,11 @@
 //! Supplementary author fixtures. Expected behavior comes from fixed b243fa0
-//! assembleModelMessage.ts, projectToolResults.ts, ensureToolResultPairing.ts,
+//! projectToolResults.ts, ensureToolResultPairing.ts,
 //! tool/protocol/result.ts, block-identity.spec.ts/openaiReasoningContent.spec.ts.
 //! These tests do not claim independent original exported-function differential parity.
+use pilotdeck_agent::source_model::{OriginalSourceModelReducer, SourceModelReducer};
 use pilotdeck_agent::*;
 use pilotdeck_protocol::model::*;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
-use std::sync::Arc;
 
 fn raw(value: &str) -> JsValue {
     parse_json(value).unwrap()
@@ -17,56 +17,6 @@ fn obj(fields: &[(&str, JsValue)]) -> JsValue {
     }
     JsValue::Object(object)
 }
-fn captured(event: ModelEvent, value: JsValue) -> CapturedModelEvent {
-    CapturedModelEvent {
-        event,
-        boundary: BoundarySnapshot::capture(&value),
-    }
-}
-fn text(state: &mut ModelAssemblerState, value: &str) {
-    apply_model_event(
-        state,
-        &captured(
-            ModelEvent::TextDelta {
-                text: value.into(),
-                raw: None,
-            },
-            obj(&[("type", "text_delta".into()), ("text", value.into())]),
-        ),
-    )
-    .unwrap();
-}
-fn thinking(
-    state: &mut ModelAssemblerState,
-    text: &str,
-    reasoning: Option<&str>,
-    signature: Option<&str>,
-) {
-    apply_model_event(
-        state,
-        &captured(
-            ModelEvent::ThinkingDelta {
-                text: text.into(),
-                raw: None,
-                reasoning_content: reasoning.map(Into::into),
-                signature: signature.map(Into::into),
-            },
-            obj(&[
-                ("type", "thinking_delta".into()),
-                ("text", text.into()),
-                (
-                    "reasoningContent",
-                    reasoning.map_or(JsValue::Undefined, JsValue::from),
-                ),
-                (
-                    "signature",
-                    signature.map_or(JsValue::Undefined, JsValue::from),
-                ),
-            ]),
-        ),
-    )
-    .unwrap();
-}
 fn call(id: JsString) -> ToolCall {
     ToolCall {
         timeline: None,
@@ -75,50 +25,6 @@ fn call(id: JsString) -> ToolCall {
         input: raw("{\"path\":\"example.txt\"}"),
         raw: None,
     }
-}
-fn end_call(
-    state: &mut ModelAssemblerState,
-    call: ToolCall,
-    extra: JsValue,
-    repaired: Option<bool>,
-) {
-    let mut value = obj(&[
-        ("id", JsValue::String(call.id.clone())),
-        ("name", JsValue::String(call.name.clone())),
-        ("input", call.input.clone()),
-        ("extension", extra),
-    ]);
-    if let (JsValue::Object(value), Some(timeline)) = (&mut value, &call.timeline) {
-        value.insert(
-            "timeline".into(),
-            obj(&[
-                ("version", JsValue::Number(1.0)),
-                ("turnId", JsValue::String(timeline.turn_id.clone())),
-                ("id", JsValue::String(timeline.id.clone())),
-                ("order", JsValue::Number(timeline.order)),
-                ("revision", JsValue::Number(timeline.revision)),
-            ]),
-        );
-    }
-    apply_model_event(
-        state,
-        &captured(
-            ModelEvent::ToolCallEnd {
-                tool_call: call,
-                raw: None,
-                was_repaired: repaired,
-            },
-            obj(&[
-                ("type", "tool_call_end".into()),
-                ("toolCall", value),
-                (
-                    "wasRepaired",
-                    repaired.map_or(JsValue::Undefined, JsValue::Bool),
-                ),
-            ]),
-        ),
-    )
-    .unwrap();
 }
 fn content(boundary: JsValue) -> ToolContent {
     ToolContent::BoundaryOnly {
@@ -216,311 +122,6 @@ fn blocks(message: &ProjectedMessage) -> &[JsValue] {
     array(message.boundary.value().get("content").unwrap())
 }
 
-#[test]
-fn original_block_identity_and_interleaved_signature_reasoning_flush() {
-    let mut state = create_model_assembler(Some("response".into()));
-    assert_eq!(
-        stream_block_id(&state, StreamBlockKind::Thinking),
-        Some("response:thinking:0".into())
-    );
-    thinking(&mut state, "", None, Some("sig"));
-    thinking(&mut state, "", Some("native"), Some(""));
-    text(&mut state, "same");
-    end_call(&mut state, call("a".into()), JsValue::Undefined, None);
-    thinking(&mut state, "thought", None, None);
-    text(&mut state, "same");
-    let assembled = assemble_assistant_message(&mut state);
-    let raw_blocks = array(
-        assembled
-            .boundary
-            .value()
-            .get("message")
-            .unwrap()
-            .get("content")
-            .unwrap(),
-    );
-    assert_eq!(
-        raw_blocks[0],
-        raw(
-            "{\"type\":\"thinking\",\"text\":\"\",\"blockId\":\"response:thinking:0\",\"reasoningContent\":\"native\",\"signature\":\"sig\"}"
-        )
-    );
-    assert_eq!(
-        raw_blocks[1],
-        raw("{\"type\":\"text\",\"text\":\"same\",\"blockId\":\"response:text:0\"}")
-    );
-    assert_eq!(
-        raw_blocks[3].get("blockId"),
-        Some(&JsValue::from("response:thinking:1"))
-    );
-    assert_eq!(
-        raw_blocks[4].get("blockId"),
-        Some(&JsValue::from("response:text:1"))
-    );
-}
-#[test]
-fn literal_tool_text_and_start_delta_do_not_create_calls() {
-    let mut state = create_model_assembler(None);
-    let literal = "<tool_call id=\"x\"> <think>example</think>";
-    for ch in literal.chars() {
-        text(&mut state, &ch.to_string());
-    }
-    apply_model_event(
-        &mut state,
-        &captured(
-            ModelEvent::ToolCallStart {
-                id: "x".into(),
-                name: "tool".into(),
-                raw: None,
-            },
-            raw("{\"type\":\"tool_call_start\",\"id\":\"x\",\"name\":\"tool\"}"),
-        ),
-    )
-    .unwrap();
-    apply_model_event(
-        &mut state,
-        &captured(
-            ModelEvent::ToolCallDelta {
-                id: "x".into(),
-                delta: "{}".into(),
-                raw: None,
-            },
-            raw("{\"type\":\"tool_call_delta\",\"id\":\"x\",\"delta\":\"{}\"}"),
-        ),
-    )
-    .unwrap();
-    let result = assemble_assistant_message(&mut state);
-    assert!(result.tool_calls.is_empty());
-    assert!(!result.has_message_end);
-    assert_eq!(result.finish_reason, FinishReason::Unknown);
-    assert_eq!(
-        array(
-            result
-                .boundary
-                .value()
-                .get("message")
-                .unwrap()
-                .get("content")
-                .unwrap()
-        )[0]
-        .get("text"),
-        Some(&JsValue::from(literal))
-    );
-}
-#[test]
-fn utf16_trim_collision_and_full_call_extensions_survive_repeat_assembly() {
-    let mut state = create_model_assembler(Some(JsString::from_utf16(vec![0xd800])));
-    let ids = [
-        JsString::from("\u{feff} x \u{a0}"),
-        "x_2".into(),
-        "x".into(),
-        "\u{200b}".into(),
-        "\u{2028}\u{2029}".into(),
-        JsString::from_utf16(vec![0x20, 0xd800, 0x20]),
-    ];
-    for id in ids {
-        end_call(
-            &mut state,
-            call(id),
-            obj(&[
-                ("present", JsValue::Undefined),
-                ("null", JsValue::Null),
-                (
-                    "surrogate",
-                    JsValue::String(JsString::from_utf16(vec![0xdc00])),
-                ),
-            ]),
-            Some(false),
-        );
-    }
-    let result = assemble_assistant_message(&mut state);
-    assert_eq!(
-        result
-            .tool_calls
-            .iter()
-            .map(|v| v.id.clone())
-            .collect::<Vec<_>>(),
-        vec![
-            "x".into(),
-            "x_2".into(),
-            "x_3".into(),
-            "\u{200b}".into(),
-            "call_4".into(),
-            JsString::from_utf16(vec![0xd800])
-        ]
-    );
-    let raw_calls = array(result.boundary.value().get("toolCalls").unwrap());
-    assert!(
-        raw_calls[0]
-            .get("extension")
-            .unwrap()
-            .get("present")
-            .unwrap()
-            .is_undefined()
-    );
-    assert_eq!(result.has_repaired_tool_calls, None);
-    assert_eq!(
-        stringify_json(result.boundary.value()).unwrap(),
-        stringify_json(assemble_assistant_message(&mut state).boundary.value()).unwrap()
-    );
-}
-#[test]
-fn usage_addition_preserves_absent_zero_and_own_undefined() {
-    let mut state = create_model_assembler(None);
-    for usage in [
-        Usage {
-            input_tokens: Some(0.0),
-            native_cost: Some(0.25),
-            ..Usage::default()
-        },
-        Usage {
-            input_tokens: Some(2.0),
-            output_tokens: Some(3.0),
-            native_cost: Some(0.5),
-            ..Usage::default()
-        },
-    ] {
-        let boundary = obj(&[
-            ("type", "usage".into()),
-            (
-                "usage",
-                obj(&[
-                    (
-                        "inputTokens",
-                        usage
-                            .input_tokens
-                            .map_or(JsValue::Undefined, JsValue::Number),
-                    ),
-                    (
-                        "outputTokens",
-                        usage
-                            .output_tokens
-                            .map_or(JsValue::Undefined, JsValue::Number),
-                    ),
-                    (
-                        "nativeCost",
-                        usage
-                            .native_cost
-                            .map_or(JsValue::Undefined, JsValue::Number),
-                    ),
-                ]),
-            ),
-        ]);
-        apply_model_event(
-            &mut state,
-            &captured(ModelEvent::Usage { usage, raw: None }, boundary),
-        )
-        .unwrap();
-    }
-    let result = assemble_assistant_message(&mut state);
-    let usage = result.usage.unwrap();
-    assert_eq!(usage.input_tokens, Some(2.0));
-    assert_eq!(usage.native_cost, Some(0.75));
-    assert_eq!(usage.total_tokens, None);
-    let raw = result.boundary.value().get("usage").unwrap();
-    assert_eq!(raw.as_object().unwrap().len(), 6);
-    assert!(raw.get("totalTokens").unwrap().is_undefined());
-}
-#[test]
-fn error_preserves_prefix_extensions_without_fabricating_message_end() {
-    let mut state = create_model_assembler(None);
-    text(&mut state, "prefix");
-    let error = ModelError {
-        provider: "p".into(),
-        model: None,
-        protocol: ModelProtocol::OpenAi,
-        code: "extension_code".into(),
-        status: None,
-        message: "failed".into(),
-        retryable: false,
-        raw: None,
-        recoverable_via_compact: None,
-        recoverable_via_image_strip: None,
-        retry_after_ms: None,
-        user_hint: None,
-        settings_fix: None,
-        max_context_tokens: None,
-        max_output_tokens: None,
-        available_output_tokens: None,
-        stream_interruption: None,
-    };
-    let raw_error = raw(
-        "{\"provider\":\"p\",\"protocol\":\"openai\",\"code\":\"extension_code\",\"message\":\"failed\",\"retryable\":false,\"extension\":null}",
-    );
-    apply_model_event(
-        &mut state,
-        &captured(
-            ModelEvent::Error(Box::new(error)),
-            obj(&[("type", "error".into()), ("error", raw_error.clone())]),
-        ),
-    )
-    .unwrap();
-    let result = assemble_assistant_message(&mut state);
-    assert_eq!(result.finish_reason, FinishReason::Error);
-    assert!(!result.has_message_end);
-    assert_eq!(result.boundary.value().get("error"), Some(&raw_error));
-    assert_eq!(result.message.content.len(), 1);
-}
-#[test]
-fn contradiction_is_rejected_before_buffer_flush_and_raw_echo_mismatch() {
-    let mut state = create_model_assembler(None);
-    text(&mut state, "unflushed");
-    let mismatched = captured(
-        ModelEvent::ThinkingDelta {
-            text: "typed".into(),
-            signature: None,
-            reasoning_content: None,
-            raw: None,
-        },
-        raw("{\"type\":\"thinking_delta\",\"text\":\"different\"}"),
-    );
-    assert!(matches!(
-        apply_model_event(&mut state, &mismatched),
-        Err(AssemblyError::InvalidBoundary { .. })
-    ));
-    assert!(state.content.is_empty());
-    assert_eq!(state.text_buffer, "unflushed".into());
-    let mismatched_raw = captured(
-        ModelEvent::TextDelta {
-            text: "x".into(),
-            raw: Some(ProviderEcho(Arc::new(JsValue::Null))),
-        },
-        raw("{\"type\":\"text_delta\",\"text\":\"x\"}"),
-    );
-    assert!(apply_model_event(&mut state, &mismatched_raw).is_err());
-}
-#[test]
-fn empty_response_and_model_truthiness_do_not_generate_ids_or_metadata() {
-    let mut state = create_model_assembler(Some("".into()));
-    apply_model_event(
-        &mut state,
-        &captured(
-            ModelEvent::RequestStarted {
-                provider: "p".into(),
-                model: "".into(),
-                provider_base_url: None,
-                request_fingerprint: None,
-                metadata: None,
-            },
-            raw("{\"type\":\"request_started\",\"provider\":\"p\",\"model\":\"\"}"),
-        ),
-    )
-    .unwrap();
-    text(&mut state, "x");
-    assert_eq!(stream_block_id(&state, StreamBlockKind::Text), None);
-    let result = assemble_assistant_message(&mut state);
-    assert!(result.message.metadata.is_none());
-    assert!(
-        result
-            .boundary
-            .value()
-            .get("message")
-            .unwrap()
-            .get("metadata")
-            .is_none()
-    );
-    assert!(result.boundary.value().get("usage").unwrap().is_undefined());
-}
 #[test]
 fn pairing_consumes_fifo_duplicates_ignores_extra_and_calls_missing_only_once() {
     let calls = vec![call("a".into()), call("a".into()), call("missing".into())];
@@ -900,28 +501,21 @@ fn deep_extensions_and_utf16_snapshot_are_detached_from_mutable_input() {
             ]),
         ),
     ]);
-    let event = captured(
-        ModelEvent::ToolCallEnd {
-            tool_call: call,
-            was_repaired: None,
-            raw: None,
-        },
-        input.clone(),
-    );
+    let event = BoundarySnapshot::capture(&input);
     if let JsValue::Object(input) = &mut input {
         input.insert("toolCall".into(), JsValue::Null);
     }
-    let mut state = create_model_assembler(None);
-    apply_model_event(&mut state, &event).unwrap();
-    let assembled = assemble_assistant_message(&mut state);
-    let mut leaf = array(assembled.boundary.value().get("toolCalls").unwrap())[0]
-        .get("extension")
-        .unwrap();
+    let reducer = OriginalSourceModelReducer;
+    let mut state = reducer.create(&JsValue::Undefined);
+    reducer.apply(&mut state, &event).unwrap();
+    let assembled = reducer.assemble(&mut state).unwrap();
+    let calls = array(assembled.value().get("toolCalls").unwrap());
+    let mut leaf = calls[0].get("extension").unwrap();
     for _ in 0..1024 {
         leaf = leaf.get("next").unwrap();
     }
     assert_eq!(leaf.as_string().unwrap().units(), &[0xd800, 0, 0xdc00]);
-    assert_eq!(assembled.tool_calls[0].id, "a".into());
+    assert_eq!(calls[0].get("id"), Some(&JsValue::from("a")));
 }
 #[test]
 fn null_optional_echo_fields_normalize_none_without_losing_own_null() {

@@ -1,7 +1,7 @@
 //! Pure AgentLoop helpers. No filesystem, provider, permission or Session authority.
 use pilotdeck_protocol::model::{
-    BoundarySnapshot, ContentBlock, FinishReason, ImageBlock, Message, ModelError, ModelEvent,
-    PdfBlock, ToolCall, Usage,
+    BoundarySnapshot, FinishReason, ImageBlock, Message, ModelError, ModelEvent, PdfBlock,
+    ToolCall, Usage,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 pub mod budget_terminal;
@@ -14,8 +14,8 @@ pub mod driver;
 pub mod early_stream_recovery;
 mod early_stream_recovery_policy;
 pub use early_stream_recovery_policy::create_model_request_failure_status;
+mod boundary_match;
 mod large_file_repair;
-mod model_event_reducer;
 pub mod ordinary_error_recovery;
 mod ordinary_error_recovery_policy;
 pub mod output_recovery;
@@ -244,33 +244,10 @@ impl TurnTimeline {
 }
 
 #[derive(Debug, Clone)]
-pub struct ModelAssemblerState {
-    pub response_id: Option<JsString>,
-    pub content: Vec<ContentBlock>,
-    pub content_boundaries: Vec<BoundarySnapshot>,
-    pub tool_call_boundaries: Vec<BoundarySnapshot>,
-    pub error_boundary: Option<BoundarySnapshot>,
-    pub text_buffer: JsString,
-    pub model: Option<JsString>,
-    pub thinking_buffer: JsString,
-    pub thinking_reasoning_content_buffer: JsString,
-    pub thinking_signature: Option<JsString>,
-    pub usage: Usage,
-    pub finish_reason: Option<FinishReason>,
-    pub has_message_end: bool,
-    pub error: Option<Box<ModelError>>,
-    pub tool_calls: Vec<ToolCall>,
-    pub has_repaired_tool_calls: Option<bool>,
-}
-#[derive(Debug, Clone)]
 pub struct CapturedModelEvent {
     pub event: ModelEvent,
     /// Full matching event after consumer admission, including call/error extensions.
     pub boundary: BoundarySnapshot,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AssemblyError {
-    InvalidBoundary { message: JsString },
 }
 #[derive(Debug, Clone)]
 pub struct AssembledAssistantMessage {
@@ -284,27 +261,6 @@ pub struct AssembledAssistantMessage {
     pub has_repaired_tool_calls: Option<bool>,
     pub has_message_end: bool,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StreamBlockKind {
-    Text,
-    Thinking,
-}
-pub fn create_model_assembler(response_id: Option<JsString>) -> ModelAssemblerState {
-    model_event_reducer::new(response_id)
-}
-pub fn stream_block_id(state: &ModelAssemblerState, kind: StreamBlockKind) -> Option<JsString> {
-    model_event_reducer::block_id(state, kind)
-}
-pub fn apply_model_event(
-    state: &mut ModelAssemblerState,
-    event: &CapturedModelEvent,
-) -> Result<(), AssemblyError> {
-    model_event_reducer::apply(state, event)
-}
-pub fn assemble_assistant_message(state: &mut ModelAssemblerState) -> AssembledAssistantMessage {
-    model_event_reducer::assemble(state)
-}
-
 /// Each tool content keeps the actual full admitted boundary object for raw echoes
 /// and supplemental stringify, independently of its normalized typed projection.
 #[derive(Debug, Clone)]

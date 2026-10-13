@@ -1,6 +1,6 @@
 //! Source: fixed original ensureToolResultPairing/projectToolResults/result.ts.
 //! Captures are immutable echoes. This module has no tool or permission authority.
-use crate::model_event_reducer::{matches_fields, object, optional_string, same_value};
+use crate::boundary_match::{matches_fields, object, optional_string, same_value};
 use crate::{
     MessageProjection, ProjectedMessage, ProjectionError, ProjectionGap, SupplementalToolMessage,
     ToolContent, ToolExecutionResult, ToolResultDisposition,
