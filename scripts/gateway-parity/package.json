@@ -1,0 +1,13 @@
+{
+  "name": "pdrs-gateway-parity-tools",
+  "private": true,
+  "type": "module",
+  "description": "阶段 A · A3：gateway 协议 JSON Schema 导出工具的钉死依赖（只装在本目录，绝不全局）",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ts-json-schema-generator": "2.9.0",
+    "typescript": "5.9.3"
+  }
+}
