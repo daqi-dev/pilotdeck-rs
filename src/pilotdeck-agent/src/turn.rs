@@ -3691,10 +3691,9 @@ fn finish_tool_terminal(
 /// Capture is the sole terminal cleanup effect admitted after user abort.
 /// Its budget starts here, independently of the expired execution deadline.
 fn fresh_capture_cleanup(previous: &CallControl) -> CallControl {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     CallControl {
-        cancellation: previous.cancellation.bounded_cleanup_scope(deadline),
-        deadline: Some(deadline),
+        cancellation: previous.cancellation.cleanup_scope(),
+        deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(5)),
     }
 }
 

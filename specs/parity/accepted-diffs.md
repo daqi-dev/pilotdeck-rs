@@ -8,3 +8,4 @@
 
 | 1 | `deadline` | Rust sidecar 收尾后，TS 宿主竞态可能额外写一条 `gateway_submit_failed` durable.status | 原版缺陷 | bug 第②条：基线 `src/gateway/client/InProcessGateway.ts:1727` catch 未排除 `timedOut`，与 `tests/gateway/operation-deadline.spec.ts:159-160` 的仅有 `turn_timeout` 断言矛盾；独立复现 `_tmp/probe-host-timeout.mjs`、`_tmp/probe-host-timeout.json`、`_tmp/probe-host-timeout.stderr`；阶段 A 替换 gateway 时修（协调者 AI 代拍，待人复核） | 待批 |
 | 2 | `deadline_during_tool` | Rust sidecar 收尾后，TS 宿主竞态可能额外写一条 `gateway_submit_failed` durable.status | 原版缺陷 | bug 第②条：基线 `src/gateway/client/InProcessGateway.ts:1727` catch 未排除 `timedOut`，与 `tests/gateway/operation-deadline.spec.ts:159-160` 的仅有 `turn_timeout` 断言矛盾；独立复现 `_tmp/probe-host-timeout.mjs`、`_tmp/probe-host-timeout.json`、`_tmp/probe-host-timeout.stderr`；阶段 A 替换 gateway 时修（协调者 AI 代拍，待人复核） | 待批 |
+| 3 | `deadline` / `deadline_during_tool` | #1 #2 依据更正：真实 TS 流程 0/10、Rust 多写 gateway_submit_failed，改按 Rust 产品问题处理；修复撤出 PR #27，挂起待人（3 轮未修好） | Rust 产品问题 | #1 #2 依据更正 | 待批 |
