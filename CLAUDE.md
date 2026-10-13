@@ -83,3 +83,16 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 - codex 写代码的命令模板：`codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check -C <worktree> < <任务文件>`。**每个任务一个 worktree**（`_build/wt-<名字>`，≤ 5 个），任务文件写进 `_tmp/<日期>-<名字>/task.md`。
 - 硬红线（夜里也不放开）：不改已冻结的尺子；不碰 `~/.pilotdeck`、用户自己在跑的 PilotDeck 进程、`~/ws/PilotDeck-rust-program-20261009/`；每次推送前 gitleaks；不强推 main；同一失败 3 次就挂起跳下一件；磁盘超 30 GB 就停；全量对拍同一时刻只跑 1 个（锁：`mkdir /tmp/pdrs-parity.lock`）。
 - **08:30 停止派新活**，收尾手上的，写交接与晨报。
+- **授权扩大（2026-10-14 夜，人原话）**：「重构这个过程，意向非常明确，AI 可以替代人在这次重构过程中做判断，阶段 CBA 都能做，直到把前端做完，整体完成重构。」⇒ 方向、红线、架构选型、阶段切换都可由 AI 代拍；**每一处都记进晨报「AI 代批，待人复核」**。仍不放开的：上面的硬红线；**尺子可改，但必须另开 issue、两家评审同意、写明理由**，不许为变绿而改。
+
+### 夜跑合并闸门（2026-10-14 夜补：把课程的能力编排接回来）
+
+每条 PR 合并前依次过，**审的一律不是写的那家**：
+1. **规则层**：CI `check` 绿；worker 自证命令的原始输出贴进 PR 描述。
+2. **simplify 四视角**（复用 · 简化 · 效率 · 层级）：交给一家非作者模型，只出建议，不直接改。
+3. **pr-ready 三角色**（同类遗漏 sibling · 并发与资源 concurrency · 边界 boundary），按 `.claude/skills/pr-ready/SKILL.md` 的流程：交给另一家非作者模型，产出 P1/P2 审计表贴进 PR。
+4. **双谱系评审**收敛到无 P0/P1/P2，最多两轮；两轮不收敛就挂起，不合并。
+5. 合并后 `git log --format='%h %ae %ce' -3` 核一眼。
+
+**实效层与定标**（课程里人不可替代的两步）今晚做不了：晨报里列出要人亲手跑一遍、判一遍的东西。
+
