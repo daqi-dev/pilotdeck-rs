@@ -45,7 +45,7 @@
 
 **路由形态**：整个应用是**单通配路由**——`ui/src/App.tsx:50` `<Route path="*" element={<AppShellV2 />} />`（`:33-35` 注释明说 URL 变化不重挂壳）。URL 只在 `AppShellV2` 内部用 `useMatch` 分辨（`AppShellV2.tsx:79-84`）。「按路由渐进」因此可行但对象是**页面/Tab**，不是 React Router 的路由组件。
 
-**跨页导航是 SPA 客户端跳转，不是整页加载**：`AppShellV2.tsx:5` 引 `useNavigate`、`:73` 取实例，`:387`（`onShowSettings`）、`:257, :326`（项目切换）、`:358, :361`（通知跳转）等全部走 `navigate(...)`——URL 变了但**不触发整页加载**。且服务端对全部 HTML 路由是单一通配：`ui/server/index.js:3471` `app.get('*')` 一律回旧 `dist/index.html`（`:3480-3483` 存在性检查 + `sendFile`）。⇒ **「静态托管按路径前缀选 bundle」只在整页加载时生效**：不新增托管分流，旧 SPA 内点进已迁移页面时永远还是旧 bundle；反向从新壳跳未迁移页也一样。渐进共存必须补两件事：**双入口托管**（改 `app.get('*')` 加前缀分支，或前置反代分流）与**双向导航拦截**（旧壳 `navigate` 到已迁前缀时改硬跳 `window.location`，新壳跳未迁路径时硬跳回旧 bundle）。跨壳硬跳会丢 SPA 内存态（WS 连接、流式中途文本、composer 草稿、滚动位置），详见 `accepted-diffs.md`。
+**跨页导航是 SPA 客户端跳转，不是整页加载**：`AppShellV2.tsx:5` 引 `useNavigate`、`:73` 取实例，`:387`（`onShowSettings`）、`:257, :326`（项目切换）、`:358, :361`（通知跳转）等全部走 `navigate(...)`——URL 变了但**不触发整页加载**。且服务端对全部 HTML 路由是单一通配：`ui/server/index.js:3471` `app.get('*')` 一律回旧 `dist/index.html`（`:3480` 拼路径、`:3483-3488` 存在即 `sendFile`）。⇒ **「静态托管按路径前缀选 bundle」只在整页加载时生效**：不新增托管分流，旧 SPA 内点进已迁移页面时永远还是旧 bundle；反向从新壳跳未迁移页也一样。渐进共存必须补两件事：**双入口托管**（改 `app.get('*')` 加前缀分支，或前置反代分流）与**双向导航拦截**（旧壳 `navigate` 到已迁前缀时改硬跳 `window.location`，新壳跳未迁路径时硬跳回旧 bundle）。跨壳硬跳会丢 SPA 内存态（WS 连接、流式中途文本、composer 草稿、滚动位置），详见 `accepted-diffs.md`。
 
 ## 二、对后端的依赖面（浏览器侧）
 
