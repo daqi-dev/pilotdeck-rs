@@ -6,3 +6,4 @@
 | 编号 | 日期 | 标题 |
 |------|------|------|
 | — | 2026-10-14 | Rust 后端怎么接上原版前端、怎么证明行为一致 → 取舍卡见 `docs/research/002_parity-boundary/decision.md` |
+| — | 2026-10-14 | 之前那次 PilotDeck Rust 迁移里，哪些可以照搬、教训是什么 → 取舍卡见 `docs/research/003_prior-attempt/decision.md` |
