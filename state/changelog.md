@@ -17,7 +17,7 @@
 **为什么变**：从只读旧 commit `0eba113` 接续已有实现，为阶段 C 的量分提供本仓二进制；机械目录适配与入口改动有独立阶段材料。
 
 **对你意味着什么**：源码与本地闸已具备；拿锁后 pure_text 握手冒烟退出 0，stdio/握手/module call trace 证据与 Rust 版本身份齐全，锁已释放。实际 Git 提交被 worktree 外的元数据写权限阻断，三阶段补丁/提交脚本与完整验证结果留在 `_tmp/`，尚未提交或 push。详见 `_tmp/RESULT.md` 和 `state/board.md`。
-> ⚠️ **协调者更正（2026-10-14 03:10）**：上面这次冒烟**实际跑的是 TS sidecar**——上游 adapter 在 sidecar 模式会把 `PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND` 覆盖成 `process.execPath`（`resources/PilotDeck/tools/agent-loop-parity/adapters/pilotdeck_gateway_impl.mjs:566-570`）；「implementation=rust」来自另一次单独的 `--version`，不是 trace。**真正的 Rust 握手**由协调者用 issue #7 的驱动（`scripts/parity/round.py --side rust`，经生产 YAML 模块绑定）核实：被启动命令是本分支编出的二进制，sha256 `8bc4889c…` 匹配，带生产的单个路径参数，`pure_text` 通过。
+> ⚠️ **协调者更正（2026-10-14 03:10）**：本次冒烟实际跑的是 TS sidecar；真正的 Rust 握手已由协调者另行核实，证据见 `state/board.md` 的同日「协调者更正」。
 
 ## 2026-10-13 · 系统诞生
 
