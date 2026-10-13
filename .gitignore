@@ -1,0 +1,43 @@
+# ── 第六组 过程材料：都不入库。日期一律打头方能一路排序；均禁裸文件 ──
+# 构建产物（可重建）：只许 YYYYMMDD-HHMMSS/，一次构建一个——按天分会撞车
+_build/
+# 一次性过程材料（用完即弃）：只许 YYYYMMDD-slug/
+_tmp/
+# 快照：只许 YYYYMMDD-slug/
+_archive/*
+# 例外：需入库可追溯的下线件，目录名以 -delisted 结尾，带 README 说明为什么下线
+!_archive/*-delisted/
+
+# ── 第二组 外部参考：本地留存，仅 README 入库 ──
+resources/**
+!resources/README.md
+
+# 注：notes/ 装同事写的、要读的东西，**入库**。只有你自己看的速记不放这里，放 _tmp/
+
+# 大件（本地 + 云盘，绝不入库；按需加例外）
+*.key
+*.pptx
+*.pdf
+*.mp4
+*.mov
+*.zip
+
+# 密钥（永不入库）
+.env
+.env.local
+.env.*.local
+
+# 系统
+.DS_Store
+__pycache__/
+*.pyc
+node_modules/
+.venv/
+
+# ── 本项目补充（初始化模板漏了这几样）──
+# skill 是软链，指向 ~/.42plugin/cache/，只在本机有效（demo-2/00）
+.claude/skills/
+# 双谱系评审配置，因机器而异
+.claude/dev-launch.review.md
+# Rust 构建产物
+target/

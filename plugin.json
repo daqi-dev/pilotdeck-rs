@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "pdrs",
+  "version": "0.1.0",
+  "description": "PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust",
+  "license": "MIT",
+  "keywords": ["aias"]
+}
