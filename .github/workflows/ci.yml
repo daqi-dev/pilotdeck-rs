@@ -23,3 +23,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: 测试
         run: cargo test --all
+      # A3 · gateway 协议 schema 静态断言：CI 没有基线目录（resources/ 不入库），
+      # check_schema.py 自动退回「快照 × method-inventory.md × schema」三方比对；基线核对只在本地跑。
+      - name: gateway 协议 schema 静态断言（A3）
+        working-directory: .
+        run: python3 scripts/gateway-parity/check_schema.py
