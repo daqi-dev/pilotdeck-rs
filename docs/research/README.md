@@ -8,6 +8,7 @@
 | 001 | 2026-10-13 | [真实重写/移植案例](001_rewrite-case-studies.md) |
 | [002](002_parity-boundary/) | 2026-10-14 | Rust 后端怎么接上原版前端、怎么证明行为一致 |
 | [003](003_prior-attempt/) | 2026-10-14 | 之前那次 PilotDeck Rust 迁移里，哪些可以照搬、教训是什么 |
-| [005](005_phase-a-gateway/) | 2026-10-14 | 阶段 A：用 Rust 替换 18789 gateway（004 预留给阶段 C 模块对应表） |
 | [007](007_frontend/) | 2026-10-14 | 前端重构（浏览器端 `ui/src` → Rust）：依赖面、重依赖对应物、改不改与怎么改的取舍 |
 | [006](006_phase-b-ui-server/) | 2026-10-14 | 阶段 B：用 Rust 替换 `ui/server`——切法、进程内 `src/`、对拍装置、鉴权、SSE、编排 |
+| [004](004_rust-ts-module-mapping/) | 2026-10-14 | 阶段 C S7：Rust↔TS 模块对应检查与膨胀候选清单 |
+| [005](005_phase-a-gateway/) | 2026-10-15 | 阶段 A：用 Rust 替换 18789 gateway |
