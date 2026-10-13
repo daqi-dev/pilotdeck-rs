@@ -4,7 +4,7 @@ number: "002"
 date: 2026-10-15
 title: 阶段 A：Rust 替换 18789 gateway——代理先行、装置其次、只读 method 首迁
 tags: [phase-a, gateway, proxy, parity]
-status: draft
+status: ready
 related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_phase-c-agent-loop-sidecar, experiments/exp002-connection-state]
 ---
 
@@ -14,7 +14,7 @@ related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_p
 
 为什么这样设计见 `docs/research/005_phase-a-gateway/`（`must-know` / `gap` / `decision` / `method-inventory`，行号均已回源核对）。一句话：在 `ui/server` 与 `apps/desktop` 一行不改的前提下，Rust gateway 先以透明代理占位（实验与验收全走高位端口，绝不绑定 18789——用户本机的 PilotDeck 正占着它），配一套能机器判的对拍装置，再把冻结清单里的 (a) 类 **15** 个只读 method 逐个本地化。取舍卡五项技术项（粒度 / 装置 / 类型 / 编排 / crate）为 **AI 代拍，待人复核**；两项红线项（A1 是否提前、桌面端是否验收）**待人拍板，不代拍**（`005/decision.md` #5/#7）。
 
-**阶段门（待人拍板，不代拍）**：阶段 A 的**全部**步骤（A1–A4）默认等**阶段 C 对拍达标**（exp004 达标且报告冻结）后才开工——`.42cog/intent.md:24`「前一阶段对拍达标之前不进下一阶段」是人定的红线，AI 不以「不写产品代码」等理由自行收窄（第 1 轮评审判 P0，原豁免已删）。唯一可能的例外：**A1 只跑 exp003 实验、不写替换代码**是否允许提前，单列在 `005/decision.md` 拍板表 #5，**待人拍板，未拍板前按不提前执行**。全量对拍同一时刻只跑 1 个（`CLAUDE.md` §五）。
+**阶段门（AI 代拍，待人复核——人 2026-10-14 夜授权 AI 代做全部判断，见 `CLAUDE.md` §五「授权扩大」）**：阶段 A **可以与阶段 C 并行**——两者替换的进程不同（C = sidecar，A = gateway），阶段 A 的对拍是「Rust gateway + TS sidecar」对「TS gateway + TS sidecar」，不依赖阶段 C 的进度。**合并进 main 的每一步仍须阶段 A 自己的对拍达标。**
 
 ## 现状（已确认）
 
@@ -35,11 +35,11 @@ related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_p
 
 ## 执行步骤
 
-> 拆分逻辑与计划 001 相同：issue 之间隔着人的闸门——A1 开工本身受阶段门约束（默认等阶段 C 达标；提前须人拍板，`005/decision.md` #5 不代拍），A3 冻结 schema 交人批，A4 等 exp004 达标报告冻结。后续 issue 在前一条合并后再开。
+> 拆分逻辑与计划 001 相同：issue 之间隔着人的闸门——A1 可直接开工（`005/decision.md` #5 已 AI 代拍），A3 冻结 schema（AI 代批，待人复核），A4 合并前须 A2 装置对拍达标。后续 issue 在前一条合并后再开。
 
-### Issue A1 · exp003：真 `ui/server` 连透明代理（GitHub 另开；开工时机：默认等阶段 C 对拍达标，「只跑实验、不写替换代码」的提前须人拍板——`005/decision.md` #5，不代拍）
+### Issue A1 · exp003：真 `ui/server` 连透明代理（GitHub 另开；可与阶段 C 并行，`005/decision.md` #5 AI 代拍）
 
-**S0 前置确认**：阶段 C 的 exp004 达标报告已冻结；或人已在 `005/decision.md` #5 明确批准 A1 提前（批准范围仅限跑实验，不含任何 method 替换代码）。
+**S0 前置确认**：`CLAUDE.md` §五的硬红线（高位端口、隔离 `PILOT_HOME`、不碰用户进程）逐条核对。
 
 **S1 搭代理**（代理代码**只留 `src/pilotdeck-gateway` 一份**，铁律 7：不留 `_tmp` 副本、不留「先住 `_tmp` 再转正」的双份；`_tmp/<日期>-exp003/` 只放运行产物——帧日志、隔离 `PILOT_HOME`、token 文件）
 - Rust 单 bin：`tokio` + `tokio-tungstenite`（codex-rs 同款选型，做法见 `app-server-transport/src/transport/`，不抄代码）。TCP 监听 → HTTP 请求全量反代到上游（`hyper` 客户端）→ `/ws` upgrade 成功后，客户端侧与上游侧各一条 WS，帧原文双向搬运。**帧日志由 driver 侧录制**（S3 的驱动脚本/编排各自落盘 jsonl：方向 + 单调序号 + 帧全文）——被测代理不负责自证；代理内部日志仅作调试辅助，不进比对口径。
@@ -83,7 +83,7 @@ related: [research/005_phase-a-gateway, research/002_parity-boundary, plan/001_p
 **S3 冻结与用途**：人过目 → 冻结进 `specs/gateway-parity/FROZEN.md`；此后两侧（TS 基线、Rust）录到的帧先过 schema 校验再进比对；Rust 侧 serde 类型以「schema × 实例 fixtures」对拍（A4 用）。
 **怎么算做完**：[ ] 断言脚本进 CI 可跑；[ ] schema 冻结登记；[ ] `gap.md` 2.1 的「无运行时 schema」关闭。
 
-### Issue A4 · `pilotdeck-gateway` crate：透传 + (a) 类本地化（**阶段 C 对拍达标后才开工**——前置条件机器可判：阶段 C 的 exp004 达标报告已冻结进 `docs/experiments/`；若 A1 曾获准提前，本条仍不放松）
+### Issue A4 · `pilotdeck-gateway` crate：透传 + (a) 类本地化（可与阶段 C 并行；合并前须本阶段 A2 装置对拍达标）
 
 **S1 crate 骨架**：`src/pilotdeck-gateway`（单 crate，AI 代拍 #6；A1 的代理代码已在此，无转正搬运）；`pilotdeck-cli` 加 `server` 子命令委派之。模块：`acceptor`（仅 `/ws` upgrade，复刻手写 WS 的可见行为——**怪癖清单**：不要求分片、continuation(0x0) 静默丢弃、RSV 不校验、回 pong、客户端 close 回 1000 不回显、unmasked 帧按异常路径断开、close code 4001/4002/4003 语义含 `GatewayWsConnection.ts:89` 的 4002 `invalid_frame`，细目见 `005/gap.md` 1.5）、`upstream`（连 TS 的客户端，帧掩码）、`http_proxy`（全量反代 + `/health` 本地）、`pairing`（连接 1:1 + 双向关闭）、`dispatch`（本地 method 白名单，其余透传）。
 **S2 (a) 类逐个本地化**：本地化清单 = `005/method-inventory.md` 冻结的 **(a) 类 15 个**（改清单=改分母，须人过目）。每个 method 一小步：读同一 `PILOT_HOME` 实现 → 场景组对拍绿 → 上游观测点录帧证明**该 method 的 request 没有转发到 TS** → 登记差异（bug 按_intent_「默认修」）。**`describe_server` 保持透传**（`gap.md` 3.4，不在 (a) 内），hello_ok 仍由 TS 生成；每迁一个在 `specs/gateway-parity/accepted-diffs.md` 对应登记。
@@ -125,7 +125,7 @@ node --import tsx scripts/gateway-parity/export_schema.mjs --check
 | R5 | (a) 类本地化后 `describe_server`/能力清单与 TS 漂移 | `describe_server` 与 `hello_ok` 保持 TS 生成；一致性断言进对拍 |
 | R6 | Rust 读盘与 TS 写盘并发（transcript 半行、sqlite 锁） | (a) 类只读；读实现容忍截断行（`read_subagent_messages` 备注，`005/method-inventory.md` #82）；对拍在落盘快照上比最终态 |
 | R7 | 误碰用户环境（18789、3001、`~/.pilotdeck`、用户进程） | 一律高位端口（287xx/33xx）+ `PILOT_HOME`/`TMPDIR` 指向 `_tmp/` + 编排生成的隔离 token 文件（`PILOTDECK_GATEWAY_TOKEN_PATH` 指向它）；绝不 kill 用户进程；每次实验把端口清单写进 readme |
-| R8 | 阶段门被进度压力侵蚀（「先写一点替换代码」「实验顺便把 dispatch 也做了」） | 阶段门待人拍板不代拍（`005/decision.md` #5）；A4 开工条件 = exp004 达标报告冻结，机器可判；A1 即使获批提前，范围仅限实验，越界即停 |
+| R8 | 阶段门被进度压力侵蚀（「先写一点替换代码」「实验顺便把 dispatch 也做了」） | 并行已由 AI 代拍（`005/decision.md` #5），但**合并闸门不放松**：每条 PR 必须本阶段对拍达标 + 双谱系评审；超出 issue 范围的改动另开 issue |
 
 ## 范围外
 
