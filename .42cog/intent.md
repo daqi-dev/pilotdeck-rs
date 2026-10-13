@@ -8,7 +8,7 @@
 
 一个用 Rust 写的 PilotDeck **agent 循环 sidecar**（阶段 C）：TS 那一侧一行不改，只靠环境变量 `PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND` 指向它，在上游自带的对拍装置 `tools/agent-loop-parity/` 里，与 **TS sidecar** 的语义事件归一化后一致；基线 `OpenBMB/PilotDeck@cc7c4e6`（standalone_alpha1，2026-10-13）。阶段 A 再替换 18789 上的 gateway，阶段 B 再替换 `ui/server`，届时回来改这一句。
 
-怎么算数：**对拍**。关联度 ＝ Rust sidecar 与 TS sidecar 一致的场景数 / 装置的全部场景数（`cc7c4e6` 上 53 个）。同一场景要**连跑多遍都一致**才算数（exp001：有 7 个场景时有时无）。基线自身 native 与 TS sidecar 之间的 31 处稳定差异先登记进「已接受差异」清单，不算到 Rust 头上。每个 PR 要么让这个数变大，要么说明它为什么不变。对照物钉死在 `cc7c4e6`，不是「最新的上游」。
+怎么算数：**对拍**。关联度 ＝ Rust sidecar 与 TS sidecar 一致的场景数 / （53 − 原版自己就不稳定的场景数）；「一致」与「原版不稳定」的判法以冻结的 `specs/parity/README.md` 为准（k = 5 遍全一致；原版不稳定的场景逐个由人批准排除，且排除后仍须 ≥ 45 个）。基线自身 native 与 TS sidecar 之间的 31 处稳定差异先登记进「已接受差异」清单，不算到 Rust 头上。每个 PR 要么让这个数变大，要么说明它为什么不变。对照物钉死在 `cc7c4e6`，不是「最新的上游」。
 
 > 依据：`docs/research/002_parity-boundary/decision.md`（拍板：先 C 再 A 再 B · 驱动用 TS · 默认修 bug · 归一化后相同）· `docs/experiments/exp001-baseline-parity-run/` · `docs/experiments/exp002-connection-state/`。
 

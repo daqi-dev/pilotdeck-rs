@@ -4,7 +4,7 @@ number: "001"
 date: 2026-10-14
 title: 阶段 C：agent 循环 Rust sidecar——回捞尺子、搬入旧代码、量分、对应检查
 tags: [phase-c, sidecar, parity, reuse]
-status: draft
+status: in-progress
 related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-boundary, research/003_prior-attempt]
 ---
 
@@ -67,7 +67,7 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 - 从旧现场 `build/source-repository` @ `0eba113` 复制 `rust/crates/{pilotdeck-agent,pilotdeck-transport,pilotdeck-protocol,pilotdeck-tokenizer}` 与 `rust/vendor/tiktoken-rs`（8.4 MB，保留其 LICENSE）到 `src/`，登记进 `src/Cargo.toml` 的 workspace，搬入旧 `[workspace.dependencies]` 里阶段 C 用得上的那几条（版本照旧钉死）。
 - **不搬**：`plugin/workspace/terminal-protocol`、`ui-probe`、`desktop-probe`、`pilotdeck-protocol-probe`。
 - ⚠️ **workspace 继承项要一起搬**（评审 A+B 撞车）：旧 `rust/Cargo.toml` 的 `exclude = ["vendor/tiktoken-rs"]`、`[workspace.package]` 的 `rust-version` / `version` / `license-file`、以及 `[workspace.lints]`（若有），crate 里都是 `*.workspace = true` 继承的；依赖**以各 crate 自己的 manifest 为准**（旧 workspace 依赖表之外还有 `ryu-js`、`base64`、`rustc-hash` 等）。本仓 `src/Cargo.toml` 与它合并时，manifest 的改动列入 `src/PROVENANCE.md` 的「适配例外」。
-- ⚠️ **sidecar 入口要接受 gateway 传来的路径参数**（评审 A，主会话核实）：基线 profile 总是传 `args: [sidecarPath]`（`resources/PilotDeck/src/cli/AgentLoopDeploymentProfile.ts:73`），而旧入口只接受空参数或 `--stdio`，否则退出码 2（旧 `rust/crates/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:22`）；旧执行是靠 `formal-bind.mjs` 拦截 spawn、以空参数起 Rust 才绕过去的。⇒ 在入口里接受并忽略这一个位置参数，**单独一个提交**，列入适配例外。（接入方式待人拍板，见文末。）
+- ⚠️ **sidecar 入口要接受 gateway 传来的路径参数**（评审 A，主会话核实）：基线 profile 总是传 `args: [sidecarPath]`（`resources/PilotDeck/src/cli/AgentLoopDeploymentProfile.ts:73`），而旧入口只接受空参数或 `--stdio`，否则退出码 2（旧 `rust/crates/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:22`）；旧执行是靠 `formal-bind.mjs` 拦截 spawn、以空参数起 Rust 才绕过去的。⇒ 在入口里接受并忽略这一个位置参数，**单独一个提交**，列入适配例外。（人已拍板：改 Rust 入口。）
 - 写 `src/PROVENANCE.md`：来源仓与 commit、每个搬入文件的 sha256、适配例外清单、「此后改动走本仓提交链」。
 - 占位 crate `pilotdeck-core` 删掉（无内容）；`pilotdeck-cli` 留给阶段 A。
 
@@ -134,12 +134,12 @@ python3 scripts/parity/g03_compare.py ts-r1 rust-r1
 
 阶段 A（18789 gateway）与阶段 B（`ui/server`）；性能；发版；把对拍接进 GitHub CI（单遍约 4 分钟且要构建基线，先只在本地跑）。
 
-## 待人拍板（评审后新增）
+## 人已拍板（评审后新增，2026-10-14 均按建议）
 
-| # | 需要拍板的 | 选项 | 建议 |
+| # | 需要拍板的 | 选项 | 建议 → 决定 |
 |---|---|---|---|
-| 1 | Rust sidecar 怎么接进 TS gateway | 改 Rust 入口、接受并忽略路径参数（TS 零改动） · 沿用旧执行的 spawn 拦截（`bind.mjs`） | 改 Rust 入口：真实部署也走这条路，拦截只适合测试 |
-| 2 | `specs/parity/README.md` 第三节的阈值程序与分母 | 见该文件 | 见该文件 |
+| 1 | Rust sidecar 怎么接进 TS gateway | 改 Rust 入口、接受并忽略路径参数（TS 零改动） · 沿用旧执行的 spawn 拦截（`bind.mjs`） | 改 Rust 入口：真实部署也走这条路，拦截只适合测试 → ☑ **改 Rust 入口** |
+| 2 | `specs/parity/README.md` 第三节的阈值程序与分母 | 见该文件 | ☑ 按该文件，已冻结 |
 
 ## 相关
 

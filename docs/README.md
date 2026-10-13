@@ -18,4 +18,4 @@
 
 | 编号 | 日期 | 标题 | status |
 |------|------|------|--------|
-| [001](plan/001_phase-c-agent-loop-sidecar.md) | 2026-10-14 | 阶段 C：回捞尺子、搬入旧代码、量分、对应检查 | draft |
+| [001](plan/001_phase-c-agent-loop-sidecar.md) | 2026-10-14 | 阶段 C：回捞尺子、搬入旧代码、量分、对应检查 | in-progress |
