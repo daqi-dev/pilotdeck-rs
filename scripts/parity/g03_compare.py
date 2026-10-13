@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -23,13 +24,21 @@ WORKTREE = Path(__file__).resolve().parents[2]
 
 
 def baseline_path() -> Path:
-    default = WORKTREE / "resources/PilotDeck"
-    if default.is_dir():
-        return default.resolve()
+    # 显式 PDRS_BASELINE 优先（PR #13 第 2 轮评审 P3）；其次本 worktree 的 resources/；再次主仓的 resources/。
     configured = os.environ.get("PDRS_BASELINE")
-    if configured and Path(configured).is_dir():
-        return Path(configured).resolve()
-    raise FileNotFoundError(f"PilotDeck baseline not found at {default}; set PDRS_BASELINE to an existing directory")
+    if configured:
+        if Path(configured).is_dir():
+            return Path(configured).resolve()
+        raise FileNotFoundError(f"PDRS_BASELINE={configured} is not a directory")
+    candidates = [WORKTREE / "resources/PilotDeck"]
+    common = subprocess.run(["git", "-C", str(WORKTREE), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                            capture_output=True, text=True)
+    if common.returncode == 0 and common.stdout.strip():
+        candidates.append(Path(common.stdout.strip()).parent / "resources/PilotDeck")
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    raise FileNotFoundError(f"PilotDeck baseline not found at {candidates}; set PDRS_BASELINE to an existing directory")
 
 
 BASELINE = baseline_path()

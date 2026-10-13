@@ -77,26 +77,29 @@ class ReviewControls(unittest.TestCase):
         (worktree / '_tmp').mkdir(parents=True)
         out_root = worktree / '_tmp/parity'
         lock = self.root / 'parity.lock'
-        real_run, real_lock = subprocess.run, R.parity_lock
-        seen_timeouts = []
-        def sleeping_runner(cmd, **kwargs):
-            seen_timeouts.append(kwargs['timeout'])
-            return real_run([sys.executable, '-c', 'import time; print("before timeout", flush=True); time.sleep(10)'],
-                            text=True, capture_output=True, timeout=kwargs['timeout'])
+        real_popen, real_lock = subprocess.Popen, R.parity_lock
+        spawned = []
+        def sleeping_popen(cmd, **kwargs):
+            spawned.append(kwargs.get('start_new_session'))
+            return real_popen([sys.executable, '-c', 'import time; print("before timeout", flush=True); time.sleep(10)'], **kwargs)
         def isolated_lock(**kwargs):
             return real_lock(lock, **kwargs)
         argv = ['round.py', '--side', 'ts', '--label', 'timeout', '--scenario', 'pure_text', '--timeout-seconds', '0.2']
         stdout = io.StringIO()
+        started = time.monotonic()
         with patch.object(sys, 'argv', argv), patch.dict(os.environ, {'PDRS_OUT': str(out_root)}), \
              patch.object(G, 'WORKTREE', worktree), patch.object(G, 'BASELINE', baseline), \
              patch.object(G, 'scenario_catalog', return_value={'pure_text': {}}), \
              patch.object(R.shutil, 'which', return_value=sys.executable), \
              patch.object(R.subprocess, 'check_output', return_value='v-control\n'), \
-             patch.object(R.subprocess, 'run', side_effect=sleeping_runner), \
+             patch.object(R.subprocess, 'Popen', side_effect=sleeping_popen), \
              patch.object(R, 'parity_lock', side_effect=isolated_lock), redirect_stdout(stdout):
             self.assertEqual(R.main(), 1)
         run = json.loads((out_root / 'timeout/run.json').read_text())
-        self.assertEqual(seen_timeouts, [0.2])
+        # 子进程在独立进程组里起，超时后整组被杀：远早于 sleep(10) 结束就返回
+        self.assertEqual(spawned, [True])
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertIn('timed out after 0.2', run['blocked'][0])
         self.assertEqual(run['status'], 'BLOCKED')
         self.assertFalse(run['valid_round'])
         self.assertFalse(lock.exists())
@@ -152,12 +155,15 @@ class ReviewControls(unittest.TestCase):
         fallback = self.root / 'external-baseline'
         local.mkdir(parents=True)
         fallback.mkdir()
+        # 显式 PDRS_BASELINE 优先；其次 worktree 的 resources/；都没有（且不在 git 仓里）就报错
         with patch.object(G, 'WORKTREE', self.root), patch.dict(os.environ, {'PDRS_BASELINE': str(fallback)}):
-            self.assertEqual(G.baseline_path(), local.resolve())
-            local.rmdir()
             self.assertEqual(G.baseline_path(), fallback.resolve())
             with patch.dict(os.environ, {'PDRS_BASELINE': ''}):
-                with self.assertRaisesRegex(FileNotFoundError, 'set PDRS_BASELINE'):
+                self.assertEqual(G.baseline_path(), local.resolve())
+                local.rmdir()
+                not_a_repo = subprocess.CompletedProcess(args=[], returncode=128, stdout='', stderr='')
+                with patch.object(G.subprocess, 'run', return_value=not_a_repo), \
+                     self.assertRaisesRegex(FileNotFoundError, 'set PDRS_BASELINE'):
                     G.baseline_path()
 
     def test_malformed_self_comparison_returns_structured_failure(self):
