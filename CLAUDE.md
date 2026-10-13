@@ -76,3 +76,10 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 - `specs/parity/` 下 `FROZEN.md` 登记过的文件，**AI 一律不改**；要改就另开 issue 写清理由，等人批。`accepted-diffs.md` 只许追加，每条要写类别与依据。
 - 定阈值（k、m）的时候**不许看 Rust 的运行结果**；Issue #1 不跑 Rust。
 - 每次提交前：`cd specs/parity && shasum -a 256 README.md` 与 `FROZEN.md` 对得上。
+
+### 夜跑规则（2026-10-14 夜，人定；人睡觉、08:30 收工）
+- **AI 代守全部闸门**：口径（`acceptance.md` / `normalization.md`）只有在机器检查全过、\|S\| ≥ 45、两家评审都无 P0/P1/P2 时才**临时批准**；CI 绿且评审通过的 PR 合进 main；按计划接着开下一条 issue。每一处代拍都写「**AI 代批，待人复核**」，并记进 `state/morning-report-20261014.md`。
+- 分工：**Claude 只当协调者**（派活、核实、跑对拍、合并、写报告）；**写代码交给 codex**，评审交给另一家（codex 写的给 GLM 审，GLM 写的给 codex 审）；`dsh`（DeepSeek）配好 key 后作第三家备用。
+- codex 写代码的命令模板：`codex exec --sandbox workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check -C <worktree> < <任务文件>`。**每个任务一个 worktree**（`_build/wt-<名字>`，≤ 5 个），任务文件写进 `_tmp/<日期>-<名字>/task.md`。
+- 硬红线（夜里也不放开）：不改已冻结的尺子；不碰 `~/.pilotdeck`、用户自己在跑的 PilotDeck 进程、`~/ws/PilotDeck-rust-program-20261009/`；每次推送前 gitleaks；不强推 main；同一失败 3 次就挂起跳下一件；磁盘超 30 GB 就停；全量对拍同一时刻只跑 1 个（锁：`mkdir /tmp/pdrs-parity.lock`）。
+- **08:30 停止派新活**，收尾手上的，写交接与晨报。
