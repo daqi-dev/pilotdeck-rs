@@ -8,3 +8,4 @@
 | — | 2026-10-14 | Rust 后端怎么接上原版前端、怎么证明行为一致 → 取舍卡见 `docs/research/002_parity-boundary/decision.md` |
 | — | 2026-10-14 | 之前那次 PilotDeck Rust 迁移里，哪些可以照搬、教训是什么 → 取舍卡见 `docs/research/003_prior-attempt/decision.md` |
 | [001](001_phase-c-agent-loop-sidecar.md) | 2026-10-14 | 阶段 C：回捞尺子、搬入旧代码、量分、对应检查（in-progress） |
+| [002](002_phase-a-gateway.md) | 2026-10-15 | 阶段 A：代理先行、装置其次、只读 method 首迁（draft，含 AI 代拍待人复核） |
