@@ -11,7 +11,7 @@
 - `src/pilotdeck-tokenizer/Cargo.toml`：vendor 路径从 `../../vendor/tiktoken-rs` 改为 `../vendor/tiktoken-rs`，适配从 `rust/crates/` 到 `src/` 的布局。
 - `src/pilotdeck-protocol/src/bin/pilotdeck-protocol-probe.rs`：原样快照后移除；该 probe bin 是本任务明确排除的范围，源文件哈希仍保留以审计完整原样搬入。
 - `src/pilotdeck-core/Cargo.toml`、`src/pilotdeck-core/src/lib.rs`：删除无实际能力的占位 crate。
-- `src/pilotdeck-cli/Cargo.toml`：移除占位 core 依赖。
+- `src/pilotdeck-cli/Cargo.toml`：移除占位 core 依赖；补齐 workspace rust-version 与 lints 继承，使 CLI 同样受 `unsafe_code = "forbid"` 约束。
 - `src/pilotdeck-cli/src/main.rs`：直接用 `env!("CARGO_PKG_VERSION")` 打印版本，保持现有输出。
 
 - `src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs`：增加参数判定辅助函数，额外接受恰好一个非空且不以 `--` 开头的位置参数并忽略它，使 TS gateway 的 `args: [sidecarPath]` 能拉起 Rust。保留无参数、`--stdio`、`--version` 与非法参数退出码 2；增加参数矩阵回归测试、空串进程退出码测试和 usage 提示。
