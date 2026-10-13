@@ -138,7 +138,7 @@ if (mode === 'ui') {
   // Replay is this supplementary probe's assertion. Keep a failed post-replay
   // answer visible; never relabel the actual UI automatic replay as successful.
   if (answer.delivered === false) {
-    save({ previousBinding, nextBinding: second.interactionBinding, before, replay, active, answer,
+    save({ status: 'PASS-with-note', previousBinding, nextBinding: second.interactionBinding, before, replay, active, answer,
       limitation: 'baseline rejects post-reconnect elicitation answer on both direct and proxy connections' });
     second.close();
     process.exit(0);

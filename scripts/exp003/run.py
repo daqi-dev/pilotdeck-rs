@@ -16,6 +16,9 @@ SCRIPT = ROOT / 'scripts/exp003'
 TOKEN = 'exp003-isolated-test-token'
 PROCESSES = []
 RESULTS = {}
+LISTENERS = []
+CLEANUP_ERRORS = []
+STOPPED = set()
 
 
 def save(name, value):
@@ -24,21 +27,57 @@ def save(name, value):
 
 def start(name, argv, env, port=None, cwd=ROOT):
     log = (OUT / f'{name}.log').open('w')
-    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT)
-    entry = {'name': name, 'pid': proc.pid, 'port': port, 'argv': [str(x) for x in argv]}
+    try:
+        proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+    except Exception:
+        log.close()
+        raise
+    entry = {'name': name, 'pid': proc.pid, 'processGroup': proc.pid, 'port': port,
+             'argv': [str(x) for x in argv]}
     PROCESSES.append((proc, log, entry))
     save('processes.json', [item[2] for item in PROCESSES])
     return proc
 
 
 def stop(proc):
-    if proc.poll() is None:
-        proc.send_signal(signal.SIGTERM)
+    if proc.pid in STOPPED:
+        return
+    # Every group was created by start(); never discover or kill a group by port.
+    def signal_group(sig):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
+
+    try:
+        signal_group(signal.SIGTERM)
         try:
             proc.wait(timeout=8)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            pass
+        # Also reap descendants that survived TERM even if the direct child exited.
+        signal_group(signal.SIGKILL)
+        if proc.poll() is None:
             proc.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        CLEANUP_ERRORS.append({'pid': proc.pid, 'error': str(error)})
+        print(f'cleanup warning for owned group {proc.pid}: {error}', flush=True)
+    else:
+        STOPPED.add(proc.pid)
+
+
+def assert_loopback(port, proc):
+    if port not in (3301, 28789, 28790):
+        raise RuntimeError(f'port {port} is outside exp003')
+    result = subprocess.run(['lsof', '-nP', '-a', '-p', str(proc.pid), '-iTCP',
+                             '-sTCP:LISTEN', '-Fn'], capture_output=True, text=True, timeout=5)
+    addresses = [line[1:] for line in result.stdout.splitlines() if line.startswith('n')]
+    LISTENERS.append({'pid': proc.pid, 'port': port, 'addresses': addresses,
+                      'loopbackOnly': result.returncode == 0 and addresses == [f'127.0.0.1:{port}']})
+    save('listeners.json', LISTENERS)
+    if not LISTENERS[-1]['loopbackOnly']:
+        raise RuntimeError(f'owned process {proc.pid} must listen only on 127.0.0.1:{port}: {addresses}')
 
 
 def wait_http(port, proc):
@@ -49,6 +88,7 @@ def wait_http(port, proc):
         try:
             with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=1) as response:
                 if response.status == 200:
+                    assert_loopback(port, proc)
                     return
         except (OSError, urllib.error.URLError):
             time.sleep(.1)
@@ -82,6 +122,12 @@ model:
             maxOutputTokens: 8192
 telemetry:
   enabled: false
+''' + f'''webui:
+  runtime:
+    host: 127.0.0.1
+    serverPort: 3301
+    databasePath: {json.dumps(str(home / 'auth.db'))}
+    workspacesRoot: {json.dumps(str(OUT / 'workspaces'))}
 ''')
     env = dict(os.environ)
     # Prevent inherited runtime/token/sidecar configuration from changing the experiment.
@@ -116,10 +162,17 @@ def check_driver(proc, timeout=60):
         raise RuntimeError(f'driver exited {code}; see its log')
 
 
+def protocol_probe(env, baseline, project, label, url):
+    check_driver(driver('reconnect-protocol', dict(env, EXP003_GATEWAY_URL=url), baseline, project, label))
+    evidence = json.loads((OUT / f'{label}.json').read_text())
+    if evidence.get('status') == 'PASS-with-note':
+        return {'status': 'PASS-with-note', 'note': evidence['limitation']}
+
+
 def scenario(name, callback):
     try:
-        callback()
-        RESULTS[name] = {'status': 'PASS'}
+        result = callback()
+        RESULTS[name] = result if isinstance(result, dict) else {'status': 'PASS'}
     except Exception as error:
         RESULTS[name] = {'status': 'FAIL', 'error': str(error)}
     save('scenarios.json', RESULTS)
@@ -137,6 +190,8 @@ def main():
         raise RuntimeError('existing evidence: archive this run under OUT before rerunning')
     for port in (3301, 28789, 28790):
         with socket.socket() as sock:
+            # Match service binds: old TCP TIME_WAIT is not a live listener.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(('127.0.0.1', port))
     (OUT / 'tmp').mkdir(exist_ok=True)
     project = OUT / 'project'
@@ -183,19 +238,20 @@ def main():
             # Exceed the real cache's 1s first backoff; do not alter the client delays.
             time.sleep(1.6)
             rs = proxy(env, 'restarted')
-            save('reconnect-process.json', {'killedPid': old_pid, 'replacementPid': rs.pid,
-                 'downSecondsUntilReplacementReady': time.monotonic() - killed_at})
-            check_driver(proc, 55)
-            frames = [json.loads(line) for line in (OUT / 'bridge-frames.jsonl').read_text().splitlines()]
-            methods = [item['frame'].get('method') for item in frames if isinstance(item.get('frame'), dict)]
+            ready_seconds = time.monotonic() - killed_at
+            try:
+                check_driver(proc, 55)
+            finally:
+                frames = [json.loads(line) for line in (OUT / 'bridge-frames.jsonl').read_text().splitlines()]
+                methods = [item['frame'].get('method') for item in frames if isinstance(item.get('frame'), dict)]
+                save('reconnect-process.json', {'killedPid': old_pid, 'replacementPid': rs.pid,
+                     'downSecondsUntilReplacementReady': ready_seconds,
+                     'downSecondsUntilDriverDone': time.monotonic() - killed_at, 'observedMethods': methods})
             assert 'reconnect_interaction' in methods and 'active_turn_snapshot' in methods
-            save('reconnect-process.json', {'killedPid': old_pid, 'replacementPid': rs.pid,
-                 'downSecondsUntilDriverDone': time.monotonic() - killed_at, 'observedMethods': methods})
 
         scenario('S4-reconnect', reconnect)
         for label, url in [('protocol-direct', 'ws://127.0.0.1:28790/ws'), ('protocol-proxy', 'ws://127.0.0.1:28789/ws')]:
-            scenario(label, lambda label=label, url=url: check_driver(driver('reconnect-protocol',
-                     dict(env, EXP003_GATEWAY_URL=url), baseline, project, label)))
+            scenario(label, lambda label=label, url=url: protocol_probe(env, baseline, project, label, url))
         scenario('S5-http', lambda: check_driver(driver('http', env, baseline, project)))
         scenario('close-codes', lambda: check_driver(driver('close', env, baseline, project)))
         stop(ui)
@@ -239,7 +295,37 @@ def main():
             entry['stopped'] = proc.poll() is not None
             log.close()
         save('processes.json', [item[2] for item in PROCESSES])
-    return 0 if RESULTS and all(item['status'] == 'PASS' for item in RESULTS.values()) else 1
+        ports = {}
+        for port in (3301, 28789, 28790):
+            try:
+                with socket.socket() as sock:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    sock.bind(('127.0.0.1', port))
+                ports[str(port)] = 'released (SO_REUSEADDR bind succeeded, socket then closed)'
+            except OSError as error:
+                ports[str(port)] = str(error)
+        owned_groups = {proc.pid for proc, _, _ in PROCESSES}
+        remaining_groups = []
+        # Signal 0 checks existence without sending a signal. No ps access or
+        # global process discovery is needed in the managed sandbox.
+        for group in sorted(owned_groups):
+            try:
+                os.killpg(group, 0)
+                remaining_groups.append(group)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                CLEANUP_ERRORS.append({'processGroup': group, 'error': f'group audit: {error}'})
+        audit = {'allRecordedProcessesStopped': all(item[0].poll() is not None for item in PROCESSES),
+             'cleanupErrors': CLEANUP_ERRORS, 'ports': ports,
+             'ownedProcessGroupsRemaining': remaining_groups,
+             'allOwnedProcessGroupsGone': not remaining_groups and not CLEANUP_ERRORS,
+             'allListenersLoopback': bool(LISTENERS) and all(item['loopbackOnly'] for item in LISTENERS)}
+        save('audit.json', audit)
+    clean = (audit['allRecordedProcessesStopped'] and audit['allListenersLoopback']
+             and audit['allOwnedProcessGroupsGone']
+             and all(value.startswith('released') for value in ports.values()))
+    return 0 if clean and RESULTS and all(item['status'] in ('PASS', 'PASS-with-note') for item in RESULTS.values()) else 1
 
 
 if __name__ == '__main__':
