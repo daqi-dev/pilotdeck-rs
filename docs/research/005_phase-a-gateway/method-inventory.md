@@ -38,8 +38,8 @@
 | 16 | `manager_sessions` | 待定 | GWC:309 → IPG:2828-2831 → `createLocalGateway.ts:1261-1268` | `registry.listSessions`，未核 |
 | 17 | `manager_browsers` | 待定 | GWC:312 → IPG:2832-2835 | 外部注入 port（`createLocalGateway.ts:1270`） |
 | 18 | `native_archive_manifest` | **(a)** | GWC:315 → IPG:2555-2560 → `createLocalGateway.ts:1183-1196` | 读盘 native transcript 后统计 |
-| 19 | `native_archive_entries` | **(a)** | GWC:318 → IPG:2562-2573 → `createLocalGateway.ts:1198-1216` | 读盘分页 |
-| 20 | `native_archive_artifact` | **(a)** | GWC:321 → IPG:2575-2587 → `createLocalGateway.ts:1217-1237` | `readFileAsync` 读工具产物 |
+| 19 | `native_archive_entries` | **(a)** | GWC:318 → IPG:2562-2573 → `createLocalGateway.ts:1197-1216` | 读盘分页 |
+| 20 | `native_archive_artifact` | **(a)** | GWC:321 → IPG:2575-2587 → `createLocalGateway.ts:1215-1237` | `readFileAsync` 读工具产物 |
 | 21 | `steer_turn` | (b) | GWC:276 → IPG:1859 | 轮次运行时 |
 | 22 | `cancel_steer` | (b) | GWC:278 → IPG:1886 | |
 | 23 | `abort_turn` | (b) | GWC:280 → IPG:2000 | |
@@ -101,7 +101,7 @@
 | 79 | `permission_decide` | **(c)** | GWC:492-506（binding 注入 `:502-505`、sdk 豁免分支 `:500-501`）→ IPG:2776-2778 | bus 在进程级（`gap.md` 3.3），透传最安全 |
 | 80 | `grant_session_permission` | (b) | GWC:507 → IPG:2837-2839 | `interactionCoordinator` |
 | 81 | `read_session_messages` | (b) | GWC:509 → IPG:2841-2861 | **改判**：合并 `turnEventCoordinator` 内存轮次快照并校验 epoch（`:2850-2860`） |
-| 82 | `read_subagent_messages` | **(a)** | GWC:511 → IPG:2863-2870（纯透传）→ `src/cli/GatewaySessionHistoryBundle.ts:107` → `src/web/server/readSessionMessages.ts:263+` | 盘上 subagent transcript；在飞时会读到半行，读实现须容忍截断 |
+| 82 | `read_subagent_messages` | **待定** | GWC:511 → IPG:2863-2870（纯透传）→ `src/cli/GatewaySessionHistoryBundle.ts:107` → `src/web/server/readSessionMessages.ts:263+` | 盘上 subagent transcript；在飞时会读到半行，读实现须容忍截断 | （第 2 轮评审：`read_subagent_messages` 先 `recoverTranscriptReplacements()`，可能写盘——`GatewaySessionHistoryBundle.ts:137-141`）
 | 83 | `fork_session` | (b)·写 | GWC:513 → IPG:2872-2879 | 会话复制 |
 | 84 | `replace_last_turn` | (b) | GWC:515 → IPG:2881-2883 | `turnReplacementCoordinator` |
 | 85 | `finalize_last_turn_replacement` | (b) | GWC:517 → IPG:2885-2889 | 同上 |
@@ -110,21 +110,21 @@
 | 88 | `reload_config` | 待定·写 | GWC:523 → IPG:2905-2910 | 写全局 + 广播 |
 | 89 | `prepare_weixin_login` | 待定 | GWC:528 → IPG:2912-2921 | 外部副作用（微信登录） |
 | 90 | `reload_extensions` | 待定·写 | GWC:537 → IPG:2923-2928 | 写全局 + 广播 |
-| 91 | `skill_list` | **(a)** | GWC:542 → IPG:2950-2952 | SkillManager 盘操作（IPG:2942-2948 注释） |
-| 92 | `skill_read` | **(a)** | GWC:544 → IPG:2954-2956 | |
+| 91 | `skill_list` | **待定** | GWC:542 → IPG:2950-2952 | SkillManager 盘操作（IPG:2942-2948 注释） | （第 2 轮评审：skill 读方法先读缓存配置再选禁用 / 外部后端——`createLocalGateway.ts:854`；两家分歧取保守）
+| 92 | `skill_read` | **待定** | GWC:544 → IPG:2954-2956 | | （第 2 轮评审：skill 读方法先读缓存配置再选禁用 / 外部后端——`createLocalGateway.ts:854`；两家分歧取保守）
 | 93 | `skill_write` | 待定·写 | GWC:546 → IPG:2958-2960 | 写全局 |
 | 94 | `skill_create` | 待定·写 | GWC:548 → IPG:2962-2964 | |
 | 95 | `skill_delete` | 待定·写 | GWC:550 → IPG:2966-2968 | |
 | 96 | `skill_import` | 待定·写 | GWC:552 → IPG:2970-2972 | |
-| 97 | `skill_validate` | **(a)** | GWC:554 → IPG:2974-2976 | 只读校验 |
-| 98 | `skill_scan` | **(a)** | GWC:556 → IPG:2978-2980 | 只读扫描 |
+| 97 | `skill_validate` | **待定** | GWC:554 → IPG:2974-2976 | 只读校验 | （第 2 轮评审：skill 读方法先读缓存配置再选禁用 / 外部后端——`createLocalGateway.ts:854`；两家分歧取保守）
+| 98 | `skill_scan` | **待定** | GWC:556 → IPG:2978-2980 | 只读扫描 | （第 2 轮评审：skill 读方法先读缓存配置再选禁用 / 外部后端——`createLocalGateway.ts:854`；两家分歧取保守）
 | 99 | `always_on_apply` | (b) | GWC:558 → IPG:2992-2998 | `alwaysOnControl` 运行时端口 |
 | 100 | `always_on_abort` | (b) | GWC:563 → IPG:2999-3009 | |
 | 101 | `always_on_rerun_plan` | (b) | GWC:568 → IPG:3010+ | |
 
-## (a) 类小结（15 个 = A4 本地化的分母）
+## (a) 类小结（10 个 = A4 本地化的分母；第 2 轮评审后由 15 降为 10，协调者改）
 
-`native_archive_manifest` · `native_archive_entries` · `native_archive_artifact` · `project_files_list` · `project_file_read` · `model_catalog_list` · `session_model_get` · `supported_agents` · `read_subagent_messages` · `list_projects` · `describe_project` · `skill_list` · `skill_read` · `skill_validate` · `skill_scan`
+`native_archive_manifest` · `native_archive_entries` · `native_archive_artifact` · `project_files_list` · `project_file_read` · `model_catalog_list` · `session_model_get` · `supported_agents` · `list_projects` · `describe_project`
 
 （`describe_server` 虽只读，但读的是运行时注入 options，且与 `hello_ok.serverInfo` 同源——**保持透传**，`gap.md` 3.4，不入 (a)。）
 
@@ -132,4 +132,4 @@
 
 - 本表冻结后即为计划 002 指标的**唯一分母**；改分类 = 改分母，须人过目并记变更，不得在实现过程中顺手改。
 - (b)(c) 的行号依据是「现状」而非「永久归属」：会话运行时整体迁移（计划 003）时，(b) 类随之整块迁走，本表只做透传清单用。
-- 「待定」36 个在各自状态域迁移前一律透传；其中存储介质未核的（upload/memory/snapshot/manager/hook），透传期顺带补核，结论回填本表。
+- 「待定」41 个在各自状态域迁移前一律透传；其中存储介质未核的（upload/memory/snapshot/manager/hook），透传期顺带补核，结论回填本表。
