@@ -33,7 +33,7 @@ related: [research/002_parity-boundary, research/003_prior-attempt, plan/001_pha
 
 `PILOTDECK_AGENT_LOOP_TRANSPORT=stdio`，`PILOTDECK_AGENT_LOOP_SIDECAR_COMMAND=<Rust 二进制>`，`PILOTDECK_AGENT_LOOP_SIDECAR_PATH=<占位参数>`（`AgentLoopDeploymentProfile.ts:62, 72`）。宿主仍是 TS gateway，模型、工具、权限、上下文都由宿主经 module call 提供；Rust sidecar 只含循环逻辑。
 
-⚠️ 评审更正：profile 总是给子进程传一个路径参数（`AgentLoopDeploymentProfile.ts:73`），旧 Rust 入口收到任何参数都退出（旧 `pilotdeck-agent-loop-sidecar.rs:22`）；旧执行靠 `formal-bind.mjs` 拦截 spawn 绕过。所以「零改动」只对 TS 成立，**Rust 入口要接受并忽略这个参数**（或沿用拦截，待人定）。
+⚠️ 评审更正：profile 总是给子进程传一个路径参数（`AgentLoopDeploymentProfile.ts:73`），旧 Rust 入口收到任何参数都退出（旧 `pilotdeck-agent-loop-sidecar.rs:22`）；旧执行靠 `formal-bind.mjs` 拦截 spawn 绕过。所以「零改动」只对 TS 成立，**Rust 入口要接受并忽略这个参数**（2026-10-14 人定，不沿用拦截）。
 
 ### 3. 拿什么比：Rust sidecar 对 **TS sidecar**，不对 native（要新做「sidecar 对 sidecar」配对）
 

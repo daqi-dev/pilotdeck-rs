@@ -4,6 +4,12 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-14 第六轮 · 第 8–10 步：架构 001、计划 001、对拍规约冻结、issue #1（分支 plan/001-phase-c）
+> **做了**：PR #5 合并 · 旧 sidecar 源码找到（旧现场 `build/source-repository` @ `0eba113`，产品约 2.7 万行 + 测试约 2.6 万行）· `docs/changes/arch/001` · `docs/plan/001`（Issue #1 尺子 / #2 搬代码 / #3 量分 + 对应检查）· `specs/parity/` 冻结（README `f8958a32…`、accepted-diffs `653ccb10…`）· 双谱系评审 1 轮：无 P0，P1 六条（4 条两谱系撞车）全部处理 → `docs/reviews/001_plan-phase-c.md`。
+> **人定**：worktree ≤ 5（AI 加「全量对拍串行」、磁盘 30 GB）· 改 Rust 入口接受路径参数 · 阈值程序按推荐（k = 5、\|S\| ≥ 45、分母 53 − 原版不稳定）。
+> **方法缺口（新增）**：⑫ `dev-docs` 与 `aias-meta-research` 的调研目录约定不一致（findings/sources vs NNN_slug/）⑬ 主会话差点把未经人看过的规则直接标成「冻结」——**冻结前必须有一次人过目**，已改。
+> **下一步**：开 issue #1 → 起草发车指令 → ⛔ 停。
+
 > ## 2026-10-14 第五轮 · 第 7 步探针 + 调研 003（分支 research/003-prior-attempt）
 > **做了**：PR #4 合并（main @ 25c6b21）· exp002（连接级状态：阶段 A 只有约 35 个只读 method 能按 method 切）· exp001（原样跑上游 `tools/agent-loop-parity/`：53 场景 0 BLOCKED、自检 54/54；native vs TS sidecar 31 个稳定差异；TS sidecar 自比 35/53）· 人改定**先 C 再 A 再 B**，intent 改为阶段 C 版（待人过目）· 调研 003（用户旧迁移：方案 + 执行现场），双谱系评审 1 轮，3 条 P1 已处理。
 > **关键发现**：① 上游自带 agent 循环 sidecar 边界与对拍装置，sidecar 二进制可用环境变量零改动替换 ② 旧执行的「原版自比 31/53」与本仓 exp001 独立复现一致 ③ **旧执行已做成尺子（G03 v1）与一个 51–53/53 的 Rust sidecar**，暂停在 `CORE.6` 10 open ④ `b243fa0` → `cc7c4e6` 只差 2 个提交，不碰 agent 循环。
