@@ -61,11 +61,11 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 
 **S5 双壳同源共存实验（新增，不过则 F3 起的共存方案回炉）**
 - **双入口托管两选项各搭一遍**：A——本地给 `ui/server` 的 `app.get('*')`（`index.js:3471`）打前缀分支的最小 patch（几行，实验用，不提交主线）；B——前置反代（caddy/nginx 任一）按前缀分流，`ui/server` 零改动。同一源下新 bundle 挂 `/probe` 前缀、其余走旧 bundle，量出两选项的改动面与运维面，记进实验文档供 F3 定夺。
-- **双向导航拦截**：旧壳点入 `/probe` 前缀页须硬跳（在旧壳 `navigate` 调用处包一层 `window.location.assign`，实验里量出实际要改几处：`AppShellV2.tsx` 的 navigate 调用点 + 各页内跳转）；新壳跳未迁路径硬跳回旧 bundle。
+- **双向导航拦截**：旧壳点入 `/probe` 前缀页须硬跳——拦截**下移到路由/历史层**（包住导航原语或监听 history，一处覆盖三类入口：`navigate` 调用、`<Link>`/`<NavLink>` 组件跳转（如 `auth/view/ModelConfigurationErrorScreen.tsx:40` 的 `<Link to="/settings/models">`，绕过 `navigate`）、浏览器前进/后退；不在各调用点逐处包 `window.location.assign`，逐处包必漏）；实验里逐类入口验证都被拦住；新壳跳未迁路径硬跳回旧 bundle。
 - **跨壳行为实测**：① 登录态跨壳保持（`auth-token` 等 storage 键）；② 前进/后退跨壳边界（整页加载、状态由 URL+storage 重建）；③ 流式中途跨壳再返回（`watch-session` 重挂，断口部分帧不可复现）；④ 重连行为按通道分断言——主 `/ws` 断开自动重连（1s→30s 退避），终端 `/shell` 断开**不**自动重连、须手动重进（旧实现 `onclose` 只清屏：`useShellConnection.ts:174-183`）；⑤ composer 草稿跨壳**保留**（`draft_input_<projectName>:<sessionId|'new'>` 键是共享契约，`chatStorage.ts:6-9`——旧壳本就有 localStorage 恢复/写入/离页刷新：`useChatComposerState.ts:316-321, 1621-1629, 1643-1644`；丢草稿是 bug 不是差异）。③–⑤ 按 `accepted-diffs.md` D1–D5 逐条对账，实测与描述不符的条目回炉改写，不静默保留。
 
 **Issue F1 怎么算做完**
-- [ ] 实验文档 `docs/experiments/exp006-frontend-probe/readme.md`：两候选 IME/流式/岛生命周期三命门的同负载实测数据（截图或 trace）与选型结论、双入口托管两选项对比、导航拦截改动点数量、A 类移植 1 条的成本
+- [ ] 实验文档 `docs/experiments/exp006-frontend-probe/readme.md`：两候选 IME/流式/岛生命周期三命门的同负载实测数据（截图或 trace）与选型结论、双入口托管两选项对比、路由/历史层拦截的入口覆盖验证（`navigate`/`Link`/`NavLink`/前进后退逐类过一遍）、A 类移植 1 条的成本
 - [ ] `accepted-diffs.md` D1–D5 逐条实测对账完成（对不上的条目已改写或移除）
 - [ ] 探针页在黑盒 e2e 子集上与旧前端同判（或差异逐条有解释）
 - [ ] 拍板栏 a′ 复核完成（人或晨报追认）
@@ -87,7 +87,7 @@ related: [research/007_frontend, research/002_parity-boundary, research/003_prio
 - 理由：表单型、无重岛、黑盒用例现成（`real-auth-native.spec.mjs` 整例打 `/settings/module/agent-route`——注意它是 env 门控的真实部署用例（`REAL_NATIVE_URL`），F2 的部署矩阵就绪后才跑得起来；smoke 里 settings 系 4 个）。
 - **双壳共存落地（机制由 F1 S5 实测后在此定稿，两件事缺一不可）**：
   - **双入口托管**：选项 A——`ui/server` 的 `app.get('*')`（`index.js:3471`）加 `/settings` 前缀分支返回新 bundle 的 index（几行、单独评审、可回退）；选项 B——前置反代按前缀分流（`ui/server` 零改动、多一个常驻组件）。静态分流只在整页加载时生效。
-  - **双向导航拦截**：旧壳是 SPA 客户端导航（`AppShellV2.tsx:387` `navigate(SETTINGS_PATH)` 等），不拦截则旧 SPA 点进设置页永远还是旧 bundle——旧壳到已迁前缀的 `navigate` 改硬跳（F1 S5 量出的改动点），新壳跳未迁路径硬跳回旧 bundle。
+  - **双向导航拦截**：旧壳是 SPA 客户端导航（`AppShellV2.tsx:387` `navigate(SETTINGS_PATH)` 等），不拦截则旧 SPA 点进设置页永远还是旧 bundle——拦截在路由/历史层做（覆盖 `navigate`、`<Link>`/`<NavLink>`、前进/后退三类入口，机制与实测见 F1 S5；`AppShellV2.tsx:387` 只是入口之一），旧壳到已迁前缀改硬跳，新壳跳未迁路径硬跳回旧 bundle。
   - 跨壳硬跳丢内存态（WS/流中文本/滚动）按 `accepted-diffs.md` D1–D5 执行与对账；composer 草稿键跨壳保留是验收项（契约，见 accepted-diffs 不变式），丢草稿按 bug 处理。
 - **怎么算做完**：settings 相关黑盒用例在新前端全绿（B 类走部署矩阵）；旧 bundle 对 `/settings` 前缀停返回；跨壳共享键行为验证（登录态互通——这是契约不是差异，坏了是 bug）。
 
