@@ -4,6 +4,12 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-14 · Issue #10：搬入旧 Rust sidecar（分支 `feat/issue-10-import-rust`，待提交）
+> **做了**：从只读来源 `source-repository @ 0eba113` 原样取出 117 个文件，四个 crate 与 tiktoken vendor 到 `src/`；合并 workspace、排除 protocol probe、删除占位 core、保留 CLI 版本输出；sidecar 接受并忽略单个路径参数，补参数测试；`src/PROVENANCE.md` 登记全部源哈希及适配例外。
+> **验证**：Rust 1.99 release 构建 / fmt / clippy -D warnings 全过；测试 687 个全过（agent 486、transport 158、protocol 26、tokenizer 16、入口新增 1）；113 个源文件最终哈希未变，4 个例外逐项登记；无 lint 行为修改或 allow。冻结尺子未改。
+> **冒烟**：等锁约 15 分钟后 gateway pure_text 退出 0，blocked/failed/oracleFailures 为空；sidecar trace 有 transport_selected(stdio)、handshake_completed、stream_accepted、module_call_received；实际二进制版本含 implementation=rust，哈希已记录；自己持有的锁已释放。
+> **待完成**：仅实际 Git 提交。Git 元数据位于本 worktree 外，sandbox 拒绝写 `.git/worktrees/wt-issue10/index.lock`，提交 ① 未成功，后续提交也无法写。三个分步补丁及消息已留 `_tmp/commit-stages/`、`_tmp/commit-0{1,2,3}.txt`，顺序应用可逐字节复现最终 `src/`；完整结果见 `_tmp/RESULT.md`。基线 HEAD `2434ce0`，此轮尚无新 commit、未 push。
+
 > ## 2026-10-14 第六轮 · 第 8–10 步：架构 001、计划 001、对拍规约冻结、issue #1（分支 plan/001-phase-c）
 > **做了**：PR #5 合并 · 旧 sidecar 源码找到（旧现场 `build/source-repository` @ `0eba113`，产品约 2.7 万行 + 测试约 2.6 万行）· `docs/changes/arch/001` · `docs/plan/001`（Issue #1 尺子 / #2 搬代码 / #3 量分 + 对应检查）· `specs/parity/` 冻结（README `f8958a32…`、accepted-diffs `653ccb10…`）· 双谱系评审 1 轮：无 P0，P1 六条（4 条两谱系撞车）全部处理 → `docs/reviews/001_plan-phase-c.md`。
 > **人定**：worktree ≤ 5（AI 加「全量对拍串行」、磁盘 30 GB）· 改 Rust 入口接受路径参数 · 阈值程序按推荐（k = 5、\|S\| ≥ 45、分母 53 − 原版不稳定）。
