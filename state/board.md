@@ -4,6 +4,11 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-14 夜跑收工（07:45，main @ e68b8c4）
+> **分数**：阶段 C **51/53**（budget 修好；deadline ×2 挂起 #19）。**合并**：C4（#27）。**挂起 5 个 PR**（两轮评审不收敛或闸门未过）：B1 #29、A3 #30、A2 #31、F1 #32、精简 S1 #34；尺子问题 #35（`cancel_during_tool` 原版不稳定，TS 1/15）。
+> **下一个会话先做**：读 `state/morning-report-20261014.md` 第三节，等人对每条挂起拍板（放第 3 轮 / 接受限制 / 重标定）；人未拍板前**不要**自己开第 3 轮。A4 依赖 A2，B2 依赖 B1，F2 依赖 F1，精简 S2+ 依赖 #35。
+> **环境**：codex 沙箱现拒绝 loopback listen，对拍与浏览器门须协调者在沙箱外跑；本地 pre-push hook 已装（gitleaks）；worktree 现有 a2 / a3 / b1 / f1 / slim1（共 5 个，已到上限），`_tmp` 合并前用 `_tmp/merge_safe.sh` 归档。
+
 > ## 2026-10-14 · Issue #15 / A1 exp003（feat/a1-exp003-proxy，基于 f1bc4f5，按用户要求未提交）
 > **做了**：新增 `src/pilotdeck-gateway` 透明 WS/HTTP bin，固定依赖与 Cargo.lock；`scripts/exp003/` 三进程隔离编排、真实 UI HTTP/WS 驱动、客户端帧录制与临时比较器；readme 与研究 gap 回填。fmt/clippy/test 全 workspace 通过（core 1 + gateway 3 测试）。
 > **实测**：七项六 PASS；真实 UI 自动重放 FAIL（client close 先清 hello，bridge 丢旧 binding，重连后不发恢复请求）。19/19 帧等价 PASS；修改 hello_ok.serverVersion 的阳性对照 FAIL/exit 1/唯一差异。保存 binding 的补充驱动直连/代理都 reconnected + active snapshot，回答均 delivered=false，未冒充恢复轮次完成。
