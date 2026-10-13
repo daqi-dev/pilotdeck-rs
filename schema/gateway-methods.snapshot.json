@@ -38,6 +38,14 @@
     "plan",
     "bypassPermissions"
   ],
+  "gatewayWsClientNameLiterals": [
+    "cli",
+    "tui",
+    "web",
+    "feishu",
+    "sdk",
+    "test"
+  ],
   "generatedBy": "ts-json-schema-generator@2.9.0 (typescript@5.9.3)",
   "methodCount": 101,
   "methods": [
@@ -142,6 +150,74 @@
     "always_on_apply",
     "always_on_abort",
     "always_on_rerun_plan"
+  ],
+  "payloadAliases": [
+    {
+      "input": "GatewayAbortTurnInput",
+      "method": "abortTurn"
+    },
+    {
+      "input": "GatewayCloseProjectSessionsInput",
+      "method": "closeProjectSessions",
+      "result": "GatewayCloseProjectSessionsResult"
+    },
+    {
+      "input": "GatewayCloseSessionInput",
+      "method": "closeSession"
+    },
+    {
+      "input": "GatewayDeleteSessionInput",
+      "method": "deleteSession"
+    },
+    {
+      "method": "grantSessionPermission",
+      "result": "GatewayGrantSessionPermissionResult"
+    },
+    {
+      "method": "newSession",
+      "result": "GatewayNewSessionResult"
+    },
+    {
+      "method": "permissionDecide",
+      "result": "GatewayPermissionDecideResult"
+    },
+    {
+      "method": "recordAgentStatusMessage",
+      "result": "GatewayRecordAgentStatusMessageResult"
+    },
+    {
+      "method": "renameSession",
+      "result": "GatewayRenameSessionResult"
+    },
+    {
+      "method": "respondElicitation",
+      "result": "GatewayRespondElicitationResult"
+    },
+    {
+      "method": "respondUserDialog",
+      "result": "GatewayRespondUserDialogResult"
+    },
+    {
+      "input": "GatewayResumeSessionInput",
+      "method": "resumeSession",
+      "result": "GatewayResumeSessionResult"
+    },
+    {
+      "method": "setPermissionMode",
+      "result": "GatewaySetPermissionModeResult"
+    },
+    {
+      "method": "setSdkSessionConfig",
+      "result": "GatewaySetSdkSessionConfigResult"
+    },
+    {
+      "method": "setSessionThinking",
+      "result": "GatewaySetSessionThinkingResult"
+    },
+    {
+      "method": "tagSession",
+      "result": "GatewayTagSessionResult"
+    }
   ],
   "protocolVersion": "1.2",
   "source": {
