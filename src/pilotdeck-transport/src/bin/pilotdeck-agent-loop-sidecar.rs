@@ -19,7 +19,7 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    if !accepts_stdio_arguments(&arguments) {
+    if !accepts_launch_arguments(&arguments) {
         eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]");
         return ExitCode::from(2);
     }
@@ -74,7 +74,9 @@ fn main() -> ExitCode {
     }
 }
 
-fn accepts_stdio_arguments(arguments: &[String]) -> bool {
+// A single nonempty path is only a launch placeholder for the TS gateway;
+// it is ignored, and every accepted invocation uses stdio.
+fn accepts_launch_arguments(arguments: &[String]) -> bool {
     arguments.is_empty()
         || (arguments.len() == 1
             && !arguments[0].is_empty()
@@ -83,7 +85,7 @@ fn accepts_stdio_arguments(arguments: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::accepts_stdio_arguments;
+    use super::accepts_launch_arguments;
 
     #[test]
     fn stdio_accepts_one_ignored_path_and_rejects_invalid_arguments() {
@@ -95,7 +97,7 @@ mod tests {
             vec!["-sidecar.js"],
         ] {
             let arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
-            assert!(accepts_stdio_arguments(&arguments), "{arguments:?}");
+            assert!(accepts_launch_arguments(&arguments), "{arguments:?}");
         }
         for arguments in [
             vec![""],
@@ -105,7 +107,7 @@ mod tests {
             vec!["--version", "sidecar.js"],
         ] {
             let arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
-            assert!(!accepts_stdio_arguments(&arguments), "{arguments:?}");
+            assert!(!accepts_launch_arguments(&arguments), "{arguments:?}");
         }
     }
 }
