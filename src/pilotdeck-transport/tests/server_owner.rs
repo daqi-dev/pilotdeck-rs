@@ -1,5 +1,5 @@
 //! Component ownership probes. Test factories do not validate production AgentLoop.
-use pilotdeck_agent::ports::PortResult;
+use pilotdeck_agent::ports::{CancelCause, PortError, PortResult};
 use pilotdeck_protocol::admission::{CallEffect, SidecarBinding};
 use pilotdeck_protocol::module::ModuleOutcome;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
@@ -46,13 +46,29 @@ impl ExecutionFactory for Factory {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.wait {
             let identity = ctx.identity("s".into(), "t".into());
-            ctx.call(
-                identity,
+            let response = ctx.call(
+                identity.clone(),
                 "model",
                 "get_metadata",
                 CallEffect::ReadOnly,
                 JsObject::new(),
             )?;
+            if ctx.control.deadline.is_some() {
+                assert!(response.cancelled_before_response);
+                // Settling the sent identity must not authorize a new effect.
+                assert!(matches!(
+                    ctx.call(
+                        identity,
+                        "capability",
+                        "execute_batch",
+                        CallEffect::SideEffect,
+                        JsObject::new(),
+                    ),
+                    Err(PortError::Cancelled {
+                        cause: CancelCause::Deadline
+                    })
+                ));
+            }
         }
         Ok(ExecutionTerminal {
             outcome: ModuleOutcome::Completed,
@@ -241,6 +257,54 @@ fn same_call_ack_after_cancel_settles_without_another_host_dispatch() {
     close(io, handle);
 }
 #[test]
+fn same_call_ack_after_deadline_settles_before_deadline_terminal() {
+    let (mut io, handle, calls) = setup(true);
+    send(&mut io, &execute(Some("future")));
+    let _accepted = read(&io);
+    let call = read(&io);
+    // The fixture deadline is 100ms after admission. Its already dispatched
+    // call still owns the ACK; it must not become Unknown at that deadline.
+    // Wait on the wire past the real execution deadline: it must remain open
+    // for the ACK rather than publish an immediate unknown terminal.
+    io.set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut line = String::new();
+    let error = BufReader::with_capacity(1, &io)
+        .read_line(&mut line)
+        .unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+    assert!(line.is_empty());
+    io.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let mut reply = JsObject::new();
+    reply.insert("kind".into(), "response".into());
+    reply.insert("messageId".into(), "late-ack".into());
+    reply.insert("inReplyTo".into(), field(&call, "messageId").clone());
+    reply.insert("ok".into(), JsValue::Bool(true));
+    reply.insert("payload".into(), JsValue::Object(JsObject::new()));
+    send(
+        &mut io,
+        &pilotdeck_protocol::stringify_json(&JsValue::Object(reply))
+            .unwrap()
+            .unwrap(),
+    );
+    let terminal = read(&io);
+    assert_eq!(
+        field(&terminal, "outcome"),
+        &JsValue::from("result_unknown")
+    );
+    assert_eq!(
+        field(&terminal, "code"),
+        &JsValue::from("DEADLINE_EXCEEDED")
+    );
+    assert!(field(&terminal, "error").get("acceptedCall").is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    close(io, handle);
+}
+
+#[test]
 fn explicit_unknown_retains_accepted_call_sequence_in_terminal() {
     let (mut io, handle, calls) = setup(true);
     send(&mut io, &execute(None));
@@ -280,6 +344,7 @@ fn explicit_unknown_retains_accepted_call_sequence_in_terminal() {
 #[test]
 fn deadline_does_not_replace_unresolved_accepted_call_identity() {
     let (mut io, handle, calls) = setup(true);
+    io.set_read_timeout(Some(Duration::from_secs(7))).unwrap();
     send(&mut io, &execute(Some("future")));
     let _accepted = read(&io);
     let call = read(&io);
@@ -317,6 +382,7 @@ fn duplicate_terminal_is_cached_without_reexecuting_factory() {
 #[test]
 fn accepted_deadline_returns_unknown_and_freezes_pending_effect() {
     let (mut io, handle, calls) = setup(true);
+    io.set_read_timeout(Some(Duration::from_secs(7))).unwrap();
     send(&mut io, &execute(Some("future")));
     let _ = read(&io);
     let _ = read(&io);
