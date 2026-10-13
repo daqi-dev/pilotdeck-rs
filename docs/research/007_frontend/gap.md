@@ -82,10 +82,10 @@
 
 任务简报说「46 个 Playwright 用例」；实测口径如下（2026-10-14，grep `^\s*test(` 逐文件数 + 循环展开人工核对）：
 
-- **15 个 spec 文件、60 个 `test()` 调用**：顶层 `ui/e2e/*.spec.mjs` 10 个文件 34 例；`ui/e2e/real/*.spec.mjs` 5 个文件 26 例。
+- **15 个 spec 文件、61 个 `test()` 调用**（grep `^\s*test(` 数得 60，漏掉 `model-selection.spec.mjs:108` 的同行调用 1 处——`for (const ready of [...]) test(...)` 的 `test(` 不在行首）：顶层 `ui/e2e/*.spec.mjs` 10 个文件 35 例；`ui/e2e/real/*.spec.mjs` 5 个文件 26 例。
 - **循环展开后实际注册 72 例**：`model-selection.spec.mjs:108`（`for (const ready of [false, true]) test(...)` 同行注册 2 例）、`:193`（preset 循环 ×2）、`streaming-lifecycle.spec.mjs:94, 154`（各 ×2）、`streaming-search.spec.mjs:16, 41`（×3、×4）、`real/session.spec.mjs:35`（provider 循环 ×3）。**注意用例内层的 `for` 循环（如 `real/settings.spec.mjs:44, 51, 82`、`real/onboarding.spec.mjs:17`）不增例数。**引用计数一律以展开后的 72 为准。
 - **另有 10 个独立 smoke 脚本**（`*.smoke.mjs`，Playwright 库 API 直写、无 `test()`）：`appearance`、`desktop-chrome`、`desktop-layout-regression`、`dialog-appearance`、`file-picker`、`settings-material`、`settings-navigation-theme`、`settings-refinement`、`update-actions`、`update-download`。
-- 60 + 10 = 70 与「46」都对不上；简报的数应是某种子集口径。**以本表为准，引用时带文件名。**
+- 61 + 10 = 71 与「46」都对不上；简报的数应是某种子集口径。**以本表为准，引用时带文件名。**
 
 按「新前端验收时这例怎么才能跑起来」分四类（展开后口径）：
 
