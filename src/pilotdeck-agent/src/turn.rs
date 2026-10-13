@@ -3557,9 +3557,10 @@ fn finish_budget_terminal(
         ports.events,
         &mut state.timeline,
         ports.input,
-        TurnEvent::AgentStatusText {
+        // AgentLoop's status projection omits text; the sidecar client falls
+        // back to the event name. Keep the diagnostic in StopFailure/errors.
+        TurnEvent::AgentStatus {
             event: plan.status_event,
-            text: error_message,
             detail: plan.status_detail,
         },
     )?;
@@ -3690,9 +3691,10 @@ fn finish_tool_terminal(
 /// Capture is the sole terminal cleanup effect admitted after user abort.
 /// Its budget starts here, independently of the expired execution deadline.
 fn fresh_capture_cleanup(previous: &CallControl) -> CallControl {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     CallControl {
-        cancellation: previous.cancellation.cleanup_scope(),
-        deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs(5)),
+        cancellation: previous.cancellation.bounded_cleanup_scope(deadline),
+        deadline: Some(deadline),
     }
 }
 
@@ -7936,6 +7938,146 @@ mod ordinary_model_error_terminal_order_tests {
         );
         let recorded = log.lock().unwrap().clone();
         (result, recorded)
+    }
+    #[test]
+    fn budget_status_projection_preserves_failure_diagnostics_for_both_limits() {
+        struct BudgetEvents(Vec<BoundarySnapshot>);
+        impl TurnEventPort for BudgetEvents {
+            fn emit(&mut self, event: BoundarySnapshot) -> PortResult<()> {
+                self.0.push(event);
+                Ok(())
+            }
+        }
+        for (stop, event_name, reason) in [
+            (
+                crate::driver::BudgetStop::Turn,
+                "max_budget_reached",
+                TurnStopReason::MaxBudget,
+            ),
+            (
+                crate::driver::BudgetStop::Task,
+                "task_budget_reached",
+                TurnStopReason::TaskBudget,
+            ),
+        ] {
+            let log: Log = Arc::new(Mutex::new(vec![]));
+            let mut ledger = BudgetLedger::new(
+                (stop == crate::driver::BudgetStop::Turn).then_some(0.1),
+                (stop == crate::driver::BudgetStop::Task).then_some(0.1),
+                0.0,
+            );
+            ledger.turn_spent_usd = 0.125;
+            ledger.task_spent_usd = 0.125;
+            let assistant = ProjectedMessage {
+                boundary: BoundarySnapshot::capture(
+                    &pilotdeck_protocol::parse_json(r#"{"role":"assistant","content":[]}"#)
+                        .unwrap(),
+                ),
+                normalized: MessageProjection::BoundaryOnly(vec![]),
+            };
+            let route = crate::ports::Route {
+                provider: "parity".into(),
+                model: "model".into(),
+            };
+            let plan = crate::budget_terminal::OriginalBudgetTerminalPolicy
+                .evaluate(crate::budget_terminal::BudgetTerminalInput {
+                    ledger: &ledger,
+                    stop,
+                    last_invocation_cost_usd: Some(0.125),
+                    route: &route,
+                    assistant_message: &assistant,
+                    unexecuted_tool_call_count: 1,
+                })
+                .unwrap();
+            let error = plan.error.clone();
+            let diagnostic = error.value().get("message").unwrap().clone();
+            assert!(
+                diagnostic
+                    .as_string()
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap()
+                    .starts_with("Reached Gateway-owned")
+            );
+            let detail = plan.status_detail.clone();
+            let state = TurnExecutionState {
+                messages: vec![],
+                turn_count: 1.0,
+                usage: empty_usage(),
+                permission_denials: vec![],
+                final_message: None,
+                structured_output: None,
+                budget: ledger,
+                timeline: TurnTimeline::new("turn".into()),
+                transient_prompt_ids: vec![],
+            };
+            let input = TurnInput {
+                session_id: "session".into(),
+                turn_id: "turn".into(),
+                messages: vec![],
+                max_turns: None,
+                max_budget_usd: None,
+                task_budget_usd: None,
+                initial_task_budget_spent_usd: None,
+                base_permission_mode: None,
+                allow_plan_mode_tools: false,
+                can_elicit: false,
+                model_override: None,
+            };
+            let control = CallControl {
+                cancellation: Cancellation::default(),
+                deadline: None,
+            };
+            let mut host = Host {
+                log: log.clone(),
+                model_error: BoundarySnapshot::capture(&diagnostic),
+                capture_error: None,
+            };
+            let mut events = BudgetEvents(vec![]);
+            let output = finish_budget_terminal(
+                state,
+                "start".into(),
+                plan,
+                &Clock(log.clone()),
+                TerminalTurnPorts {
+                    host: &mut host,
+                    events: &mut events,
+                    input: &input,
+                    control: &control,
+                },
+            )
+            .unwrap();
+            assert_eq!(output.result.kind, TurnResultKind::Error);
+            assert_eq!(output.result.stop_reason, reason);
+            assert_eq!(output.result.errors.len(), 1);
+            assert_eq!(output.result.errors[0].value(), error.value());
+            let values: Vec<_> = events.0.iter().map(BoundarySnapshot::value).collect();
+            assert_eq!(
+                values
+                    .iter()
+                    .map(|v| v.get("type").unwrap().clone())
+                    .collect::<Vec<_>>(),
+                [
+                    "stop_failure",
+                    "agent_status",
+                    "turn_failed",
+                    "turn_completed"
+                ]
+                .map(JsValue::from)
+            );
+            assert_eq!(values[0].get("error"), Some(&diagnostic));
+            assert_eq!(values[1].get("event"), Some(&JsValue::from(event_name)));
+            assert_eq!(values[1].get("detail"), Some(detail.value()));
+            // TS sidecarStatusMessage falls back to event.event when these
+            // fields are absent. Numeric budget detail must remain intact.
+            assert!(values[1].get("text").is_none());
+            assert!(detail.value().get("message").is_none());
+            assert_eq!(values[2].get("error"), Some(error.value()));
+            assert_eq!(
+                *log.lock().unwrap(),
+                ["StopFailure", "result_clock", "capture_true"].map(JsString::from)
+            );
+        }
     }
     #[test]
     fn ordinary_terminal_has_source_order_and_omits_prior_structured_output() {

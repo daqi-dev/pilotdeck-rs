@@ -39,3 +39,25 @@ fn terminal_owner_fixed_deadline_survives_later_observation() {
         Some(CancelCause::Requested("finish".into()))
     );
 }
+
+#[test]
+fn cleanup_total_bound_is_independent_and_cannot_gain_another_grace() {
+    let parent = Cancellation::default();
+    parent.cancel(CancelCause::Deadline);
+    let bound = Instant::now() - Duration::from_secs(1);
+    let child = parent.bounded_cleanup_scope(bound);
+    let grace = Duration::from_secs(5);
+    assert!(
+        child.cause().is_none(),
+        "cleanup ignores the execution soft stop"
+    );
+    assert_eq!(child.reconciliation_deadline(grace), Some(bound));
+    assert!(
+        child.cancel_with_reconciliation_deadline(CancelCause::Deadline, Instant::now() + grace,)
+    );
+    assert_eq!(child.reconciliation_deadline(grace), Some(bound));
+    assert!(!child.cancel(CancelCause::Requested("duplicate".into())));
+    assert_eq!(child.reconciliation_deadline(grace), Some(bound));
+    parent.cancel(CancelCause::OwnerRetired);
+    assert_eq!(child.hard_stop_cause(), Some(CancelCause::OwnerRetired));
+}

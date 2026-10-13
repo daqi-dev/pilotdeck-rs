@@ -454,8 +454,15 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
         matches!(result, Err(PortError::AcceptedUnknown { identity: actual, last_applied_sequence: None }) if *actual == original.identity)
     );
     assert!(!log.lock().unwrap().iter().any(|e| e == "turn_completed"));
+    // A missing model ACK now gets its own five-second cancellation grace.
+    // Pending capture must still use only its separate five-second total bound.
+    let bound = if matches!(capture, Capture::Pending) && !requested {
+        Duration::from_secs(11)
+    } else {
+        Duration::from_secs(6)
+    };
     assert!(
-        elapsed < Duration::from_secs(6),
+        elapsed < bound,
         "capture did not respect its bound: {elapsed:?}"
     );
     if matches!(capture, Capture::Pending | Capture::Unknown) {
