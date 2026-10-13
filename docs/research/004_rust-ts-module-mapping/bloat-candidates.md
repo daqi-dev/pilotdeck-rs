@@ -32,6 +32,7 @@
 - **TS 为什么没有**：TS `assembleModelMessage.ts`（214 行）只有一份 reducer，直接 switch typed 事件、不做校验。
 - **删掉的风险**：产品路径（`turn.rs`）实际走 `source_invocation` 的 source reducer（`source_model_reducer.rs`），typed reducer 是与之平行的**双轨验证**实现；删校验层不影响产品行为，但失去「typed 与原始对象矛盾即拒绝」的自检。附带：`driver.rs` 的 `run_model_invocation`（约 200 行）是同一双轨的另一端（未接线），应同批评估。
 - **建议**：**删除候选**（连同 `driver.rs` 的未接线路径）。先确认无产品接线、相关测试随迁裁剪，删除后跑全量对拍。
+- ⚠️ **协调者核对（2026-10-14 04:30）**：「未接线」只对 typed reducer 的主体成立——它导出的 `same_value` / `matches_fields` / `object` / `optional_string` 被 `tool_projection.rs:3`、`large_file_repair.rs:2` 引用，`lib.rs:293, 296` 也有 `model_event_reducer::new` / `block_id` 的调用点（是否在产品路径待核）。**删之前先把这几个辅助函数迁出**，否则编译即失败。
 
 ## 4. `pilotdeck-agent/src/tool_projection.rs`（614 行 · 比值 3.7 · 部分 · 多出约 446 行）
 
