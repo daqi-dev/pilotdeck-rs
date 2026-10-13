@@ -4,6 +4,12 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-14 第四轮 · 第 6 步调研 `docs/research/002_parity-boundary/`（分支 research/002-parity-boundary）
+> **做了**：intent 盲测冒烟两路通过（暴露 intent 末行注脚过时）· 参考区就位：PilotDeck@cc7c4e6、prime-agent（全量历史）、codex、goose（已迁 aaif-goose）、rust-sdk · 派活 4 路（先冒烟 1 路再批量），产出 4 份 `findings-*.md`，主会话抽查 15 条、更正 1 处计数方法 · `gap.md` + `decision.md` · 双谱系对抗评审 1 轮：无 P0，6 条 P1 全部处理（2 条两谱系撞车）→ `review.md` · decision 盲测冒烟两路通过。
+> **关键发现**：浏览器之下还有 `ui/server`（约 5 万行），进程内 import `src/` 38 处；干净的边界是 18789 gateway 帧协议；prime-agent 的对拍比的正是三类契约（事件流 / 会话文件 / 模型请求体）。
+> **方法缺口（新增）**：⑦ skill 说「批量派活前先冒烟一份」管用——但**主会话抽查**才抓到计数方法错与「共享 mock」误读，派活不能只看格式合格 ⑧ reviews 目录「与 plan 同号」不适合评调研，记录改放调研目录内。
+> **待人定**：`decision.md` 拍板表 7 行。**下一步**：拍板 → 回改 intent → 第 7 步探针 exp001–003。
+
 > ## 2026-10-14 第三轮 · 公开 + 分支保护 + 撞闸 + 评审配齐（main @ cfd7841）
 > **做了**：重写 PR #1 合并提交作者（4172dc2 → 10442bd，强推 main）· 仓库改**公开**（人定，接受 PR #1 记录里仍可见真实邮箱）· PR #2 合并：AGPL-3.0 `LICENSE`（与 gnu.org sha256 一致）、README 来源说明、`docs/research/001`、intent 两条不做什么 · `main` 分支保护：必需检查 `check`（strict）、管理员不例外、禁强推/删除 · **直推 main 被拒**（GH006 “Required status check "check" is expected”）· opencode 2.0.25 装好，`.claude/dev-launch.review.md` 配 codex(GPT) + opencode(glm-5.3)，两路只读冒烟通过 · 装齐 aias-meta-research/proto/evolve 与 aias-dev 四件。
 > **人定**：渐进策略采用（Rust 网关在前、未实现的转发给 TS），第 6 步去验证；第二谱系 = opencode + GLM。
