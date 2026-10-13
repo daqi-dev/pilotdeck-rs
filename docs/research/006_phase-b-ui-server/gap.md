@@ -63,3 +63,14 @@
 | **广播桥与文件 watcher 实验**：Rust 写 `pilotdeck.yaml` 后，TS 的 chokidar watcher（`index.js:3720s`、事件从 `index.js:3724` 发）是否已广播、payload 与 `config.js:527/995` 的 `ui-save` 是否同形、是否与显式桥调用重复 | 决定 G-YAML 能否在 `/ws` 之前迁、跨进程广播桥要不要显式调用、`suppressNextWatchEvent`（`routes/gateway.js:115`）语义怎么复刻 | `decision.md` #7 的桥契约 |
 
 > 已冻结的 `specs/parity/`（阶段 C 的尺子）**不动**；阶段 B 的对拍规约另立（`specs/ui-server-parity/`），人批后冻结。
+
+## 四、B1 探针带回的新事实（2026-10-14，exp008）
+
+| # | 事实 | 证据 | 对阶段 B 的影响 | 分级 |
+|---|---|---|---|---|
+| 4.1 | Express 4.22 的 `express.Router()` 实例原型**不等于** `express.Router.prototype`（`Object.getPrototypeOf(r) !== Router.prototype`），加载期 hook 包 `Router.prototype.use/.route` **一条都拦不到** | exp008 `enumerate_hook.mjs` 首版 0 命中；改用 dump `app._router.stack` + `layer.regexp` 还原挂载前缀后得 263 条 | B2 的 `enumerate_routes.mjs` 不能只靠原型 hook，必须以 stack dump 为准、hook 仅作交叉校验（或改从 `layer.handle` 反推） | P2 |
+| 4.2 | 基线树只读且无 `ui/dist`；Vite dev 默认在 `ui/node_modules/.vite` 写缓存/临时配置，直接启动即 EPERM | exp008 `vite.log`：`.vite-temp` / `.vite/deps_temp_*` mkdir 失败 | B2 的浏览器场景要走 dev server 时，必须把 `cacheDir` 指到可写目录并用 `--configLoader runner`（否则配置 bundling 会写在基线内）；生产静态面要另想（B3 由 Rust 服务 `ui/dist`） | P1 |
+| 4.3 | 沙箱内 node-pty `spawn` 报 `posix_spawnp failed`，`/shell` 无法真正起 PTY | exp008 `ui.log`：「Error spawning process: Error: posix_spawnp failed.」 | PTY 哨兵/退出/重连（场景 5）在本机沙箱内无法完整验收；B2 的 PTY 用例需在能起 PTY 的环境跑，或显式豁免并留原因 | P1 |
+| 4.4 | 真浏览器加载 UI 后 `/ws` 未立即建立（Playwright 只看到 Vite HMR socket）；应用按需开 WS | exp008 `browser.json` `appWebSockets: []` | 浏览器场景证明 HTTP 面经 Rust；`/ws` 全帧对拍仍需驱动脚本（B1 用 `driver.mjs` + Rust tee 证明） | P2 |
+| 4.5 | 直连与经反代两侧**共用一个 TS 进程**时，列表类端点会漂移：`/api/projects` 的 `x-projects-revision`/`lastActivity` 随墙钟变，`sessionMeta.total` 会把另一侧刚建的会话算进来（直连先录 WS 后，反代再读就多 1） | r1 `comparison.json` 首跑差异：`header.x-projects-revision`、`body[0].lastActivity` 类型/值、`body[0].sessionMeta.total` 0↔1 | B2 的 `compare.py` 要判 HTTP 面，须先决定「两侧各自冷启动后端」，否则不能把有状态列表端点纳入硬门；r1 先排除、只比确定性只读，并在 readme 记明 | P2 |
+| 4.6 | 中继录放归一化里，**单调计数器**（`revision`/`generation`）不能和身份 ID 一样做「首次出现序号映射」：两个 fresh session 的绝对 revision 起点不同，序号会发散成 `<revision:20>` vs `<revision:24>`，制造假红 | r1 `compare.py` 首跑 `ws[chat-raw] #8.body.activity.revision`；改为塌缩 `<VOLATILE>` 后 PASS | B2 的 `specs/ui-server-parity/normalization.md` 应把「身份类→有序映射、计数/时钟类→塌缩、SSE `sseId` 是续传锚点不归一化」写成条目 | P2 |

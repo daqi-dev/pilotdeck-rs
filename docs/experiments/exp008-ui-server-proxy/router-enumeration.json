@@ -1,0 +1,2593 @@
+{
+  "generatedAt": "2026-10-13T20:31:07.227Z",
+  "appCaptured": true,
+  "routeCount": 263,
+  "uniqueRouteCount": 263,
+  "routes": [
+    {
+      "order": 1,
+      "method": "GET",
+      "path": "/health",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 2,
+      "method": "GET",
+      "path": "/api/auth/status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/auth/",
+        "/api/auth/"
+      ]
+    },
+    {
+      "order": 3,
+      "method": "POST",
+      "path": "/api/auth/register",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/auth/",
+        "/api/auth/"
+      ]
+    },
+    {
+      "order": 4,
+      "method": "POST",
+      "path": "/api/auth/login",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/auth/",
+        "/api/auth/"
+      ]
+    },
+    {
+      "order": 5,
+      "method": "GET",
+      "path": "/api/auth/user",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/auth/",
+        "/api/auth/"
+      ]
+    },
+    {
+      "order": 6,
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/auth/",
+        "/api/auth/"
+      ]
+    },
+    {
+      "order": 7,
+      "method": "GET",
+      "path": "/api/projects/files",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 8,
+      "method": "GET",
+      "path": "/api/projects/:projectName/staffdeck-binding",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 9,
+      "method": "POST",
+      "path": "/api/projects/:projectName/staffdeck-binding/ensure",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 10,
+      "method": "GET",
+      "path": "/api/projects/:projectName/discovery-context",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 11,
+      "method": "GET",
+      "path": "/api/projects/:projectName/discovery-plans",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 12,
+      "method": "POST",
+      "path": "/api/projects/:projectName/discovery-plans/:planId/execute",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 13,
+      "method": "GET",
+      "path": "/api/projects/:projectName/discovery-plans/:planId/report",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 14,
+      "method": "GET",
+      "path": "/api/projects/:projectName/work-cycles",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 15,
+      "method": "POST",
+      "path": "/api/projects/:projectName/work-cycles/:cycleId/apply",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 16,
+      "method": "POST",
+      "path": "/api/projects/:projectName/work-cycles/:cycleId/archive",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 17,
+      "method": "POST",
+      "path": "/api/projects/create-workspace",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 18,
+      "method": "GET",
+      "path": "/api/projects/clone-progress",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/projects/",
+        "/api/projects/"
+      ]
+    },
+    {
+      "order": 19,
+      "method": "GET",
+      "path": "/api/git/status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 20,
+      "method": "GET",
+      "path": "/api/git/diff",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 21,
+      "method": "GET",
+      "path": "/api/git/file-with-diff",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 22,
+      "method": "POST",
+      "path": "/api/git/initial-commit",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 23,
+      "method": "POST",
+      "path": "/api/git/commit",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 24,
+      "method": "POST",
+      "path": "/api/git/revert-local-commit",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 25,
+      "method": "GET",
+      "path": "/api/git/branches",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 26,
+      "method": "POST",
+      "path": "/api/git/checkout",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 27,
+      "method": "POST",
+      "path": "/api/git/create-branch",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 28,
+      "method": "POST",
+      "path": "/api/git/delete-branch",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 29,
+      "method": "GET",
+      "path": "/api/git/commits",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 30,
+      "method": "GET",
+      "path": "/api/git/commit-diff",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 31,
+      "method": "POST",
+      "path": "/api/git/generate-commit-message",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 32,
+      "method": "GET",
+      "path": "/api/git/remote-status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 33,
+      "method": "POST",
+      "path": "/api/git/fetch",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 34,
+      "method": "POST",
+      "path": "/api/git/pull",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 35,
+      "method": "POST",
+      "path": "/api/git/push",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 36,
+      "method": "POST",
+      "path": "/api/git/publish",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 37,
+      "method": "POST",
+      "path": "/api/git/discard",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 38,
+      "method": "POST",
+      "path": "/api/git/delete-untracked",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/git/",
+        "/api/git/"
+      ]
+    },
+    {
+      "order": 39,
+      "method": "GET",
+      "path": "/api/mcp/config",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 40,
+      "method": "GET",
+      "path": "/api/mcp/config/:scope",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 41,
+      "method": "POST",
+      "path": "/api/mcp/config/validate",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 42,
+      "method": "PUT",
+      "path": "/api/mcp/config/:scope",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 43,
+      "method": "GET",
+      "path": "/api/mcp/cli/list",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 44,
+      "method": "POST",
+      "path": "/api/mcp/cli/add",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 45,
+      "method": "POST",
+      "path": "/api/mcp/cli/add-json",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 46,
+      "method": "DELETE",
+      "path": "/api/mcp/cli/remove/:name",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 47,
+      "method": "GET",
+      "path": "/api/mcp/cli/get/:name",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 48,
+      "method": "GET",
+      "path": "/api/mcp/config/read",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp/",
+        "/api/mcp/"
+      ]
+    },
+    {
+      "order": 49,
+      "method": "GET",
+      "path": "/api/taskmaster/installation-status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 50,
+      "method": "GET",
+      "path": "/api/taskmaster/detect/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 51,
+      "method": "GET",
+      "path": "/api/taskmaster/detect-all",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 52,
+      "method": "POST",
+      "path": "/api/taskmaster/initialize/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 53,
+      "method": "GET",
+      "path": "/api/taskmaster/next/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 54,
+      "method": "GET",
+      "path": "/api/taskmaster/tasks/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 55,
+      "method": "GET",
+      "path": "/api/taskmaster/prd/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 56,
+      "method": "POST",
+      "path": "/api/taskmaster/prd/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 57,
+      "method": "GET",
+      "path": "/api/taskmaster/prd/:projectName/:fileName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 58,
+      "method": "DELETE",
+      "path": "/api/taskmaster/prd/:projectName/:fileName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 59,
+      "method": "POST",
+      "path": "/api/taskmaster/init/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 60,
+      "method": "POST",
+      "path": "/api/taskmaster/add-task/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 61,
+      "method": "PUT",
+      "path": "/api/taskmaster/update-task/:projectName/:taskId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 62,
+      "method": "POST",
+      "path": "/api/taskmaster/parse-prd/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 63,
+      "method": "GET",
+      "path": "/api/taskmaster/prd-templates",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 64,
+      "method": "POST",
+      "path": "/api/taskmaster/apply-template/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/taskmaster/",
+        "/api/taskmaster/"
+      ]
+    },
+    {
+      "order": 65,
+      "method": "GET",
+      "path": "/api/memory/overview",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 66,
+      "method": "GET",
+      "path": "/api/memory/settings",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 67,
+      "method": "POST",
+      "path": "/api/memory/settings",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 68,
+      "method": "POST",
+      "path": "/api/memory/index/run",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 69,
+      "method": "POST",
+      "path": "/api/memory/dream/run",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 70,
+      "method": "POST",
+      "path": "/api/memory/dream/rollback-last",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 71,
+      "method": "GET",
+      "path": "/api/memory/snapshot",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 72,
+      "method": "GET",
+      "path": "/api/memory/memory/list",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 73,
+      "method": "GET",
+      "path": "/api/memory/memory/get",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 74,
+      "method": "POST",
+      "path": "/api/memory/memory/actions",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 75,
+      "method": "GET",
+      "path": "/api/memory/memory/user-summary",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 76,
+      "method": "GET",
+      "path": "/api/memory/project-meta",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 77,
+      "method": "POST",
+      "path": "/api/memory/project-meta",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 78,
+      "method": "GET",
+      "path": "/api/memory/workspace",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 79,
+      "method": "GET",
+      "path": "/api/memory/cases",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 80,
+      "method": "GET",
+      "path": "/api/memory/cases/:caseId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 81,
+      "method": "GET",
+      "path": "/api/memory/index-traces",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 82,
+      "method": "GET",
+      "path": "/api/memory/index-traces/:indexTraceId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 83,
+      "method": "GET",
+      "path": "/api/memory/dream-traces",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 84,
+      "method": "GET",
+      "path": "/api/memory/dream-traces/:dreamTraceId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 85,
+      "method": "GET",
+      "path": "/api/memory/export/current-project",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 86,
+      "method": "GET",
+      "path": "/api/memory/export/all-projects",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 87,
+      "method": "POST",
+      "path": "/api/memory/import/current-project",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 88,
+      "method": "POST",
+      "path": "/api/memory/import/all-projects",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 89,
+      "method": "GET",
+      "path": "/api/memory/export",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 90,
+      "method": "POST",
+      "path": "/api/memory/import",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 91,
+      "method": "POST",
+      "path": "/api/memory/clear",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/memory/",
+        "/api/memory/"
+      ]
+    },
+    {
+      "order": 92,
+      "method": "GET",
+      "path": "/api/mcp-utils/taskmaster-server",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp-utils/",
+        "/api/mcp-utils/"
+      ]
+    },
+    {
+      "order": 93,
+      "method": "GET",
+      "path": "/api/mcp-utils/all-servers",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/mcp-utils/",
+        "/api/mcp-utils/"
+      ]
+    },
+    {
+      "order": 94,
+      "method": "POST",
+      "path": "/api/commands/list",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/commands/",
+        "/api/commands/"
+      ]
+    },
+    {
+      "order": 95,
+      "method": "POST",
+      "path": "/api/commands/load",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/commands/",
+        "/api/commands/"
+      ]
+    },
+    {
+      "order": 96,
+      "method": "POST",
+      "path": "/api/commands/execute",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/commands/",
+        "/api/commands/"
+      ]
+    },
+    {
+      "order": 97,
+      "method": "POST",
+      "path": "/api/skills/list",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 98,
+      "method": "POST",
+      "path": "/api/skills/read",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 99,
+      "method": "POST",
+      "path": "/api/skills/write",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 100,
+      "method": "POST",
+      "path": "/api/skills/create",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 101,
+      "method": "POST",
+      "path": "/api/skills/delete",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 102,
+      "method": "POST",
+      "path": "/api/skills/validate",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 103,
+      "method": "POST",
+      "path": "/api/skills/import",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 104,
+      "method": "POST",
+      "path": "/api/skills/scan",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 105,
+      "method": "POST",
+      "path": "/api/skills/import-upload",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 106,
+      "method": "POST",
+      "path": "/api/skills/clawhub/search",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 107,
+      "method": "POST",
+      "path": "/api/skills/clawhub/install",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/skills/",
+        "/api/skills/"
+      ]
+    },
+    {
+      "order": 108,
+      "method": "GET",
+      "path": "/api/uploads/limits",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/uploads/",
+        "/api/uploads/"
+      ]
+    },
+    {
+      "order": 109,
+      "method": "POST",
+      "path": "/api/uploads/",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/uploads/",
+        "/api/uploads/"
+      ]
+    },
+    {
+      "order": 110,
+      "method": "POST",
+      "path": "/api/uploads/:uploadId/content",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/uploads/",
+        "/api/uploads/"
+      ]
+    },
+    {
+      "order": 111,
+      "method": "GET",
+      "path": "/api/uploads/:uploadId/events",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/uploads/",
+        "/api/uploads/"
+      ]
+    },
+    {
+      "order": 112,
+      "method": "GET",
+      "path": "/api/uploads/:uploadId/attachments/:attachmentId/preview",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/uploads/",
+        "/api/uploads/"
+      ]
+    },
+    {
+      "order": 113,
+      "method": "GET",
+      "path": "/api/uploads/:uploadId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/uploads/",
+        "/api/uploads/"
+      ]
+    },
+    {
+      "order": 114,
+      "method": "DELETE",
+      "path": "/api/uploads/:uploadId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/uploads/",
+        "/api/uploads/"
+      ]
+    },
+    {
+      "order": 115,
+      "method": "GET",
+      "path": "/api/models/",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/models/",
+        "/api/models/"
+      ]
+    },
+    {
+      "order": 116,
+      "method": "GET",
+      "path": "/api/settings/permissions",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 117,
+      "method": "PUT",
+      "path": "/api/settings/permissions",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 118,
+      "method": "GET",
+      "path": "/api/settings/api-keys",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 119,
+      "method": "POST",
+      "path": "/api/settings/api-keys",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 120,
+      "method": "DELETE",
+      "path": "/api/settings/api-keys/:keyId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 121,
+      "method": "PATCH",
+      "path": "/api/settings/api-keys/:keyId/toggle",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 122,
+      "method": "GET",
+      "path": "/api/settings/credentials",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 123,
+      "method": "POST",
+      "path": "/api/settings/credentials",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 124,
+      "method": "DELETE",
+      "path": "/api/settings/credentials/:credentialId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 125,
+      "method": "PATCH",
+      "path": "/api/settings/credentials/:credentialId/toggle",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 126,
+      "method": "GET",
+      "path": "/api/settings/notification-preferences",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 127,
+      "method": "PUT",
+      "path": "/api/settings/notification-preferences",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 128,
+      "method": "GET",
+      "path": "/api/settings/push/vapid-public-key",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 129,
+      "method": "POST",
+      "path": "/api/settings/push/subscribe",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 130,
+      "method": "POST",
+      "path": "/api/settings/push/unsubscribe",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/settings/",
+        "/api/settings/"
+      ]
+    },
+    {
+      "order": 131,
+      "method": "GET",
+      "path": "/api/config/connection-test-tasks",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 132,
+      "method": "POST",
+      "path": "/api/config/connection-test-tasks",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 133,
+      "method": "POST",
+      "path": "/api/config/connection-test-tasks/:id/retry",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 134,
+      "method": "PUT",
+      "path": "/api/config/connection-test-tasks/:id/image-capabilities",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 135,
+      "method": "POST",
+      "path": "/api/config/connection-test-tasks/:id/acknowledge",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 136,
+      "method": "POST",
+      "path": "/api/config/connection-test-tasks/:id/cancel",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 137,
+      "method": "GET",
+      "path": "/api/config/",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 138,
+      "method": "POST",
+      "path": "/api/config/validate",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 139,
+      "method": "GET",
+      "path": "/api/config/model-references",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 140,
+      "method": "POST",
+      "path": "/api/config/model-removal",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 141,
+      "method": "GET",
+      "path": "/api/config/office-preview/status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 142,
+      "method": "PUT",
+      "path": "/api/config/",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 143,
+      "method": "POST",
+      "path": "/api/config/reload",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 144,
+      "method": "GET",
+      "path": "/api/config/provider",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 145,
+      "method": "POST",
+      "path": "/api/config/models",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 146,
+      "method": "POST",
+      "path": "/api/config/test-connection",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 147,
+      "method": "POST",
+      "path": "/api/config/test-connections",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 148,
+      "method": "PUT",
+      "path": "/api/config/test-connections/:testId/image-capabilities",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 149,
+      "method": "POST",
+      "path": "/api/config/test-web-search",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 150,
+      "method": "POST",
+      "path": "/api/config/open",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/config/",
+        "/api/config/"
+      ]
+    },
+    {
+      "order": 151,
+      "method": "GET",
+      "path": "/api/v1/providers",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/v1/",
+        "/api/v1/"
+      ]
+    },
+    {
+      "order": 152,
+      "method": "POST",
+      "path": "/api/v1/model-connection-tests",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/v1/",
+        "/api/v1/"
+      ]
+    },
+    {
+      "order": 153,
+      "method": "PUT",
+      "path": "/api/v1/model-connection-tests/:testId/image-capabilities",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/v1/",
+        "/api/v1/"
+      ]
+    },
+    {
+      "order": 154,
+      "method": "PUT",
+      "path": "/api/v1/model-configuration",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/v1/",
+        "/api/v1/"
+      ]
+    },
+    {
+      "order": 155,
+      "method": "POST",
+      "path": "/api/v1/workspaces",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/v1/",
+        "/api/v1/"
+      ]
+    },
+    {
+      "order": 156,
+      "method": "GET",
+      "path": "/api/gateway/status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 157,
+      "method": "POST",
+      "path": "/api/gateway/feishu/test",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 158,
+      "method": "POST",
+      "path": "/api/gateway/feishu/qr-begin",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 159,
+      "method": "GET",
+      "path": "/api/gateway/feishu/qr-poll",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 160,
+      "method": "POST",
+      "path": "/api/gateway/feishu/qr-cancel",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 161,
+      "method": "POST",
+      "path": "/api/gateway/feishu/save",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 162,
+      "method": "POST",
+      "path": "/api/gateway/feishu/disable",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 163,
+      "method": "POST",
+      "path": "/api/gateway/weixin/qr-begin",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 164,
+      "method": "GET",
+      "path": "/api/gateway/weixin/qr",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 165,
+      "method": "GET",
+      "path": "/api/gateway/weixin/qr-poll",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 166,
+      "method": "POST",
+      "path": "/api/gateway/weixin/disable",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 167,
+      "method": "POST",
+      "path": "/api/gateway/wecom/qr-begin",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 168,
+      "method": "GET",
+      "path": "/api/gateway/wecom/qr-poll",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 169,
+      "method": "POST",
+      "path": "/api/gateway/wecom/qr-cancel",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 170,
+      "method": "POST",
+      "path": "/api/gateway/wecom/save",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 171,
+      "method": "POST",
+      "path": "/api/gateway/wecom/disable",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/gateway/",
+        "/api/gateway/"
+      ]
+    },
+    {
+      "order": 172,
+      "method": "GET",
+      "path": "/api/user/git-config",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/user/",
+        "/api/user/"
+      ]
+    },
+    {
+      "order": 173,
+      "method": "POST",
+      "path": "/api/user/git-config",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/user/",
+        "/api/user/"
+      ]
+    },
+    {
+      "order": 174,
+      "method": "POST",
+      "path": "/api/user/complete-onboarding",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/user/",
+        "/api/user/"
+      ]
+    },
+    {
+      "order": 175,
+      "method": "GET",
+      "path": "/api/user/onboarding-status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/user/",
+        "/api/user/"
+      ]
+    },
+    {
+      "order": 176,
+      "method": "GET",
+      "path": "/api/user/runtime-status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/user/",
+        "/api/user/"
+      ]
+    },
+    {
+      "order": 177,
+      "method": "POST",
+      "path": "/api/user/runtime/gateway/retry",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/user/",
+        "/api/user/"
+      ]
+    },
+    {
+      "order": 178,
+      "method": "GET",
+      "path": "/api/plugins/",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 179,
+      "method": "GET",
+      "path": "/api/plugins/:name/manifest",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 180,
+      "method": "GET",
+      "path": "/api/plugins/:name/assets/*",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 181,
+      "method": "PUT",
+      "path": "/api/plugins/:name/enable",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 182,
+      "method": "POST",
+      "path": "/api/plugins/install",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 183,
+      "method": "POST",
+      "path": "/api/plugins/:name/update",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 184,
+      "method": "_ALL",
+      "path": "/api/plugins/:name/rpc/*",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 185,
+      "method": "DELETE",
+      "path": "/api/plugins/:name",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/plugins/",
+        "/api/plugins/"
+      ]
+    },
+    {
+      "order": 186,
+      "method": "GET",
+      "path": "/api/sessions/model",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 187,
+      "method": "PUT",
+      "path": "/api/sessions/model",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 188,
+      "method": "DELETE",
+      "path": "/api/sessions/model",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 189,
+      "method": "GET",
+      "path": "/api/sessions/:sessionId/messages",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/sessions/",
+        "/api/sessions/"
+      ]
+    },
+    {
+      "order": 190,
+      "method": "POST",
+      "path": "/api/sessions/:sessionId/fork",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/sessions/",
+        "/api/sessions/"
+      ]
+    },
+    {
+      "order": 191,
+      "method": "GET",
+      "path": "/api/sessions/:sessionId/subagent/:subagentId/messages",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/sessions/",
+        "/api/sessions/"
+      ]
+    },
+    {
+      "order": 192,
+      "method": "POST",
+      "path": "/api/sop/approver/login",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/sop/",
+        "/api/sop/"
+      ]
+    },
+    {
+      "order": 193,
+      "method": "GET",
+      "path": "/api/sop/approver/session",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/sop/",
+        "/api/sop/"
+      ]
+    },
+    {
+      "order": 194,
+      "method": "GET",
+      "path": "/api/sop/status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/sop/",
+        "/api/sop/"
+      ]
+    },
+    {
+      "order": 195,
+      "method": "POST",
+      "path": "/api/sop/resume",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/sop/",
+        "/api/sop/"
+      ]
+    },
+    {
+      "order": 196,
+      "method": "POST",
+      "path": "/api/modules/staffdeck-copy/call",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/staffdeck-copy/",
+        "/api/modules/staffdeck-copy/"
+      ]
+    },
+    {
+      "order": 197,
+      "method": "POST",
+      "path": "/api/modules/host-capabilities/call",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 198,
+      "method": "POST",
+      "path": "/api/modules/host-capabilities/callback",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 199,
+      "method": "GET",
+      "path": "/api/modules/runtime",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 200,
+      "method": "POST",
+      "path": "/api/modules/knowledge/query",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 201,
+      "method": "POST",
+      "path": "/api/modules/knowledge/citation",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 202,
+      "method": "POST",
+      "path": "/api/modules/knowledge/call",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 203,
+      "method": "GET",
+      "path": "/api/modules/sop/definitions",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 204,
+      "method": "PUT",
+      "path": "/api/modules/sop/definitions/:definitionId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 205,
+      "method": "GET",
+      "path": "/api/modules/sop/management",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 206,
+      "method": "POST",
+      "path": "/api/modules/sop/management/call",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 207,
+      "method": "POST",
+      "path": "/api/modules/staffdeck-sdk/call",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 208,
+      "method": "GET",
+      "path": "/api/modules/staffdeck-sdk/events",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 209,
+      "method": "POST",
+      "path": "/api/modules/staffdeck-sdk/file",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/modules/",
+        "/api/modules/"
+      ]
+    },
+    {
+      "order": 210,
+      "method": "POST",
+      "path": "/api/agent/",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/agent/",
+        "/api/agent/"
+      ]
+    },
+    {
+      "order": 211,
+      "method": "GET",
+      "path": "/api/update/context",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/update/",
+        "/api/update/",
+        "/api/update/"
+      ]
+    },
+    {
+      "order": 212,
+      "method": "GET",
+      "path": "/api/update/info",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/update/",
+        "/api/update/",
+        "/api/update/"
+      ]
+    },
+    {
+      "order": 213,
+      "method": "POST",
+      "path": "/api/update/check",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/update/",
+        "/api/update/",
+        "/api/update/"
+      ]
+    },
+    {
+      "order": 214,
+      "method": "GET",
+      "path": "/api/update/status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/update/",
+        "/api/update/",
+        "/api/update/"
+      ]
+    },
+    {
+      "order": 215,
+      "method": "POST",
+      "path": "/api/update/apply",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/update/",
+        "/api/update/",
+        "/api/update/"
+      ]
+    },
+    {
+      "order": 216,
+      "method": "POST",
+      "path": "/api/update/restart",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/api/update/",
+        "/api/update/"
+      ]
+    },
+    {
+      "order": 217,
+      "method": "GET",
+      "path": "/api/agents/runtime-config",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 218,
+      "method": "GET",
+      "path": "/api/ccr/dashboard",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 219,
+      "method": "GET",
+      "path": "/api/always-on/events",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 220,
+      "method": "GET",
+      "path": "/api/always-on/cron-jobs",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 221,
+      "method": "POST",
+      "path": "/api/always-on/cron-jobs",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 222,
+      "method": "PATCH",
+      "path": "/api/always-on/cron-jobs/:taskId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 223,
+      "method": "POST",
+      "path": "/api/always-on/cron-jobs/:taskId/run-now",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 224,
+      "method": "POST",
+      "path": "/api/always-on/cron-jobs/:taskId/stop",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 225,
+      "method": "DELETE",
+      "path": "/api/always-on/cron-jobs/:taskId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 226,
+      "method": "GET",
+      "path": "/api/ccr/health",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 227,
+      "method": "GET",
+      "path": "/api/ccr/config",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 228,
+      "method": "GET",
+      "path": "/api/ccr/stats/summary",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 229,
+      "method": "GET",
+      "path": "/api/ccr/stats/sessions/:sessionId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 230,
+      "method": "POST",
+      "path": "/api/ccr/stats/reset",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 231,
+      "method": "PUT",
+      "path": "/api/ccr/config",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 232,
+      "method": "GET",
+      "path": "/memory-dashboard",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 233,
+      "method": "GET",
+      "path": "/api/projects",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 234,
+      "method": "GET",
+      "path": "/api/projects/:projectName/sessions",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 235,
+      "method": "PUT",
+      "path": "/api/projects/:projectName/rename",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 236,
+      "method": "DELETE",
+      "path": "/api/projects/:projectName/sessions/:sessionId",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 237,
+      "method": "PUT",
+      "path": "/api/sessions/:sessionId/rename",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 238,
+      "method": "DELETE",
+      "path": "/api/projects/:projectName",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 239,
+      "method": "POST",
+      "path": "/api/projects/create",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 240,
+      "method": "GET",
+      "path": "/api/search/conversations",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 241,
+      "method": "GET",
+      "path": "/api/browse-filesystem",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 242,
+      "method": "POST",
+      "path": "/api/browse-filesystem/native-folder",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 243,
+      "method": "POST",
+      "path": "/api/create-folder",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 244,
+      "method": "GET",
+      "path": "/api/projects/:projectName/file",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 245,
+      "method": "GET",
+      "path": "/api/projects/:projectName/files/content",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 246,
+      "method": "GET",
+      "path": "/api/office-preview/status",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 247,
+      "method": "GET",
+      "path": "/api/projects/:projectName/files/preview/pdf",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 248,
+      "method": "GET",
+      "path": "/api/projects/:projectName/files/preview/spreadsheet/manifest",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 249,
+      "method": "GET",
+      "path": "/api/projects/:projectName/files/preview/spreadsheet/data",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 250,
+      "method": "GET",
+      "path": "/api/projects/:projectName/files/preview/spreadsheet/sheet",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 251,
+      "method": "GET",
+      "path": "/api/projects/:projectName/preview/*",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 252,
+      "method": "GET",
+      "path": "/api/projects/:projectName/download",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 253,
+      "method": "PUT",
+      "path": "/api/projects/:projectName/file",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 254,
+      "method": "GET",
+      "path": "/api/projects/:projectName/files",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 255,
+      "method": "POST",
+      "path": "/api/projects/:projectName/files/create",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 256,
+      "method": "PUT",
+      "path": "/api/projects/:projectName/files/rename",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 257,
+      "method": "DELETE",
+      "path": "/api/projects/:projectName/files",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 258,
+      "method": "POST",
+      "path": "/api/projects/:projectName/files/upload/check",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 259,
+      "method": "POST",
+      "path": "/api/projects/:projectName/files/upload",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 260,
+      "method": "POST",
+      "path": "/api/projects/:projectName/upload-attachments",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 261,
+      "method": "POST",
+      "path": "/api/projects/:projectName/upload-images",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 262,
+      "method": "GET",
+      "path": "/api/projects/:projectName/sessions/:sessionId/token-usage",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    },
+    {
+      "order": 263,
+      "method": "GET",
+      "path": "/*",
+      "handler": "bound dispatch",
+      "mountChain": [
+        "/"
+      ]
+    }
+  ],
+  "middlewareOrUnknownLayers": 36
+}

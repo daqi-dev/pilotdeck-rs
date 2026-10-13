@@ -1,0 +1,109 @@
+{
+  "verdict": "PASS",
+  "controls": [
+    {
+      "name": "equivalence:left-vs-right",
+      "expect": "PASS",
+      "mutated": null,
+      "actual": "PASS",
+      "differences": [],
+      "passed": true
+    },
+    {
+      "name": "equivalence:left-vs-itself",
+      "expect": "PASS",
+      "mutated": null,
+      "actual": "PASS",
+      "differences": [],
+      "passed": true
+    },
+    {
+      "name": "equivalence:right-vs-itself",
+      "expect": "PASS",
+      "mutated": null,
+      "actual": "PASS",
+      "differences": [],
+      "passed": true
+    },
+    {
+      "name": "inject:http-body-field",
+      "expect": "FAIL",
+      "mutated": "health",
+      "expectedLocation": "http[health] body.installMode",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "http[health] body.installMode",
+          "left": "git",
+          "right": "INJECTED_git",
+          "message": "value differs"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "name": "inject:http-status-code",
+      "expect": "FAIL",
+      "mutated": "health",
+      "expectedLocation": "http[health] status",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "http[health] status",
+          "left": 200,
+          "right": 201,
+          "message": "status differs"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "name": "inject:delete-ws-frame",
+      "expect": "FAIL",
+      "mutated": "chat-raw",
+      "expectedLocation": "ws[chat-raw] #3",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "ws[chat-raw] #3.body.id",
+          "left": null,
+          "right": "status_<uuid:4>",
+          "message": "missing on left"
+        },
+        {
+          "location": "ws[chat-raw] #3.body.kind",
+          "left": null,
+          "right": "status",
+          "message": "missing on left"
+        },
+        {
+          "location": "ws[chat-raw] #3.body.model",
+          "left": null,
+          "right": "deterministic",
+          "message": "missing on left"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "name": "inject:change-sse-event",
+      "expect": "FAIL",
+      "mutated": "sse-incremental",
+      "expectedLocation": "sse[sse-incremental] #0",
+      "actual": "FAIL",
+      "namedLocation": true,
+      "differences": [
+        {
+          "location": "sse[sse-incremental] #0.data",
+          "left": "first",
+          "right": "first\ncontrol-injected\n",
+          "message": "value differs"
+        }
+      ],
+      "passed": true
+    }
+  ]
+}
