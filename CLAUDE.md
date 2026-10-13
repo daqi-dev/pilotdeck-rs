@@ -72,6 +72,10 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 - 单个会话 ≤ **2 小时**，到点先写交接（`state/board.md`）再退出；**没写交接的退出等于没做**。
 - 第一条 issue（回捞并复核尺子，GitHub #7）≤ **1 天**；超时**停下交人决定**是否降级——不许自己降级（计划 001 风险 R1）。
 
+### 坑：合并时把 worktree 连同 `_tmp/` 一起删了（2026-10-14 夜）
+`gh pr merge --delete-branch` 删除本地分支时会**连带删掉签出它的 worktree**，未入库的 `_tmp/`（实验证据、交接报告）一起没了。
+⇒ 合并 worktree 的 PR：**不用 `--delete-branch`**；先 `rsync -a _build/wt-<名>/_tmp/ _tmp/archive/wt-<名>-tmp/`，再 `git push origin --delete <分支>`、`git worktree remove`。实验证据要被文档链接的，放主仓 `_tmp/<日期>-<名>/`。
+
 ### 尺子不许自己改（2026-10-14；旧迁移的教训：比较器从 v2.0 改到 v2.4.1，大量轮次花在调契约上）
 - `specs/parity/` 下 `FROZEN.md` 登记过的文件，**AI 一律不改**；要改就另开 issue 写清理由，等人批。`accepted-diffs.md` 只许追加，每条要写类别与依据。
 - 定阈值（k、m）的时候**不许看 Rust 的运行结果**；Issue #1 不跑 Rust。
