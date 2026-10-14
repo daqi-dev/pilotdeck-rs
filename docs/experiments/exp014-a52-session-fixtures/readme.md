@@ -52,6 +52,8 @@ timeout 使用固定 gateway now 与 `timeoutMs=123456` 的原 callback；捕获
 
 有 registry 的 timeout 自身 status/error 都在同步 close 后才尝试 enqueue；迟到 G 同样被丢弃。故障触发的 U 也在 close 后被丢弃。以上是本次指定交错的观察值，不推断生产调度概率或保证所有故障都会如此。
 
+**重连可从 registry 回放**：同 runId 的重复 submitTurn 接纳会读取 registry events（基线 `InProcessGateway.ts:913`），也可通过 run_events 查询；上表的 `∅` 只指原 submitTurn 实时流，不表示事件无法恢复，也不表示真实 Web bridge 已自动发出恢复请求。
+
 ## 逐项 writer 实测
 
 下面每行采用 model 的实际 seq；tool 多一个前缀，registry seq、revision、lastSeq 全部加 1，其余行为相同。全部两阶段各 5/5 一致。快格的其他次序另表，不计作慢/失败格替代。
