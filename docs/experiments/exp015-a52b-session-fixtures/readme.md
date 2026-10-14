@@ -3,13 +3,13 @@ type: experiment
 number: "015"
 date: 2026-10-15
 title: A5.2b · 双连接、交错 close、存储故障与重启夹具
-status: 进程内实测完成；真实 sidecar G 交叉确认完成；cold-restart / 真实 WS 待协调者采集
+status: 进程内实测完成；真实 sidecar G 交叉确认完成（一格）；cold-restart 与真实 WS 已由协调者实跑（WS 跨遍汇总待补，#112）
 related: [plan/005_phase-a-session-domain, experiments/exp014-a52-session-fixtures, research/008_phase-a-session-domain/gap]
 ---
 
 # A5.2b 基线受控实测
 
-**34 个子例 × k=5 = 170 次进程内测量，全部一致；4 个装置级、6 个观察副本对照均命中指定规则。真实 stdio sidecar 另做 5 次 G 路径交叉确认；原 A5.2a 装置原样回归 360 次及 9 个原有对照。** 本轮共 535 次测量、19 个对照，不含任何 Rust 对拍分数。cold-restart 和真实 WS 尚未运行，分别交付协调者脚本；真实 Web bridge 重连仍单列为未验，不能据此关闭 D5。
+**34 个子例 × k=5 = 170 次进程内测量，全部一致；4 个装置级、6 个观察副本对照均命中指定规则。真实 stdio sidecar 另做 5 次 G 路径交叉确认；原 A5.2a 装置原样回归 360 次及 9 个原有对照。** 本轮共 535 次测量、19 个对照，不含任何 Rust 对拍分数。cold-restart（2 组 × 5，结果一致）与真实 WS（15 子例 × 5 = 75 次执行完，跨遍汇总待补）已由协调者在沙箱外实跑，结果见下表；真实 Web bridge 重连仍单列为未验，不能据此关闭 D5。
 
 逐例摘要、完整集合、装置与证据哈希见 [results.json](results.json)。**正式采集**（预注册规则先单独提交（本 PR 第一个提交；rebase 合并会改哈希，以提交内容为准），记录为 COMMITTED_BEFORE_COLLECTION）：进程内 [`_tmp/a52b/coordinator-main/`](../../../_tmp/a52b/coordinator-main/)，sidecar [`coordinator-sidecar/`](../../../_tmp/a52b/coordinator-sidecar/)，A5.2a 回归 [`coordinator-a52a/`](../../../_tmp/a52b/coordinator-a52a/)。开发期采集 `delivery-main/` 等保留作对照：协调者用同一汇总器分别汇总两次采集，去掉 ID、时间戳、路径与哈希后**零差异**。合并后证据归档在主仓 `_tmp/archive/wt-a52b-tmp/a52b/`。
 
