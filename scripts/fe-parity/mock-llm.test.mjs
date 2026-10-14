@@ -1077,7 +1077,7 @@ test('round twelve: hidden Chrome child requires current verified ancestry and c
 test('round twelve: exited/defunct/zombie pass with evidence; live unknown, identity races and probe errors fail', async () => {
   const base = '10 1 10 runner\n20 10 20 (hidden)';
   for (const [raw, status, denied] of [['', 'exited', false], ['20 10 20 Z', 'zombie', false],
-    ['20 10 20 S <defunct>', 'zombie', false], ['20 10 20 S', 'unavailable', true],
+    ['20 10 20 S <defunct>', 'unavailable', true], ['20 10 20 S', 'unavailable', true],
     ['20 10 20 S hidden', 'unavailable', true], ['20 99 20 S /usr/bin/true', 'unavailable', true],
     ['20 10 99 S /usr/bin/true', 'unavailable', true], ['20 10 20 S /tmp/../usr/bin/true', 'unavailable', true],
     ['20 10 20 S /usr/bin/true\n20 10 20 S /usr/bin/true', 'unavailable', true]]) {
@@ -1091,6 +1091,8 @@ test('round twelve: exited/defunct/zombie pass with evidence; live unknown, iden
   assert.equal(defunct[1].executableObservation.status, 'zombie');
   const liveDefunct = await resolveUnreadableProcesses(processTree(base.replace('(hidden)', '(open) <defunct>'), 10), { run: async () => '20 10 20 S /usr/bin/open', executableRealpath: path => path });
   assert.equal(forbiddenProcesses(liveDefunct)[0]?.pid, 20, 'live process with <defunct> in argv FAIL');
+  const renamed = await resolveUnreadableProcesses(processTree(base.replace('(hidden)', '<defunct>'), 10), { run: async () => '20 10 20 SN <defunct>', executableRealpath: path => path });
+  assert.equal(forbiddenProcesses(renamed)[0]?.pid, 20, 'live process renamed to <defunct> (stat SN) FAIL');
   const failed = await resolveUnreadableProcesses(processTree(base, 10), { run: async () => { throw new Error('timeout'); } });
   assert.equal(forbiddenProcesses(failed)[0].pid, 20);
   for (const live of [false, true]) {

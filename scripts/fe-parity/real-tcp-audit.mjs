@@ -56,7 +56,6 @@ export function processTree(ps, rootPid, groupRoots = []) {
 const unreadableCommand = command => /^\(.+\)$/.test(command);
 // A <defunct> marker in the args snapshot is only a reason to probe; the probe's
 // stat (Z) or a vanished PID decides. An argv merely containing it is not a zombie.
-const defunctCommand = command => command.trim() === '<defunct>';
 const mentionsDefunct = command => /(?:^|\s)<defunct>(?:\s|$)/.test(command);
 // args=(comm) is not evidence of an executable. Re-probe each sample, binding
 // comm/stat to the current PID/PPID/PGID; never reuse a previous path approval.
@@ -72,7 +71,8 @@ export async function resolveUnreadableProcesses(processes, { run = capture, exe
       if (!match || Number(match[1]) !== row.pid || Number(match[2]) !== row.ppid || Number(match[3]) !== row.pgid)
         throw new Error('executable probe process identity changed or malformed');
       observation.stat = match[4];
-      if (match[4].startsWith('Z') || defunctCommand(match[5] ?? '')) { observation.status = 'zombie'; return; }
+      // Only the kernel state decides: a live process can rename argv0/comm to <defunct>.
+      if (match[4].startsWith('Z')) { observation.status = 'zombie'; return; }
       const path = match[5];
       if (path?.startsWith('/') && resolve(path) === path) observation.path = path;
     };
@@ -334,7 +334,8 @@ export function forbiddenProcesses(processes, { playwrightRoots = [], browserTmp
   return processes.filter(row => {
     const observation = row.executableObservation, paths = executablePaths(row);
     if (inactiveProcess(row)) return false;
-    if (unreadableCommand(row.command) && (observation?.status !== 'resolved' || !paths.length)) return true;
+    // A live row that is unreadable or merely claims <defunct> must resolve its executable.
+    if ((unreadableCommand(row.command) || mentionsDefunct(row.command)) && (observation?.status !== 'resolved' || !paths.length)) return true;
     const names = paths.map(path => basename(path));
     if (unreadableCommand(row.command)) names.push(row.command.slice(1, -1));
     if (/(?:^|\s|[;&|])(?:[^\s;|]*\/)?(?:open|xdg-open|osascript)(?=\s|$|[;&|])/.test(row.command)
