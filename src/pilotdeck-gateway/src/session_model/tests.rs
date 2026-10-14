@@ -99,8 +99,20 @@ fn complete_default_provider_matches_node_wire_fixtures() {
         } else {
             response(&request, &m, &env(row))
         };
+        let expected_calls: Vec<i32> = row["process"]["killCalls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| i32::try_from(v.as_i64().unwrap()).unwrap())
+            .collect();
+        assert_eq!(
+            *m.files.calls.lock().unwrap(),
+            expected_calls,
+            "{} kill calls",
+            row["id"]
+        );
         if row["forward"].as_bool() == Some(true) {
-            assert!(actual.is_none(), "{} must obey D6", row["id"]);
+            assert!(actual.is_none(), "{} must forward to TS", row["id"]);
             continue;
         }
         let actual = actual.map(|b| String::from_utf8(b).unwrap());
@@ -154,6 +166,26 @@ fn project_configuration_diagnostics_match_the_real_node_loader() {
             .as_string()
             .map(|s| String::from_utf16_lossy(s.units()));
         let loaded = config::load_project(&m, &env(row), project.as_deref());
+        let expected_calls: Vec<i32> = row["process"]["loadKillCalls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| i32::try_from(v.as_i64().unwrap()).unwrap())
+            .collect();
+        assert_eq!(
+            *m.files.calls.lock().unwrap(),
+            expected_calls,
+            "{} loader kill calls",
+            row["id"]
+        );
+        if row["loadForward"].as_bool() == Some(true) {
+            assert!(
+                loaded.err().unwrap().requires_host,
+                "{} loader requires host",
+                row["id"]
+            );
+            continue;
+        }
         let actual = match loaded {
             Ok(c) => object([
                 ("ok", JsValue::Bool(true)),

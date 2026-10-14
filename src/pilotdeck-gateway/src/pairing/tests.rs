@@ -1167,7 +1167,7 @@ async fn session_selection_requests_match_node_frames_with_an_independent_upstre
         let expected = server_frame(1, row["response"].as_str().unwrap().as_bytes());
         write(&mut pair.client, &request).await;
         if row["forward"].as_bool() == Some(true) {
-            // D6 fallback must preserve the complete original request frame.
+            // Host fallback must preserve the complete original request frame.
             read(&mut pair.server, &request).await;
             write(&mut pair.server, &expected).await;
         }
