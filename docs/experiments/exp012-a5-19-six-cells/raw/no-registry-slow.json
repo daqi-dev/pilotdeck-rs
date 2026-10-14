@@ -1,0 +1,5187 @@
+{
+  "cell": "no-registry-slow",
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "repetitions": [
+    {
+      "cell": "no-registry-slow",
+      "variant": "status-slow",
+      "phase": "model",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed",
+        "agent_status:turn_timeout",
+        "error:turn_timeout"
+      ],
+      "durableStatuses": [
+        "gateway_submit_failed",
+        "turn_timeout"
+      ],
+      "registryEventsAfterPrefix": "N/A",
+      "registryState": "N/A",
+      "registryResult": "N/A",
+      "registryRevision": "N/A",
+      "registryLastSeq": "N/A",
+      "droppedEnqueues": [],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed",
+            "agent_status:turn_timeout",
+            "error:turn_timeout"
+          ],
+          "durableStatuses": [
+            "gateway_submit_failed",
+            "turn_timeout"
+          ],
+          "registryEventsAfterPrefix": "N/A",
+          "registryState": "N/A",
+          "registryResult": "N/A",
+          "registryRevision": "N/A",
+          "registryLastSeq": "N/A",
+          "droppedEnqueues": []
+        }
+      ]
+    },
+    {
+      "cell": "no-registry-slow",
+      "variant": "status-slow",
+      "phase": "tool",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed",
+        "agent_status:turn_timeout",
+        "error:turn_timeout"
+      ],
+      "durableStatuses": [
+        "gateway_submit_failed",
+        "turn_timeout"
+      ],
+      "registryEventsAfterPrefix": "N/A",
+      "registryState": "N/A",
+      "registryResult": "N/A",
+      "registryRevision": "N/A",
+      "registryLastSeq": "N/A",
+      "droppedEnqueues": [],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed",
+            "agent_status:turn_timeout",
+            "error:turn_timeout"
+          ],
+          "durableStatuses": [
+            "gateway_submit_failed",
+            "turn_timeout"
+          ],
+          "registryEventsAfterPrefix": "N/A",
+          "registryState": "N/A",
+          "registryResult": "N/A",
+          "registryRevision": "N/A",
+          "registryLastSeq": "N/A",
+          "droppedEnqueues": []
+        }
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "id": "no-registry-slow/status-slow/model/1",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "model",
+      "repetition": 1,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/model/1/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "model"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "loop.wait",
+          "phase": "model"
+        },
+        {
+          "order": 15,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 16,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 17,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 18,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 19,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 20,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 21,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 22,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 23,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 24,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 25,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 26,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 27,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 28,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 29,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 30,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 31,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 32,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 33,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 34,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 35,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 36,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 37,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 38,
+          "kind": "client.resume"
+        },
+        {
+          "order": 39,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 40,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 41,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 43,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 44,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/model/2",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "model",
+      "repetition": 2,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/model/2/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "model"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "loop.wait",
+          "phase": "model"
+        },
+        {
+          "order": 15,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 16,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 17,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 18,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 19,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 20,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 21,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 22,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 23,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 24,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 25,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 26,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 27,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 28,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 29,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 30,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 31,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 32,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 33,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 34,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 35,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 36,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 37,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 38,
+          "kind": "client.resume"
+        },
+        {
+          "order": 39,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 40,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 41,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 43,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 44,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/model/3",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "model",
+      "repetition": 3,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/model/3/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "model"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "loop.wait",
+          "phase": "model"
+        },
+        {
+          "order": 15,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 16,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 17,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 18,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 19,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 20,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 21,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 22,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 23,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 24,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 25,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 26,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 27,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 28,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 29,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 30,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 31,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 32,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 33,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 34,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 35,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 36,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 37,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 38,
+          "kind": "client.resume"
+        },
+        {
+          "order": 39,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 40,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 41,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 43,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 44,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/model/4",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "model",
+      "repetition": 4,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/model/4/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "model"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "loop.wait",
+          "phase": "model"
+        },
+        {
+          "order": 15,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 16,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 17,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 18,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 19,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 20,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 21,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 22,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 23,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 24,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 25,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 26,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 27,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 28,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 29,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 30,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 31,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 32,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 33,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 34,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 35,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 36,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 37,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 38,
+          "kind": "client.resume"
+        },
+        {
+          "order": 39,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 40,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 41,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 43,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 44,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/model/5",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "model",
+      "repetition": 5,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/model/5/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "model"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "loop.wait",
+          "phase": "model"
+        },
+        {
+          "order": 15,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 16,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 17,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 18,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 19,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 20,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 21,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 22,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 23,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 24,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 25,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 26,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 27,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 28,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 29,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 30,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 31,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 32,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 33,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 34,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 35,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 36,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 37,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 38,
+          "kind": "client.resume"
+        },
+        {
+          "order": 39,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 40,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 41,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 43,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 44,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/tool/1",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "tool",
+      "repetition": 1,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "tool_call_started",
+          "toolCallId": "tool-1",
+          "name": "controlled_wait",
+          "argsPreview": "{}",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/tool/1/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "tool"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 15,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 16,
+          "kind": "queue.enqueue",
+          "key": "tool_call_started:",
+          "closed": false,
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 17,
+          "kind": "loop.wait",
+          "phase": "tool"
+        },
+        {
+          "order": 18,
+          "kind": "client.frame",
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 19,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 20,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 21,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 22,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 23,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 24,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 25,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 26,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 27,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 28,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 29,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 30,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 31,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 32,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 33,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 34,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 35,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 36,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 37,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 38,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 39,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 40,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 41,
+          "kind": "client.resume"
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 43,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 44,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 45,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 46,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 47,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/tool/2",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "tool",
+      "repetition": 2,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "tool_call_started",
+          "toolCallId": "tool-1",
+          "name": "controlled_wait",
+          "argsPreview": "{}",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/tool/2/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "tool"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 15,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 16,
+          "kind": "queue.enqueue",
+          "key": "tool_call_started:",
+          "closed": false,
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 17,
+          "kind": "loop.wait",
+          "phase": "tool"
+        },
+        {
+          "order": 18,
+          "kind": "client.frame",
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 19,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 20,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 21,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 22,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 23,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 24,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 25,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 26,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 27,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 28,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 29,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 30,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 31,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 32,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 33,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 34,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 35,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 36,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 37,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 38,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 39,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 40,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 41,
+          "kind": "client.resume"
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 43,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 44,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 45,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 46,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 47,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/tool/3",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "tool",
+      "repetition": 3,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "tool_call_started",
+          "toolCallId": "tool-1",
+          "name": "controlled_wait",
+          "argsPreview": "{}",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/tool/3/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "tool"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 15,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 16,
+          "kind": "queue.enqueue",
+          "key": "tool_call_started:",
+          "closed": false,
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 17,
+          "kind": "loop.wait",
+          "phase": "tool"
+        },
+        {
+          "order": 18,
+          "kind": "client.frame",
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 19,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 20,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 21,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 22,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 23,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 24,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 25,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 26,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 27,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 28,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 29,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 30,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 31,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 32,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 33,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 34,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 35,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 36,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 37,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 38,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 39,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 40,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 41,
+          "kind": "client.resume"
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 43,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 44,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 45,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 46,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 47,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/tool/4",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "tool",
+      "repetition": 4,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "tool_call_started",
+          "toolCallId": "tool-1",
+          "name": "controlled_wait",
+          "argsPreview": "{}",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/tool/4/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "tool"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 15,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 16,
+          "kind": "queue.enqueue",
+          "key": "tool_call_started:",
+          "closed": false,
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 17,
+          "kind": "loop.wait",
+          "phase": "tool"
+        },
+        {
+          "order": 18,
+          "kind": "client.frame",
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 19,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 20,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 21,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 22,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 23,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 24,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 25,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 26,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 27,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 28,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 29,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 30,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 31,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 32,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 33,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 34,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 35,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 36,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 37,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 38,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 39,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 40,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 41,
+          "kind": "client.resume"
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 43,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 44,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 45,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 46,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 47,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    },
+    {
+      "id": "no-registry-slow/status-slow/tool/5",
+      "variant": {
+        "name": "status-slow",
+        "slowStatus": true
+      },
+      "phase": "tool",
+      "repetition": 5,
+      "frames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "fixture",
+          "runId": "run"
+        },
+        {
+          "type": "tool_call_started",
+          "toolCallId": "tool-1",
+          "name": "controlled_wait",
+          "argsPreview": "{}",
+          "runId": "run"
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "gateway_submit_failed",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "gateway_submit_failed",
+          "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "recoverable": false,
+          "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+        },
+        {
+          "type": "agent_status",
+          "runId": "run",
+          "event": "turn_timeout",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          }
+        },
+        {
+          "type": "error",
+          "runId": "run",
+          "code": "turn_timeout",
+          "message": "Turn exceeded the 123456ms timeout.",
+          "recoverable": false,
+          "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+        }
+      ],
+      "durableStatus": {
+        "source": "_tmp/20261014-a5-19/run-tJd1xr/no-registry-slow/status-slow/tool/5/status.jsonl",
+        "rawText": "{\"sequence\":1,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"gateway_submit_failed\",\"kind\":\"error\",\"text\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"detail\":{\"message\":\"AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.\",\"code\":\"gateway_submit_failed\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.\",\"scope\":\"turn\",\"source\":\"gateway\"}}}\n{\"sequence\":2,\"sessionId\":\"session\",\"turnId\":\"run\",\"status\":{\"event\":\"turn_timeout\",\"kind\":\"error\",\"text\":\"Turn exceeded the 123456ms timeout.\",\"detail\":{\"message\":\"Turn exceeded the 123456ms timeout.\",\"code\":\"turn_timeout\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.\",\"scope\":\"turn\",\"source\":\"gateway\",\"timeoutMs\":123456}}}\n",
+        "entries": [
+          {
+            "sequence": 1,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "gateway_submit_failed",
+              "kind": "error",
+              "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "detail": {
+                "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+                "code": "gateway_submit_failed",
+                "severity": "error",
+                "visible": true,
+                "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+                "scope": "turn",
+                "source": "gateway"
+              }
+            }
+          },
+          {
+            "sequence": 2,
+            "sessionId": "session",
+            "turnId": "run",
+            "status": {
+              "event": "turn_timeout",
+              "kind": "error",
+              "text": "Turn exceeded the 123456ms timeout.",
+              "detail": {
+                "message": "Turn exceeded the 123456ms timeout.",
+                "code": "turn_timeout",
+                "severity": "error",
+                "visible": true,
+                "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+                "scope": "turn",
+                "source": "gateway",
+                "timeoutMs": 123456
+              }
+            }
+          }
+        ],
+        "emptyReason": null
+      },
+      "registry": {
+        "applicable": false,
+        "reason": "runRegistry was not configured"
+      },
+      "timeline": [
+        {
+          "order": 1,
+          "kind": "timer.arm",
+          "ms": 123456
+        },
+        {
+          "order": 2,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 3,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 4,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 5,
+          "kind": "queue.enqueue",
+          "key": "turn_started:",
+          "closed": false,
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 6,
+          "kind": "client.frame",
+          "event": {
+            "type": "turn_started",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 7,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 8,
+          "kind": "queue.enqueue",
+          "key": "input_accepted:",
+          "closed": false,
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 9,
+          "kind": "client.frame",
+          "event": {
+            "type": "input_accepted",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 10,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 11,
+          "kind": "loop.input",
+          "execution": {
+            "runId": "run",
+            "operationId": "run",
+            "operationDeadline": "2026-10-14T08:02:03.456Z"
+          },
+          "phase": "tool"
+        },
+        {
+          "order": 12,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 13,
+          "kind": "queue.enqueue",
+          "key": "model_request_started:",
+          "closed": false,
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 14,
+          "kind": "client.frame",
+          "event": {
+            "type": "model_request_started",
+            "model": "controlled",
+            "provider": "fixture",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 15,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 16,
+          "kind": "queue.enqueue",
+          "key": "tool_call_started:",
+          "closed": false,
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 17,
+          "kind": "loop.wait",
+          "phase": "tool"
+        },
+        {
+          "order": 18,
+          "kind": "client.frame",
+          "event": {
+            "type": "tool_call_started",
+            "toolCallId": "tool-1",
+            "name": "controlled_wait",
+            "argsPreview": "{}",
+            "runId": "run"
+          }
+        },
+        {
+          "order": 19,
+          "kind": "client.pause",
+          "purpose": "hold outer finally until controlled release"
+        },
+        {
+          "order": 20,
+          "kind": "timer.fire"
+        },
+        {
+          "order": 21,
+          "kind": "session.abort",
+          "reason": "timeout:run"
+        },
+        {
+          "order": 22,
+          "kind": "status.attempt",
+          "key": "turn_timeout",
+          "status": {
+            "event": "turn_timeout",
+            "kind": "error",
+            "text": "Turn exceeded the 123456ms timeout.",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 23,
+          "kind": "status.block",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 24,
+          "kind": "control.release.unknown"
+        },
+        {
+          "order": 25,
+          "kind": "loop.final",
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "aborted": true,
+          "reason": "timeout:run"
+        },
+        {
+          "order": 26,
+          "kind": "session.submit.exit"
+        },
+        {
+          "order": 27,
+          "kind": "fence.current",
+          "current": true
+        },
+        {
+          "order": 28,
+          "kind": "status.attempt",
+          "key": "gateway_submit_failed",
+          "status": {
+            "event": "gateway_submit_failed",
+            "kind": "error",
+            "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 29,
+          "kind": "status.commit",
+          "key": "gateway_submit_failed",
+          "sequence": 1
+        },
+        {
+          "order": 30,
+          "kind": "queue.enqueue",
+          "key": "agent_status:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 31,
+          "kind": "queue.enqueue",
+          "key": "error:gateway_submit_failed",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 32,
+          "kind": "timer.clear"
+        },
+        {
+          "order": 33,
+          "kind": "control.release.status"
+        },
+        {
+          "order": 34,
+          "kind": "status.release",
+          "key": "turn_timeout"
+        },
+        {
+          "order": 35,
+          "kind": "status.commit",
+          "key": "turn_timeout",
+          "sequence": 2
+        },
+        {
+          "order": 36,
+          "kind": "queue.enqueue",
+          "key": "agent_status:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 37,
+          "kind": "queue.enqueue",
+          "key": "error:turn_timeout",
+          "closed": false,
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 38,
+          "kind": "queue.close",
+          "alreadyClosed": false
+        },
+        {
+          "order": 39,
+          "kind": "control.release.append"
+        },
+        {
+          "order": 40,
+          "kind": "queue.close",
+          "alreadyClosed": true
+        },
+        {
+          "order": 41,
+          "kind": "client.resume"
+        },
+        {
+          "order": 42,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "gateway_submit_failed",
+            "detail": {
+              "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+              "code": "gateway_submit_failed",
+              "severity": "error",
+              "visible": true,
+              "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+              "scope": "turn",
+              "source": "gateway"
+            }
+          }
+        },
+        {
+          "order": 43,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        },
+        {
+          "order": 44,
+          "kind": "client.frame",
+          "event": {
+            "type": "agent_status",
+            "runId": "run",
+            "event": "turn_timeout",
+            "detail": {
+              "message": "Turn exceeded the 123456ms timeout.",
+              "code": "turn_timeout",
+              "severity": "error",
+              "visible": true,
+              "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+              "scope": "turn",
+              "source": "gateway",
+              "timeoutMs": 123456
+            }
+          }
+        },
+        {
+          "order": 45,
+          "kind": "client.frame",
+          "event": {
+            "type": "error",
+            "runId": "run",
+            "code": "turn_timeout",
+            "message": "Turn exceeded the 123456ms timeout.",
+            "recoverable": false,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout."
+          }
+        },
+        {
+          "order": 46,
+          "kind": "fence.complete"
+        },
+        {
+          "order": 47,
+          "kind": "client.done"
+        }
+      ],
+      "transcriptRawText": "{\"sessionId\":\"session\",\"turnId\":\"run\",\"event\":{\"type\":\"turn_started\"}}\n{\"sessionId\":\"session\",\"turnId\":\"run\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"controlled wait\"}]}]}\n"
+    }
+  ]
+}
