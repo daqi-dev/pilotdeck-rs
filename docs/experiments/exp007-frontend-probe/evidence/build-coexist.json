@@ -1,0 +1,38 @@
+[
+  {
+    "candidate": "leptos",
+    "cargoSeconds": 0.324,
+    "bindgenSeconds": 0.519,
+    "cache": "warm, not cold build benchmark",
+    "wasmBytes": 470683,
+    "wasmGzipBytes": 113033,
+    "wasmSHA256": "e31125c219f5c46fcfc0c99120c9abd2812b652b9e54cf84b6c1b8b27a58db14",
+    "jsBytes": 47632,
+    "jsGzipBytes": 9021,
+    "wasmOpt": false,
+    "profile": {
+      "optLevel": "z",
+      "lto": true,
+      "codegenUnits": 1,
+      "strip": false
+    }
+  },
+  {
+    "candidate": "dioxus",
+    "cargoSeconds": 275.174,
+    "bindgenSeconds": 0.037,
+    "cache": "warm, not cold build benchmark",
+    "wasmBytes": 720168,
+    "wasmGzipBytes": 210535,
+    "wasmSHA256": "8afd39a1ef28a15f71d4efb7c0bf091451babea2d23bc9e217a7f9b87dec290e",
+    "jsBytes": 97271,
+    "jsGzipBytes": 17900,
+    "wasmOpt": false,
+    "profile": {
+      "optLevel": "z",
+      "lto": true,
+      "codegenUnits": 1,
+      "strip": false
+    }
+  }
+]

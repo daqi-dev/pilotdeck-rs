@@ -29,3 +29,8 @@
 | D5 | 页内岛重挂焦点通过，跨壳浏览器滚动/焦点没有可用实测 | **撤销上表“跨壳前进/后退不恢复”的无条件断言。修订为：普通新文档重建不承诺恢复原内存中的滚动/焦点；历史遍历的实际结果待 Chrome/BFCache 矩阵验证，允许浏览器自动恢复。** 原因：当前无布局验证，浏览器 `scrollRestoration=auto` 可恢复滚动（[MDN](https://developer.mozilla.org/en-US/docs/Web/API/History/scrollRestoration)），不能靠“整页加载”推出必不恢复。该文档说明不是本次实测 | 原无条件口径撤回；修订假设待测，未转正 |
 
 不变式对账：两 Rust 壳从已有 `auth-token` / `draft_input_probe:s` 启动时，登录请求带 Bearer、composer 恢复“跨壳尚未发送草稿”；`pilotdeck-active-project` 保持。输入事件写草稿通过。同 origin 的 history 遍历不改变 storage 的 DOM 级实验通过，**浏览器旧↔新整页导航仍待补**。主题 `themeMode` / `theme`、语言 `userLanguage` 已回源，完整静态调用点及动态键表达式见 [storage 盘点](../../experiments/exp007-frontend-probe/storage-keys.md)。草稿丢失仍是回归 bug，不变成已接受差异。
+
+
+## Issue #43 实现更新（2026-10-15；不改接受口径）
+
+上述 D4 的 Caddy 记录属于首轮历史。当前方案 B 已用本仓 Rust 前缀路由器 + 原样冻结 exp008 proxy 复跑入口选择及 HTTP/WS/SSE，见 [exp007 S5 与当前证据](../../experiments/exp007-frontend-probe/readme.md)。这里只更新实现与证据指针；D1–D5 的接受语义/转正状态、共享 storage 不变式、浏览器未测边界均保持原口径。

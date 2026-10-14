@@ -5,6 +5,11 @@
     "sha256": "77090d2e82a4174eacb7d309f9c7ca4a373fd2cbd631d369234e9df54ed22966"
   },
   {
+    "file": "build-coexist.json",
+    "bytes": 924,
+    "sha256": "fcf706ef7d41ee3899d59f16af894a3c6e5f8d301de03f03d20d9188e9977b00"
+  },
+  {
     "file": "build.json",
     "bytes": 978,
     "sha256": "ea3b1620e7508b156dd468539022a87b2f1e0feaf39d667c4fba03a6b2fe879a"
@@ -25,9 +30,14 @@
     "sha256": "8beb0f019efa13aa5ff0240186a111716e64d3df67a7eb800509eec980ff296b"
   },
   {
-    "file": "coexist.json",
+    "file": "coexist-caddy.json",
     "bytes": 1576,
     "sha256": "006d496148665a8e095846cc117f462e9b4591def6897c793c95d83fb12740cd"
+  },
+  {
+    "file": "coexist.json",
+    "bytes": 4163,
+    "sha256": "b72ffcbfa13837289ff31f336b84aebb68539e7fb6d16e2a8a4aeba491801283"
   },
   {
     "file": "dioxus-restore.json",
@@ -93,6 +103,11 @@
     "file": "stream-gap.json",
     "bytes": 338,
     "sha256": "9c55fe88db81e4e29284d5b561e1269528870e40e958d61ce91955e5cb690fc0"
+  },
+  {
+    "file": "validation-issue43.json",
+    "bytes": 6414,
+    "sha256": "82525a695a37e7abd005293cb98408ae478db559a56688f2d16cca91beb481c7"
   },
   {
     "file": "validation.log",

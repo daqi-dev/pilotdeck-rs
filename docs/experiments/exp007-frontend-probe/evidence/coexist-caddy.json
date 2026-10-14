@@ -1,0 +1,73 @@
+{
+  "status": "PASS_HTTP_WS_ONLY",
+  "variant": "B Caddy front proxy",
+  "checks": [
+    {
+      "path": "/",
+      "status": "PASS",
+      "bundle": "actual baseline Vite index",
+      "statusCode": 200
+    },
+    {
+      "path": "/settings",
+      "status": "PASS",
+      "bundle": "actual baseline Vite index",
+      "statusCode": 200
+    },
+    {
+      "path": "/probex",
+      "status": "PASS",
+      "bundle": "actual baseline Vite index",
+      "statusCode": 200
+    },
+    {
+      "path": "/probe/leptos/",
+      "status": "PASS",
+      "bundle": "actual compiled wasm static entry",
+      "wasmBytes": 449336
+    },
+    {
+      "path": "/probe/dioxus/",
+      "status": "PASS",
+      "bundle": "actual compiled wasm static entry",
+      "wasmBytes": 718068
+    },
+    {
+      "path": "/api/auth/login",
+      "status": "PASS",
+      "backend": "mock same-origin"
+    },
+    {
+      "path": "/ws",
+      "status": "PASS",
+      "webSocketUpgrade": true,
+      "tokenRetained": true
+    },
+    {
+      "path": "/shell",
+      "status": "PASS",
+      "webSocketUpgrade": true,
+      "tokenRetained": true
+    }
+  ],
+  "processes": {
+    "runner": 43207,
+    "caddy": 43212,
+    "vite": "in-process",
+    "mock": "in-process"
+  },
+  "bind": "127.0.0.1",
+  "ports": [
+    28370,
+    28374,
+    28375
+  ],
+  "admin": false,
+  "baselineFilesChanged": 0,
+  "limitation": "HTTP entries and WS upgrade measured; native browser reload/storage/BFCache behavior not measured",
+  "cleanup": {
+    "caddyStopped": true,
+    "closeCallsCompleted": true,
+    "deadlineMs": 5000
+  }
+}

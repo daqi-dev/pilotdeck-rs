@@ -94,13 +94,47 @@ Dev 热替换：**未测端到端热替换/状态保留，也未拿 watch 日志
 
 A 类移植尝试：[history-refresh.mjs](../../../scripts/exp007/history-refresh.mjs)。读取原 `streaming-lifecycle.spec.mjs` 的 history refresh 例，改为点现有 `?manual-reconcile` fixture 的可见回放按钮 + 一份图片/一次提问/思考在回答之前的 DOM 断言，不再调用 window.store。前 3 阶段通过；第 4 阶段“完成历史”切换 assistantWorking=false，DOM 只剩提问/回答，思考内容不再渲染，严格断言失败（[结果与失败 DOM](evidence/history-refresh.json)）。原用例一直保持 working=true，故这个按钮式驱动不是一比一等价移植：**样板是 PARTIAL，不判基线回归，不把一次失败变成放弃该尺子**。约 8 分钟含读源/编写/打包/两轮试跑；单次约 6s。F2 应拆开“refresh while running”与“completion refresh”两种触发，再在原/新真实页面双跑；包体/DOM 几何也需浏览器验证。
 
-## S5 · B 前置反代与历史边界
+## S5 · 仓内 Rust 方案 B 与历史边界（Issue #43，2026-10-15）
 
-只完成 **B（Caddy）**；**A 真 ui/server 前缀 patch 未搭、未测**，不把模拟 Express catchall 或纸面 patch 计为 A 实测。B 是本轮降级交付，共存最终方案留 F3/F2 环境补测。没有改真实 `ui/server` / baseline 源码；没有起用户 PilotDeck 进程或碰 3001/18789。
+**当前方案 B 使用本仓独立前缀路由器 + 原样的 exp008 Rust proxy。** 人定 4B：仓内组件优先，禁止下载任何预编译二进制。`scripts/exp007/install-caddy.py` 与 `Caddyfile` 已删除；历史 Caddy 数据保留为 [coexist-caddy.json](evidence/coexist-caddy.json)，原始 bytes/SHA256 不变，原配置可从 Git 历史查看。历史下载说明仅是既往事实，不是当前复现步骤。
 
-Caddy 2.10.2 mac/arm64 的官方 release archive 已对官方 SHA512 清单校验（SHA256 cc9ad20742ea7bfee5dd1d435d42ab7fcf8592294f9ec43bf08fd21cbe448bc4）。配置：[Caddyfile](../../../scripts/exp007/Caddyfile)，admin/auto_https off，grace_period=2s，入口 127.0.0.1:28375；新 `/probe`、shared/vendor → 28370 的 Rust 静态/mock 服务；其余 → 28374 的真实旧 Vite index；API/ws/shell → 28370。旧 Vite 缓存写本 worktree，源码保持只读。
+回源核实：只读基线 `cc7c4e6` 的 catchall 仍在 `ui/server/index.js:3471`，实际生产逻辑还依赖它之前的 `express.static`；不能把「加几行 index 分支」当成整个资产托管方案。当前 HEAD 的 exp008 已有 #72 / #80 修复，但其 `EXP008_UPSTREAM` 只有一个 HTTP origin，没有路径选择。B2 `FROZEN.md` 登记整个 exp008，故本任务在 [prefix-router](../../../scripts/exp007/prefix-router/README.md) 添加独立适配层；未改冻结清单、proxy、录制层或比较器。默认链路仍实际经过冻结 proxy，可由 HTTP 响应 `X-PilotDeck-Handler: ts` 核验。
 
-[coexist.json](evidence/coexist.json) 验证 `/`、`/settings`、`/probex` 返回旧入口；两个 `/probe/{candidate}/` 返回新入口且 wasm Content-Type/内容可取；代理登录 token 正常、主/终端 WS upgrade 正常、终端 CADDY_ECHO 来回。Caddy 在独立进程组中起，finally 只 SIGTERM 自己的组；mock 与 Vite 在 runner 内 finally 同时 close（5s 清理窗口），随后仅退出本 runner，避免 Vite/esbuild idle handles 悬留；最后一次 close 均完成。两次旧 runner 跨 exec 单元直接 SIGTERM 被 sandbox 拒绝，已通过原 exec session Ctrl-C 退出（130）；所有实验端口收尾无监听。额外运维面：一个配置 + 一个常驻前置代理、部署时要同时管理旧 upstream 与新静态服务；生产静态资产可由 Caddy file_server 直接供，但本次没有把那个变体算为验证过。
+入口为 `127.0.0.1:28375`：`/probe`、`/probe/*` 和严格段边界的 shared/vendor 资产 → `28370` 的既有 Node 静态/mock 服务；其余 → `28373` exp008 → `28374` 真实旧 Vite。Vite 的显式 proxy 将 `/api`、`/ws`、`/shell`、`/plugin-ws/*`、`/__probe/*` 送往 mock。生产接法可以是 prefix-router → exp008 → ui/server；**本次没有启动真实 ui/server/gateway、没有修改 baseline 源码**。新增的 Rust 组件只分流与搬运，不冒充静态文件服务器。
+
+[当前 coexist.json](evidence/coexist.json) 保留历史 `status/variant/checks/processes/bind/ports/admin/baselineFilesChanged/limitation/cleanup` 结构；历史 `caddy` PID/停止项改为 `exp008` 与 `prefixRouter`，端口新增 28373。旧入口 `/`、`/settings`、`/probex`、两份编译 wasm、登录与 `/ws`、`/shell` 可逐项比较；额外检查 shared/vendor、`/plugin-ws/echo`、鉴权与子协议、无合成 Date、Pong/Close 回执、SSE 两块增量，以及端口释放。wasm 不仅检查 MIME/大小，还与重建源文件逐字节核对。状态 `PASS_HTTP_WS_SSE_ONLY` 表示本地无浏览器的 HTTP/WS/SSE 实验通过，不宣称生产端到端通过。
+
+本次 **12/12 PASS**，SSE 首块与末块约隔 201 ms；退出后四个端口全部释放。重建产物见 [build-coexist.json](evidence/build-coexist.json)（Leptos wasm 470,683 B，Dioxus 720,168 B；历史 build.json 原件未改）。[验证记录](evidence/validation-issue43.json)：新 Rust 5/5、冻结 exp008 21/21、JS 环境/代理回归 3/3；DOM 导航 8/8 且输出与原 navigation.json 字节相同；fmt/clippy、16 个 Node 模块语法、shell 语法及三套冻结检查 PASS。B2 初查因新 worktree 缺忽略目录下的审批依据失败，在 `_tmp` 链接到主仓已有报告/两份评审后 53 项 PASS；未改依据内容或任何冻结文件。当前浏览器状态仍为 NOT_RUN。
+
+每次服务启动前检查四个端口空闲，严格只绑回环，端口被占即失败。Vite/mock 和两个 Rust 子进程使用本次新建目录中的 HOME/XDG/TMPDIR/PILOT_HOME，禁止自动开浏览器并清理继承的部署/录制变量；Vite cache 写隔离目录。finally 同时关闭服务，只给自己创建的 Rust 子进程发信号，超时升级 SIGKILL 并有界等待；清理失败或端口未释放判 FAIL。所有构建从源码进行，没有下载预编译工具/浏览器。
+
+### 给 F3 的 A / B 对比（A 未实测，不把纸面 patch 记为通过）
+
+| 维度 | A：ui/server 内前缀 patch | B：本仓前置反代（本次实现） |
+|---|---|---|
+| 产品改动面 | 修改真实 server 的静态挂载与 catchall 顺序；`/settings` 与 `/settings/*` 返回新 index，资产必须正确挂载在此前。需生产/开发两种模式单独评审 | ui/server 源码零改；新增 exp007 Rust 路由组件与编排，exp008 只作子进程原样复用；仍需配置旧/新 origin |
+| 静态资产 | 一个 server 可同时供两个 bundle；新资产命名/前缀、404、SPA 深路径 fallback 必须约定，避免旧静态 middleware 抢先 | 当前由独立静态服务供新 bundle；本路由器不做文件 fallback。shared/vendor 是探针专用保留路径，生产应使用专属资产前缀并检查冲突 |
+| 常驻进程/端口 | 生产可不增加进程/监听；开发仍要处理 Vite 的独立入口 | 相对旧 server 增加 **两个 Rust 进程**（prefix-router + exp008），以及新静态服务（若已有可复用）。本实验 4 个监听、2 个 Rust 子进程，不能沿用 Caddy 时代“只多一个代理”的运维结论 |
+| 协议与故障面 | 后端 WS/SSE 继续直达 server，新增风险主要是静态路由优先级/错误 catchall | 多两跳、两处监听/健康与清理；HTTP body 流式、Upgrade 原始隧道，默认经过已修 #72/#80 的 exp008。本次三类 mock WS/SSE 通过，真实 PTY/plugin/auth 部署矩阵仍须验证 |
+| 发布与回退 | 服务与两个 bundle 联动发布；撤销前缀 patch 后恢复旧 bundle。改变产品代码，需要旧页回归 | 发布两份源码构建的 Rust 程序与路由 env；停前置组件并将入口指回旧 server 可回退，但须处理流量切换和已有长连接 |
+| 冻结约束 | 生产代码 patch 不可顺带改 B2 装置/尺子；后续对拍需既有尺子验证 | 本次明确独立于 exp008 冻结范围；若将来合并成一个 proxy，应另开装置变更 issue 并重新评审/定标，不能直接改冻结源 |
+| 导航/状态 | 与 B 相同：静态分支只在整页加载时生效，旧路由/历史层必须拦截，新壳反向硬跳；共享登录态/草稿必须保留 | 同左；前置反代不会自动把旧 SPA 的 navigate/Link/NavLink 改成整页跳转 |
+| 已有证据 | 真实 prefix patch **NOT_RUN** | 本次本地 HTTP/WS/SSE + Rust/JS 单测；浏览器补跑命令见下 |
+
+F3 定夺依据：如果能在生产 ui/server 内正确挂载两个 bundle 并完成静态/导航回归，A 的常驻组件更少；如果需保持后端零修改与独立回退，B 已有可复现的仓内实现，代价是额外进程、监听和长连接运维。**本 issue 只落实 4B 删除 Caddy，不替 F3 把尚未实测的 A 判失败，也不以 B 的 mock 通过放行生产页。** F3 仍须补 A 真 patch、两种入口的实际部署矩阵及完整跨壳导航/storage。
+
+### 当前复现与协调者沙箱外补跑
+
+在本 worktree 根执行；构建脚本只从源码构建 Rust 程序与 wasm-bindgen CLI，已有系统 Chrome 不安装、不下载：
+
+```sh
+sh scripts/exp007/build-coexist.sh
+node scripts/exp007/coexist.mjs
+# 沙箱外本机 Chrome，临时 profile；R12 保留浏览器真实 HOME，服务仍隔离
+node scripts/exp007/coexist.mjs --browser
+```
+
+输出 `_tmp/exp007/coexist.json`；确认退出码 0、status、cleanup 与浏览器检查范围后再归档为 `evidence/coexist.json`，同步 manifest 的 bytes/SHA256。浏览器模式增加双向 history 原语的 document reload、auth/draft/sessionStorage、前进/后退入口；实际 React `navigate`/`Link`/`NavLink` 调用覆盖继续由下面的 DOM 实验记录，BFCache 命中、滚动/焦点恢复、OS IME/HMR 仍不作自动通过。
 
 导航钩子：[boundary.js](../../../ui-rs/shared/boundary.js)。在 router 初始化之前封装 history.pushState/replaceState，并监听 popstate；加载壳身份固定，前缀严格只匹配 `/probe` / `/probe/`，`/probex` 不误切；跨壳 push 用 assign，replace/遍历用 replace，避免后退产生重复 history entry。新壳到未迁 URL 反向同判。实验注入真实 React Router BrowserRouter/useNavigate/Link/NavLink，三类入口均记录了硬跳目标；jsdom 原生 back/forward traversal 均记录 replace，见 [navigation.json](evidence/navigation.json)。**硬跳函数以 recorder 替代：只证明拦截调用，未证明浏览器 document reload 成功。**
 
