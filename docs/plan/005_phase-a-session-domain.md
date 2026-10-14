@@ -12,7 +12,7 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 
 ## Context
 
-承接计划 002 的“A5 起·深水区”：现在要迁走的是拥有状态的 gateway 宿主，包含会话接纳、agent 宿主能力、binding、交互、历史/运行登记、项目配置与其它入口。架构依据集中在 [调研 008](../research/008_phase-a-session-domain/must-know.md)，91 个未本地化 method 的工作包映射和 #19 因果链在 [gap](../research/008_phase-a-session-domain/gap.md)，决策分级在 [decision](../research/008_phase-a-session-domain/decision.md)。计划 002 对后续编号“003”的占位由本 **005** 承接；003 已用于阶段 B，本轮不重排旧编号，仅同步其与 D5 有关的候选阶段门。
+承接计划 002 的“A5 起·深水区”：现在要迁走的是拥有状态的 gateway 宿主，包含会话接纳、agent 宿主能力、binding、交互、历史/运行登记、项目配置与其它入口。架构依据集中在 [调研 008](../research/008_phase-a-session-domain/must-know.md)，91 个未本地化 method 的工作包映射和 #19 因果链在 [gap](../research/008_phase-a-session-domain/gap.md)，决策分级在 [decision](../research/008_phase-a-session-domain/decision.md)。计划 002 对后续编号“003”的占位由本 **005** 承接；003 已用于阶段 B，本轮不重排旧编号，仅在其相关段末追加 D5 待批解环建议，未批准前维持原闸门。
 
 **方案**：按状态所有者分小 PR 构建，默认代理链路保持完整；使用独立 home/project 测试 Rust 原生链路。Rust gateway 通过 Module Protocol 直接驱动阶段 C Rust sidecar，同时承担全部宿主回调。会话域和相关全局写者都准备齐后，在排空边界一次切换权威。没有同一 `PILOT_HOME` 下 TS/Rust 会话状态双写期，也没有逐个打开 (b)(c) 的生产白名单阶段。
 
@@ -59,19 +59,26 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 | PR | 工作 / 目标位置 | 自己怎么算做完 |
 |---|---|---|
 | A5.1 依赖账本 | 基于研究 gap 的50+41列表，扩展 `scripts/gateway-parity/` 的 coverage manifest（拟新增）；逐项列 handler→provider→存储/内存→通知→成功/错误/未配置分支。补 memory/snapshot/browser、external binding 的实际提供者、配置和释放证据 | method 集合与冻结 schema/101清单一一相等、无重复；每项有 owner 和场景ID；未知项明确 BLOCKED；补全后才估算 A6 provider 子 PR |
-| A5.2 并发/重启夹具 | 复用官方 client、独立 driver 录帧、进程管理与高位端口隔离；新增双连接、多会话、旧close/新reconnect交错、store 故障、可控 clock/barrier、cold-restart；#19 覆盖模型/工具等待 × timeout/unknown 顺序 × 快/慢/失败 writer，控制 queue.close 与外层 complete 边界 | 每个夹具有独立 oracle；不能靠 sleep 调到“碰巧绿”；真 bridge 重连另列，不代替协议闭环；#19 原始帧与 durable.status 分开断言，快 writer 下帧只有 timeout 也必须能检出 durable 多写，详见下表 |
+| A5.2 并发/重启夹具 | 复用官方 client、独立 driver 录帧、进程管理与高位端口隔离；新增双连接、多会话、旧close/新reconnect交错、store 故障、可控 clock/barrier、cold-restart；#19 实测复现模型/工具等待 × timeout/unknown 顺序 × **有/无 runRegistry × 快/慢/失败 writer**，分别控制 status 写入与 registry append、queue.close、外层 complete 边界 | 每个夹具有独立 oracle；不能靠 sleep 调到“碰巧绿”；真 bridge 重连另列；实时帧、durable status、registry events/result 分开断言，六格不得缺项；有 registry 组须覆盖生产默认 FileRunRegistry，结果待实测，不预判 timeout 帧可见或 result 不变，详见下表 |
 | A5.3 原生拓扑与四格入口 | 拟新增 `scripts/gateway-parity/session_domain.py`，接口见下；复用现有 compare/driver 而不复制一套尺子。新增 Rust-host→TS/Rust-sidecar、禁 TS host-helper 审计；连接数、进程树、argv/hash、输出/落盘/HTTP 都记账 | native 拓扑被声明时，启动 TS gateway、调用隐形 helper、漏一组场景、伪造 unavailable、丢/重/乱序事件、错误 binding、空 observer、两侧同坏都须 FAIL |
 | A5.4 定标/评审/冻结 | TS-only 先校准新增组 k=5；#19 已知非稳定交错单列，受控预期与批准差异明确，不能删场景。按独立 issue 理由更新装置白名单/哈希、acceptance/normalization 与差异登记；D4 的评分语义、人审门另记 | 原八组仍通过；新增各组有完整5轮与全对比较、33项旧 controls 及新增 controls；两家评审无P0/P1；语义变化依 D4 人批后冻结，未批只交草稿不伪称通过 |
 
-**#19 在此的工作**：验证调研 gap §四的更正因果链：handle 到外层 finally complete 才移除，timeout writer 返回/queue.close 不使其失效；timeout-first/current handle 下 catch 仍落盘 gateway_submit_failed，快慢 writer 都如此。只读基线、不改资源源码；用独立 fixture/注入的 session/storage 及消费端 barrier 控制交错，真实 sidecar 场景用于交叉确认。下面是 A5.2 待实现的基线断言，不是本轮实测；成功落盘分支与故障分支分别记录，不能以实时帧结果代替 durable 结果。
+**#19 在此的工作**：实测复现调研 gap §四的静态机制，不预先写定基线帧或落盘结果。运行期 handle 到外层 finally complete 才移除，timeout writer 返回/queue.close 不使其失效；另有接纳前 releasePreflight，不混入运行期交错。无 registry 时直接入队；有 registry 时 append 成功后才入队，timeout 发布后同步关 queue 可能丢失自身帧；FileRunRegistry 的 failed 不拒绝后续 append，后到 error 还可覆盖 result。生产 createLocalGateway 默认总有 registry，不能以无 registry 夹具代替生产证据。
 
-| 受控次序 | 基线帧断言 | 基线 durable.status 断言 |
-|---|---|---|
-| timeout-first，快 writer；timeout 落盘并关 queue 后 unknown 进入 catch，外层尚未 complete | timeout status/error 可见；后续 gateway_submit_failed 的 status/error 被关闭的 queue 丢弃 | timeout 与额外一条 gateway_submit_failed 都存在；catch 落盘不受 queue.close 影响 |
-| timeout-first，慢 writer；阻塞 timeout 写入，先让 unknown 的失败写入及帧入队，再释放 timeout writer | gateway_submit_failed 与 timeout 的 status/error 均可见，顺序按 barrier 固定 | 两类状态都存在，各一次；落盘顺序按写入 barrier 固定，不能猜测与帧顺序相同 |
-| timeout-first，但 unknown 迟至外层 complete 后才进入 catch | 旧 handle 不应追加失败帧 | current fence 拒绝旧 catch，不追加 gateway_submit_failed；这是 handle 生命周期边界，不是“快 writer 就安全” |
+A5.2 后续发车时只读基线、不改资源源码，用独立 fixture/注入的 session/storage 及 barrier 控制交错，真实 sidecar 场景交叉确认。**必须实测下列六格**；这里的“快/慢/失败 writer”须拆到两个写入点：durable status writer 与 registry append，二者可独立快/慢/失败，不能只延迟 status 写入就声称已覆盖 registry。无 registry 组只有 status writer；有 registry 组分别让两个写入点快写、受控阻塞、独立失败，并覆盖二者交叉快慢及故障交错。有 registry 组必须使用生产默认 FileRunRegistry 的实际存储语义，记录注入方式，不能只凭 mock append 宣称复现生产。
 
-另分别强制 unknown-first / known-final-first、timeout status 与 run registry 写失败；失败注入时核实写入尝试、实际 durable 结果及错误帧，不把写失败当作“已成功持久化唯一 timeout”。**D4 选 B 的候选 Rust oracle**须另列：timeout-first 快/慢 writer 都不追加 durable gateway_submit_failed，帧仅一套 timeout status/error，ledger 仍 unknown；D4 未批不能用候选规则改评分。记录 bug②证据不足的情形，不把“所有 unknown 都是超时”写入 oracle。源码依据 `B/src/gateway/client/InProcessGateway.ts:1252-1266,1384-1439,1727-1759,1848`、`B/src/gateway/util/AsyncQueue.ts:17-18`。
+| 待实测拓扑 / writer | 受控次序与复现问题 | 帧观察 / 独立断言 | durable status 观察 / 独立断言 | registry events/result 观察 / 独立断言 |
+|---|---|---|---|---|
+| 无 registry / 快 | timeout-first，status 快写，控制关 queue 后 unknown 进入仍 current 的 catch | 录原始帧、缺失与顺序，不预填 timeout 可见 | 读实际存储，核对 timeout / gateway_submit_failed 的次数和顺序 | 明确未配置、不适用，不冒充已验证 registry |
+| 无 registry / 慢 | 阻塞 timeout status 写入，控制 catch 写入、入队、释放 writer 与关 queue 次序 | 核对各帧实际入队/消费次序 | 独立核对写入尝试、提交与顺序，不从帧反推 | 明确未配置、不适用 |
+| 无 registry / 失败 | 分别使 timeout / catch status 写失败，保留各自错误证据 | 核实错误帧是否可见及实际 code | 核实实际持久内容，不把写入尝试算成功 | 明确未配置、不适用 |
+| 有 registry / 快 | status 与 append 快写，显式观测 append 的 .then 与同步 queue.close 次序；控制迟到 catch | 核实 timeout 自身帧及后续失败帧是否缺失，不预判可见 | 独立读取 status 的实际内容与顺序 | 读取 events/seq 与 record.state/result，核实 timeout 与迟到 error 的追加及 result 是否覆盖 |
+| 有 registry / 慢 | 独立阻塞 status 或 append，覆盖快 status/慢 append、慢 status/快 append 及二者均慢；控制关闭前后完成 append | 比较实际帧与 append 完成、queue.close 的顺序 | 独立核实 status 内容，不能拿 registry 代替 | 核实实际 events 顺序与最终 result，不以帧不可见判定 append 未发生 |
+| 有 registry / 失败 | status 与 registry append 分别注入失败，再覆盖失败与另一写入点快/慢的交错 | 记录 timeout / result_unknown / gateway_submit_failed 等实际错误与缺帧 | 核实已提交 status 与失败尝试，保留原始错误 | 核实 events/result 的实际持久结果、state/revision/seq；故障后从磁盘重读，不能用内存变更或 rejected promise 推断落盘成功/失败 |
+
+六格各自保留原始证据与独立断言，**具体基线输出在实测复现后回填**；先登记受控次序、观察字段和完整性检查，不把上述问题当成预定 PASS 结果。另分别覆盖 unknown-first / known-final-first，以及 unknown 迟至外层 complete 后的旧 handle fence 边界；记录无法复现、被其它终态挡住或 bug②证据不足的情形。用“丢 timeout 帧”“漏读 registry events”“忽略 result 覆盖”等独立失败对照证明各观察面能检出差异。
+
+**D4 选 B 的候选 Rust oracle（待批，非基线结果）**须另列：已定标的 timeout-first 成功持久化分支中，帧仅一套 timeout status/error，durable status 无额外 gateway_submit_failed；有 registry 时 events 无迟到失败、result 保持 timeout，无 registry 时明确不适用；ledger 仍 unknown。失败分支不伪称持久化成功，具体错误发布与落盘口径在复现后交人批准；D4 未批不能以候选规则改评分。源码依据 `B/src/cli/createLocalGateway.ts:996`、`B/src/gateway/client/InProcessGateway.ts:974-986,1216-1266,1384-1439,1727-1759,1848`、`B/src/gateway/run/RunRegistry.ts:242-260`、`B/src/gateway/util/AsyncQueue.ts:17-18`。
 
 **怎么算做完**：上述四 PR 各自完成；101清单及 provider 分支无无主项；原生拓扑与错误对照可判；D4 涉及的规则未获批时 A5 标“兼容部分完成，修正口径待批”。现有 A2 八组全绿不是 A5 的替代物。
 
@@ -116,10 +123,10 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 | A7.4 user_dialog | A6 store接通校验、claim/renew/release/expiry、hosted→live→recovered、broadcast | 两renderer争租约、错误值不消费、崩溃后恢复、owner租约与renderer租约分离；notify失败不改变bus/store权威 |
 | A7.5 历史与会话写事务 | `storage/history`、`runtime/replacement`；S1/S3/S5，A6 catalog、fork/replace/finalize、session model/config、read_subagent_messages恢复 | close/delete/export/restore忙闲边界、替换claim/commit/rollback、半写/重启、读epoch校验；原A4读方法看到同一新状态 |
 | A7.6 运行中控制/统计 | S2/S6与hook_async_result；steer/cancel/abort、usage、background、MCP status、seed/rewind | late/duplicate hook不注入新轮次；abort drain有界；后台任务真停、usage归属正确，不拿空列表过关 |
-| A7.7 #19 收尾修复 | `runtime/turn` 的单一收尾裁决，复用 A6 operation ledger；按D4批准的精确范围修，关联原 #19，不另建同义 issue | timeout-first/unknown-first/known-final-first、快/慢/失败writer、Requested、late ACK、sidecar crash全部有断言；帧与durable分开验证，unknown仍入账且未知effect不再执行；两条deadline各5对通过已批准口径，完整C/A回归无新差异 |
+| A7.7 #19 收尾修复 | `runtime/turn` 的单一收尾裁决，复用 A6 operation ledger；按D4批准的精确范围修，关联原 #19，不另建同义 issue | timeout-first/unknown-first/known-final-first、有/无 registry × 快/慢/失败 writer、Requested、late ACK、sidecar crash 全部有断言；帧、durable status、registry events/result 分开验证，unknown仍入账且未知effect不再执行；两条deadline各5对通过已批准口径，完整C/A回归无新差异 |
 | A7.8 自动化与整域装配 | S7 SOP/always-on；能力声明、所有50项与U9/U10一起装配；测试时HTTP同域入口也直达这个owner或明确尚未开放，不能回TS修改同域 | 50项覆盖无漏项；全会话域报告PASS；无TS内部宿主；真实Web普通轮次/权限/历史可验，D5自动恢复仍单列；默认代理仍不进行半域切换 |
 
-**#19 修正的原则与范围（D4 等人，以下为候选）**：分别维护“执行事实 unknown/known”和“可见收尾 open/settling/settled”。timeout 首先取得当前 run 的收尾权并 abort，随后等待该等待的状态写入；迟到 reconciliation 错误仍保留 ledger unknown，但不能再次追加 durable gateway_submit_failed 或发布对应失败帧。**只在 D4 已定标且获批的 timeout-first 情形应用，覆盖快/慢 writer，不以阻塞或帧可见为条件**；unknown-first 保持原失败投影，已知 final 与 timeout 竞合采用 A5 预注册次序。禁止改成成功、删除未知状态、重发工具、人为延时、改归一化屏蔽错误。#19 在代码、精确差异登记、回归证据齐备并按流程回复之后才能关闭。
+**#19 修正的原则与范围（D4 等人，以下为候选）**：分别维护“执行事实 unknown/known”和“可见收尾 open/settling/settled”。timeout 首先取得当前 run 的收尾权并 abort，随后等待该等待的状态写入；迟到 reconciliation 错误仍保留 ledger unknown，但不能再次追加 durable gateway_submit_failed 或发布对应失败帧。**只在 D4 已定标且获批的 timeout-first 情形应用，覆盖有/无 registry × 快/慢/失败 writer，分别核验帧、durable status、registry events/result，不以阻塞或帧可见为条件**；unknown-first 保持原失败投影，已知 final 与 timeout 竞合采用 A5 预注册次序。禁止改成成功、删除未知状态、重发工具、人为延时、改归一化屏蔽错误。#19 在代码、精确差异登记、回归证据齐备并按流程回复之后才能关闭。
 
 **怎么算做完**
 
