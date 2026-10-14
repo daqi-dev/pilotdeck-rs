@@ -1,12 +1,12 @@
 import { test, expect, login, frontend } from './fixture.mjs';
-import { STREAM_SCENARIOS, marker, streamErrors, textErrors, readingErrors, followErrors } from '../stream.mjs';
+import { STREAM_SCENARIOS, STREAM_PROTOCOLS, marker, streamErrors, textErrors, readingErrors, followErrors } from '../stream.mjs';
 
 // All product observations are DOM text/geometry/scrollTop. __f2Observation is
 // test-owned DOM sampling state; it never reads React/Rust stores or WS frames.
 test.setTimeout(60000);
 const surface = page => page.locator('[data-chat-search-surface]').first();
 const metrics = pane => pane.evaluate(node => ({ top: node.scrollTop, distance: node.scrollHeight - node.clientHeight - node.scrollTop, height: node.scrollHeight }));
-const control = (page, action, scenario = '') => page.request.post(`/__parity/stream?action=${action}&scenario=${scenario}`);
+const control = (page, action, scenario = '', protocol = 'legacy') => page.request.post(`/__parity/stream?action=${action}&scenario=${scenario}&protocol=${protocol}`);
 const state = async page => (await page.request.get('/__parity/stream')).json();
 async function open(page) {
   expect((await control(page, 'reset')).ok()).toBe(true);
@@ -32,7 +32,7 @@ async function observe(page) {
     requestAnimationFrame(sample);
   });
 }
-async function start(page, scenario) { expect((await control(page, 'start', scenario)).status()).toBe(202); }
+async function start(page, scenario, protocol) { expect((await control(page, 'start', scenario, protocol)).status()).toBe(202); }
 async function attachResumeEvidence(page, testInfo) {
   // Keep the final assertion input and scroll geometry, including on failure.
   const dom = await surface(page).evaluate(node => {
@@ -92,70 +92,93 @@ async function readUp(page, delta = -120) {
 }
 test.afterEach(async ({ page }) => { await control(page, 'stop'); });
 
-test('F2-STREAM-001 25Hz for 60s retains every delta and follows the bottom', async ({ page }, testInfo) => {
-  test.setTimeout(110000);
-  await open(page); await observe(page); await start(page, 'endurance');
-  // Check throughout the stream, allowing one layout/follow turn to settle.
-  for (let i = 0; i < 12; i++) {
-    await page.waitForTimeout(4500);
-    await expect.poll(async () => (await metrics(surface(page))).distance, { timeout: 1000, intervals: [40] }).toBeLessThan(3);
-  }
-  const observation = await finish(page, 'endurance', testInfo);
-  expect(followErrors(observation.samples)).toEqual([]);
-});
+for (const protocol of STREAM_PROTOCOLS) {
 
-test('F2-STREAM-002 reading does not jump during deltas or completion and explicit resume follows', async ({ page }, testInfo) => {
-  await open(page);
-  const readingTop = await readUp(page);
-  await observe(page); await start(page, 'reading');
-  const observation = await finish(page, 'reading', testInfo);
-  expect(readingErrors(observation.samples, readingTop)).toEqual([]);
-  await page.getByRole('button', { name: /Back to latest|回到最新|返回最新/i }).click();
-  await expect.poll(async () => (await metrics(surface(page))).distance).toBeLessThan(3);
-  // Resume must keep following subsequent growth, not just perform one scroll.
-  const previousHeight = (await metrics(surface(page))).height;
-  await start(page, 'reading');
-  try {
-    await expect.poll(async () => (await metrics(surface(page))).height).toBeGreaterThan(previousHeight + 100);
-    await expect.poll(async () => (await state(page)).status, { timeout: 15000 }).toBe('completed');
-    expect(streamErrors(await state(page))).toEqual([]);
-    // DOM retention includes offscreen content skipped by content-visibility:auto.
-    // innerText measures rendered text and can omit the entire first answer.
-    await expect.poll(async () => textErrors(await surface(page).textContent() || '', 2 * STREAM_SCENARIOS.reading)).toEqual([]);
-    await expect.poll(async () => (await metrics(surface(page))).distance).toBeLessThan(3);
-  } finally {
-    await attachResumeEvidence(page, testInfo);
-  }
-});
-
-for (const query of ['F2 searchable lighthouse', 'f2-hidden-reference']) {
-  test(`F2-STREAM-SEARCH finds ${query} and does not recenter while reading`, async ({ page }, testInfo) => {
-    await open(page);
-    await surface(page).click({ position: { x: 20, y: 250 } });
-    await page.keyboard.press('Meta+f');
-    await expect(page.getByRole('searchbox')).toBeVisible();
-    await page.getByRole('searchbox').fill(query);
-    const search = page.getByRole('search', { name: 'Search in conversation' });
-    await expect(search.getByText('1 / 1', { exact: true })).toBeVisible();
-    await expect(search.getByRole('button', { name: 'Next match', exact: true })).toBeEnabled();
-    const target = query === 'f2-hidden-reference' ? surface(page).getByRole('link', { name: 'F2 reference', exact: true }) : surface(page).locator('mark[aria-current="true"]').filter({ hasText: query });
-    await expect(target).toHaveCount(1);
-    // Frozen e2e/streaming-scroll.spec.mjs:72 asserts visible highlighting, not
-    // viewport intersection. The full-shell old2 captures find 1/1 but remain
-    // at Question 22/23. Keep that navigation limitation explicit in README.
-    await expect(target).toBeVisible();
-    if (query === 'f2-hidden-reference') await expect(target).toHaveAttribute('href', 'https://example.invalid/f2-hidden-reference');
-    await testInfo.attach('search-dom-evidence', { body: JSON.stringify(await target.evaluate(node => {
-      const pane = node.closest('[data-chat-search-surface]');
-      const rect = element => element.getBoundingClientRect().toJSON();
-      return { target: rect(node), pane: rect(pane), top: pane.scrollTop, height: pane.scrollHeight, viewport: pane.clientHeight };
-    })), contentType: 'application/json' });
-    const readingTop = await readUp(page);
-    await expect.poll(async () => (await metrics(surface(page))).distance).toBeGreaterThan(50);
-    await observe(page); await start(page, 'search');
-    const observation = await finish(page, 'search', testInfo);
-    expect(readingErrors(observation.samples, readingTop)).toEqual([]);
-    await page.getByRole('searchbox').press('Escape');
-    await expect(page.getByRole('searchbox')).toBeHidden();
+  test(`F2-STREAM-001 [${protocol}] 25Hz for 60s retains every delta and follows the bottom`, async ({ page }, testInfo) => {
+    test.setTimeout(110000);
+    await open(page); await observe(page); await start(page, 'endurance', protocol);
+    // Check throughout the stream, allowing one layout/follow turn to settle.
+    for (let i = 0; i < 12; i++) {
+      await page.waitForTimeout(4500);
+      await expect.poll(async () => (await metrics(surface(page))).distance, { timeout: 1000, intervals: [40] }).toBeLessThan(3);
+    }
+    const observation = await finish(page, 'endurance', testInfo);
+    expect(followErrors(observation.samples)).toEqual([]);
   });
+
+  test(`F2-STREAM-002 [${protocol}] reading does not jump during deltas or completion and explicit resume follows`, async ({ page }, testInfo) => {
+    await open(page);
+    const readingTop = await readUp(page);
+    await observe(page); await start(page, 'reading', protocol);
+    const observation = await finish(page, 'reading', testInfo);
+    expect(readingErrors(observation.samples, readingTop)).toEqual([]);
+    await page.getByRole('button', { name: /Back to latest|回到最新|返回最新/i }).click();
+    await expect.poll(async () => (await metrics(surface(page))).distance).toBeLessThan(3);
+    // Resume must keep following subsequent growth, not just perform one scroll.
+    const previousHeight = (await metrics(surface(page))).height;
+    await start(page, 'reading', protocol);
+    try {
+      await expect.poll(async () => (await metrics(surface(page))).height).toBeGreaterThan(previousHeight + 100);
+      await expect.poll(async () => (await state(page)).status, { timeout: 15000 }).toBe('completed');
+      expect(streamErrors(await state(page))).toEqual([]);
+      // DOM retention includes offscreen content skipped by content-visibility:auto.
+      // innerText measures rendered text and can omit the entire first answer.
+      await expect.poll(async () => textErrors(await surface(page).textContent() || '', 2 * STREAM_SCENARIOS.reading)).toEqual([]);
+      await expect.poll(async () => textErrors(await surface(page).innerText(), STREAM_SCENARIOS.reading, STREAM_SCENARIOS.reading)).toEqual([]);
+      await expect.poll(async () => (await metrics(surface(page))).distance).toBeLessThan(3);
+    } finally {
+      await attachResumeEvidence(page, testInfo);
+    }
+  });
+
+  for (const query of ['F2 searchable lighthouse', 'f2-hidden-reference']) {
+    test(`F2-STREAM-SEARCH [${protocol}] locates ${query} and does not recenter while reading`, async ({ page }, testInfo) => {
+      await open(page);
+      await surface(page).click({ position: { x: 20, y: 250 } });
+      // TranscriptFixture starts at the top without the shell's scroll follower.
+      // Establish that reading precondition through real input in the full shell:
+      // Home pauses following and lets its reading anchor settle before search.
+      await page.keyboard.press('Home');
+      await page.waitForTimeout(200); // Settle the actual keyboard gesture, as readUp does for wheel.
+      await expect.poll(async () => (await metrics(surface(page))).top).toBeLessThan(3);
+      await expect(page.getByRole('button', { name: /Back to latest|回到最新|返回最新/i })).toBeVisible();
+      const seedTarget = surface(page).getByRole('link', { name: 'F2 reference', exact: true });
+      await expect(seedTarget).not.toBeInViewport();
+      const beforeSearch = await metrics(surface(page));
+      await page.keyboard.press('Meta+f');
+      await expect(page.getByRole('searchbox')).toBeVisible();
+      await page.getByRole('searchbox').fill(query);
+      const search = page.getByRole('search', { name: 'Search in conversation' });
+      await expect(search.getByText('1 / 1', { exact: true })).toBeVisible();
+      await expect(search.getByRole('button', { name: 'Next match', exact: true })).toBeEnabled();
+      const target = query === 'f2-hidden-reference' ? surface(page).getByRole('link', { name: 'F2 reference', exact: true }) : surface(page).locator('mark[aria-current="true"]').filter({ hasText: query });
+      try {
+        await expect(target).toHaveCount(1);
+        await expect(target).toBeInViewport();
+        await expect.poll(async () => (await metrics(surface(page))).distance).toBeGreaterThan(50);
+        if (query === 'f2-hidden-reference') await expect(target).toHaveAttribute('href', 'https://example.invalid/f2-hidden-reference');
+      } finally {
+        // Also retain failed navigation geometry; never scroll the target in test code.
+        await testInfo.attach('search-dom-evidence', { body: JSON.stringify({ protocol, query, beforeSearch,
+          afterSearch: await surface(page).evaluate((pane, query) => {
+            const target = query === 'f2-hidden-reference'
+              ? pane.querySelector('a[href="https://example.invalid/f2-hidden-reference"]')
+              : pane.querySelector('mark[aria-current="true"]');
+            return { target: target?.getBoundingClientRect().toJSON() ?? null,
+              pane: pane.getBoundingClientRect().toJSON(), top: pane.scrollTop,
+              height: pane.scrollHeight, viewport: pane.clientHeight,
+              distance: pane.scrollHeight - pane.clientHeight - pane.scrollTop,
+              virtualized: Boolean(pane.querySelector('[data-virtualized-messages]')),
+              paused: pane.dataset.scrollFollowPaused, readingAnchor: pane.dataset.readingAnchorKey };
+          }, query) }), contentType: 'application/json' });
+      }
+      const readingTop = await readUp(page);
+      await observe(page); await start(page, 'search', protocol);
+      const observation = await finish(page, 'search', testInfo);
+      expect(readingErrors(observation.samples, readingTop)).toEqual([]);
+      await page.getByRole('searchbox').press('Escape');
+      await expect(page.getByRole('searchbox')).toBeHidden();
+    });
+  }
+
 }

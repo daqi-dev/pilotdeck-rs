@@ -25,7 +25,7 @@ export function createMock({ streamClock = {} } = {}) {
       if (action === 'stop') { stream.stop(); return json(stream.state); }
       if (action !== 'start') return json({ error: 'Unknown stream action' }, 400);
       if (![...watched].some(socket => socket.readyState === 1)) return json({ error: 'No watched browser session' }, 409);
-      try { return json(stream.start(url.searchParams.get('scenario')), 202); }
+      try { return json(stream.start(url.searchParams.get('scenario'), url.searchParams.get('protocol') || 'legacy'), 202); }
       catch (error) { return json({ error: error.message }, 400); }
     }
     if (url.pathname === '/api/auth/status') return json({ needsSetup: false, authDisabled: false });

@@ -2,29 +2,28 @@
 
 旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。不启动基线 dev server、gateway 或真实 `ui/server`。
 
-本 runner 有三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（4 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过和 #61 真实报告验收仍须协调者运行后确认。**
+本 runner 有三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（legacy / timeline 各 4 例，共 8 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过和 #61 真实报告验收仍须协调者运行后确认。**
 
 ## 第二 PR：流式 / 滚动 / 搜索定位
 
-测试在完整 `/session/s` 页面运行：HTTP 历史 seed + 主 `/ws` 推送，观察 DOM 文本、`scrollTop`、尺寸和 viewport。STREAM-002 最终用 textContent 验证两轮内容仍在 DOM，innerText 同时保留供渲染可见性对照。没有旧 store / `window.streamFixture` / React / Wasm 内部状态钩子。`__f2Observation` 仅是测试自己保存的 DOM 采样；API 控制 mock 开始/结束，不经浏览器替业务注入消息。
+测试在完整 `/session/s` 页面运行：HTTP 历史 seed + 主 `/ws` 推送，观察 DOM 文本、`scrollTop`、尺寸和 viewport。STREAM-002 同时要求 textContent 的 0000–0399 全部保留，以及 innerText 恰好含 0200–0399；两者都须有序且各一次。没有旧 store / `window.streamFixture` / React / Wasm 内部状态钩子。`__f2Observation` 仅是测试自己保存的 DOM 采样；API 控制 mock 开始/结束，不经浏览器替业务注入消息。
 
 | 用例 | 机器判据 |
 |---|---|
 | F2-STREAM-001 | 固定 25Hz × 60s、1500 delta；实际发送率 ≥20Hz，每帧恰好送往一个已 watch 的连接；最终 DOM 序号完整且顺序一致、无重复；有超过 20 个中间内容状态；rAF 采样无 >500ms 停顿、底部不得连续 >500ms 偏离 ≥3px，结束距底 <3px |
-| F2-STREAM-002 | 真实 wheel 上滚后，每次 rAF 的 scrollTop 与阅读起点差 <2px，覆盖 200 delta 和 stream_end/complete/历史刷新；点击 Back to latest 后距底 <3px，再启动一次流验证持续跟随 |
-| F2-STREAM-SEARCH ×2 | 搜索普通文本及 Markdown 隐藏 URL，显示 `1 / 1` 且下一命中按钮可用；唯一活动高亮 / 正确 href 的链接在 DOM 中可见（`toBeVisible`，不等同进入 viewport）；wheel 阅读后，200 delta 及结束期间位置差 <2px，不能反复居中；Escape 关闭搜索 |
+| F2-STREAM-002 | 真实 wheel 上滚后，每次 rAF 的 scrollTop 与阅读起点差 <2px，覆盖 200 delta 和 stream_end/complete/历史刷新；点击 Back to latest 后距底 <3px，再启动一次流验证持续跟随；textContent=0000–0399，innerText=0200–0399，各一次且有序 |
+| F2-STREAM-SEARCH ×2 | 搜索普通文本及 Markdown 隐藏 URL，显示 `1 / 1` 且下一命中按钮可用；搜索前目标在视口外，搜索后唯一活动高亮 / 正确 href 的链接必须 `toBeInViewport`；距底 >50px 在 `readUp` 之前检查；wheel 阅读后，200 delta 及结束期间位置差 <2px，不能反复居中；Escape 关闭搜索 |
 
-wire 复用消息表的字段形状：`{kind:'stream_delta', id, sessionId, provider, timestamp, runId, content}`；先 `status/started`，后 `stream_end`、`complete`，不是伪造 `type:'stream_delta'`。完成前保存 mock 历史，供旧壳自动刷新。每个测试 reset；测试结束及 runner finally 取消计时器，断线移除订阅。
+wire 有两条独立线路，所有四项用例都运行两次，标题带 `[legacy]` / `[timeline]`，报告按 8 个不同身份对账。legacy 使用 `{kind:'stream_delta', id, sessionId, provider, timestamp, runId, content}`。timeline 额外使用稳定 `blockId`、`timeline{version:1,turnId,id,order,revision,offset}`；offset 是此前文本的 UTF-16 长度，revision 单调增长。结束发送带 `streamBoundary{turnId,through,revision}` 的 stream_end、由 assistant_block 投影的 `text/role=assistant/isFinal=true/streamState=closed` 完整块，再 complete。timeline 每轮（包括首轮）都有带 runId/turnId 的独立 user 锚点；HTTP 历史保留同一块坐标及 turnId/isFinal，避免刷新时回退 legacy、重复回答或把无锚点的首轮排到第二轮后面。完成前保存 mock 历史；每例 reset，结束及 runner finally 取消计时器，断线移除订阅。原生形状与边界限制见第 8 轮。
 
 第 2 轮修复：mock 必须提供 `/api/modules/runtime`，其 `modules` 与冻结构建的 `generatedFrontendProfile` 一致，且 `runtime.gatewayState='ready'`。旧壳在此接口 404 时会保持 `assembly=null`（`ui/src/composition/runtime.ts:77,177`），因此会话标题可以显示而聊天 surface 不挂载。`/session/:sessionId` 路由（`ui/src/components/app-shell/AppShellV2.tsx:81`）和 `[data-chat-search-surface]`（`ui/src/components/chat-v2/MessagesPaneV2.tsx:1267`）均存在。输出目录中的 `mock-runtime.json` 是 `real/*` fixture 的编排文件，不能替代这个 HTTP 接口。离线自检直接执行基线纯 reader/validator，验证响应及 404/错配负例；不等同于旧侧 4/4 浏览器通过。
 
 第 3 轮依据（冻结 commit `cc7c4e6`，以下 `ui/` 相对只读 `resources/PilotDeck/`）：
 
 - **002 的 400/200 是序号数量，不是滚动像素。** `coordinator-stream-old2/old.json` 指向旧测试第 87 行；第一轮 549 个 rAF 样本的 scrollTop 全为 5490。旧夹具连续两次只发 assistant，没有新 user 消息。`ui/src/components/chat-v2/processGrouping.ts:142` 按 user 划分回合，`:944` 把非最后回答收入 trace；`MessagesPaneV2.tsx:1115` 仅在展开时挂载 trace。因此修复第二次 start 的消息边界：先保存并通过原 WS 通道发送唯一 user text，再发送 status/delta/完成消息。保留最终 400 个 DOM 序号的原断言；不加长种子历史、不改 1280×900 视口。离线自检执行原版 `foldCompletedTurns`，旧夹具复现 200，修复后为 400。
-- **两条 SEARCH 的自动滚入 viewport 在完整旧壳实跑中未完成，搜索验收改为已观察到的命中行为。** 两张 old2 截图显示 `1 / 1`，但仍在 Question 22/23；错误快照分别给出活动 mark 和 href 链接，viewport ratio 都为 0。种子 Answer 10 是普通最终回答，未放在折叠 trace 内。原基线 `ui/e2e/streaming-scroll.spec.mjs:67` 的同类测试在 `:72` 只要求活动高亮 `toBeVisible()`，随后 wheel 并检查位置差 <2px（`:73–79`）。本套件据此改为命中计数、唯一活动高亮/正确链接与 DOM 可见性；不把 `toBeVisible` 描述成 viewport 定位成功。URL 用例还验证搜索计数，避免原本就存在的链接单独造成假通过。
-- **源码存在定位意图，不声称“旧版没有搜索滚动代码”。** `ui/src/components/chat-v2/useChatHistorySearch.ts:158–161,181–195` 对新命中请求 reveal；`chatHistorySearchUtils.ts:421` 返回活动 mark 或消息行（隐藏 URL 没有文字 mark），`:425–439` 请求容器居中滚动。`MessagesPaneV2.tsx:1196–1199` 同时暂停跟随/展开 trace；`ui/src/components/chat/hooks/useScrollFollow.ts:99–105,293–308` 保存并恢复阅读锚点。现有证据没有记录 scrollTo 调用及后续 DOM 位移时序，**不能把平滑滚动/锚点恢复竞争写成已证根因**。可确定的是该场景的完整旧壳未完成自动定位，原自建 `toBeInViewport` 超出了实跑行为和原 E2E 判据。本轮校准命中与阅读稳定性，自动定位缺口明确保留，不计为已验收能力。
+- **撤回第 3 轮的搜索降级依据。** old2 的完整壳截图只能证明当时的自建夹具未定位，不能证明基线没有该能力。更对口的 `ui/e2e/streaming-search.spec.mjs:21–27` 明确要求隐藏 Markdown URL `toBeInViewport`；同一旧产物的 `coordinator-baseline-old2/old-{staffdeck,minimal,replacement}.json` 三个 profile 均 passed。此前引用 `streaming-scroll.spec.mjs` 的 `toBeVisible` 来降低定位断言不成立；issue #70 已关闭为不成立。第 8 轮恢复严格定位并修正搜索前置状态，详见下文。
 
-SEARCH 新增 `search-dom-evidence` attachment，记录命中目标和聊天容器的 rect/scrollTop/scrollHeight/clientHeight；不通过测试代码调用 scrollIntoView 或改 CSS 把目标搬进视口。SEARCH 标题由 `locates` 改为 `finds`，只影响本套件的独立 4 例，冻结 72 身份不变。阅读 <2px、底部 <3px、持续失跟随/采样停顿 >500ms 判失败、25Hz×60s 和 1500 增量口径均未改变。
+SEARCH 的 `search-dom-evidence` 在定位成功或失败时均记录搜索前后几何、virtualized 标记及 DOM 阅读锚点；测试不调用 scrollIntoView 或改 CSS。阅读 <2px、底部 <3px、持续失跟随/采样停顿 >500ms 判失败、25Hz×60s 和 1500 增量口径保持。
 
 ### 第 5 轮：跨轮连续编号，撤掉临时探针
 
@@ -52,7 +51,32 @@ old6 的 `result.json.mock.historyResponses` 保存每次真实历史响应的�
 
 新增独立离线自检通过同一个最终校验器验证完整 textContent 正例；分别删除 0000、0137、0199、0200、0399，或删除整个首轮，只剩 0200–0399，均必须 FAIL。既有重号/乱序负例继续执行。这些是校验器输入自检，浏览器取证仍由 old7 实跑提供。阅读 <2px、恢复后高度增长和底部 <3px、全程 rAF 与首轮 innerText 判据保持。
 
-`stream.mjs` 由 Node runner → mock 直接 import，不属于旧 Vite bundle；新启动 runner 即加载本轮代码，**无需重建旧产物**。协调者从 worktree 根目录持锁运行，output 必须尚不存在：
+old7 随后得到旧侧 4/4 PASS，但当时搜索仅要求 DOM 可见，innerText 仅取证，且只有 legacy 线路。这个历史结果不能放行第 8 轮恢复、补强后的 8 项测试；原始报告保留。
+
+### 第 8 轮：恢复搜索定位、双文本判定、双协议线路
+
+本轮重新解码三份 baseline-old2 原件和 old7 的 `resume-final-evidence`：隐藏 URL 搜索三个 profile 均 passed；old7 的 innerText 严格等于 0200–0399，textContent 严格等于 0000–0399，距底 0。摘要在 `_tmp/round8-prior-evidence.json`。
+
+搜索夹具对照（冻结基线 `cc7c4e6`）：
+
+| 项目 | 基线 transcript fixture | 完整 `/session/s` 夹具 |
+|---|---|---|
+| 容器 | `streaming-lifecycle.jsx:137–150` 的 100vh flex 容器直接挂 MessagesPane | 完整 shell + ChatInterfaceV2；两者实际滚动元素均为 `[data-chat-search-surface]` |
+| 尺寸 | runner 浏览器 1280×900，fixture 无完整壳标题/输入区 | 同为 1280×900；old7 聊天 clientHeight=646；本轮不改 viewport/CSS |
+| 行窗口与 CSS | 隐藏 URL 用例为 31 行，另有 201 行的虚拟化专例 | seed=48 行，目标由 Answer 10 移到 Answer 21，后留两轮；目标未折叠；未达到行数阈值 160，短种子也未达到估高 20,000；两者共用 content-visibility:auto |
+| 目标位置 | 30 条历史之后追加 target，后续新回答紧随目标 | 对齐尾部目标，保留两轮尾部供搜索后、wheel 前距底 >50px；避免中段阅读时新流式行远离渲染区域 |
+| 初始滚动/跟随 | `window.streamLifecycle.set` 更新消息，初始在顶部；没有传 onPauseScroll，也没有挂 useScrollFollow | `open` 明确等待到底部；ChatInterfaceV2:911 传 onPauseScroll，搜索 reveal 会暂停跟随并捕获阅读锚点 |
+| 搜索操作 | 点击容器 → Meta+f → fill | 保留同样操作；搜索前增加真实 Home，等待顶部与 Back to latest，先断言目标在视口外 |
+
+夹具已知的不等价点是**从完整壳底部跟随状态直接切入搜索**；`MessagesPaneV2.tsx:1196–1200`、`useChatHistorySearch.ts:102–119,181–195` 与 `useScrollFollow.ts:99–111,293–308` 显示搜索 reveal、暂停、锚点恢复之间存在额外状态变化，transcript 没有这条路径。本轮用真实 Home 输入建立与 transcript 一致的顶部阅读起点，再验证搜索自身完成视口外→视口内的移动。Home 不触碰目标；种子仍为 24 轮，命中位置移到 Answer 21，容器和 CSS 不改。原来的 Answer 10 使搜索成功后新流式行距离阅读区域很远，content-visibility 可以跳过该行；基线却把目标放在尾部。本轮同时修正这项场景差异，保留原来的流式 innerText/rAF 判据，不靠改断言掩盖离屏采样问题。`distance>50` 已恢复在搜索定位后、`readUp` 前检查。**精确到浏览器帧的锚点竞争尚未在本沙箱复现，不能写成已证根因；此修复的浏览器有效性仍须 old8 确认，也不声称覆盖从底部直接搜索的状态切换。**
+
+STREAM-002 保留 `textErrors(textContent,400)`，增加 `textErrors(innerText,200,200)`，共用有起始序号参数的严格校验器。只有 textContent 正确而第二轮未渲染、innerText 为空、漏号、重号、乱序、出现第一轮序号均 FAIL。old7 附件离线回放满足两条判据；这不替代 timeline 的新浏览器实跑。
+
+`stream-contract-self-check.mjs` 执行冻结源声明，对比 `src/agent/stream/TurnTimeline.ts:18–42,66–79` → `src/gateway/client/GatewayAgentEventProjector.ts:41–44,98–112` → `ui/server/pilotdeck-bridge.js:1206–1280` 的 delta/最终块，以及 `ui/server/routes/messages.js:187–218` 的持久化投影。每个 live delta 还进入冻结的 `SessionTimeline`，在最终快照之前核对完整前缀，防止最后一帧掩盖增量丢失；缺 timeline/blockId、错 offset/revision/id/turnId 的变体必须失败。两种线路均经真实 mock HTTP handler 验证两轮历史、complete 当刻和 reset（legacy total=51，timeline 因首轮也有 user 锚点 total=52）；冻结 mergeTimeline 另验证跨轮刷新顺序，删除首轮锚点必须失败；六个基线 side/profile 注册仍各 72，黑盒每端 8 个唯一身份。
+
+边界回源限制：冻结 Gateway `mapModelEvent`（约 :530–543）不投影 message_end，不能声称当前原生链路实际发出了 assistant_stream_end。mock 使用 TurnTimeline 的真实 message_end 边界坐标，覆盖 bridge 已支持的 assistant_stream_end → stream_end 契约；自检明确断言该原生 projector 输出为空，并单独验证边界的 bridge 形状。timeline 的 delta 与 assistant_block 最终块则确实由原生 projector 逐帧对比，前端 `useChatRealtimeHandlers.ts:745–750` 会将它们送入 applyTimelineMessage。
+
+协调者 old8 命令（无需重建旧 Vite 产物；output 必须尚不存在）：
 
 ```sh
 (
@@ -60,15 +84,15 @@ old6 的 `result.json.mock.historyResponses` 保存每次真实历史响应的�
   mkdir /tmp/pdrs-parity.lock || exit 1
   trap 'rmdir /tmp/pdrs-parity.lock' EXIT
   node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old \
-    --output _tmp/fe-parity/coordinator-stream-old7
+    --output _tmp/fe-parity/coordinator-stream-old8
 )
 ```
 
-旧侧放行门仍为 4/4 PASS、0 skip、`PASS_SINGLE_FRONTEND_ONLY`；离线自检不替代 old7 浏览器结果，历史 FAIL 必须保留。此为最后一次协调者复测：若 textContent 也仅有 200 个不同序号，原样交回 FAIL 和附件，由协调者挂起此条，不再追加试改。
+放行要求 **8/8 PASS，legacy 与 timeline 各 4/4，0 skip，exit 0 / PASS_SINGLE_FRONTEND_ONLY**。本轮离线自检不代替 old8；任一搜索仍不能进入视口或第二轮 innerText 不满足范围，保留 FAIL 和附件继续定位，不再降级断言。
 
 序号证明**增量内容不丢失**，不声称每个网络包都对应单独一次浏览器绘制。底部允许一个布局/跟随周期的瞬时差，连续失跟随由全程采样捕获；阅读位置不允许先跳再回。`stream-dom-evidence` JSON attachment 保留发送时间、订阅计数、逐帧 DOM 指标及最终文本。截图仍不做像素比较。
 
-新探针没有聊天 surface，测试产生真实 `FAIL`（断言信息 `NOT_IMPLEMENTED: probe has no conversation scroll/search surface`），不 skip、不 xfail。单旧侧 4/4 通过时总状态 `PASS_SINGLE_FRONTEND_ONLY`；双侧只有全部通过才 `PASS_SUITE_ONLY`。基线仍标 72/0 NOT_RUN。
+新探针没有聊天 surface，测试产生真实 `FAIL`（断言信息 `NOT_IMPLEMENTED: probe has no conversation scroll/search surface`），不 skip、不 xfail。单旧侧 8/8 通过时总状态 `PASS_SINGLE_FRONTEND_ONLY`；双侧只有全部通过才 `PASS_SUITE_ONLY`。基线仍标 72/0 NOT_RUN。
 
 ## 第二 PR：完整基线报告（#61）
 
@@ -183,7 +207,7 @@ WS 映射 self-check 检查全部45条消息（35主通道＋4历史兼容＋6�
 
 ## 留待协调者与后续 PR
 
-- 协调者真实 Chrome 跑旧侧流式 4 例并保存全量 72 例多 profile 报告；未跑前 F5 闸门与 #61 待验收项不勾选。
+- 协调者真实 Chrome 跑旧侧流式双协议 8 例并保存全量 72 例多 profile 报告；未跑前 F5 闸门与 #61 待验收项不勾选。
 - A类34例逐条处置与替代分母，改冻结用例按另issue+评审流程。
 - B类9例部署/profile矩阵脚本化，接入D类28例mock LLM编排；完整37候选双跑并对账72。
 
