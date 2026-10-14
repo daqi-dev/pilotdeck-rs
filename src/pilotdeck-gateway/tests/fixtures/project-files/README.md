@@ -62,7 +62,7 @@ Rust 对应测试 `checked_path_replacements_cannot_read_outside_or_fall_back_to
 - Node 结果：`" FILEFILEFILEFILE "` 对 `nested/FILEFILEFILEFILE.txt` 返回空数组；无空格则命中 name 和 relativePath。未 trim 的 `I` 重复查询对顶层 12 字符项命中两字段，13/14 字符项只命中 name；嵌套项仍命中两字段。trim 后长度 12 沿用 root 小写，长度 13/14 改为土耳其语小写，仅命中顶层 relativePath。对应 cursor 在 12 字符时可复用于无空格查询，13/14 字符时返回 INVALID_CURSOR。
 - 同一个 `size=2147483648, blocks=0` 稀疏文件：chmod 000 返回 `EACCES / permission denied, open ...`；恢复 0600 后返回 `ERR_FS_FILE_TOO_LARGE / File size (2147483648) is greater than 2 GiB`。Rust 原生 dispatch 测试对照完整响应，仅替换测试临时根路径；root CI 可跳过无法触发的 EACCES，本轮非 root 两种状态均实际执行。Rust 在报大小错误前经 NOFOLLOW 安全打开并请求零字节前缀，不读取大文件内容。
 
-**已知风险：此行为依赖 V8 内部字符串表示，不是 ECMAScript/Unicode 的稳定保证；引擎升级可能改变。** 当前按基线实际构造方式推断：trim 确实移除字符，或 canonical relativePath 位于顶层，且剩余 UTF-16 长度 ≥13 时为切片；Latin-1 非切片才走 root 小写。name 与经 join 重建的嵌套路径保持非切片规则。此 fixture 证明上述 Node v22 实测样本，不保证其他引擎版本或其他字符串构造方式等价。
+**已知风险：此行为依赖 V8 内部字符串表示，不是 ECMAScript/Unicode 的稳定保证；引擎升级可能改变。** 第 4 轮按基线实际构造方式推断：trim 确实移除字符，或 canonical relativePath 位于顶层，且剩余 UTF-16 长度 ≥13 时为切片；Latin-1 非切片才走 root 小写。此轮实测的 Latin-1 根下，name 与经 join 重建的嵌套路径保持非切片规则；双字节根的补充与最终残余风险范围见下节。
 
 复跑（输出到临时目录，审阅后仅复制新的 round4 fixture）：
 
@@ -73,4 +73,37 @@ LANG=tr_TR env -u LC_ALL -u LC_MESSAGES -u LC_COLLATE -u LC_CTYPE \
   /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
   _tmp/20261014-a4-files-round4/node-runtime-round4.json \
   _tmp/20261014-a4-files-round4/scratch
+```
+
+## V8 字符串表示依赖
+
+第 5 轮按协调者决定登记为**已知残余风险（自决·待复核 / AI 代批，待人复核）**：V8 是否走 Latin-1 小写快路取决于字符串的内存表示，不能仅凭字符内容穷举。本轮补齐双字节父串样本后，不再追补仅在 `tr` / `az` / `lt` 等具有特殊大小写规则的 locale 下才可观察的同类表示差异；**其余情形不保证与 Node 一致**。此范围限于表示导致的 locale/root 小写分歧，不扩大到普通匹配、排序、路径安全等其他行为，也没有修改冻结尺子或添加比较豁免。
+
+目前已对齐的三条规则（阈值均按 UTF-16 单元计数）：
+
+1. **Latin-1 非切片快路**：内容全部 ≤0xFF 且未触发下述表示规则时，用 root 小写；内容含 >0xFF 字符时用 locale 小写。第 3 轮 `node-runtime-round3.json` 的 `localeProbe` 实测包括 `tr` 下 `FILE.txt → file.txt`、`FILE😀 → fıle😀`，以及 `lt` 下 `Ì → ì`、`Ì😀 → i̇̀😀`。Dirent.name 继续遵循这条规则。
+2. **长切片**：query 的 trim 确实移除字符且结果长度 ≥13，或 canonical relativePath 位于顶层且长度 ≥13 时，按 locale 小写；长度 12 不触发。第 4 轮 `node-runtime-round4.json` 的 26 条生产列表响应覆盖 12/13/14、首尾 trim、嵌套到顶层的 symlink、匹配范围与 cursor 签名；Latin-1 根下的嵌套路径仍按第 1 条处理。
+3. **双字节父串**：canonicalRoot 含 >0xFF 字符且 canonical relativePath 任一段长度 ≥13 时，整个 relativePath 按 locale 小写，包含嵌套路径。第 5 轮 `node-runtime-round5.json` 的 20 条生产列表响应覆盖中文根、Latin-1 `é` 根、ASCII 根，12/13 边界，长段位于叶子/父目录/中间目录，以及 ASCII 项目别名指向中文 canonicalRoot。
+
+第 5 轮实测环境为 Node **v22.22.0** / V8 **12.4.254.21-node.33** / ICU **78.2**，`LANG=tr_TR`，resolved locale **tr-TR**。录制器 `../../record_project_files_round5.mts` 离线调用钉死基线的真实 `InProcessGateway.projectFilesList` 与 `GatewayWsConnection`，保存 request/response 原始字符串、独立文件系统输入快照与列表源码 SHA256（`b004f655300aa2e67b6643cd46d5effa221b93f2efe253d3847bd20890bfd1f1`）。没有用重写的小写算法生成期望值，也没有直接检查 V8 内部对象；上述表示解释是对实测行为的有限建模。
+
+| 第 5 轮 `LANG=tr_TR` 样本 | Node 的 relativePath 匹配证据 |
+|---|---|
+| 中文根，`a/b/` + 13 个 `I`；13 个 `I` + `/x`；`a/` + 13 个 `I` + `/z` | 命中 13 个 dotless `ı`，不命中 ASCII `i`。叶子/目录的 name 仍按 root 小写。 |
+| 中文根，上述长段改为 12 个 `I` | 命中 12 个 ASCII `i`；即使路径总长超过 13，也不触发嵌套路径规则。 |
+| 中文根，13 个 `A` + `/I` | 末尾一单元 `I` 在 relativePath 中命中 `ı`、在 name 中命中 `i`，证明影响整个拼接路径；12 个 `A` 的对照两字段都命中 `i`。 |
+| `é` 或 ASCII 根，同样的嵌套 12/13 样本 | relativePath 命中 ASCII `i`；顶层 13 单元目录仍按第 2 条命中 dotless `ı`。 |
+| ASCII 项目别名 → 中文根 | 与中文 canonicalRoot 的响应行为一致，判断不能使用原始 projectKey。 |
+
+Rust 测试 `node_round5_two_byte_parent_list_responses` 在独立 locale 子进程中经 dispatch 逐字节重放全部 20 条响应（含 ID、字段顺序、mtime、路径与 matches），不归一化响应；修复前该测试失败。输入快照额外保存独立 stat 的 `mtime_ms_exact` 十进制字符串，由 Rust `f64::from_str` 精确还原，避免 serde_json 默认浮点解析产生 1 ULP 偏差；响应原文不改。快照适配器也修正根 symlink 的空 suffix，避免人为添加 realpath 没有的尾斜杠。第 3/4 轮证据与回归保留。第 5 轮没有重新穷举 `az` / `lt`，也不声称全 Unicode、任意字符串构造方式或其他 Node/V8 版本等价；引擎升级需重跑实测。
+
+复跑（scratch 的完整绝对路径须只含 Latin-1 字符，以保证 ASCII / Latin-1 根对照不受祖先污染）：
+
+```sh
+LANG=tr_TR env -u LC_ALL -u LC_MESSAGES -u LC_COLLATE -u LC_CTYPE \
+  node --import /Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/tsx/dist/loader.mjs \
+  src/pilotdeck-gateway/tests/record_project_files_round5.mts \
+  /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
+  _tmp/20261014-a4-files-round5/node-runtime-round5.json \
+  _tmp/20261014-a4-files-round5/scratch
 ```

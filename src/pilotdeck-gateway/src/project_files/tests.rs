@@ -43,7 +43,10 @@ impl Files for Snapshot {
             size: f["size"].as_u64().unwrap(),
             birth_ms: f["birth_ms"].as_f64().unwrap(),
             ctime_ms: f["ctime_ms"].as_f64().unwrap(),
-            mtime_ms: f["mtime_ms"].as_f64().unwrap(),
+            mtime_ms: f["mtime_ms_exact"].as_str().map_or_else(
+                || f["mtime_ms"].as_f64().unwrap(),
+                |exact| exact.parse().unwrap(),
+            ),
         })
     }
     fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
@@ -55,7 +58,14 @@ impl Files for Snapshot {
                 prefix.push(component);
                 if let Some(link) = self.files.get(&prefix).and_then(|f| f["link"].as_str()) {
                     let suffix = current.strip_prefix(&prefix).unwrap();
-                    current = resolve(prefix.parent().unwrap(), link).join(suffix);
+                    let target = resolve(prefix.parent().unwrap(), link);
+                    // Joining an empty suffix adds a trailing separator, unlike
+                    // realpath. A project-root symlink must retain the exact root.
+                    current = if suffix.as_os_str().is_empty() {
+                        target
+                    } else {
+                        target.join(suffix)
+                    };
                     replaced = true;
                     break;
                 }
@@ -766,8 +776,26 @@ fn round4() -> Value {
 
 #[test]
 fn node_round4_sliced_latin1_list_responses() {
+    node_locale_list_responses(
+        round4(),
+        "project_files::tests::node_round4_sliced_latin1_list_responses",
+    );
+}
+
+#[test]
+fn node_round5_two_byte_parent_list_responses() {
+    node_locale_list_responses(
+        serde_json::from_str(include_str!(
+            "../../tests/fixtures/project-files/node-runtime-round5.json"
+        ))
+        .unwrap(),
+        "project_files::tests::node_round5_two_byte_parent_list_responses",
+    );
+}
+
+fn node_locale_list_responses(fixture: Value, test_name: &str) {
     // A separate process sets the locale without racing other tests' env reads.
-    const CHILD: &str = "PDRS_ROUND4_LOCALE_CHILD";
+    const CHILD: &str = "PDRS_FILES_LOCALE_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         for (key, _) in std::env::vars_os() {
@@ -776,13 +804,9 @@ fn node_round4_sliced_latin1_list_responses() {
             }
         }
         let output = command
-            .args([
-                "--exact",
-                "project_files::tests::node_round4_sliced_latin1_list_responses",
-                "--nocapture",
-            ])
+            .args(["--exact", test_name, "--nocapture"])
             .env(CHILD, "1")
-            .env("LANG", round4()["env"]["LANG"].as_str().unwrap())
+            .env("LANG", fixture["env"]["LANG"].as_str().unwrap())
             .output()
             .unwrap();
         assert!(
@@ -793,7 +817,6 @@ fn node_round4_sliced_latin1_list_responses() {
         );
         return;
     }
-    let fixture = round4();
     let metadata = snapshot_metadata(&fixture);
     for case in fixture["cases"].as_array().unwrap() {
         let request = case["request"].as_str().unwrap();

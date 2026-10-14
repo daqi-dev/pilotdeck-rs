@@ -136,7 +136,7 @@ fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> Strin
     // Node v22.22.0 / V8 12.4: Latin-1 fast casing ignores the locale only
     // for non-sliced strings. Substrings shorter than 13 UTF-16 units are
     // copied; longer ones remain slices. This is representation-dependent,
-    // not a Unicode guarantee: remeasure on engine upgrades (round4 fixture).
+    // not a Unicode guarantee: remeasure on engine upgrades (round4/5 fixtures).
     let sliced = substring && value.encode_utf16().count() >= 13;
     let root = LanguageIdentifier::UNKNOWN;
     let locale = if !sliced && value.encode_utf16().all(|unit| unit <= 0xff) {
@@ -633,13 +633,21 @@ impl<F: Files> Scan<'_, F> {
             let relative = relative.to_string_lossy();
             let mut matches = Vec::new();
             if !self.query.is_empty() {
-                append_matches(&mut matches, "name", &name, self.query, &self.locale);
+                append_matches(
+                    &mut matches,
+                    "name",
+                    &name,
+                    self.query,
+                    &self.locale,
+                    self.root,
+                );
                 append_matches(
                     &mut matches,
                     "relativePath",
                     &relative,
                     self.query,
                     &self.locale,
+                    self.root,
                 );
             }
             if (self.query.is_empty() || !matches.is_empty()) && (is_file || self.include_dirs) {
@@ -696,11 +704,19 @@ fn append_matches(
     value: &str,
     query: &str,
     locale: &LanguageIdentifier,
+    root: &Path,
 ) {
     // The baseline's relative(root, canonical).split(sep).join("/") keeps
-    // a top-level substring; nested paths are rebuilt by join. Dirent.name
-    // is not a slice. Use canonical depth, including for symlink targets.
-    let substring = field == "relativePath" && !value.contains('/');
+    // a top-level substring. With a two-byte canonical root, any segment
+    // slice of >=13 UTF-16 units also makes the joined path use locale casing.
+    // Dirent.name is not a slice. These are measured V8 representation rules,
+    // not exhaustive guarantees (see the fixture README's residual risk).
+    let substring = field == "relativePath"
+        && (!value.contains('/')
+            || (root.to_string_lossy().chars().any(|c| c > '\u{ff}')
+                && value
+                    .split('/')
+                    .any(|segment| segment.encode_utf16().count() >= 13)));
     let lower = lowercase(value, locale, substring);
     for (byte, _) in lower.match_indices(query) {
         let start = lower[..byte].encode_utf16().count();

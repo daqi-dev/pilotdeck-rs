@@ -1,0 +1,966 @@
+{
+  "node": "v22.22.0",
+  "v8": "12.4.254.21-node.33",
+  "icu": "78.2",
+  "platform": "darwin",
+  "env": {
+    "LANG": "tr_TR"
+  },
+  "locale": "tr-TR",
+  "listSourceSha256": "b004f655300aa2e67b6643cd46d5effa221b93f2efe253d3847bd20890bfd1f1",
+  "cwd": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te",
+  "home": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home",
+  "roots": {
+    "chinese": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文",
+    "latin1": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é",
+    "ascii": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project"
+  },
+  "alias": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/alias",
+  "files": {
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te": {
+      "directory": true,
+      "size": 224,
+      "birth_ms": 1791961607982.87,
+      "ctime_ms": 1791961607989.9348,
+      "mtime_ms": 1791961607989.9348,
+      "mtime_ms_exact": "1791961607989.9348",
+      "entries": [
+        [
+          "alias",
+          false
+        ],
+        [
+          "home",
+          true
+        ],
+        [
+          "project",
+          true
+        ],
+        [
+          "é",
+          true
+        ],
+        [
+          "中文",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/alias": {
+      "link": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607983.0955,
+      "ctime_ms": 1791961607983.1724,
+      "mtime_ms": 1791961607983.1724,
+      "mtime_ms_exact": "1791961607983.1724",
+      "entries": [
+        [
+          "projects",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects": {
+      "directory": true,
+      "size": 192,
+      "birth_ms": 1791961607983.171,
+      "ctime_ms": 1791961607989.9993,
+      "mtime_ms": 1791961607989.9993,
+      "mtime_ms_exact": "1791961607989.9993",
+      "entries": [
+        [
+          "alias",
+          true
+        ],
+        [
+          "ascii",
+          true
+        ],
+        [
+          "chinese",
+          true
+        ],
+        [
+          "latin1",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/alias": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607989.9976,
+      "ctime_ms": 1791961607990.066,
+      "mtime_ms": 1791961607990.066,
+      "mtime_ms_exact": "1791961607990.066",
+      "entries": [
+        [
+          ".cwd",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/alias/.cwd": {
+      "directory": false,
+      "size": 97,
+      "birth_ms": 1791961607990.0642,
+      "ctime_ms": 1791961607990.156,
+      "mtime_ms": 1791961607990.156,
+      "mtime_ms_exact": "1791961607990.156",
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtYTRtMi9fdG1wLzIwMjYxMDE0LWE0LWZpbGVzLXJvdW5kNS9zY3JhdGNoL2ZpbGVzLU42dzVUZS9hbGlhcw=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/ascii": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607988.0764,
+      "ctime_ms": 1791961607988.1501,
+      "mtime_ms": 1791961607988.1501,
+      "mtime_ms_exact": "1791961607988.1501",
+      "entries": [
+        [
+          ".cwd",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/ascii/.cwd": {
+      "directory": false,
+      "size": 99,
+      "birth_ms": 1791961607988.1484,
+      "ctime_ms": 1791961607988.1865,
+      "mtime_ms": 1791961607988.1865,
+      "mtime_ms_exact": "1791961607988.1865",
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtYTRtMi9fdG1wLzIwMjYxMDE0LWE0LWZpbGVzLXJvdW5kNS9zY3JhdGNoL2ZpbGVzLU42dzVUZS9wcm9qZWN0"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/chinese": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607983.2515,
+      "ctime_ms": 1791961607983.4072,
+      "mtime_ms": 1791961607983.4072,
+      "mtime_ms_exact": "1791961607983.4072",
+      "entries": [
+        [
+          ".cwd",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/chinese/.cwd": {
+      "directory": false,
+      "size": 98,
+      "birth_ms": 1791961607983.4038,
+      "ctime_ms": 1791961607983.587,
+      "mtime_ms": 1791961607983.587,
+      "mtime_ms_exact": "1791961607983.587",
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtYTRtMi9fdG1wLzIwMjYxMDE0LWE0LWZpbGVzLXJvdW5kNS9zY3JhdGNoL2ZpbGVzLU42dzVUZS/kuK3mloc="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/latin1": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607986.1414,
+      "ctime_ms": 1791961607986.2285,
+      "mtime_ms": 1791961607986.2285,
+      "mtime_ms_exact": "1791961607986.2285",
+      "entries": [
+        [
+          ".cwd",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/home/projects/latin1/.cwd": {
+      "directory": false,
+      "size": 94,
+      "birth_ms": 1791961607986.227,
+      "ctime_ms": 1791961607986.29,
+      "mtime_ms": 1791961607986.29,
+      "mtime_ms_exact": "1791961607986.29",
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtYTRtMi9fdG1wLzIwMjYxMDE0LWE0LWZpbGVzLXJvdW5kNS9zY3JhdGNoL2ZpbGVzLU42dzVUZS/DqQ=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project": {
+      "directory": true,
+      "size": 224,
+      "birth_ms": 1791961607988.2925,
+      "ctime_ms": 1791961607989.7002,
+      "mtime_ms": 1791961607989.7002,
+      "mtime_ms_exact": "1791961607989.7002",
+      "entries": [
+        [
+          "AAAAAAAAAAAA",
+          true
+        ],
+        [
+          "AAAAAAAAAAAAA",
+          true
+        ],
+        [
+          "IIIIIIIIIIII",
+          true
+        ],
+        [
+          "IIIIIIIIIIIII",
+          true
+        ],
+        [
+          "a",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/AAAAAAAAAAAA": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607988.9146,
+      "ctime_ms": 1791961607989,
+      "mtime_ms": 1791961607989,
+      "mtime_ms_exact": "1791961607989",
+      "entries": [
+        [
+          "I",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/AAAAAAAAAAAA/I": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607988.995,
+      "ctime_ms": 1791961607989.103,
+      "mtime_ms": 1791961607989.103,
+      "mtime_ms_exact": "1791961607989.103",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/AAAAAAAAAAAAA": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607989.6975,
+      "ctime_ms": 1791961607989.7683,
+      "mtime_ms": 1791961607989.7683,
+      "mtime_ms_exact": "1791961607989.7683",
+      "entries": [
+        [
+          "I",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/AAAAAAAAAAAAA/I": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607989.7659,
+      "ctime_ms": 1791961607989.8018,
+      "mtime_ms": 1791961607989.8018,
+      "mtime_ms_exact": "1791961607989.8018",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/IIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607988.575,
+      "ctime_ms": 1791961607988.6384,
+      "mtime_ms": 1791961607988.6384,
+      "mtime_ms_exact": "1791961607988.6384",
+      "entries": [
+        [
+          "x",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/IIIIIIIIIIII/x": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607988.6338,
+      "ctime_ms": 1791961607988.6716,
+      "mtime_ms": 1791961607988.6716,
+      "mtime_ms_exact": "1791961607988.6716",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/IIIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607989.3384,
+      "ctime_ms": 1791961607989.4019,
+      "mtime_ms": 1791961607989.4019,
+      "mtime_ms_exact": "1791961607989.4019",
+      "entries": [
+        [
+          "x",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/IIIIIIIIIIIII/x": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607989.4001,
+      "ctime_ms": 1791961607989.4387,
+      "mtime_ms": 1791961607989.4387,
+      "mtime_ms_exact": "1791961607989.4387",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a": {
+      "directory": true,
+      "size": 160,
+      "birth_ms": 1791961607988.3486,
+      "ctime_ms": 1791961607989.5105,
+      "mtime_ms": 1791961607989.5105,
+      "mtime_ms_exact": "1791961607989.5105",
+      "entries": [
+        [
+          "IIIIIIIIIIII",
+          true
+        ],
+        [
+          "IIIIIIIIIIIII",
+          true
+        ],
+        [
+          "b",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a/IIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607988.7373,
+      "ctime_ms": 1791961607988.8108,
+      "mtime_ms": 1791961607988.8108,
+      "mtime_ms_exact": "1791961607988.8108",
+      "entries": [
+        [
+          "z",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a/IIIIIIIIIIII/z": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607988.8096,
+      "ctime_ms": 1791961607988.8452,
+      "mtime_ms": 1791961607988.8452,
+      "mtime_ms_exact": "1791961607988.8452",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a/IIIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607989.5083,
+      "ctime_ms": 1791961607989.569,
+      "mtime_ms": 1791961607989.569,
+      "mtime_ms_exact": "1791961607989.569",
+      "entries": [
+        [
+          "z",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a/IIIIIIIIIIIII/z": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607989.568,
+      "ctime_ms": 1791961607989.6052,
+      "mtime_ms": 1791961607989.6052,
+      "mtime_ms_exact": "1791961607989.6052",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a/b": {
+      "directory": true,
+      "size": 128,
+      "birth_ms": 1791961607988.4058,
+      "ctime_ms": 1791961607989.2268,
+      "mtime_ms": 1791961607989.2268,
+      "mtime_ms_exact": "1791961607989.2268",
+      "entries": [
+        [
+          "IIIIIIIIIIII",
+          false
+        ],
+        [
+          "IIIIIIIIIIIII",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a/b/IIIIIIIIIIII": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607988.4727,
+      "ctime_ms": 1791961607988.509,
+      "mtime_ms": 1791961607988.509,
+      "mtime_ms_exact": "1791961607988.509",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project/a/b/IIIIIIIIIIIII": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607989.2202,
+      "ctime_ms": 1791961607989.266,
+      "mtime_ms": 1791961607989.266,
+      "mtime_ms_exact": "1791961607989.266",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é": {
+      "directory": true,
+      "size": 224,
+      "birth_ms": 1791961607986.397,
+      "ctime_ms": 1791961607987.8965,
+      "mtime_ms": 1791961607987.8965,
+      "mtime_ms_exact": "1791961607987.8965",
+      "entries": [
+        [
+          "AAAAAAAAAAAA",
+          true
+        ],
+        [
+          "AAAAAAAAAAAAA",
+          true
+        ],
+        [
+          "IIIIIIIIIIII",
+          true
+        ],
+        [
+          "IIIIIIIIIIIII",
+          true
+        ],
+        [
+          "a",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/AAAAAAAAAAAA": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607987.1765,
+      "ctime_ms": 1791961607987.2393,
+      "mtime_ms": 1791961607987.2393,
+      "mtime_ms_exact": "1791961607987.2393",
+      "entries": [
+        [
+          "I",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/AAAAAAAAAAAA/I": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607987.2373,
+      "ctime_ms": 1791961607987.2773,
+      "mtime_ms": 1791961607987.2773,
+      "mtime_ms_exact": "1791961607987.2773",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/AAAAAAAAAAAAA": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607987.889,
+      "ctime_ms": 1791961607987.9614,
+      "mtime_ms": 1791961607987.9614,
+      "mtime_ms_exact": "1791961607987.9614",
+      "entries": [
+        [
+          "I",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/AAAAAAAAAAAAA/I": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607987.96,
+      "ctime_ms": 1791961607987.9988,
+      "mtime_ms": 1791961607987.9988,
+      "mtime_ms_exact": "1791961607987.9988",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/IIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607986.785,
+      "ctime_ms": 1791961607986.8584,
+      "mtime_ms": 1791961607986.8584,
+      "mtime_ms_exact": "1791961607986.8584",
+      "entries": [
+        [
+          "x",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/IIIIIIIIIIII/x": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607986.8572,
+      "ctime_ms": 1791961607986.8992,
+      "mtime_ms": 1791961607986.8992,
+      "mtime_ms_exact": "1791961607986.8992",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/IIIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607987.4866,
+      "ctime_ms": 1791961607987.5586,
+      "mtime_ms": 1791961607987.5586,
+      "mtime_ms_exact": "1791961607987.5586",
+      "entries": [
+        [
+          "x",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/IIIIIIIIIIIII/x": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607987.5571,
+      "ctime_ms": 1791961607987.6016,
+      "mtime_ms": 1791961607987.6016,
+      "mtime_ms_exact": "1791961607987.6016",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a": {
+      "directory": true,
+      "size": 160,
+      "birth_ms": 1791961607986.4924,
+      "ctime_ms": 1791961607987.6904,
+      "mtime_ms": 1791961607987.6904,
+      "mtime_ms_exact": "1791961607987.6904",
+      "entries": [
+        [
+          "IIIIIIIIIIII",
+          true
+        ],
+        [
+          "IIIIIIIIIIIII",
+          true
+        ],
+        [
+          "b",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a/IIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607986.987,
+      "ctime_ms": 1791961607987.052,
+      "mtime_ms": 1791961607987.052,
+      "mtime_ms_exact": "1791961607987.052",
+      "entries": [
+        [
+          "z",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a/IIIIIIIIIIII/z": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607987.0488,
+      "ctime_ms": 1791961607987.0845,
+      "mtime_ms": 1791961607987.0845,
+      "mtime_ms_exact": "1791961607987.0845",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a/IIIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607987.688,
+      "ctime_ms": 1791961607987.767,
+      "mtime_ms": 1791961607987.767,
+      "mtime_ms_exact": "1791961607987.767",
+      "entries": [
+        [
+          "z",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a/IIIIIIIIIIIII/z": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607987.766,
+      "ctime_ms": 1791961607987.8025,
+      "mtime_ms": 1791961607987.8025,
+      "mtime_ms_exact": "1791961607987.8025",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a/b": {
+      "directory": true,
+      "size": 128,
+      "birth_ms": 1791961607986.555,
+      "ctime_ms": 1791961607987.371,
+      "mtime_ms": 1791961607987.371,
+      "mtime_ms_exact": "1791961607987.371",
+      "entries": [
+        [
+          "IIIIIIIIIIII",
+          false
+        ],
+        [
+          "IIIIIIIIIIIII",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a/b/IIIIIIIIIIII": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607986.657,
+      "ctime_ms": 1791961607986.7026,
+      "mtime_ms": 1791961607986.7026,
+      "mtime_ms_exact": "1791961607986.7026",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é/a/b/IIIIIIIIIIIII": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607987.366,
+      "ctime_ms": 1791961607987.4102,
+      "mtime_ms": 1791961607987.4102,
+      "mtime_ms_exact": "1791961607987.4102",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文": {
+      "directory": true,
+      "size": 224,
+      "birth_ms": 1791961607983.7703,
+      "ctime_ms": 1791961607985.828,
+      "mtime_ms": 1791961607985.828,
+      "mtime_ms_exact": "1791961607985.828",
+      "entries": [
+        [
+          "AAAAAAAAAAAA",
+          true
+        ],
+        [
+          "AAAAAAAAAAAAA",
+          true
+        ],
+        [
+          "IIIIIIIIIIII",
+          true
+        ],
+        [
+          "IIIIIIIIIIIII",
+          true
+        ],
+        [
+          "a",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/AAAAAAAAAAAA": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607984.759,
+      "ctime_ms": 1791961607984.831,
+      "mtime_ms": 1791961607984.831,
+      "mtime_ms_exact": "1791961607984.831",
+      "entries": [
+        [
+          "I",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/AAAAAAAAAAAA/I": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607984.826,
+      "ctime_ms": 1791961607984.8674,
+      "mtime_ms": 1791961607984.8674,
+      "mtime_ms_exact": "1791961607984.8674",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/AAAAAAAAAAAAA": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607985.8254,
+      "ctime_ms": 1791961607985.9119,
+      "mtime_ms": 1791961607985.9119,
+      "mtime_ms_exact": "1791961607985.9119",
+      "entries": [
+        [
+          "I",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/AAAAAAAAAAAAA/I": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607985.9104,
+      "ctime_ms": 1791961607986.005,
+      "mtime_ms": 1791961607986.005,
+      "mtime_ms_exact": "1791961607986.005",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/IIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607984.3452,
+      "ctime_ms": 1791961607984.428,
+      "mtime_ms": 1791961607984.428,
+      "mtime_ms_exact": "1791961607984.428",
+      "entries": [
+        [
+          "x",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/IIIIIIIIIIII/x": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607984.4268,
+      "ctime_ms": 1791961607984.4756,
+      "mtime_ms": 1791961607984.4756,
+      "mtime_ms_exact": "1791961607984.4756",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/IIIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607985.1707,
+      "ctime_ms": 1791961607985.322,
+      "mtime_ms": 1791961607985.322,
+      "mtime_ms_exact": "1791961607985.322",
+      "entries": [
+        [
+          "x",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/IIIIIIIIIIIII/x": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607985.3203,
+      "ctime_ms": 1791961607985.3638,
+      "mtime_ms": 1791961607985.3638,
+      "mtime_ms_exact": "1791961607985.3638",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a": {
+      "directory": true,
+      "size": 160,
+      "birth_ms": 1791961607983.8596,
+      "ctime_ms": 1791961607985.44,
+      "mtime_ms": 1791961607985.44,
+      "mtime_ms_exact": "1791961607985.44",
+      "entries": [
+        [
+          "IIIIIIIIIIII",
+          true
+        ],
+        [
+          "IIIIIIIIIIIII",
+          true
+        ],
+        [
+          "b",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a/IIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607984.5557,
+      "ctime_ms": 1791961607984.6355,
+      "mtime_ms": 1791961607984.6355,
+      "mtime_ms_exact": "1791961607984.6355",
+      "entries": [
+        [
+          "z",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a/IIIIIIIIIIII/z": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607984.6343,
+      "ctime_ms": 1791961607984.6758,
+      "mtime_ms": 1791961607984.6758,
+      "mtime_ms_exact": "1791961607984.6758",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a/IIIIIIIIIIIII": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791961607985.4382,
+      "ctime_ms": 1791961607985.6274,
+      "mtime_ms": 1791961607985.6274,
+      "mtime_ms_exact": "1791961607985.6274",
+      "entries": [
+        [
+          "z",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a/IIIIIIIIIIIII/z": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607985.6216,
+      "ctime_ms": 1791961607985.7327,
+      "mtime_ms": 1791961607985.7327,
+      "mtime_ms_exact": "1791961607985.7327",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a/b": {
+      "directory": true,
+      "size": 128,
+      "birth_ms": 1791961607983.94,
+      "ctime_ms": 1791961607985.0125,
+      "mtime_ms": 1791961607985.0125,
+      "mtime_ms_exact": "1791961607985.0125",
+      "entries": [
+        [
+          "IIIIIIIIIIII",
+          false
+        ],
+        [
+          "IIIIIIIIIIIII",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a/b/IIIIIIIIIIII": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607984.0454,
+      "ctime_ms": 1791961607984.1404,
+      "mtime_ms": 1791961607984.1404,
+      "mtime_ms_exact": "1791961607984.1404",
+      "base64": "Ym91bmRhcnk="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文/a/b/IIIIIIIIIIIII": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1791961607985.0059,
+      "ctime_ms": 1791961607985.074,
+      "mtime_ms": 1791961607985.074,
+      "mtime_ms_exact": "1791961607985.074",
+      "base64": "Ym91bmRhcnk="
+    }
+  },
+  "cases": [
+    {
+      "tag": "chinese-ascii-12",
+      "request": "{\"type\":\"request\",\"id\":\"round5-1\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\",\"query\":\"IIIIIIIIIIII\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-1\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:058ca7f9d0cec7e76db0b3b4391fb6b42bd2f279adb06a8ae24fd81e00c629bb\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607984.1404,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":16}]},{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:0cb2659c273ed623f5e214250e743ef8fbe7e9683ee97c8c4d725a9f596da279\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607984.6355,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:ca4d28d8ff899ac58ecf71afd814bb796312013eae13dc55abde7bbc102aac47\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607984.6758,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:7cdc80e6e8416c3ffa308d8cfa73be26ce32b974a32517dc61633d0fc91e4183\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607984.428,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:e39722d87b8ab10b116bac67f56f18b8cd34f12ecbc704a3e241bca3828ef10c\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607984.4756,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    },
+    {
+      "tag": "chinese-dotless-12",
+      "request": "{\"type\":\"request\",\"id\":\"round5-2\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\",\"query\":\"ıııııııııııı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-2\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"relativePath\",\"start\":4,\"end\":16}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:5a556502cf31f0c97a1c67ff094dca3f764c7599e055bacebea918c97950a6c9\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.7327,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:009f381b2a1aef87d6ac37a19b8a71316a994ae951bc661e959024d3ad593e5e\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.3638,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    },
+    {
+      "tag": "chinese-ascii-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-3\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\",\"query\":\"IIIIIIIIIIIII\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-3\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    },
+    {
+      "tag": "chinese-dotless-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-4\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\",\"query\":\"ııııııııııııı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-4\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"relativePath\",\"start\":4,\"end\":17}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:5a556502cf31f0c97a1c67ff094dca3f764c7599e055bacebea918c97950a6c9\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.7327,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:009f381b2a1aef87d6ac37a19b8a71316a994ae951bc661e959024d3ad593e5e\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.3638,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    },
+    {
+      "tag": "chinese-short-ascii",
+      "request": "{\"type\":\"request\",\"id\":\"round5-5\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\",\"query\":\"i\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-5\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:058ca7f9d0cec7e76db0b3b4391fb6b42bd2f279adb06a8ae24fd81e00c629bb\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607984.1404,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15},{\"field\":\"relativePath\",\"start\":15,\"end\":16}]},{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13}]},{\"id\":\"sha256:0cb2659c273ed623f5e214250e743ef8fbe7e9683ee97c8c4d725a9f596da279\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607984.6355,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:ca4d28d8ff899ac58ecf71afd814bb796312013eae13dc55abde7bbc102aac47\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607984.6758,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13}]},{\"id\":\"sha256:6bb5905c31dbfdb63565e3ecb041ab3079b143e2a1a8563ca6e43894a2cb92ec\",\"name\":\"I\",\"relativePath\":\"AAAAAAAAAAAA/I\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607984.8674,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:62fc95f551eb53dafcf8a33ec1ad90506e03776849a34d87b487d65a2b73e8d4\",\"name\":\"I\",\"relativePath\":\"AAAAAAAAAAAAA/I\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607986.005,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1}]},{\"id\":\"sha256:7cdc80e6e8416c3ffa308d8cfa73be26ce32b974a32517dc61633d0fc91e4183\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607984.428,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12}]},{\"id\":\"sha256:e39722d87b8ab10b116bac67f56f18b8cd34f12ecbc704a3e241bca3828ef10c\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607984.4756,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    },
+    {
+      "tag": "chinese-short-dotless",
+      "request": "{\"type\":\"request\",\"id\":\"round5-6\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\",\"query\":\"ı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-6\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15},{\"field\":\"relativePath\",\"start\":15,\"end\":16},{\"field\":\"relativePath\",\"start\":16,\"end\":17}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:5a556502cf31f0c97a1c67ff094dca3f764c7599e055bacebea918c97950a6c9\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.7327,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:62fc95f551eb53dafcf8a33ec1ad90506e03776849a34d87b487d65a2b73e8d4\",\"name\":\"I\",\"relativePath\":\"AAAAAAAAAAAAA/I\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607986.005,\"matches\":[{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13}]},{\"id\":\"sha256:009f381b2a1aef87d6ac37a19b8a71316a994ae951bc661e959024d3ad593e5e\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.3638,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    },
+    {
+      "tag": "latin1-ascii-12",
+      "request": "{\"type\":\"request\",\"id\":\"round5-7\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\",\"query\":\"IIIIIIIIIIII\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-7\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:e8afd187254089a19b50e73e890037d31491dd3ff3512201033d91b78442f570\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607986.7026,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":16}]},{\"id\":\"sha256:9abfbb300ff06a23f1210c1df5f12435ed49423deaa5a6c393125b1cad158eba\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.4102,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":16}]},{\"id\":\"sha256:f311448ace51e78ae4357dbcb973be20a7c0916ebdb73f19fae868fc9bcb38b4\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.052,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:0d93e9c1e58df0fb3f886e9d1f3f04f3fe6ebf4d90a4d987495dd572f826f8b8\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.0845,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:85b89071f5846eb4cd7dbecc88300fb42633368c9b88f2dbd6f942b69af5a197\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.767,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:214fd1823c24107b255cb07c58881193a89eede01484da129cf50b93a90063bf\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.8025,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:43fcd41d8874e04cab8585bea8610b1e0d1ad493f9e3f686d7fe25dcd58683b8\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607986.8584,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:015e49e5b60eb16f3f2b5d8ce16c7385429daa52be9801ab37e48384a97b1025\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607986.8992,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:8a5656fb2ccdfef6c031e1bfdc2529e31b67e7fc57f870090ae8d8fcec6c51fc\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.5586,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:b5747a1259f2888ffe7ac3fad29857b40bb1244a18d07cc84d9d12c0034e571f\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.6016,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\"}}"
+    },
+    {
+      "tag": "latin1-dotless-12",
+      "request": "{\"type\":\"request\",\"id\":\"round5-8\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\",\"query\":\"ıııııııııııı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-8\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:8a5656fb2ccdfef6c031e1bfdc2529e31b67e7fc57f870090ae8d8fcec6c51fc\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.5586,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\"}}"
+    },
+    {
+      "tag": "latin1-ascii-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-9\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\",\"query\":\"IIIIIIIIIIIII\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-9\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:9abfbb300ff06a23f1210c1df5f12435ed49423deaa5a6c393125b1cad158eba\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.4102,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13},{\"field\":\"relativePath\",\"start\":4,\"end\":17}]},{\"id\":\"sha256:85b89071f5846eb4cd7dbecc88300fb42633368c9b88f2dbd6f942b69af5a197\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.767,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13},{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:214fd1823c24107b255cb07c58881193a89eede01484da129cf50b93a90063bf\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.8025,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:8a5656fb2ccdfef6c031e1bfdc2529e31b67e7fc57f870090ae8d8fcec6c51fc\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.5586,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:b5747a1259f2888ffe7ac3fad29857b40bb1244a18d07cc84d9d12c0034e571f\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.6016,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\"}}"
+    },
+    {
+      "tag": "latin1-dotless-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-10\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\",\"query\":\"ııııııııııııı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-10\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:8a5656fb2ccdfef6c031e1bfdc2529e31b67e7fc57f870090ae8d8fcec6c51fc\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.5586,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\"}}"
+    },
+    {
+      "tag": "latin1-short-ascii",
+      "request": "{\"type\":\"request\",\"id\":\"round5-11\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\",\"query\":\"i\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-11\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:e8afd187254089a19b50e73e890037d31491dd3ff3512201033d91b78442f570\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607986.7026,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15},{\"field\":\"relativePath\",\"start\":15,\"end\":16}]},{\"id\":\"sha256:9abfbb300ff06a23f1210c1df5f12435ed49423deaa5a6c393125b1cad158eba\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.4102,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15},{\"field\":\"relativePath\",\"start\":15,\"end\":16},{\"field\":\"relativePath\",\"start\":16,\"end\":17}]},{\"id\":\"sha256:f311448ace51e78ae4357dbcb973be20a7c0916ebdb73f19fae868fc9bcb38b4\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.052,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:0d93e9c1e58df0fb3f886e9d1f3f04f3fe6ebf4d90a4d987495dd572f826f8b8\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.0845,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:85b89071f5846eb4cd7dbecc88300fb42633368c9b88f2dbd6f942b69af5a197\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.767,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:214fd1823c24107b255cb07c58881193a89eede01484da129cf50b93a90063bf\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.8025,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:06fbdb8a0abb6d78ef804fc31e2eca17b8839c23e37c2ad53e42abdfabea02fb\",\"name\":\"I\",\"relativePath\":\"AAAAAAAAAAAA/I\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.2773,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:d7e61cafb92e807da9a1f17da079a709d95e73074605d551642251bbc06d42ab\",\"name\":\"I\",\"relativePath\":\"AAAAAAAAAAAAA/I\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.9988,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:43fcd41d8874e04cab8585bea8610b1e0d1ad493f9e3f686d7fe25dcd58683b8\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607986.8584,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12}]},{\"id\":\"sha256:015e49e5b60eb16f3f2b5d8ce16c7385429daa52be9801ab37e48384a97b1025\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607986.8992,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12}]},{\"id\":\"sha256:8a5656fb2ccdfef6c031e1bfdc2529e31b67e7fc57f870090ae8d8fcec6c51fc\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.5586,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13}]},{\"id\":\"sha256:b5747a1259f2888ffe7ac3fad29857b40bb1244a18d07cc84d9d12c0034e571f\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607987.6016,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\"}}"
+    },
+    {
+      "tag": "latin1-short-dotless",
+      "request": "{\"type\":\"request\",\"id\":\"round5-12\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\",\"query\":\"ı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-12\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:8a5656fb2ccdfef6c031e1bfdc2529e31b67e7fc57f870090ae8d8fcec6c51fc\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607987.5586,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/é\"}}"
+    },
+    {
+      "tag": "ascii-ascii-12",
+      "request": "{\"type\":\"request\",\"id\":\"round5-13\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\",\"query\":\"IIIIIIIIIIII\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-13\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:e9760ecc0d1289a907e37cefc48082ab396bb4a39539d7a648f393b7a2d08c14\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607988.509,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":16}]},{\"id\":\"sha256:2fad5cac57832d0e3fcbd2a061200ee34b5c0f79944788bac4e885a6ed64cd41\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.266,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":16}]},{\"id\":\"sha256:58440adae11f8c7774edba734f3fed530b20e5f6a8ee20aa03e875c815d25c4f\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607988.8108,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:cd3566157b9fa3a9e3802ebf44c9cbf5fa8f427e5a1b7dda6784ae7cde56ebea\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607988.8452,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:cf1cf8fa6310f863acfa42d77e1352525adf63de78cce606a09bb36347f94038\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.569,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:349220df147648a8ee93cb0b6a2480ac85072c78d8611b10dddf0cae3b82c881\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.6052,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":14}]},{\"id\":\"sha256:0370815cdbe4d68610933bd6373b66e0fa20202a5ce4876e8662bac86e392677\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607988.6384,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12},{\"field\":\"relativePath\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:580302fc5329ba56e8a358f7050b2d3ee4cd5c67a3506de98467153e15fa8946\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607988.6716,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:74b0e223030b5a399915f5440eca11d834b07b1c4a173b8f10df0733b68b13fe\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.4019,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":12}]},{\"id\":\"sha256:722a0e6f88d2404091fdf4fb9b8e215655629f76b747966ec3ceff9c536c82cd\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.4387,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\"}}"
+    },
+    {
+      "tag": "ascii-dotless-12",
+      "request": "{\"type\":\"request\",\"id\":\"round5-14\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\",\"query\":\"ıııııııııııı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-14\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:74b0e223030b5a399915f5440eca11d834b07b1c4a173b8f10df0733b68b13fe\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.4019,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":12}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\"}}"
+    },
+    {
+      "tag": "ascii-ascii-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-15\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\",\"query\":\"IIIIIIIIIIIII\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-15\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:2fad5cac57832d0e3fcbd2a061200ee34b5c0f79944788bac4e885a6ed64cd41\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.266,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13},{\"field\":\"relativePath\",\"start\":4,\"end\":17}]},{\"id\":\"sha256:cf1cf8fa6310f863acfa42d77e1352525adf63de78cce606a09bb36347f94038\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.569,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13},{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:349220df147648a8ee93cb0b6a2480ac85072c78d8611b10dddf0cae3b82c881\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.6052,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:74b0e223030b5a399915f5440eca11d834b07b1c4a173b8f10df0733b68b13fe\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.4019,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:722a0e6f88d2404091fdf4fb9b8e215655629f76b747966ec3ceff9c536c82cd\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.4387,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\"}}"
+    },
+    {
+      "tag": "ascii-dotless-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-16\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\",\"query\":\"ııııııııııııı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-16\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:74b0e223030b5a399915f5440eca11d834b07b1c4a173b8f10df0733b68b13fe\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.4019,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\"}}"
+    },
+    {
+      "tag": "ascii-short-ascii",
+      "request": "{\"type\":\"request\",\"id\":\"round5-17\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\",\"query\":\"i\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-17\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:e9760ecc0d1289a907e37cefc48082ab396bb4a39539d7a648f393b7a2d08c14\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607988.509,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15},{\"field\":\"relativePath\",\"start\":15,\"end\":16}]},{\"id\":\"sha256:2fad5cac57832d0e3fcbd2a061200ee34b5c0f79944788bac4e885a6ed64cd41\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.266,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15},{\"field\":\"relativePath\",\"start\":15,\"end\":16},{\"field\":\"relativePath\",\"start\":16,\"end\":17}]},{\"id\":\"sha256:58440adae11f8c7774edba734f3fed530b20e5f6a8ee20aa03e875c815d25c4f\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607988.8108,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:cd3566157b9fa3a9e3802ebf44c9cbf5fa8f427e5a1b7dda6784ae7cde56ebea\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607988.8452,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:cf1cf8fa6310f863acfa42d77e1352525adf63de78cce606a09bb36347f94038\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.569,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:349220df147648a8ee93cb0b6a2480ac85072c78d8611b10dddf0cae3b82c881\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.6052,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13},{\"field\":\"relativePath\",\"start\":13,\"end\":14},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:822bff350ef4e86c0e4cd557ec30d3326a653b86b87089da901e6cfc42e3f99f\",\"name\":\"I\",\"relativePath\":\"AAAAAAAAAAAA/I\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.103,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":13,\"end\":14}]},{\"id\":\"sha256:a84cd148c4991d5ce3dfaf7066d6c1dd4342db46e4fcf97a917edf769567fc75\",\"name\":\"I\",\"relativePath\":\"AAAAAAAAAAAAA/I\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.8018,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":14,\"end\":15}]},{\"id\":\"sha256:0370815cdbe4d68610933bd6373b66e0fa20202a5ce4876e8662bac86e392677\",\"name\":\"IIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607988.6384,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12}]},{\"id\":\"sha256:580302fc5329ba56e8a358f7050b2d3ee4cd5c67a3506de98467153e15fa8946\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607988.6716,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12}]},{\"id\":\"sha256:74b0e223030b5a399915f5440eca11d834b07b1c4a173b8f10df0733b68b13fe\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.4019,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"name\",\"start\":1,\"end\":2},{\"field\":\"name\",\"start\":2,\"end\":3},{\"field\":\"name\",\"start\":3,\"end\":4},{\"field\":\"name\",\"start\":4,\"end\":5},{\"field\":\"name\",\"start\":5,\"end\":6},{\"field\":\"name\",\"start\":6,\"end\":7},{\"field\":\"name\",\"start\":7,\"end\":8},{\"field\":\"name\",\"start\":8,\"end\":9},{\"field\":\"name\",\"start\":9,\"end\":10},{\"field\":\"name\",\"start\":10,\"end\":11},{\"field\":\"name\",\"start\":11,\"end\":12},{\"field\":\"name\",\"start\":12,\"end\":13}]},{\"id\":\"sha256:722a0e6f88d2404091fdf4fb9b8e215655629f76b747966ec3ceff9c536c82cd\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607989.4387,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\"}}"
+    },
+    {
+      "tag": "ascii-short-dotless",
+      "request": "{\"type\":\"request\",\"id\":\"round5-18\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\",\"query\":\"ı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-18\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:74b0e223030b5a399915f5440eca11d834b07b1c4a173b8f10df0733b68b13fe\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607989.4019,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":1,\"end\":2},{\"field\":\"relativePath\",\"start\":2,\"end\":3},{\"field\":\"relativePath\",\"start\":3,\"end\":4},{\"field\":\"relativePath\",\"start\":4,\"end\":5},{\"field\":\"relativePath\",\"start\":5,\"end\":6},{\"field\":\"relativePath\",\"start\":6,\"end\":7},{\"field\":\"relativePath\",\"start\":7,\"end\":8},{\"field\":\"relativePath\",\"start\":8,\"end\":9},{\"field\":\"relativePath\",\"start\":9,\"end\":10},{\"field\":\"relativePath\",\"start\":10,\"end\":11},{\"field\":\"relativePath\",\"start\":11,\"end\":12},{\"field\":\"relativePath\",\"start\":12,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/project\"}}"
+    },
+    {
+      "tag": "canonical-root-alias-ascii-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-19\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/alias\",\"query\":\"IIIIIIIIIIIII\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-19\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    },
+    {
+      "tag": "canonical-root-alias-dotless-13",
+      "request": "{\"type\":\"request\",\"id\":\"round5-20\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/alias\",\"query\":\"ııııııııııııı\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"round5-20\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1480d44ab11d4087465ef4b1e632c8739a00bff5809d7b3f4193f1eefc7946e9\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/b/IIIIIIIIIIIII\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.074,\"matches\":[{\"field\":\"relativePath\",\"start\":4,\"end\":17}]},{\"id\":\"sha256:15f8ae2129d989de9878171fcf107bf4c719f265270d752d30770de1d462bc92\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"a/IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.6274,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:5a556502cf31f0c97a1c67ff094dca3f764c7599e055bacebea918c97950a6c9\",\"name\":\"z\",\"relativePath\":\"a/IIIIIIIIIIIII/z\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.7327,\"matches\":[{\"field\":\"relativePath\",\"start\":2,\"end\":15}]},{\"id\":\"sha256:e6336364a7c47df168900c398d56351cbaa45944435da09cfd45e831377a1456\",\"name\":\"IIIIIIIIIIIII\",\"relativePath\":\"IIIIIIIIIIIII\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1791961607985.322,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]},{\"id\":\"sha256:009f381b2a1aef87d6ac37a19b8a71316a994ae951bc661e959024d3ad593e5e\",\"name\":\"x\",\"relativePath\":\"IIIIIIIIIIIII/x\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1791961607985.3638,\"matches\":[{\"field\":\"relativePath\",\"start\":0,\"end\":13}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/20261014-a4-files-round5/scratch/files-N6w5Te/中文\"}}"
+    }
+  ]
+}
