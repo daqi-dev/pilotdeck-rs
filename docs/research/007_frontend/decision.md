@@ -111,3 +111,10 @@
 系统 Chrome 在当前 sandbox 中 SIGABRT，真实绘制/滚动、浏览器跨壳状态与正式黑盒双跑尚未验证，**F1 不标完成，不凭暂选放行 F3 生产页面迁移**。两候选没有被证明全败；无需按“两败”条款重拍混合方向，需换到允许启动系统 Chrome 的环境补证据。
 
 b 的探针结论：Caddy 2.10.2 前置反代 B 已用真实旧 Vite 入口 + 两 Rust 静态入口与 HTTP/WS 做实验，导航原语与 history traversal 拦截在 DOM 级覆盖。A 未搭真实 `ui/server` patch 环境；生产共存方式暂不定稿。D1–D5 以 [accepted-diffs 的 F1 追加表](accepted-diffs.md#f1-exp007-对账与修订2026-10-14追加当前有效口径) 为当前口径，均未以完整跨壳浏览器实测转正。
+
+## a′ 定选（2026-10-14 上午，人亲测后）
+
+**定 Leptos 0.8.17。** 人用真实系统拼音输入法亲测两个探针（`scripts/exp007/serve-ime.mjs`）：组合期间回车上屏不发送、上屏后回车发送，**Leptos 与 Dioxus 均正常**。已测维度（真实 IME、合成 composition、xterm 生命周期、≥20Hz 流式与真实帧序号、滚动）两者无差别，唯一实测差异是同管线 gzip wasm 体积（Leptos 113,030 B vs Dioxus 210,530 B）。按人定 3C「无反例即定 Leptos」执行。
+
+- 推翻的话：F2 起的 runner 与页面都按 Leptos 写；换 Dioxus 需重做 F2 的前端侧适配（探针 `ui-rs/probe-dioxus` 保留可用）。
+- 原则（一次拍板 → 一条原则）：自动化测不到的维度由人亲测后才锁选型；锁定后探针保留，作为回退路径的证据。
