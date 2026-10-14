@@ -60,7 +60,12 @@ impl Context<'_> {
         for pair in &pairs {
             self.add_pair(map_id, pair)?;
         }
-        let Container::Map(entries) = self.nodes[map_id].clone() else {
+        self.key_indices.remove(&map_id);
+        // This Map is a private merge accumulator, never an anchored value.
+        // Move its entries out so repeated merges also release its storage.
+        let Container::Map(entries) =
+            std::mem::replace(&mut self.nodes[map_id], Container::Map(Vec::new()))
+        else {
             unreachable!()
         };
         for (key, value) in entries {

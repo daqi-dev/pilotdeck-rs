@@ -918,3 +918,53 @@ fn deep_document_works_with_a_two_megabyte_caller_stack() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn set_merge_conversion_and_diagnostics_match_node_even_after_resolve_errors() {
+    let cases = parse_json(include_str!("fixtures/set-merge.json")).unwrap();
+    let JsValue::Array(cases) = &cases else {
+        panic!("cases")
+    };
+    assert_eq!(cases.len(), 44);
+    for case in cases {
+        for pretty in [false, true] {
+            let doc = parse_document(
+                string(prop(case, "yaml")),
+                Options {
+                    pretty_errors: pretty,
+                    ..Default::default()
+                },
+            );
+            for (actual, field) in [
+                (
+                    diagnostics(&doc.errors),
+                    if pretty { "prettyErrors" } else { "errors" },
+                ),
+                (
+                    diagnostics(&doc.warnings),
+                    if pretty { "prettyWarnings" } else { "warnings" },
+                ),
+            ] {
+                assert_eq!(
+                    diff(&actual, prop(case, field), field),
+                    None,
+                    "{:?}",
+                    prop(case, "id")
+                );
+            }
+            let (actual, field) = match doc.to_json() {
+                Ok(value) => (graph(&value), "value"),
+                Err(e) => (
+                    object(vec![("name", s(e.name)), ("message", s(e.message))]),
+                    "error",
+                ),
+            };
+            assert_eq!(
+                diff(&actual, prop(case, field), field),
+                None,
+                "{:?}",
+                prop(case, "id")
+            );
+        }
+    }
+}
