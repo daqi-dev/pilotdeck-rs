@@ -23,4 +23,5 @@ process.emitWarning = warn;
 const seconds = (performance.now() - start) / 1000;
 globalThis.retained = { docs, values };
 console.log('RESOURCE_SAMPLE ' + JSON.stringify({seconds, parse_seconds: parsed,
-  documents: docs.length, errors: docs.reduce((n, d) => n + d.errors.length, 0), conversion_errors}));
+  documents: docs.length, errors: docs.reduce((n, d) => n + d.errors.length, 0),
+  warnings: docs.reduce((n, d) => n + d.warnings.length, 0), conversion_errors}));

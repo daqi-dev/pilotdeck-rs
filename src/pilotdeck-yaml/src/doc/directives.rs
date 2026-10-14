@@ -1,13 +1,49 @@
 // Port of yaml@2.9.0 dist/doc/directives.js (ISC); parsing operations.
 use crate::string::{concat, message, slice, trim};
 use pilotdeck_protocol::JsString;
+use std::{collections::HashMap, ops::Deref, sync::Arc};
+
+/// Ordered declarations with a handle index. Updating a handle keeps its slot,
+/// matching assignment to an existing property in directives.js.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagTable {
+    entries: Vec<(JsString, JsString)>,
+    index: HashMap<JsString, usize>,
+}
+impl Default for TagTable {
+    fn default() -> Self {
+        Self {
+            entries: vec![("!!".into(), "tag:yaml.org,2002:".into())],
+            index: HashMap::from([("!!".into(), 0)]),
+        }
+    }
+}
+impl Deref for TagTable {
+    type Target = [(JsString, JsString)];
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+impl TagTable {
+    pub fn insert(&mut self, handle: JsString, prefix: JsString) {
+        if let Some(&slot) = self.index.get(&handle) {
+            self.entries[slot].1 = prefix;
+        } else {
+            self.index.insert(handle.clone(), self.entries.len());
+            self.entries.push((handle, prefix));
+        }
+    }
+    fn prefix(&self, handle: &JsString) -> Option<&JsString> {
+        self.index.get(handle).map(|&slot| &self.entries[slot].1)
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Directives {
     pub doc_start: bool,
     pub doc_end: bool,
     pub explicit: bool,
     pub version: &'static str,
-    pub tags: std::sync::Arc<Vec<(JsString, JsString)>>,
+    pub tags: Arc<TagTable>,
     at_next_document: bool,
 }
 impl Default for Directives {
@@ -18,10 +54,8 @@ impl Default for Directives {
             explicit: false,
             version: "1.2",
             tags: {
-                static DEFAULT: std::sync::LazyLock<std::sync::Arc<Vec<(JsString, JsString)>>> =
-                    std::sync::LazyLock::new(|| {
-                        std::sync::Arc::new(vec![("!!".into(), "tag:yaml.org,2002:".into())])
-                    });
+                static DEFAULT: std::sync::LazyLock<Arc<TagTable>> =
+                    std::sync::LazyLock::new(|| Arc::new(TagTable::default()));
                 DEFAULT.clone()
             },
             at_next_document: false,
@@ -71,14 +105,7 @@ impl Directives {
                     return errors;
                 }
             }
-            if let Some((_, prefix)) = std::sync::Arc::make_mut(&mut self.tags)
-                .iter_mut()
-                .find(|(k, _)| *k == args[0])
-            {
-                *prefix = args[1].clone();
-            } else {
-                std::sync::Arc::make_mut(&mut self.tags).push((args[0].clone(), args[1].clone()));
-            }
+            Arc::make_mut(&mut self.tags).insert(args[0].clone(), args[1].clone());
         } else if name.equals_str("%YAML") {
             self.explicit = true;
             if args.len() != 1 {
@@ -140,11 +167,7 @@ impl Directives {
                 &" tag has no suffix".into(),
             ]));
         }
-        if let Some((_, prefix)) = self
-            .tags
-            .iter()
-            .find(|(k, _)| *k == handle && !k.is_empty())
-        {
+        if let Some(prefix) = self.tags.prefix(&handle).filter(|p| !p.is_empty()) {
             if let Some(suffix) = decode_uri_component(&suffix) {
                 return (Some(concat(&[prefix, &suffix])), errors);
             }
@@ -178,4 +201,65 @@ fn decode_uri_component(s: &JsString) -> Option<JsString> {
         res.extend(std::str::from_utf8(&bytes).ok()?.encode_utf16());
     }
     Some(JsString::from_utf16(res))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_handles_keep_order_and_last_prefix_in_cloned_documents() {
+        let mut stream = Directives::default();
+        for line in [
+            "%YAML 1.1",
+            "%TAG !a! tag:first:",
+            "%TAG !b! tag:b:",
+            "%TAG !a! tag:last:",
+        ] {
+            assert!(stream.add(&line.into()).is_empty());
+        }
+        let first = stream.at_document();
+        let second = stream.at_document();
+        assert!(Arc::ptr_eq(&first.tags, &second.tags));
+        assert_eq!(
+            first
+                .tags
+                .iter()
+                .map(|(h, _)| h.to_utf8().unwrap())
+                .collect::<Vec<_>>(),
+            ["!!", "!a!", "!b!"]
+        );
+        assert_eq!(
+            first.tag_name(&"!a!x%20y".into()),
+            (Some("tag:last:x y".into()), vec![])
+        );
+        assert!(stream.add(&"%TAG !a! tag:next:".into()).is_empty());
+        let third = stream.at_document();
+        assert_eq!(third.tags.len(), 2);
+        assert_eq!(third.tag_name(&"!a!x".into()).0, Some("tag:next:x".into()));
+        assert_eq!(first.tag_name(&"!a!x".into()).0, Some("tag:last:x".into()));
+        assert_eq!(
+            third.tag_name(&"!b!x".into()).1,
+            [JsString::from("Could not resolve tag: !b!x")]
+        );
+    }
+
+    #[test]
+    fn yaml12_resets_handles_and_index_preserves_raw_utf16() {
+        let mut stream = Directives::default();
+        let handle = JsString::from_utf16(vec![33, 0xd800, 33]);
+        Arc::make_mut(&mut stream.tags).insert(handle.clone(), "tag:raw:".into());
+        let mut source = handle.units().to_vec();
+        source.push(120);
+        let source = JsString::from_utf16(source);
+        assert_eq!(stream.tag_name(&source).0, Some("tag:raw:x".into()));
+        let doc = stream.at_document();
+        assert_eq!(doc.tags.len(), 2);
+        assert_eq!(stream.tags.len(), 1);
+        assert!(stream.tag_name(&source).0.is_none());
+        assert_eq!(
+            doc.tag_name(&"!!str".into()).0,
+            Some("tag:yaml.org,2002:str".into())
+        );
+    }
 }

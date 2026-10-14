@@ -11,13 +11,13 @@ use pilotdeck_protocol::JsString;
 pub(super) fn stringify_key(
     doc: &Document,
     id: NodeId,
-    anchors: &std::collections::HashMap<NodeId, super::to_js::Anchor>,
+    anchors: &std::collections::HashSet<JsString>,
     depth_limit: usize,
 ) -> Result<JsString, ConversionError> {
     let mut ctx = KeyContext {
         doc,
         anchors,
-        local_anchors: Vec::new(),
+        local_anchors: std::collections::HashSet::new(),
         depth: 0,
         depth_limit,
     };
@@ -86,8 +86,8 @@ impl KeyText {
 }
 struct KeyContext<'a> {
     doc: &'a Document,
-    anchors: &'a std::collections::HashMap<NodeId, super::to_js::Anchor>,
-    local_anchors: Vec<NodeId>,
+    anchors: &'a std::collections::HashSet<JsString>,
+    local_anchors: std::collections::HashSet<&'a JsString>,
     depth: usize,
     depth_limit: usize,
 }
@@ -118,12 +118,7 @@ impl KeyContext<'_> {
     ) -> Result<KeyText, ConversionError> {
         let n = &self.doc.nodes[id];
         if let NodeKind::Alias(source) = &n.kind {
-            if !self
-                .anchors
-                .keys()
-                .chain(self.local_anchors.iter())
-                .any(|id| self.doc.nodes[*id].anchor.as_ref() == Some(source))
-            {
+            if !self.anchors.contains(source) && !self.local_anchors.contains(source) {
                 return Err(ConversionError::new(
                     "Error",
                     crate::string::message(
@@ -140,7 +135,7 @@ impl KeyContext<'_> {
         if props {
             if let Some(anchor) = &n.anchor {
                 crate::doc::anchors::anchor_is_valid(anchor)?;
-                self.local_anchors.push(id);
+                self.local_anchors.insert(anchor);
                 prefix = concat(&[&"&".into(), anchor]);
             }
             if let Some(tag) = &n.tag {

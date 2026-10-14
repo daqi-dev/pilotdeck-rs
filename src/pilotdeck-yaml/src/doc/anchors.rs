@@ -8,11 +8,23 @@ use crate::{
 impl Context<'_> {
     pub(crate) fn visit_order(&mut self, id: NodeId) -> Result<(), crate::value::ConversionError> {
         let mut pending = vec![(id, 0)];
+        let mut names = std::collections::HashMap::new();
+        let mut visited = std::collections::HashSet::new();
         while let Some((id, depth)) = pending.pop() {
             if depth >= crate::stack::CONVERSION_DEPTH {
                 return Err(crate::stack::conversion_exhausted());
             }
-            self.order.push(id);
+            // Public arenas may share a node. Alias.resolve stops at its first
+            // occurrence in the original pre-order traversal.
+            if let NodeKind::Alias(name) = &self.doc.nodes[id].kind
+                && visited.insert(id)
+                && let Some(&source) = names.get(name)
+            {
+                self.alias_sources.insert(id, source);
+            }
+            if let Some(name) = &self.doc.nodes[id].anchor {
+                names.insert(name.clone(), id);
+            }
             match &self.doc.nodes[id].kind {
                 NodeKind::Seq(items) => {
                     pending.extend(items.iter().rev().map(|id| (*id, depth + 1)))
@@ -39,6 +51,8 @@ impl Context<'_> {
             .as_ref()
             .is_some_and(|s| !s.is_empty())
         {
+            self.anchor_names
+                .insert(self.doc.nodes[id].anchor.as_ref().unwrap().clone());
             self.anchors.insert(
                 id,
                 Anchor {
