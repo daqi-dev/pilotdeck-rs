@@ -116,10 +116,20 @@ export function tcpRecords(lsof) {
   }
   return records;
 }
-export function forbiddenTCP(records) {
+export function forbiddenTCP(records, allowedPorts) {
   // Also fail a forbidden listener; do not confuse an ephemeral local port on
   // an outgoing connection with its destination port.
-  return records.filter(row => [3001, 18789].includes(row.target ? row.destinationPort : row.localPort));
+  return records.filter(row => {
+    const port = row.target ? row.destinationPort : row.localPort;
+    if ([3001, 18789].includes(port)) return true;
+    if (!allowedPorts) return false; // Preserve D's existing gate.
+    const endpoint = row.target || row.endpoint;
+    const local = row.endpoint.split('->')[0];
+    // B's Node guard prevents these connections; the process audit also catches
+    // native Chrome/updater sockets outside the fixed isolated deployment.
+    return !/^127\.0\.0\.1:\d+$/.test(endpoint) || !/^127\.0\.0\.1:\d+$/.test(local)
+      || !(allowedPorts.includes(port) || row.target && allowedPorts.includes(row.localPort));
+  });
 }
 const chromeExecutable = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const chromeHelper = /^\/Applications\/Google Chrome\.app\/Contents\/Frameworks\/Google Chrome Framework\.framework\/Versions\/[^/]+\/(?:Helpers\/Google Chrome Helper(?: \([^)]+\))?\.app\/Contents\/MacOS\/Google Chrome Helper(?: \([^)]+\))?|chrome_crashpad_handler)(?:\s|$)/;
@@ -384,7 +394,7 @@ export function forbiddenProcesses(processes, { playwrightRoots = [], browserTmp
 }
 export async function startTCPAudit({ logFile, rootPid = process.pid, groupRoots = () => [], onFatal,
   playwrightRoots = () => [], browserTmpRoots = () => [], runtimeRoots = () => [],
-  nodeRoots = () => [],
+  nodeRoots = () => [], allowedPorts,
   updaterRealpath = realpathSync, sofficeRealpath = realpathSync, executableRealpath = realpathSync,
   run = capture, record = entry => appendFile(logFile, JSON.stringify(entry) + '\n'), intervalMs = 250 } = {}) {
   let timer, pending = Promise.resolve(), stopped = false, failure;
@@ -442,10 +452,10 @@ export async function startTCPAudit({ logFile, rootPid = process.pid, groupRoots
         return;
       }
       const raw = await run('lsof', ['-nP', '-a', '-p', processes.filter(row => !inactiveProcess(row)).map(row => row.pid).join(','), '-iTCP', '-F', 'pftnT']);
-      const connections = tcpRecords(raw), forbidden = forbiddenTCP(connections);
+      const connections = tcpRecords(raw), forbidden = forbiddenTCP(connections, allowedPorts);
       if (connections.some(row => !processes.some(proc => proc.pid === row.pid))) throw new Error('lsof returned a process outside the runner tree');
       // Signal first; evidence I/O must never postpone stopping a forbidden target.
-      if (forbidden.length) fail(new Error(`FAIL: runner TCP target 3001/18789: ${forbidden.map(row => `${row.pid} ${row.endpoint}`).join(', ')}`));
+      if (forbidden.length) fail(new Error(`FAIL: runner TCP target ${allowedPorts ? 'outside B isolated deployment' : '3001/18789'}: ${forbidden.map(row => `${row.pid} ${row.endpoint}`).join(', ')}`));
       await record({ timestamp: new Date().toISOString(), phase, runnerPid: rootPid, processes, environmentEvidence, readOnlySystemChecks, connections,
         browserEvidence, rawLsof: raw, status: forbidden.length ? 'FAIL' : 'PASS', forbidden, forbiddenProcesses: forbiddenApps });
     } catch (error) {

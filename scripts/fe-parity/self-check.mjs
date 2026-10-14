@@ -1,4 +1,5 @@
 import { streamSelfCheck } from './stream-self-check.mjs';
+import { deploySelfCheck } from './deploy-self-check.mjs';
 import { orchestrationSelfCheck } from './orchestration-self-check.mjs';
 import { baselineStaleSelfCheck, staleControlAttempt } from './baseline-stale-self-check.mjs';
 import { staleEntry } from './baseline-stale.mjs';
@@ -91,7 +92,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     const unknown = make(); unknown.suites[0].specs[0].title = 'unknown'; assert.equal(reconcile(inventory, unknown, '').status, 'FAIL');
     const xfail = make(); xfail.suites[0].specs[0].tests[0].expectedStatus = 'failed'; assert.equal(reconcile(inventory, xfail, '').status, 'FAIL');
   });
-  await check('paired reports: 68 PASS + 4 matched FAIL vs 72 SKIP, skip identities and provenance', async () => {
+  await check('paired reports: 66 PASS + 6 matched FAIL vs 72 SKIP, skip identities and provenance', async () => {
     const inventory = JSON.parse(await readFile(historicalInventory, 'utf8')).tests;
     assert.equal(inventory.length, 72);
     assert.equal(SKIP_ALLOWLIST.length, 9);
@@ -99,21 +100,24 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     assert(checkInventory(inventory.slice(1), { registered: 72, tests: inventory }).length > 0);
     const allowed = inventory.flatMap((row, i) => SKIP_ALLOWLIST.some(entry => caseId(entry) === caseId(row)) ? [i] : []);
     assert.equal(allowed.length, 9);
+    const nonStaleAllowed = allowed.filter(index => !staleEntry(inventory[index]));
+    assert.equal(nonStaleAllowed.length, 7);
     const origins = { old: origin('old'), new: origin('new') };
     const testDir = resolve(baseline, 'e2e');
     const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, rootDir: testDir, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: (SKIP_ALLOWLIST.find(entry => caseId(entry) === caseId(row)) || SKIP_ALLOWLIST[0]).skipReasons[0].description }] : [], results: [skipped.includes(index) ? { status: 'skipped' } : staleEntry(row) ? staleControlAttempt(staleEntry(row)) : { status: 'passed' }] }] })) }] });
     const pair = (old, next) => reconcilePair(inventory, { old, new: next }, testDir, origins);
     assert.equal(pair(make('old'), make('new')).status, 'PASS');
-    for (const skipped of [allowed.slice(0, 1), allowed]) {
+    for (const skipped of [nonStaleAllowed.slice(0, 1), nonStaleAllowed]) {
       const accepted = pair(make('old', skipped), make('new', skipped));
       assert.equal(accepted.status, 'PASS');
       for (const side of ['old', 'new']) {
         assert.equal(accepted[side].minimumExecuted, 63);
         assert.equal(accepted[side].executed, 72 - skipped.length);
-        assert.equal(accepted[side].behavioralCoverage.eligible, 68 - skipped.length);
-        assert.equal(accepted[side].behavioralCoverage.passed, 68 - skipped.length);
+        assert.equal(accepted[side].behavioralCoverage.eligible, 66 - skipped.length);
+        assert.equal(accepted[side].behavioralCoverage.passed, 66 - skipped.length);
       }
     }
+    assert.equal(pair(make('old', allowed), make('new', allowed)).status, 'FAIL', 'Reviewed B stale cases must execute FAIL, not use env skip');
     const downgrade = pair(make('old'), make('new', inventory.map((_, i) => i)));
     assert.equal(downgrade.status, 'FAIL');
     assert.equal(downgrade.errors.filter(error => error.startsWith('skip identity only in new:')).length, 44); // D's 28 are pending, never SKIP.
@@ -183,7 +187,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     }
   });
   await check('profile merge counts execution once and never masks invalid original reports', () => {
-    const inventory = [SKIP_ALLOWLIST[5], SKIP_ALLOWLIST[6], SKIP_ALLOWLIST[7]];
+    const inventory = SKIP_ALLOWLIST.filter(row => !staleEntry(row)).slice(0, 3);
     const origins = { old: origin('old'), new: origin('new') };
     const make = (frontend, active) => ({ config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } },
       suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed',
@@ -263,6 +267,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
   });
   await streamSelfCheck(check);
   await orchestrationSelfCheck(check);
+  await deploySelfCheck(check);
   await baselineStaleSelfCheck(check);
   await check('mock LLM + real orchestration unit tests (no listen/Chrome)', () => {
     execFileSync(process.execPath, ['--test', resolve(root, 'scripts/fe-parity/mock-llm.test.mjs')], { cwd: root, encoding: 'utf8' });

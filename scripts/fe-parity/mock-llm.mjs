@@ -41,6 +41,18 @@ export function selectScript(body) {
   if (marker && body.metadata?.purpose === 'session_title_generation') return { script: 'session-title', answer: JSON.stringify({ title: 'Verify E2E chat marker' }) };
   if (marker) return { script: 'chat-marker', answer: marker[1] };
   if (prompt.trim() === 'Reply exactly: 1') return { script: 'connection-text', answer: '1' };
+  // B's shipped operator SOP definitions and local-openai-mock operator mode
+  // require this actual model tool, not a fabricated Knowledge/SOP API response.
+  const operator = /\boperator\b/i.test(prompt);
+  if (operator && body.metadata?.purpose === 'session_title_generation') return { script: 'operator-title', answer: JSON.stringify({ title: 'Operator approval' }) };
+  if (operator && body.tools?.some(tool => tool.type === 'function' && tool.function?.name === 'submit_step_result')) {
+    const completed = prompt.includes('operator approved');
+    return { script: completed ? 'operator-completed' : 'operator-handoff', toolCalls: [{
+      id: completed ? 'parity-operator-completed' : 'parity-operator-handoff', type: 'function',
+      function: { name: 'submit_step_result', arguments: JSON.stringify({ status: completed ? 'completed' : 'handoff',
+        replyFragment: completed ? 'Browser operator approval completed.' : 'Waiting for browser operator approval.' }) },
+    }] };
+  }
   throw new Error('No triage script matches latest user message');
 }
 export function planResponse({ method, path, headers = {}, body }) {
@@ -61,14 +73,22 @@ export function planResponse({ method, path, headers = {}, body }) {
   try { selected = selectScript(body); } catch (error) { return errorReply(422, error.message); }
   const id = 'chatcmpl-parity-' + createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16);
   const base = { id, created: 0, model: body.model };
+  const finishReason = selected.toolCalls ? 'tool_calls' : 'stop';
   if (!body.stream) return { status: 200, ...selected, body: {
-    ...base, object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: selected.answer }, finish_reason: 'stop' }], usage,
+    ...base, object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: selected.answer ?? null,
+      ...(selected.toolCalls ? { tool_calls: selected.toolCalls } : {}) }, finish_reason: finishReason }], usage,
   } };
   const chunk = (delta, finish_reason = null, extras = {}) => ({ ...base, object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason }], ...extras });
   const chunks = [chunk({ role: 'assistant', content: '' })];
-  const characters = Array.from(selected.answer);
-  for (let index = 0; index < characters.length; index += 7) chunks.push(chunk({ content: characters.slice(index, index + 7).join('') }));
-  chunks.push(chunk({}, 'stop', { usage }));
+  if (selected.toolCalls) for (const [index, tool] of selected.toolCalls.entries()) {
+    chunks.push(chunk({ tool_calls: [{ index, id: tool.id, type: tool.type, function: { name: tool.function.name, arguments: '' } }] }));
+    for (let offset = 0; offset < tool.function.arguments.length; offset += 7) chunks.push(chunk({ tool_calls: [{ index,
+      function: { arguments: tool.function.arguments.slice(offset, offset + 7) } }] }));
+  } else {
+    const characters = Array.from(selected.answer);
+    for (let index = 0; index < characters.length; index += 7) chunks.push(chunk({ content: characters.slice(index, index + 7).join('') }));
+  }
+  chunks.push(chunk({}, finishReason, { usage }));
   return { status: 200, ...selected, frames: [...chunks.map(value => `data: ${JSON.stringify(value)}\n\n`), 'data: [DONE]\n\n'] };
 }
 export function createMockLLM({ record = async () => {}, pause = () => new Promise(done => setTimeout(done, 8)) } = {}) {

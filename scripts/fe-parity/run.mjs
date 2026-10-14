@@ -12,6 +12,8 @@ import { selfCheck } from './self-check.mjs';
 import { startMock, TOKEN } from './mock.mjs';
 import { startFrontend } from './serve.mjs';
 import { runReal, assertCanonicalAncestor } from './real-runner.mjs';
+import { runDeploy } from './deploy-runner.mjs';
+import { assertDeployExecutionEnv, selectDeployCells } from './deploy-matrix.mjs';
 const { values } = parseArgs({ options: {
   help: { type: 'boolean' }, 'self-check': { type: 'boolean' }, 'network-self-check': { type: 'boolean' },
   reconcile: { type: 'boolean' }, suite: { type: 'string', default: 'skeleton' },
@@ -28,23 +30,29 @@ if (values.help) {
   node scripts/fe-parity/run.mjs --suite baseline --profiles staffdeck,minimal,replacement --frontends old,new
   node scripts/fe-parity/run.mjs --suite real --real-mode all --frontends old
   node scripts/fe-parity/run.mjs --suite real --real-mode onboarding --frontends old
+  node scripts/fe-parity/run.mjs --suite blackbox-deploy --profiles staffdeck,minimal,replacement --frontends old
   node scripts/fe-parity/run.mjs --suite real --reconcile --frontends old,new --old-report <ready JSON> --old-report <onboarding JSON> --new-report <ready JSON> --new-report <onboarding JSON>
   node scripts/fe-parity/run.mjs --suite skeleton --frontends old,new
   node scripts/fe-parity/run.mjs --reconcile --old-report <JSON> --new-report <JSON>
 
 All configs/spec selection are repository-owned. Real uses native supervisor + owned Chrome auth setup.
-Every profile produces a complete original 72-case JSON; repeated report flags merge profiles.
+Baseline profiles produce complete original 72-case JSONs; repeated report flags merge profiles.
+B/D have source-bound deployment partitions and separate execution accounting.
 Streaming and skeleton have separate denominators; they never credit the baseline 72.
 Single-side PASS means calibration only. The probe's missing chat is FAIL, never skipped.
 --rules-only omits build-artifact checks (self-check only), never used by browser preflight.
 Mock-UI suites: 28376/28377/28378. Real: 3010/5180/18798, onboarding 3011/5181/18799, LLM 28379.
 All bind 127.0.0.1; real requires --frontends old, checks idle ports, keeps data in worktree real-run/.
+B: 28410/28411/28412, replacement Knowledge 28413, shared mock LLM 28379; both native auxiliary cells included.
+B outputs strict per-cell accounting. Missing StaffDeck runtime stays BLOCKED/FAIL, never skip/PASS.
 See README.md for known incomplete mock deployment coverage and coordinator commands.`);
   process.exit(0);
 }
 const frontends = values.frontends.split(','), profiles = values.profiles.split(',');
 if (!['old', 'new', 'old,new'].includes(values.frontends)) throw new Error('frontends must be old, new or old,new');
-if (!['skeleton', 'streaming-scroll', 'baseline', 'real'].includes(values.suite)) throw new Error('Unknown suite');
+if (!['skeleton', 'streaming-scroll', 'baseline', 'real', 'blackbox-deploy'].includes(values.suite)) throw new Error('Unknown suite');
+const isolatedSuite = ['real', 'blackbox-deploy'].includes(values.suite);
+if (values.suite === 'blackbox-deploy' && (values.frontends !== 'old' || values.reconcile || values['network-self-check'])) throw new Error('B deployment currently supports old execution/offline self-check only; new starts at F3');
 if (!['all', 'ready', 'onboarding'].includes(values['real-mode'])) throw new Error('Invalid real mode');
 if (values.suite === 'real') {
   if (values['network-self-check']) throw new Error('Real does not support network-self-check');
@@ -57,12 +65,12 @@ if ([values['self-check'], values['network-self-check'], values.reconcile].filte
 if (values['rules-only'] && !values['self-check']) throw new Error('--rules-only requires --self-check');
 if (!values.reconcile && (values['old-report'] || values['new-report'])) throw new Error('Reports require --reconcile');
 const base = resolve(root, '_tmp/fe-parity');
-if (values.suite === 'real') await assertCanonicalAncestor(base);
+if (isolatedSuite) await assertCanonicalAncestor(base);
 await mkdir(base, { recursive: true });
 let output;
 if (values.output) {
   output = ownedPath(values.output);
-  if (values.suite === 'real') await assertCanonicalAncestor(output);
+  if (isolatedSuite) await assertCanonicalAncestor(output);
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output); // EEXIST: never overwrite a previous run or its evidence.
 } else output = await mkdtemp(resolve(base, 'run-'));
@@ -73,23 +81,25 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   interrupted = true; for (const child of children) { try { process.kill(-child.pid, 'SIGTERM'); } catch { /* Child already exited. */ } }
 });
 async function command(args, env = {}) {
-  if (values.suite === 'real') {
+  if (isolatedSuite) {
+    // The whole-baseline inventory must retain its historical undefined route
+    // title. B's profile-bearing env is used only for explicit cell listings.
     if (!env.PILOTDECK_E2E_RUN_DIR) env = realExecutionEnv(process.env, { output, runDir: resolve(output, 'preflight'), mode: 'ready' });
-    assertRealExecutionEnv(env);
+    if (env.FE_SUITE === 'blackbox-deploy') assertDeployExecutionEnv(env); else assertRealExecutionEnv(env);
     await prepareRealOSDirectories(env);
   }
   return new Promise((resolveResult, reject) => {
     if (interrupted) return reject(new Error('Run interrupted'));
     // Do not merge removed operator variables (notably NODE_OPTIONS) back into
     // the explicitly sanitized real environment at the final spawn boundary.
-    const childEnv = values.suite === 'real' ? env : { ...executionEnv(process.env), ...env };
+    const childEnv = isolatedSuite ? env : { ...executionEnv(process.env), ...env };
     const child = spawn(process.execPath, [requireUI.resolve('@playwright/test/cli'), ...args], {
       cwd: root, detached: true, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'],
     });
     // Only this owned CLI (never the runtime supervisor) can authorize Chrome.
-    child.fePlaywright = args.includes(resolve(root, 'scripts/fe-parity/real.config.mjs')) && !args.includes('--list');
+    child.fePlaywright = ['real.config.mjs', 'deploy.config.mjs'].some(file => args.includes(resolve(root, 'scripts/fe-parity', file))) && !args.includes('--list');
     child.feBrowserTmp = env.TMPDIR;
-    if (values.suite === 'real') child.feServiceHome = env.HOME;
+    if (isolatedSuite) child.feServiceHome = env.HOME;
     children.add(child); let stdout = '', stderr = '';
     child.stdout.on('data', data => { stdout += data; }); child.stderr.on('data', data => { stderr += data; });
     child.once('error', error => { children.delete(child); reject(error); });
@@ -99,7 +109,7 @@ async function command(args, env = {}) {
 function printAccount(frontend, account) {
   console.log(`${frontend}: 分母 ${account.denominator}; 应执行数 ${account.expected} vs 实际执行数 ${account.executed}; 显式 skip ${account.explicitSkips}; STALE_CASCADE ${account.staleCascade ?? 0}; 待编排 ${account.pendingOrchestration}; 原始断言 ${account.status}`);
   console.log(`${frontend}: 行为守护 ${account.behavioralCoverage.passed}/${account.behavioralCoverage.eligible}; 基线失效单列 ${account.behavioralCoverage.excludedBaselineStale}，覆盖记 0`);
-  if (account.oldGate) console.log(`${frontend}: 旧侧校准门 ${account.oldGate.status}; 失效 MATCHED_FAIL 条件满足 ${account.oldGate.matchedFailConditions}/${BASELINE_STALE.tests.length} (UNPAIRED); STALE_CASCADE ${account.oldGate.staleCascade}; 待编排 ${account.oldGate.pendingOrchestration}`);
+  if (account.oldGate) console.log(`${frontend}: 旧侧校准门 ${account.oldGate.status}; 失效 MATCHED_FAIL 条件满足 ${account.oldGate.matchedFailConditions}/${account.oldGate.expectedStaleFailures} (UNPAIRED); STALE_CASCADE ${account.oldGate.staleCascade}; 待编排 ${account.oldGate.pendingOrchestration}`);
   for (const row of account.rows) if (['SKIP', 'NOT_RUN', PENDING_STATUS, CASCADE_STATUS].includes(row.status)) console.log(`  ${row.status} ${row.file} :: ${row.title} — ${row.reason}${row.source ? ` — ${Object.values(row.source).join(', ')}` : ''}`);
 }
 function table(inventory, accounts) {
@@ -184,6 +194,26 @@ try {
     result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN', reason: 'self-check only' };
     console.log(`基线应执行数 ${inventory.length} vs 实际执行数 0; NOT_RUN (self-check only)`);
     result.status = 'PASS_SELF_CHECK_ONLY';
+  } else if (values.suite === 'blackbox-deploy') {
+    result.offline = await selfCheck({ assets: false, frontends });
+    if (result.offline.status !== 'PASS') throw new Error('B deployment offline preflight failed; see result.json');
+    const deploy = await runDeploy({ output, inventory, cells: selectDeployCells(profiles), command, children, isInterrupted: () => interrupted });
+    result.deploy = deploy;
+    result.accounting = { old: deploy.accounting, status: deploy.accounting.status, errors: deploy.accounting.errors };
+    printAccount('old', deploy.accounting);
+    for (const cell of Object.values(deploy.accounting.partitions)) console.log(`B ${cell.cell}: 应执行数 ${cell.expected} vs 实际执行数 ${cell.executed}; profile 排除 ${cell.profileExclusions}; ${cell.status}`);
+    console.log(`B 全矩阵实例 ${deploy.accounting.instanceExecuted}/${deploy.accounting.instanceExpected}; BLOCKED ${deploy.accounting.blocked}; TCP/process audit ${deploy.audit.status}`);
+    for (const row of deploy.accounting.baselineStale) console.log(`B baseline-stale ${row.title}: ${row.status}; MATCHED_FAIL 旧侧条件 ${row.matchedFailCondition ? '满足' : '不满足'}; UNPAIRED; 行为覆盖 0`);
+    for (const error of deploy.accounting.errors) console.error(error);
+    await writeFile(resolve(output, 'deploy-parity.md'), table(deploy.accounting.rows, result.accounting) + '\n\n' +
+      '| 部署格 | 应执行 | 实际执行 | profile 排除 | 状态 |\n|---|---|---|---|---|\n' +
+      Object.values(deploy.accounting.partitions).map(cell => `| ${cell.cell} | ${cell.expected} | ${cell.executed} | ${cell.profileExclusions} | ${cell.status} |`).join('\n') + '\n\n' +
+      '| 基线失效身份 | 原始状态 | MATCHED_FAIL 旧侧条件 | 双侧一致性 | 行为覆盖 | 证明 |\n|---|---|---|---|---|---|\n' +
+      deploy.accounting.baselineStale.map(row => `| ${row.title} | ${row.status} | ${row.matchedFailCondition ? '满足' : '不满足'} | UNPAIRED | 0 | ${row.baselineStale.proofScript} |`).join('\n') + '\n');
+    result.baselineExecution = { expected: inventory.length, actual: deploy.accounting.executed,
+      status: 'PARTIAL_B_SUITE_ONLY', reason: 'Only requested B profiles/native auxiliary; source denominator 72 unchanged; A/C/D NOT_RUN' };
+    result.status = deploy.accounting.status === 'PASS'
+      ? (profiles.length === 3 ? 'PASS_SINGLE_FRONTEND_ONLY' : 'PASS_PARTIAL_B_PROFILES_ONLY') : 'FAIL';
   } else if (values.suite === 'real' && values.reconcile) {
     result.offline = await selfCheck({ assets: false, frontends });
     if (result.offline.status !== 'PASS') throw new Error('Real pair offline preflight failed; see result.json');

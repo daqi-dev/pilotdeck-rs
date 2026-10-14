@@ -4,6 +4,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { proveFilesBaselineStale } from './files-stale-proof.mjs';
+import { proveReplacementBaselineStale } from './replacement-stale-proof.mjs';
 import { baseline, requireUI } from './env.mjs';
 
 const ts = requireUI('typescript');
@@ -74,7 +75,13 @@ export async function proveBaselineStale(catalog) {
   }
   assert.deepEqual(references, [], 'backToApp has no executable source references');
   const proofs = [];
+  let replacementProof;
   for (const row of catalog.tests) {
+    if (row.scope === 'B_REPLACEMENT') {
+      replacementProof ??= await proveReplacementBaselineStale();
+      proofs.push({ file: row.file, title: row.title, ...replacementProof });
+      continue;
+    }
     if (row.file === 'real/files.spec.mjs') {
       proofs.push(await proveFilesBaselineStale(helper.clickButton, row));
       continue;

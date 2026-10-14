@@ -9,6 +9,7 @@ import { PENDING_ORCHESTRATION, reconcileRealPair, reconcilePair, reconcileReal,
 
 const testDir = resolve(baseline, 'e2e');
 const origins = { ready: realOrigin('ready'), onboarding: realOrigin('onboarding') };
+const realStale = BASELINE_STALE.tests.filter(row => row.file.startsWith('real/'));
 // Synthetic control reports, never written as runtime evidence.
 export function staleControlAttempt(entry) {
   const { assertion, callsite, matcher, locator } = entry.failure;
@@ -34,8 +35,8 @@ const compare = reports => reconcileRealPair(PENDING_ORCHESTRATION, reports, tes
 const staleSpec = (reports, side = 'new') => reports[side][0].suites[0].specs.find(row => row.title === BASELINE_STALE.tests[0].title);
 export async function baselineStaleSelfCheck(check) {
   await check('baseline stale: reviewed exact manifest, evidence lines/hashes and executable offline proof', async () => {
-    assert.equal((await validateBaselineStale()).identities, 4);
-    assert.equal((await proveBaselineStale(BASELINE_STALE)).proofs.length, 4);
+    assert.equal((await validateBaselineStale()).identities, 6);
+    assert.equal((await proveBaselineStale(BASELINE_STALE)).proofs.length, 6);
     for (const mutate of [
       catalog => { catalog.tests[0].title += 'x'; },
       catalog => { catalog.tests[0].file = 'real/files.spec.mjs'; },
@@ -68,8 +69,10 @@ export async function baselineStaleSelfCheck(check) {
     assert.equal(reconcileReal(PENDING_ORCHESTRATION, { ready: reports.old[0], onboarding: reports.old[1] }, testDir, origins).status, 'FAIL');
     assert.equal(result.old.oldGate.status, 'PASS');
     assert.equal(result.old.oldGate.matchedFailConditions, 4);
+    const borrowedInventory = PENDING_ORCHESTRATION.map(row => caseId(row) === caseId(realStale[0]) ? BASELINE_STALE.tests[4] : row);
+    assert.equal(oldRealGate(borrowedInventory, result.old).status, 'FAIL', 'B stale identity cannot replace a required D stale identity');
     // Every reviewed predecessor, including Files, must match its own signature.
-    for (const entry of BASELINE_STALE.tests) for (const mutate of [
+    for (const entry of realStale) for (const mutate of [
       attempt => { attempt.error.location.line++; },
       attempt => { attempt.error.stack = attempt.error.stack.replace(`${entry.failure.callsite.file}:${entry.failure.callsite.line}:${entry.failure.callsite.column}`, `${entry.failure.callsite.file}:1:1`); },
       attempt => { attempt.error.message = attempt.error.message.replace(entry.failure.locator, 'borrowed locator'); },
@@ -126,7 +129,7 @@ export async function baselineStaleSelfCheck(check) {
   });
   await check('STALE_CASCADE: frozen AST topology, manual non-successor labels, asymmetric sets and PASS predecessor are rejected', async () => {
     assert.equal(SERIAL_TOPOLOGY.length, 28);
-    assert.deepEqual(BASELINE_STALE.tests.map(row => serialSuccessors(PENDING_ORCHESTRATION, row).length), [6, 0, 2, 3]);
+    assert.deepEqual(BASELINE_STALE.tests.map(row => serialSuccessors(PENDING_ORCHESTRATION, row).length), [6, 0, 2, 3, 0, 0]);
     const catalog = JSON.parse(await readFile(new URL('./pending-orchestration.json', import.meta.url), 'utf8'));
     catalog.tests[0].source.serial = catalog.tests[8].source.serial;
     await assert.rejects(() => readSerialTopology(catalog), /catalog drift/);

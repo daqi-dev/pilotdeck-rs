@@ -4,6 +4,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { appendFileSync } from 'node:fs';
 import { realPorts, REAL_TEST_KEY } from './env.mjs';
 import { assertRealExecutionEnv } from './execution-env.mjs';
+import { assertDeployExecutionEnv, deployAllowedPorts } from './deploy-matrix.mjs';
 export function localFetchURL(input, center) {
   const url = new URL(input instanceof Request ? input.url : input);
   if (url.origin === 'https://api.openai.com' && ['/v1/models', '/models', '/v1/chat/completions', '/chat/completions'].includes(url.pathname)) {
@@ -17,7 +18,9 @@ export function installNetworkIsolation(env = process.env) {
   const record = entry => appendFileSync(env.FE_NETWORK_LOG, JSON.stringify({ timestamp: new Date().toISOString(), pid: process.pid,
     ppid: process.ppid, executable: process.execPath, entrypoint: process.argv[1] ?? null, ...entry }) + '\n');
   record({ action: 'runtime-process' });
-  const allowed = new Set([realPorts.mock, ...Object.values(realPorts.ready), ...Object.values(realPorts.onboarding)]);
+  const isDeploy = env.FE_SUITE === 'blackbox-deploy';
+  if (isDeploy) assertDeployExecutionEnv(env);
+  const allowed = new Set(isDeploy ? deployAllowedPorts : [realPorts.mock, ...Object.values(realPorts.ready), ...Object.values(realPorts.onboarding)]);
   const originalListen = net.Server.prototype.listen;
   net.Server.prototype.listen = function (...args) {
     const options = typeof args[0] === 'object' ? args[0] : { port: args[0], host: args[1] };

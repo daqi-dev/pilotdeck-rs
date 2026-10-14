@@ -1,6 +1,6 @@
 # F2：双前端对拍、流式黑盒与基线 72 例 runner
 
-旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。`skeleton` / `streaming-scroll` / `baseline` 两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。这三个套件不启动基线 dev server、gateway 或真实 `ui/server`。新增 `real` 套件使用隔离的真实 runtime 和本地 mock LLM，见文末。
+旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。`skeleton` / `streaming-scroll` / `baseline` 两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。这三个套件不启动基线 dev server、gateway 或真实 `ui/server`。`real`（D 类）与 `blackbox-deploy`（B 类）使用隔离的真实 runtime 和本地 mock LLM，见文末；B 当前只跑 old，StaffDeck 依赖缺失保持 BLOCKED。
 
 原三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（legacy / timeline 各 4 例，共 8 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过和 #61 真实报告验收仍须协调者运行后确认。**
 
@@ -170,7 +170,7 @@ self-check验证六份 side/profile 配置注册、流式/滚动正负控制、�
 
 `pendingOrchestration` 计数不扣减分母、应执行数或最低执行数，也不增加执行数和合法 skip 数。三 profile 合并按身份去重统计待编排数；任一原件 pending 即保留 FAIL，即使另一个 profile 已执行。`baseline-parity.md` 另列每端/每原件的完整身份、原始 annotations、基线 skip 原文及回源；`result.json` 的逐 profile rows/observations 保留结构化证据，离线对账的 `reportInputs` 给出原件顺序。D 类接上 mock LLM 编排前，不得据此宣称 B 9 + D 28 的 37 例目标已完成。
 
-**身份许可来源唯一固定为 [skip-allowlist.json](skip-allowlist.json)**：按 `caseId = JSON.stringify([file, 完整展开 title])` 精确匹配，只收 exp007 B 类的9例真实部署/env门控用例。每项的 `source` 给出固定基线 `cc7c4e6` 的用例注册、门控与环境依赖路径:行号，`rationale` 逐条说明原因；不按 `formal-*` / `real-auth-*` 文件名或标题前缀放行。`formal-route-matrix` 保留历史清点未设 profile 时的完整标题 `formal undefined routes follow the generated composition`；将来接入部署矩阵改变展开身份须同步评审注册口径与清单，不能自动归一化成已获准身份。
+**历史全量 `baseline` 套件的身份许可来源唯一固定为 [skip-allowlist.json](skip-allowlist.json)**：按 `caseId = JSON.stringify([file, 完整展开 title])` 精确匹配，只收 exp007 B 类的9例真实部署/env门控用例。每项的 `source` 给出固定基线 `cc7c4e6` 的用例注册、门控与环境依赖路径:行号，`rationale` 逐条说明原因；不按 `formal-*` / `real-auth-*` 文件名或标题前缀放行。`formal-route-matrix` 保留历史清点未设 profile 时的完整标题 `formal undefined routes follow the generated composition`；不把具体 profile 标题自动归一化成已获准 skip 身份。B 部署使用文末独立的严格 cell 对账：保留具体标题、项目名和源位置，不调用历史 skip 许可来扣减应执行数。
 
 **实际执行数必须 ≥ 注册数 − 本次注册中命中身份清单的数量**：当前72−9=63。三例 skeleton 与清单无交集，因此最低执行数仍是3。清单内用例允许正常执行，不要求skip；全执行时应执行72，9例合法skip时应执行63。缺失报告/NOT_RUN不算显式skip，仍需72例。身份清单不由报告、环境变量或CLI扩展；任何增删/更名都必须提交清单diff与逐条基线源码依据，经评审后才能生效。
 
@@ -209,7 +209,7 @@ WS 映射 self-check 检查全部45条消息（35主通道＋4历史兼容＋6�
 
 - 协调者真实 Chrome 跑旧侧流式双协议 8 例并保存全量 72 例多 profile 报告；未跑前 F5 闸门与 #61 待验收项不勾选。
 - A类34例逐条处置与替代分母，改冻结用例按另issue+评审流程。
-- B类9例部署/profile矩阵脚本化，接入D类28例mock LLM编排；完整37候选双跑并对账72。
+- B 类 StaffDeck 4 例仍 BLOCKED，待锁定外部模块源码与既有运行时/种子编排；D 类已有 real 编排。B/D 的完整 37 候选双跑与 72 全量验收仍待后续。
 
 WS施工图见 [ws-message-map](../../docs/research/007_frontend/ws-message-map.md)。#42正式Chrome复跑见exp007 browser.mjs；本runner不会代替其IME/流式/岛门。
 
@@ -410,3 +410,88 @@ Node 环境目标首次只有 argv、缺行或与首份 argv 不匹配时，允�
 R14 替代第 7/9/10/11/12 轮的 updater 父链条件：操作者已安装的规范 `~/Library/Application Support/Google/GoogleUpdater/<版本>/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`、与 argv 路径相同的 realpath，以及恰为 `path --wake` 或 `path --wake-all` 的完整 argv 即可按身份放行。非 Chrome 父进程、无 Playwright 祖先、wake 父进程和 launchd 收养均不再构成 updater 的拒绝理由。现有可读 HOME 核对与不可读环境的双快照绑定继续执行；路径不规范、realpath 越界或版本目录与 argv 不同、额外参数、安装/注册/卸载等仍 FAIL。父进程自身继续按原有规则审计，updater 独立 PGID 仍纳入 TCP 和 fatal 清理。
 
 协调者的 inactiveProcess 修复保留：当前 executableObservation.stat 含 E（exiting）或 Z 的行视为不活跃。old17 的 `(Google Chrome He)` 为 `?E`；old16/old18 的 wake-all 由 `(Google Chrome)` 且 status exited 的父进程启动，无法再提供主 Chrome 祖先证明。四组旧测试已按 R14 更新；集成测试用 finally 清理定时器，`node --test --test-timeout=8000` 的完整 **44/44** 单测及 **32/32** real 全量离线自检通过。详细原件行号、哈希及 **old19** 命令见 `_tmp/RESULT.md` 第 14 轮。本轮不代跑 real、不起服务、不提交，old16–old18 原 FAIL 保留。
+
+## B 类部署矩阵（issue #58 第 4 项）
+
+`--suite blackbox-deploy --frontends old` 是旧前端的隔离部署入口；每格自动 **起 → 等原生 bridge/token 和模块 health → 跑 unchanged spec → 收自有进程组**。`--profiles` 默认 `staffdeck,minimal,replacement`，可选其中的非重复子集；native 两格始终作为辅助格纳入。新侧从 F3 才接入，本入口拒绝 new、old,new 和 `--reconcile`，不会把探针算成设置页实现。
+
+基线实际支持四种部署：StaffDeck（`products/pilotdeck-staffdeck-sop/profiles/formal-host.yaml`）、minimal（`formal-minimal.yaml`）、replacement（`replacement-knowledge.yaml`）、native（`formal-native.yaml`）。native 必须单列：`real-auth-native` 测 agent-route 设置，而 minimal 的 `frontend.businessModules: {}`（`formal-minimal.yaml:22–23`）没有这个设置模块。route-matrix 在 `ui/e2e/formal-route-matrix.spec.mjs:24–37` 检查 SOP/Knowledge 不渲染，只适用于 native/minimal/replacement，不能在启用这些页面的 StaffDeck 上假跑。
+
+完整清单如下。路径相对只读 `resources/PilotDeck/` @ `cc7c4e6`；同一注册的 desktop/mobile 是执行实例，不新增源码用例身份。
+
+| 源码注册（完整标题） | 所需 env 与门控源码 | 部署与其他前提 |
+|---|---|---|
+| `ui/e2e/formal-composition.spec.mjs:13` — formal Knowledge query and citation resolution | `FORMAL_COMPOSITION_URL` 非空（`:6`）；`FORMAL_REPLACEMENT=0`（`:7–9`） | StaffDeck，真实 Knowledge query/citation 和预置知识数据；BLOCKED |
+| 同文件 `:32` — formal SOP lifecycle resumes through the real StaffDeck runtime | 同上 | StaffDeck，真实 `operator_approval`、handoff/resume；模型可用确定性 OpenAI tool call，但缺真实 SOP runtime；BLOCKED |
+| 同文件 `:52` — formal SOP and Skills routes follow the active composition | 同上 | StaffDeck 同格的 SOP/Skills 页面；完整部署依赖未就绪，BLOCKED |
+| 同文件 `:59` — formal replacement Knowledge switches frontend and backend implementation | `FORMAL_COMPOSITION_URL` 非空（`:6`）；`FORMAL_REPLACEMENT=1`（`:7–9`） | replacement，基线自己的 `fixtures/replacement-knowledge-runtime.mjs` 独立进程 |
+| `ui/e2e/formal-route-matrix.spec.mjs:7` — formal `${profile}` routes follow the generated composition | `FORMAL_ROUTE_PROFILE` 与 `FORMAL_COMPOSITION_URL` 均非空（`:3,5`）；本编排设 `FORMAL_ROUTE_AUTH=1`（`:11`） | 分别 native/minimal/replacement；真实本地 register/login + complete-onboarding（`:12–20`） |
+| `ui/e2e/real-auth-composition.spec.mjs:52` — authenticated StaffDeck profile persists settings and queries the real Knowledge runtime | `REAL_COMPOSITION_URL`、`REAL_COMPOSITION_PROFILE` 均非空（`:4–7`）；profile 必须 staffdeck（`:53`） | 本地 `evidence-staffdeck` 账号（`:10–19`）、两个预置 KB、alternate SOP、supervised restart（`:22–33,55–59,77–83,117–130`）；BLOCKED |
+| 同文件 `:134` — authenticated minimal profile keeps disabled module routes and requests inert | 同文件 `:4–7`；profile 必须 minimal（`:135`） | 本地 `evidence-minimal` 账号；Knowledge/SOP 均 disabled |
+| 同文件 `:150` — authenticated replacement profile sends saved result limits to its replacement runtime | 同文件 `:4–7`；profile 必须 replacement（`:151`）；`REPLACEMENT_KNOWLEDGE_EVIDENCE_PATH` 必须存在（`:169–179`） | 本地 `evidence-replacement` 账号；证据文件必须来自独立 replacement runtime，不合成响应或日志 |
+| `ui/e2e/real-auth-native.spec.mjs:6` — native Settings reads, saves, reloads, and authenticates runtime/config calls | `REAL_NATIVE_URL` 非空（`:4`） | native；真实本地 `browser-evidence` 注册/登录、onboarding 完成（`:7–18`） |
+
+formal 配置原有两个项目完整保留（`ui/e2e/formal-composition.config.mjs:15–18`）：desktop 1440×1000、mobile 390×844 + `isMobile/hasTouch`。real-auth 沿用其单项目默认 1280×720。B 沿用原配置默认 30s test / 5s expect、trace=on；单 worker、零 retry/repeat、forbid-only。仅将浏览器指定为本机 Chrome，并关闭需要另下载 ffmpeg 的 video。不会加载基线 webServer/globalSetup；B 原配置本身没有这两项，auth composition 的 onboarding 前提通过 `deploy-setup.mjs` 真 register/complete-onboarding API 准备，账号与原 spec 一致，不制造 JWT。native 与 route specs 自己完成注册和 onboarding。
+
+| 部署格 | 实际注册项目实例 | 应执行实例 | 计划的 profile 不适用实例 | 前提状态 |
+|---|---:|---:|---:|---|
+| staffdeck-formal | 8 | 6 | 2 | BLOCKED |
+| replacement-formal | 8 | 2 | 6 | 已编排，待协调者运行 |
+| staffdeck-auth | 3 | 1 | 2 | BLOCKED |
+| minimal-auth | 3 | 1 | 2 | 已编排，待协调者运行 |
+| replacement-auth | 3 | 1 | 2 | 已编排，待协调者运行 |
+| native-auth | 1 | 1 | 0 | 已编排，待协调者运行 |
+| native-routes | 2 | 2 | 0 | 已编排，待协调者运行 |
+| minimal-routes | 2 | 2 | 0 | 已编排，待协调者运行 |
+| replacement-routes | 2 | 2 | 0 | 已编排，待协调者运行 |
+| 合计 | 32 | **18** | 14 | 9 个源码用例身份；4 个身份 / 7 次实例 BLOCKED |
+
+**防 skip**：先列全局 72 身份（保留历史 undefined route title），再按 `deploy-matrix.mjs` 逐格精确核对原 spec 的文件、具体完整标题、line/column 与 project。只允许**不适用项目实例**以源码对应的唯一 profile 理由实际 skipped，记 `PROFILE_EXCLUDED`；缺 URL/env 理由不获准。应执行实例出现任意 skipped（包括 serial 无 annotation）、缺失、重复、retry、interrupted、xfail、FAIL、来源不符即红。某格 PASS 不掩盖另一格的 skip/失败。`accounting.mjs` 的 `reconcileDeploy*` 输出每格 expected/executed、project 观察原件与源码身份总表；route 的 native/minimal/replacement 标题保留在 observations 中。源码汇总仅按已核对的冻结注册位置关联历史行，**不授权 skip、不改全局 72 注册、原 skip allowlist 或基线 spec**。
+
+完整矩阵的应执行为 9 个身份 / 18 次实例。StaffDeck BLOCKED 保留应执行数与分母；如果其他格实跑全部成功，最多是 **5/9 个身份、11/18 次实例**，完整矩阵仍 FAIL/exit 1。只请求 minimal/replacement 时输出 `PASS_PARTIAL_B_PROFILES_ONLY`（需所有请求实例真的执行通过），全局仍列 72 与 A/C/D NOT_RUN，不宣称 B 9 或黑盒 37 已验收。
+
+所有 URL 门控由 `deployExecutionEnv` 设置为 **http://127.0.0.1:28411**，配置与 gateway 也固定本仓端口：server=28410、Vite=28411、gateway=28412、replacement Knowledge=28413、mock LLM=28379。逐格顺序复用端口，运行目录不复用。`assertDeployExecutionEnv` 在 config/launcher/Vite/setup 入口拒绝缺 env、3001/18789、任何其他端口/外部 URL、localhost、路径变体、错误 profile 与越界 runtime/config/evidence 路径。仅 connect 探测固定高位端口空闲，权限/超时/占用即 FAIL，绝不杀占用者。
+
+runtime 目录为本 worktree `_tmp/fe-parity/deploy-run/run-*/<cell>/`。复用 D 的 HOME/XDG/TMP/PILOT_HOME 隔离、真实 Git bin 发现与断言、原生 project/.cwd seed、native supervisor 及 bridge/token readiness。新目录独占创建；设置 `PILOTDECK_SKIP_BROWSER_OPEN=1`、`SKIP_BROWSER_OPEN=1`，每格单独 auth.db/workspace/cache/home-os。profile 只重写历史机器路径、model/provider、host/端口与本地模块 endpoint；原模块选择与设置保留。Vite `deploy-vite.mjs` 使用基线纯 generator 在内存提供生成模块，以原 generated 模块的解析位置处理相对 imports，不写 baseline generated/cache/dist，也不拷贝基线源。replacement 直接启动基线原件。mock-llm 已覆盖连接探测，并按基线 local-openai-mock 的 operator 模式补齐广告为 submit_step_result 的 handoff/completed 工具调用、会话标题和流式参数分块；冻结 native OpenAI parser 正反验证通过。模型脚本不代替真实 SOP/Knowledge API；未知请求拒绝并让整体 FAIL。
+
+**全程审计**复用 `withRealAudit` / `real-tcp-audit.mjs`：从部署注册检查之前到 mock/runtime/Chrome 最后清理之后。服务 Node HOME 必须真实可读且匹配隔离根；Chrome 按 R12 使用本机 HOME + 临时 `--user-data-dir`，driver HOME 仍隔离。原 opener、soffice、Chrome 当前祖先、R14 updater 身份及 Git/Xcode 规则不放宽。B 在 D 的 3001/18789 拒绝门上额外要求所有观测 TCP 端点为 127.0.0.1，且连接至少一端为固定 B 端口（服务 accept 的另一端为临时客户端端口）；通配 listener、外部目标、其他本机端口均 fatal。Node preload 同时拒绝越界 bind/connect；过程日志与连接证据分别写 `network.jsonl`、`tcp-connections.jsonl`。只有 after-cleanup 也成功才记录 `deploy.audit.status=PASS`。ps/lsof 属定时采样，离线注入不能证明真实运行的全生命周期或实跑 PASS。
+
+**StaffDeck BLOCKED 的具体缺项**：PilotDeck 基线仅含接入 profile/协议和 replacement fixture，真实模块来自独立锁定 StaffDeck checkout。回源 `tests/composition/formal-approval-fixture.ts:79–83` 要求 `STAFFDECK_SOP_ROOT` 与匹配 Python；`products/pilotdeck-staffdeck-sop/conformance/run_staffdeck_knowledge_lifecycle.py:28,40–43,47–63,115–131` 使用外部 `app.module_knowledge_app` 和预置种子。基线默认路径 `/Users/a1/.../StaffDeck-portable-sop` 不在本机；本机另有 StaffDeck 目录/venv，但缺这两个所需模块入口，不等价于锁定 runtime。还需真实预置 Knowledge 的 `kb_preset_data_001` / `kb_preset_sales_001` / `kchunk_preset_sales_001`；SOP 原件 `sops/operator-approval.yaml` 已同时包含 `operator_approval` 与 `operator_approval_alternate`，需由隔离真实模块加载，不能误报为缺少定义文件。现入口固定报告 BLOCKED，**不会**接受任意外部服务 URL 或假 Knowledge/SOP 作为替代。人提供锁定源码、已有依赖与种子后还需补其受审计的隔离启动编排；本轮未下载、安装、借用活跃服务或伪造业务结果。这是尚未完成的前提，不是永久降低验收分母。
+
+协调者整块旧侧命令（output 必须新建；当前预期因 StaffDeck 为 BLOCKED 最终 exit 1，保留其余格原始结果）：
+
+```sh
+(
+  set -eu
+  cd /Users/da/ws/pilotdeck-rs/_build/wt-f2e
+  test ! -e _tmp/fe-parity/coordinator-b-old3
+  mkdir /tmp/pdrs-parity.lock || exit 1
+  trap 'rmdir /tmp/pdrs-parity.lock' EXIT
+  node scripts/fe-parity/run.mjs --suite blackbox-deploy \
+    --profiles staffdeck,minimal,replacement --frontends old \
+    --output _tmp/fe-parity/coordinator-b-old3
+)
+```
+
+独立离线检查（无 listen、Chrome 或真实 ps/lsof）：
+
+```sh
+node scripts/fe-parity/deploy-self-check.mjs
+node scripts/fe-parity/run.mjs --suite blackbox-deploy --self-check --rules-only --frontends old
+node --test --test-timeout=8000 scripts/fe-parity/mock-llm.test.mjs
+```
+
+新增检查用真实 `--list` JSON 的身份/位置/项目/metadata 派生结果负控，执行结果为注入值，不会伪装成真实浏览器报告。保留原 full self-check、orchestration-self-check、baseline-stale-self-check；B 的新检查也由 full self-check 调用。输出含各格 `*.inventory.json`、原 `old-<cell>.json`、stdout/stderr/runtime/isolation、test-results 的 trace/截图、replacement 实际调用日志、逐格及逐例 `deploy-parity.md` 和统一 `result.json`。缺失模块/原始报告及审计失败不会改成绿。
+
+第 2 轮补齐 runner 实际调用的 replacement health 路径检查：fetch 注入返回 Node 22 原生 `new Response(...)`，其 `ok` / `status` 为属性、body 为真实 `ReadableStream`。HTTP 503、implementationId 不匹配/缺失、坏 JSON 和超时均拒绝；health 失败三格仍为 FAIL/零执行。Playwright setup 的 `APIResponse.ok()` / `status()` 保留方法调用。第 1 轮 `coordinator-b-old1/` 与 `_tmp/coordinator-b-old1.log` 保留，重跑用上面的新目录。
+
+
+第 3 轮根据保留的 `coordinator-b-old2` 原件定位 replacement formal/auth 的 3 次真实 FAIL。三份 trace 的 `POST /api/modules/knowledge/query` 都返回 HTTP 501 / `MODULE_IDENTITY_UNAVAILABLE`；截图和 error-context 显示同一错误，三个独立 fixture 的实际 `replacement-calls.jsonl` 均为空。`network.jsonl` 确认运行的是冻结 `fixtures/replacement-knowledge-runtime.mjs`；该日志只有 runtime-process 观察，不能单凭没有 fetch 行判断请求。原 352 次 TCP/process 采样含 after-cleanup 均 PASS；LLM 日志 0 条。完整可复核证据见 `_tmp/round3-old2-forensics.json`、`_tmp/round3-old2-accounting.json`、`_tmp/round3-baseline-history.diff`；old2 日志/输出及原 runtime 的 25938 个文件 hash 见 `_tmp/round3-old2-preserved.json`，原件未改。
+
+判定为 **baseline-stale**：冻结 replacement profile 本身没有 tenantId/actorUserId 或 StaffDeck copy binding。`468b4ba9` 在这两个 unchanged replacement spec/fixture 发布后为 Knowledge query/citation 加入身份必需门；`666dace9` 又无条件加入 `verifyStaffDeckKnowledgeBinding`。只补两个身份值仍被 `COPY_UNAVAILABLE` 拒绝；独立 fixture 只有 health 与 module_call，没有真实 StaffDeck `/api/auth/me` 与目录 API。这不是端点、启动顺序或 fixture 文案缺失。不能通过伪造 StaffDeck identity/directory 回包使其通过；本轮未改编排配置、基线 spec/fixture、业务回包或超时。module health 只证明进程身份/存活，不能证明宿主认可领域调用。
+
+R8 清单新增精确 B 身份 `formal-composition.spec.mjs` 的 replacement 例及 `real-auth-composition.spec.mjs` 的 replacement 例，分别绑定 `64:131` 与 `164:131`、matcher `toBeVisible` 和完整 exact locator。证据含源文件 hash/行/原文、上述完整 commit ID 和独立离线 proof。清单现共 6 身份，canonical SHA-256 为 `b855a582a47ffa3cc6bc8865cf6a7ad36f7a4ab4749e15c3805c38ef2b3c85c6`。`replacement-stale-proof.mjs` 通过 AST 执行冻结 query/citation handler 及真实 copy 验证函数：原 profile 501、仅补身份 501，均在上游调用前拒绝；另执行未编辑 fixture handler，确认其原查询回包确实含 exact 文案。这些都是 **OFFLINE_FROZEN_SOURCE_ONLY**，不写 runtime evidence，不监听、不启动浏览器，不充当真实行为回包。
+
+B 原始行/分区/总体继续 **FAIL**，floor 仍 9 身份 / 18 实例，old2 实际 5 身份 / 11 实例执行（3 身份 / 8 实例 PASS、2 身份 / 3 实例 FAIL，4 身份 / 7 实例 BLOCKED）。B 报告只记录精确 FAIL 的 `matchedFailCondition`，旧侧条件满足仍 `pairedConsistency=UNPAIRED`，不宣称双侧 MATCHED_FAIL；两侧都有有效原件且同位 FAIL 才能确认配对。原 profile 排除规则、端口审计与行为错误诊断不放宽。失效的两个身份行为覆盖记 0；其余 7 身份含 4 个 BLOCKED，当前通过 3。D 仍要求其原有 4 个精确 stale 身份，B 身份不能替代 D 条件，D 原 17 执行 / 11 cascade / 13 PASS 的校准口径保持。
+
+新增离线负控拒绝错误断言行/列、重复 locator、别种错误、PASS 冒充匹配 FAIL、xfail、skip、retry、错误 provenance 和 report error；确切 FAIL 的账目也必须红。此次没有编排修复，所以无需制造“修复旧编排”的 mutation。本轮所有检查及命令详见 `_tmp/RESULT.md` 第 3 轮。按上面的 `coordinator-b-old3` 新目录重跑仍预期 replacement 两格 FAIL、StaffDeck 两格 BLOCKED；该命令用于验证 unchanged spec 与 R8 记录，不能作为 replacement 修复 PASS 的承诺。

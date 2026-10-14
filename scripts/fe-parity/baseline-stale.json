@@ -579,6 +579,564 @@
           "sha256": "3459e1240c71977818a69e210fcf5f3bd4bfff995e0684e6aace356b774a296f"
         }
       ]
+    },
+    {
+      "file": "formal-composition.spec.mjs",
+      "title": "formal replacement Knowledge switches frontend and backend implementation",
+      "defectType": "replacement 独立 fixture/profile 与后加入的 Knowledge identity / StaffDeck copy 强制验证不兼容",
+      "scope": "B_REPLACEMENT",
+      "proofScript": "scripts/fe-parity/replacement-stale-proof.mjs",
+      "history": [
+        {
+          "commit": "468b4ba9c94e32a8b6aa1ed5900ddd025a838ea7",
+          "change": "Knowledge query/citation 在转发前强制 tenantId 和 actorUserId；replacement profile 未更新"
+        },
+        {
+          "commit": "666dace9c633bdc15051d14ed7c0514fc8179319",
+          "change": "Knowledge query/citation 无条件调用 verifyStaffDeckKnowledgeBinding；独立 fixture 不提供 StaffDeck copy API"
+        }
+      ],
+      "failure": {
+        "assertion": {
+          "file": "formal-composition.spec.mjs",
+          "line": 64,
+          "column": 131
+        },
+        "callsite": {
+          "file": "formal-composition.spec.mjs",
+          "line": 64,
+          "column": 131
+        },
+        "matcher": "toBeVisible",
+        "locator": "getByText('Replacement runtime verified this query through an independent module process.', { exact: true })"
+      },
+      "evidence": [
+        {
+          "file": "ui/e2e/formal-composition.spec.mjs",
+          "line": 64,
+          "text": "  await expect(page.getByText('Replacement runtime verified this query through an independent module process.', { exact: true })).toBeVisible();",
+          "sha256": "e817066b28410dd829b552969e8b87125c04d00d9539753c5440568a5d5bd9ae"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 163,
+          "text": "      }",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 165,
+          "text": "        return res.status(501).json({ error: { code: 'MODULE_IDENTITY_UNAVAILABLE', message: 'Knowledge module requires a server-configured tenantId and actorUserId.' } });",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 168,
+          "text": "      await verifyStaffDeckKnowledgeBinding(configFor(req), req.user, binding, req.body, req.moduleRequestSignal);",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 180,
+          "text": "      const response = await fetch(new URL(binding.callPath || '/v2/module/call', binding.endpoint), {",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 537,
+          "text": "function hasKnowledgeIdentity(binding) {",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 538,
+          "text": "  return typeof binding?.tenantId === 'string' && Boolean(binding.tenantId.trim())",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 539,
+          "text": "    && typeof binding?.actorUserId === 'string' && Boolean(binding.actorUserId.trim());",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 24,
+          "text": "  const binding = config?.webui?.staffdeckCopy;",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 26,
+          "text": "    throw new CopyError(501, 'COPY_UNAVAILABLE', 'StaffDeck copy bridge is not configured.');",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 27,
+          "text": "  }",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 106,
+          "text": "export async function verifyStaffDeckKnowledgeBinding(config, user, moduleBinding, input, signal) {",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 107,
+          "text": "  const binding = { ...bindingFor(config, user, 'list_agents'), signal };",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 108,
+          "text": "  if (moduleBinding?.tenantId !== binding.tenantId || moduleBinding?.actorUserId !== binding.actorUserId",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 109,
+          "text": "    || moduleBinding?.agentId !== binding.targetAgentId) {",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 118,
+          "text": "  }",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 119,
+          "text": "  await verifyFormalUser(binding);",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 10,
+          "text": "    response.writeHead(200, { 'content-type': 'application/json' });",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 11,
+          "text": "    response.end(JSON.stringify({ status: 'ok', implementationId: 'replacement.knowledge', contract: 'staffdeck.knowledge/v1' }));",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 14,
+          "text": "  if (request.method !== 'POST' || request.url !== '/v2/module/call') {",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 24,
+          "text": "    ? { implementation: 'replacement-knowledge-runtime', query: input.query, chunks: [{ id: 'replacement-citation-001', content: 'Replacement runtime verified this query through an independent module process.', source_ref: 'replacement://conformance/001' }] }",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 25,
+          "text": "    : operation === 'resolve_citation'",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 31,
+          "text": "  if (evidencePath) await appendFile(evidencePath, `${JSON.stringify({ operation, input, at: new Date().toISOString() })}\\n`);",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 34,
+          "text": "}).listen(port, '127.0.0.1', () => console.log(`replacement Knowledge runtime listening on ${port}`));",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 15,
+          "text": "    const response = await authenticatedFetch('/api/modules/knowledge/query', {",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 16,
+          "text": "      method: 'POST', body: JSON.stringify({ query }),",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 18,
+          "text": "    const body = await response.json().catch(() => ({}));",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 19,
+          "text": "    if (!response.ok) { setError(body?.error?.message || 'Replacement knowledge query failed.'); return; }",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 26,
+          "text": "    {error && <p role=\"alert\" className=\"mt-3 text-sm text-red-600\">{error}</p>}",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 28,
+          "text": "      {(result.chunks ?? []).map((chunk: { id: string; content?: string }) => <div key={chunk.id} className=\"flex items-start justify-between gap-3 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800\"><p>{chunk.content}</p><button type=\"button\" className=\"shrink-0 rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700\" onClick={async () => {",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 71,
+          "text": "  knowledge:",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 72,
+          "text": "    enabled: true",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 73,
+          "text": "    implementationId: replacement.knowledge",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 74,
+          "text": "    frontendModule: fixture.knowledge-search",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 75,
+          "text": "    contract: staffdeck.knowledge/v1",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 76,
+          "text": "    transport: module-http-v2",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 77,
+          "text": "    endpoint: http://127.0.0.1:18093",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 78,
+          "text": "    methods:",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 79,
+          "text": "      - query",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 80,
+          "text": "      - resolve_citation",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 81,
+          "text": "    resultLimit: 3",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        }
+      ]
+    },
+    {
+      "file": "real-auth-composition.spec.mjs",
+      "title": "authenticated replacement profile sends saved result limits to its replacement runtime",
+      "defectType": "replacement 独立 fixture/profile 与后加入的 Knowledge identity / StaffDeck copy 强制验证不兼容",
+      "scope": "B_REPLACEMENT",
+      "proofScript": "scripts/fe-parity/replacement-stale-proof.mjs",
+      "history": [
+        {
+          "commit": "468b4ba9c94e32a8b6aa1ed5900ddd025a838ea7",
+          "change": "Knowledge query/citation 在转发前强制 tenantId 和 actorUserId；replacement profile 未更新"
+        },
+        {
+          "commit": "666dace9c633bdc15051d14ed7c0514fc8179319",
+          "change": "Knowledge query/citation 无条件调用 verifyStaffDeckKnowledgeBinding；独立 fixture 不提供 StaffDeck copy API"
+        }
+      ],
+      "failure": {
+        "assertion": {
+          "file": "real-auth-composition.spec.mjs",
+          "line": 164,
+          "column": 131
+        },
+        "callsite": {
+          "file": "real-auth-composition.spec.mjs",
+          "line": 164,
+          "column": 131
+        },
+        "matcher": "toBeVisible",
+        "locator": "getByText('Replacement runtime verified this query through an independent module process.', { exact: true })"
+      },
+      "evidence": [
+        {
+          "file": "ui/e2e/real-auth-composition.spec.mjs",
+          "line": 164,
+          "text": "  await expect(page.getByText('Replacement runtime verified this query through an independent module process.', { exact: true })).toBeVisible();",
+          "sha256": "bb7fa1d8561f4caacc98b64f343db54d2e30ccf2b9eab012c6520d12ea23f31f"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 163,
+          "text": "      }",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 165,
+          "text": "        return res.status(501).json({ error: { code: 'MODULE_IDENTITY_UNAVAILABLE', message: 'Knowledge module requires a server-configured tenantId and actorUserId.' } });",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 168,
+          "text": "      await verifyStaffDeckKnowledgeBinding(configFor(req), req.user, binding, req.body, req.moduleRequestSignal);",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 180,
+          "text": "      const response = await fetch(new URL(binding.callPath || '/v2/module/call', binding.endpoint), {",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 537,
+          "text": "function hasKnowledgeIdentity(binding) {",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 538,
+          "text": "  return typeof binding?.tenantId === 'string' && Boolean(binding.tenantId.trim())",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/modules.js",
+          "line": 539,
+          "text": "    && typeof binding?.actorUserId === 'string' && Boolean(binding.actorUserId.trim());",
+          "sha256": "fef550e7e5ea1c2e70b4782edb8f26c47cd9b41873945cfb98290915889a696a"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 24,
+          "text": "  const binding = config?.webui?.staffdeckCopy;",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 26,
+          "text": "    throw new CopyError(501, 'COPY_UNAVAILABLE', 'StaffDeck copy bridge is not configured.');",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 27,
+          "text": "  }",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 106,
+          "text": "export async function verifyStaffDeckKnowledgeBinding(config, user, moduleBinding, input, signal) {",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 107,
+          "text": "  const binding = { ...bindingFor(config, user, 'list_agents'), signal };",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 108,
+          "text": "  if (moduleBinding?.tenantId !== binding.tenantId || moduleBinding?.actorUserId !== binding.actorUserId",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 109,
+          "text": "    || moduleBinding?.agentId !== binding.targetAgentId) {",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 118,
+          "text": "  }",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "ui/server/routes/staffdeck-copy.js",
+          "line": 119,
+          "text": "  await verifyFormalUser(binding);",
+          "sha256": "bd56f602cded38ce99f11fbcf6a33cbac8ece8442dde78b75ed7f44a9a38fa7b"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 10,
+          "text": "    response.writeHead(200, { 'content-type': 'application/json' });",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 11,
+          "text": "    response.end(JSON.stringify({ status: 'ok', implementationId: 'replacement.knowledge', contract: 'staffdeck.knowledge/v1' }));",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 14,
+          "text": "  if (request.method !== 'POST' || request.url !== '/v2/module/call') {",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 24,
+          "text": "    ? { implementation: 'replacement-knowledge-runtime', query: input.query, chunks: [{ id: 'replacement-citation-001', content: 'Replacement runtime verified this query through an independent module process.', source_ref: 'replacement://conformance/001' }] }",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 25,
+          "text": "    : operation === 'resolve_citation'",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 31,
+          "text": "  if (evidencePath) await appendFile(evidencePath, `${JSON.stringify({ operation, input, at: new Date().toISOString() })}\\n`);",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/fixtures/replacement-knowledge-runtime.mjs",
+          "line": 34,
+          "text": "}).listen(port, '127.0.0.1', () => console.log(`replacement Knowledge runtime listening on ${port}`));",
+          "sha256": "4a5353eba2fc86e56e28fb9a57e6fb71621f51b1c3fd80b2f54bda597ee3badc"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 15,
+          "text": "    const response = await authenticatedFetch('/api/modules/knowledge/query', {",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 16,
+          "text": "      method: 'POST', body: JSON.stringify({ query }),",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 18,
+          "text": "    const body = await response.json().catch(() => ({}));",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 19,
+          "text": "    if (!response.ok) { setError(body?.error?.message || 'Replacement knowledge query failed.'); return; }",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 26,
+          "text": "    {error && <p role=\"alert\" className=\"mt-3 text-sm text-red-600\">{error}</p>}",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 28,
+          "text": "      {(result.chunks ?? []).map((chunk: { id: string; content?: string }) => <div key={chunk.id} className=\"flex items-start justify-between gap-3 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800\"><p>{chunk.content}</p><button type=\"button\" className=\"shrink-0 rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700\" onClick={async () => {",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 71,
+          "text": "  knowledge:",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 72,
+          "text": "    enabled: true",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 73,
+          "text": "    implementationId: replacement.knowledge",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 74,
+          "text": "    frontendModule: fixture.knowledge-search",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 75,
+          "text": "    contract: staffdeck.knowledge/v1",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 76,
+          "text": "    transport: module-http-v2",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 77,
+          "text": "    endpoint: http://127.0.0.1:18093",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 78,
+          "text": "    methods:",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 79,
+          "text": "      - query",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 80,
+          "text": "      - resolve_citation",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "products/pilotdeck-staffdeck-sop/profiles/replacement-knowledge.yaml",
+          "line": 81,
+          "text": "    resultLimit: 3",
+          "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        }
+      ]
     }
   ]
 }

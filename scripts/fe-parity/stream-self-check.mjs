@@ -200,7 +200,9 @@ export async function streamSelfCheck(check) {
     const fetchMock = async endpoint => {
       const response = { writeHead(status) { this.status = status; }, end(body) { this.body = JSON.parse(body); } };
       await mock.handleHTTP({ url: endpoint, method: 'GET', headers: { authorization: `Bearer ${TOKEN}` } }, response);
-      return { ok: response.status === 200, status: response.status, json: async () => response.body };
+      return new Response(JSON.stringify(response.body), {
+        status: response.status, headers: { 'content-type': 'application/json' },
+      });
     };
     try {
       const runtime = await gate.readRuntimeCapabilities(fetchMock);
