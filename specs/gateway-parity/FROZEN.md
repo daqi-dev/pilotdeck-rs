@@ -9,7 +9,7 @@
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
-f951a8943194f2064b9faedecc8ae123dffc9757d4377c76f554b840c1ec54da  accepted-diffs.md
+54ae4975f51b9dff51529219f20950bb48ea29564de4ce17fc52647e85c92a7a  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
 3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
 62798f75d13cca08a377d71b72746c39f1a054494b5e73565671785a18dea2dc  ../../scripts/gateway-parity/common.py
