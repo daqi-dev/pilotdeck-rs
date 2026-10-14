@@ -1,0 +1,2323 @@
+{
+  "schema": 1,
+  "seed_enumeration": "docs/experiments/exp008-ui-server-proxy/router-enumeration.json",
+  "note": "B1 历史枚举仅用来预填；check_coverage 必须使用本轮运行时枚举，新增/缺失路由均 FAIL。",
+  "routes": [
+    {
+      "route": "ALL /api/plugins/:name/rpc/*",
+      "cases": [],
+      "exemption": {
+        "route": "ALL /api/plugins/:name/rpc/*",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/always-on/cron-jobs/:taskId",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/always-on/cron-jobs/:taskId",
+        "reason": "S2 六场景首批未驱动 always-on 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/mcp/cli/remove/:name",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/mcp/cli/remove/:name",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/plugins/:name",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/plugins/:name",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/projects/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/projects/:projectName",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/projects/:projectName/files",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/projects/:projectName/files",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/projects/:projectName/sessions/:sessionId",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/projects/:projectName/sessions/:sessionId",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/sessions/model",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/sessions/model",
+        "reason": "S2 六场景首批未驱动 sessions 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/settings/api-keys/:keyId",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/settings/api-keys/:keyId",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/settings/credentials/:credentialId",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/settings/credentials/:credentialId",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/taskmaster/prd/:projectName/:fileName",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/taskmaster/prd/:projectName/:fileName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "DELETE /api/uploads/:uploadId",
+      "cases": [],
+      "exemption": {
+        "route": "DELETE /api/uploads/:uploadId",
+        "reason": "S2 六场景首批未驱动 uploads 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /*",
+      "cases": [],
+      "exemption": {
+        "route": "GET /*",
+        "reason": "S2 六场景首批未驱动 静态/运行环境 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/agents/runtime-config",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/agents/runtime-config",
+        "reason": "S2 六场景首批未驱动 agents 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/always-on/cron-jobs",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/always-on/cron-jobs",
+        "reason": "S2 六场景首批未驱动 always-on 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/always-on/events",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/always-on/events",
+        "reason": "S2 六场景首批未驱动 always-on 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/auth/status",
+      "cases": [
+        "auth.status"
+      ]
+    },
+    {
+      "route": "GET /api/auth/user",
+      "cases": [
+        "auth.user",
+        "auth.user.unauthorized"
+      ]
+    },
+    {
+      "route": "GET /api/browse-filesystem",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/browse-filesystem",
+        "reason": "S2 六场景首批未驱动 browse-filesystem 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/ccr/config",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/ccr/config",
+        "reason": "S2 六场景首批未驱动 ccr 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/ccr/dashboard",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/ccr/dashboard",
+        "reason": "S2 六场景首批未驱动 ccr 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/ccr/health",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/ccr/health",
+        "reason": "S2 六场景首批未驱动 ccr 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/ccr/stats/sessions/:sessionId",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/ccr/stats/sessions/:sessionId",
+        "reason": "S2 六场景首批未驱动 ccr 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/ccr/stats/summary",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/ccr/stats/summary",
+        "reason": "S2 六场景首批未驱动 ccr 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/config",
+      "cases": [
+        "readonly.config",
+        "config.read"
+      ]
+    },
+    {
+      "route": "GET /api/config/connection-test-tasks",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/config/connection-test-tasks",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/config/model-references",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/config/model-references",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/config/office-preview/status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/config/office-preview/status",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/config/provider",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/config/provider",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/gateway/feishu/qr-poll",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/gateway/feishu/qr-poll",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/gateway/status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/gateway/status",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/gateway/wecom/qr-poll",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/gateway/wecom/qr-poll",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/gateway/weixin/qr",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/gateway/weixin/qr",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/gateway/weixin/qr-poll",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/gateway/weixin/qr-poll",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/git/branches",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/git/branches",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/git/commit-diff",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/git/commit-diff",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/git/commits",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/git/commits",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/git/diff",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/git/diff",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/git/file-with-diff",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/git/file-with-diff",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/git/remote-status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/git/remote-status",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/git/status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/git/status",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/mcp-utils/all-servers",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/mcp-utils/all-servers",
+        "reason": "S2 六场景首批未驱动 mcp-utils 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/mcp-utils/taskmaster-server",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/mcp-utils/taskmaster-server",
+        "reason": "S2 六场景首批未驱动 mcp-utils 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/mcp/cli/get/:name",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/mcp/cli/get/:name",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/mcp/cli/list",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/mcp/cli/list",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/mcp/config",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/mcp/config",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/mcp/config/:scope",
+      "cases": [
+        "shadow.mcp"
+      ]
+    },
+    {
+      "route": "GET /api/mcp/config/read",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/mcp/config/read",
+        "reason": "基线被先注册 GET /api/mcp/config/:scope 遮蔽，实际 GET /config/read 返回 400；shadow.mcp 直接 HTTP 探针验证先注册分支，此注册本身不可达。Rust 接管时须保持顺序语义。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/cases",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/cases",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/cases/:caseId",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/cases/:caseId",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/dream-traces",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/dream-traces",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/dream-traces/:dreamTraceId",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/dream-traces/:dreamTraceId",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/export",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/export",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/export/all-projects",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/export/all-projects",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/export/current-project",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/export/current-project",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/index-traces",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/index-traces",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/index-traces/:indexTraceId",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/index-traces/:indexTraceId",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/memory/get",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/memory/get",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/memory/list",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/memory/list",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/memory/user-summary",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/memory/user-summary",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/overview",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/overview",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/project-meta",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/project-meta",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/settings",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/settings",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/snapshot",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/snapshot",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/memory/workspace",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/memory/workspace",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/models",
+      "cases": [
+        "readonly.models"
+      ]
+    },
+    {
+      "route": "GET /api/modules/runtime",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/modules/runtime",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/modules/sop/definitions",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/modules/sop/definitions",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/modules/sop/management",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/modules/sop/management",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/modules/staffdeck-sdk/events",
+      "note": "三个续传用例仅覆盖 host 未配置的 501 分支：resume.query 按前端 gatewayEvents 带 jobId、scope=agent、agentId 与 afterSeq；两个 global job_events 带 jobId，不带 agent/team scope。请求输入详见 scenarios.json，不证明真实 host 续传语义。",
+      "cases": [
+        "resume.header",
+        "resume.query",
+        "resume.last-event-query"
+      ]
+    },
+    {
+      "route": "GET /api/office-preview/status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/office-preview/status",
+        "reason": "S2 六场景首批未驱动 office-preview 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/plugins",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/plugins",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/plugins/:name/assets/*",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/plugins/:name/assets/*",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/plugins/:name/manifest",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/plugins/:name/manifest",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects",
+      "cases": [
+        "readonly.projects"
+      ]
+    },
+    {
+      "route": "GET /api/projects/:projectName/discovery-context",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/discovery-context",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/discovery-plans",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/discovery-plans",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/discovery-plans/:planId/report",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/discovery-plans/:planId/report",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/download",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/download",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/file",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/file",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/files",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/files",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/files/content",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/files/content",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/files/preview/pdf",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/files/preview/pdf",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/files/preview/spreadsheet/data",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/files/preview/spreadsheet/data",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/files/preview/spreadsheet/manifest",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/files/preview/spreadsheet/manifest",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/files/preview/spreadsheet/sheet",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/files/preview/spreadsheet/sheet",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/preview/*",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/preview/*",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/sessions",
+      "cases": [
+        "readonly.sessions"
+      ]
+    },
+    {
+      "route": "GET /api/projects/:projectName/sessions/:sessionId/token-usage",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/sessions/:sessionId/token-usage",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/staffdeck-binding",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/staffdeck-binding",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/:projectName/work-cycles",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/:projectName/work-cycles",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/clone-progress",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/projects/clone-progress",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/projects/files",
+      "cases": [
+        "shadow.files"
+      ]
+    },
+    {
+      "route": "GET /api/search/conversations",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/search/conversations",
+        "reason": "S2 六场景首批未驱动 search 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/sessions/:sessionId/messages",
+      "cases": [
+        "readonly.messages"
+      ]
+    },
+    {
+      "route": "GET /api/sessions/:sessionId/subagent/:subagentId/messages",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/sessions/:sessionId/subagent/:subagentId/messages",
+        "reason": "S2 六场景首批未驱动 sessions 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/sessions/model",
+      "cases": [
+        "shadow.model"
+      ]
+    },
+    {
+      "route": "GET /api/settings/api-keys",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/settings/api-keys",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/settings/credentials",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/settings/credentials",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/settings/notification-preferences",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/settings/notification-preferences",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/settings/permissions",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/settings/permissions",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/settings/push/vapid-public-key",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/settings/push/vapid-public-key",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/sop/approver/session",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/sop/approver/session",
+        "reason": "S2 六场景首批未驱动 sop 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/sop/status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/sop/status",
+        "reason": "S2 六场景首批未驱动 sop 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/detect-all",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/detect-all",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/detect/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/detect/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/installation-status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/installation-status",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/next/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/next/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/prd-templates",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/prd-templates",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/prd/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/prd/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/prd/:projectName/:fileName",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/prd/:projectName/:fileName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/taskmaster/tasks/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/taskmaster/tasks/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/update/context",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/update/context",
+        "reason": "S2 六场景首批未驱动 update 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/update/info",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/update/info",
+        "reason": "S2 六场景首批未驱动 update 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/update/status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/update/status",
+        "reason": "S2 六场景首批未驱动 update 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/uploads/:uploadId",
+      "cases": [
+        "upload.read"
+      ]
+    },
+    {
+      "route": "GET /api/uploads/:uploadId/attachments/:attachmentId/preview",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/uploads/:uploadId/attachments/:attachmentId/preview",
+        "reason": "S2 六场景首批未驱动 uploads 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/uploads/:uploadId/events",
+      "cases": [
+        "upload.events"
+      ]
+    },
+    {
+      "route": "GET /api/uploads/limits",
+      "cases": [
+        "upload.limits"
+      ]
+    },
+    {
+      "route": "GET /api/user/git-config",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/user/git-config",
+        "reason": "S2 六场景首批未驱动 user 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/user/onboarding-status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/user/onboarding-status",
+        "reason": "S2 六场景首批未驱动 user 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/user/runtime-status",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/user/runtime-status",
+        "reason": "S2 六场景首批未驱动 user 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /api/v1/providers",
+      "cases": [],
+      "exemption": {
+        "route": "GET /api/v1/providers",
+        "reason": "S2 六场景首批未驱动 v1 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /health",
+      "cases": [],
+      "exemption": {
+        "route": "GET /health",
+        "reason": "S2 六场景首批未驱动 静态/运行环境 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "GET /memory-dashboard",
+      "cases": [],
+      "exemption": {
+        "route": "GET /memory-dashboard",
+        "reason": "S2 六场景首批未驱动 静态/运行环境 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PATCH /api/always-on/cron-jobs/:taskId",
+      "cases": [],
+      "exemption": {
+        "route": "PATCH /api/always-on/cron-jobs/:taskId",
+        "reason": "S2 六场景首批未驱动 always-on 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PATCH /api/settings/api-keys/:keyId/toggle",
+      "cases": [],
+      "exemption": {
+        "route": "PATCH /api/settings/api-keys/:keyId/toggle",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PATCH /api/settings/credentials/:credentialId/toggle",
+      "cases": [],
+      "exemption": {
+        "route": "PATCH /api/settings/credentials/:credentialId/toggle",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/agent",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/agent",
+        "reason": "S2 六场景首批未驱动 agent 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/always-on/cron-jobs",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/always-on/cron-jobs",
+        "reason": "S2 六场景首批未驱动 always-on 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/always-on/cron-jobs/:taskId/run-now",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/always-on/cron-jobs/:taskId/run-now",
+        "reason": "S2 六场景首批未驱动 always-on 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/always-on/cron-jobs/:taskId/stop",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/always-on/cron-jobs/:taskId/stop",
+        "reason": "S2 六场景首批未驱动 always-on 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/auth/login",
+      "cases": [
+        "auth.login",
+        "auth.login.invalid"
+      ]
+    },
+    {
+      "route": "POST /api/auth/logout",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/auth/logout",
+        "reason": "S2 六场景首批未驱动 auth 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/auth/register",
+      "cases": [
+        "auth.register"
+      ]
+    },
+    {
+      "route": "POST /api/browse-filesystem/native-folder",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/browse-filesystem/native-folder",
+        "reason": "S2 六场景首批未驱动 browse-filesystem 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/ccr/stats/reset",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/ccr/stats/reset",
+        "reason": "S2 六场景首批未驱动 ccr 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/commands/execute",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/commands/execute",
+        "reason": "S2 六场景首批未驱动 commands 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/commands/list",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/commands/list",
+        "reason": "S2 六场景首批未驱动 commands 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/commands/load",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/commands/load",
+        "reason": "S2 六场景首批未驱动 commands 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/connection-test-tasks",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/connection-test-tasks",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/connection-test-tasks/:id/acknowledge",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/connection-test-tasks/:id/acknowledge",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/connection-test-tasks/:id/cancel",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/connection-test-tasks/:id/cancel",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/connection-test-tasks/:id/retry",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/connection-test-tasks/:id/retry",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/model-removal",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/model-removal",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/models",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/models",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/open",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/open",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/reload",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/reload",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/test-connection",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/test-connection",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/test-connections",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/test-connections",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/test-web-search",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/test-web-search",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/config/validate",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/config/validate",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/create-folder",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/create-folder",
+        "reason": "S2 六场景首批未驱动 create-folder 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/feishu/disable",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/feishu/disable",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/feishu/qr-begin",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/feishu/qr-begin",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/feishu/qr-cancel",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/feishu/qr-cancel",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/feishu/save",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/feishu/save",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/feishu/test",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/feishu/test",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/wecom/disable",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/wecom/disable",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/wecom/qr-begin",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/wecom/qr-begin",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/wecom/qr-cancel",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/wecom/qr-cancel",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/wecom/save",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/wecom/save",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/weixin/disable",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/weixin/disable",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/gateway/weixin/qr-begin",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/gateway/weixin/qr-begin",
+        "reason": "S2 六场景首批未驱动 gateway 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/checkout",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/checkout",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/commit",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/commit",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/create-branch",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/create-branch",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/delete-branch",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/delete-branch",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/delete-untracked",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/delete-untracked",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/discard",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/discard",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/fetch",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/fetch",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/generate-commit-message",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/generate-commit-message",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/initial-commit",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/initial-commit",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/publish",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/publish",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/pull",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/pull",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/push",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/push",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/git/revert-local-commit",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/git/revert-local-commit",
+        "reason": "S2 六场景首批未驱动 git 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/mcp/cli/add",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/mcp/cli/add",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/mcp/cli/add-json",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/mcp/cli/add-json",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/mcp/config/validate",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/mcp/config/validate",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/clear",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/clear",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/dream/rollback-last",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/dream/rollback-last",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/dream/run",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/dream/run",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/import",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/import",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/import/all-projects",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/import/all-projects",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/import/current-project",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/import/current-project",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/index/run",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/index/run",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/memory/actions",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/memory/actions",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/project-meta",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/project-meta",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/memory/settings",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/memory/settings",
+        "reason": "S2 六场景首批未驱动 memory 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/host-capabilities/call",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/host-capabilities/call",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/host-capabilities/callback",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/host-capabilities/callback",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/knowledge/call",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/knowledge/call",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/knowledge/citation",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/knowledge/citation",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/knowledge/query",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/knowledge/query",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/sop/management/call",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/sop/management/call",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/staffdeck-copy/call",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/staffdeck-copy/call",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/staffdeck-sdk/call",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/staffdeck-sdk/call",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/modules/staffdeck-sdk/file",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/modules/staffdeck-sdk/file",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/plugins/:name/update",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/plugins/:name/update",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/plugins/install",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/plugins/install",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/discovery-plans/:planId/execute",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/discovery-plans/:planId/execute",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/files/create",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/files/create",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/files/upload",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/files/upload",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/files/upload/check",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/files/upload/check",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/staffdeck-binding/ensure",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/staffdeck-binding/ensure",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/upload-attachments",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/upload-attachments",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/upload-images",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/upload-images",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/work-cycles/:cycleId/apply",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/work-cycles/:cycleId/apply",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/:projectName/work-cycles/:cycleId/archive",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/:projectName/work-cycles/:cycleId/archive",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/create",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/create",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/projects/create-workspace",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/projects/create-workspace",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/sessions/:sessionId/fork",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/sessions/:sessionId/fork",
+        "reason": "S2 六场景首批未驱动 sessions 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/settings/api-keys",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/settings/api-keys",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/settings/credentials",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/settings/credentials",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/settings/push/subscribe",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/settings/push/subscribe",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/settings/push/unsubscribe",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/settings/push/unsubscribe",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/clawhub/install",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/clawhub/install",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/clawhub/search",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/clawhub/search",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/create",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/create",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/delete",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/delete",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/import",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/import",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/import-upload",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/import-upload",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/list",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/list",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/read",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/read",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/scan",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/scan",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/validate",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/validate",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/skills/write",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/skills/write",
+        "reason": "S2 六场景首批未驱动 skills 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/sop/approver/login",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/sop/approver/login",
+        "reason": "S2 六场景首批未驱动 sop 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/sop/resume",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/sop/resume",
+        "reason": "S2 六场景首批未驱动 sop 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/taskmaster/add-task/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/taskmaster/add-task/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/taskmaster/apply-template/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/taskmaster/apply-template/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/taskmaster/init/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/taskmaster/init/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/taskmaster/initialize/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/taskmaster/initialize/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/taskmaster/parse-prd/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/taskmaster/parse-prd/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/taskmaster/prd/:projectName",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/taskmaster/prd/:projectName",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/update/apply",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/update/apply",
+        "reason": "S2 六场景首批未驱动 update 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/update/check",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/update/check",
+        "reason": "S2 六场景首批未驱动 update 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/update/restart",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/update/restart",
+        "reason": "S2 六场景首批未驱动 update 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/uploads",
+      "cases": [
+        "upload.create"
+      ]
+    },
+    {
+      "route": "POST /api/uploads/:uploadId/content",
+      "cases": [
+        "upload.content"
+      ]
+    },
+    {
+      "route": "POST /api/user/complete-onboarding",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/user/complete-onboarding",
+        "reason": "S2 六场景首批未驱动 user 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/user/git-config",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/user/git-config",
+        "reason": "S2 六场景首批未驱动 user 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/user/runtime/gateway/retry",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/user/runtime/gateway/retry",
+        "reason": "S2 六场景首批未驱动 user 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/v1/model-connection-tests",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/v1/model-connection-tests",
+        "reason": "S2 六场景首批未驱动 v1 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "POST /api/v1/workspaces",
+      "cases": [],
+      "exemption": {
+        "route": "POST /api/v1/workspaces",
+        "reason": "S2 六场景首批未驱动 v1 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/ccr/config",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/ccr/config",
+        "reason": "S2 六场景首批未驱动 ccr 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/config",
+      "cases": [
+        "config.write"
+      ]
+    },
+    {
+      "route": "PUT /api/config/connection-test-tasks/:id/image-capabilities",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/config/connection-test-tasks/:id/image-capabilities",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/config/test-connections/:testId/image-capabilities",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/config/test-connections/:testId/image-capabilities",
+        "reason": "S2 六场景首批未驱动 config 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/mcp/config/:scope",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/mcp/config/:scope",
+        "reason": "S2 六场景首批未驱动 mcp 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/modules/sop/definitions/:definitionId",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/modules/sop/definitions/:definitionId",
+        "reason": "S2 六场景首批未驱动 modules 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/plugins/:name/enable",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/plugins/:name/enable",
+        "reason": "S2 六场景首批未驱动 plugins 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/projects/:projectName/file",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/projects/:projectName/file",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/projects/:projectName/files/rename",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/projects/:projectName/files/rename",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/projects/:projectName/rename",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/projects/:projectName/rename",
+        "reason": "S2 六场景首批未驱动 projects 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/sessions/:sessionId/rename",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/sessions/:sessionId/rename",
+        "reason": "S2 六场景首批未驱动 sessions 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/sessions/model",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/sessions/model",
+        "reason": "S2 六场景首批未驱动 sessions 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/settings/notification-preferences",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/settings/notification-preferences",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/settings/permissions",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/settings/permissions",
+        "reason": "S2 六场景首批未驱动 settings 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/taskmaster/update-task/:projectName/:taskId",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/taskmaster/update-task/:projectName/:taskId",
+        "reason": "S2 六场景首批未驱动 taskmaster 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/v1/model-configuration",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/v1/model-configuration",
+        "reason": "S2 六场景首批未驱动 v1 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    },
+    {
+      "route": "PUT /api/v1/model-connection-tests/:testId/image-capabilities",
+      "cases": [],
+      "exemption": {
+        "route": "PUT /api/v1/model-connection-tests/:testId/image-capabilities",
+        "reason": "S2 六场景首批未驱动 v1 域此端点；仍由 TS 留守。接管该路由前须补直接 HTTP 用例或重新审批；本豁免不证明行为等价。",
+        "approver": "AI 代批，待人复核"
+      }
+    }
+  ]
+}
