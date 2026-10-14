@@ -17,11 +17,31 @@ pub struct Proxy {
 impl Proxy {
     pub async fn serve(
         &self,
-        mut request: Request<Incoming>,
+        request: Request<Incoming>,
     ) -> Result<Response<Body>, std::io::Error> {
-        // Node dispatches any Upgrade protocol to handleUpgrade, which checks
-        // the pathname and key rather than requiring "websocket" here.
-        let is_upgrade = request.headers().contains_key(header::UPGRADE);
+        self.serve_with_http(request, |request| self.http(request))
+            .await
+    }
+
+    async fn serve_with_http<F, Fut>(
+        &self,
+        mut request: Request<Incoming>,
+        http: F,
+    ) -> Result<Response<Body>, std::io::Error>
+    where
+        F: FnOnce(Request<Incoming>) -> Fut,
+        Fut: std::future::Future<Output = Response<Body>>,
+    {
+        // Node dispatches any Upgrade protocol only when Connection also has
+        // an upgrade token, then handleUpgrade checks the pathname and key.
+        let is_upgrade = request.headers().contains_key(header::UPGRADE)
+            && request
+                .headers()
+                .get_all(header::CONNECTION)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|value| value.split(','))
+                .any(|token| token.trim().eq_ignore_ascii_case("upgrade"));
         if is_upgrade {
             if request.uri().path() != "/ws" {
                 // A service error makes Hyper close the socket without an HTTP
@@ -39,7 +59,7 @@ impl Proxy {
                 }
             });
         }
-        Ok(self.http(request).await)
+        Ok(http(request).await)
     }
 
     async fn http(&self, mut request: Request<Incoming>) -> Response<Body> {
@@ -226,7 +246,7 @@ mod tests {
         );
     }
 
-    async fn rejected_upgrade(path: &str, key: Option<&str>, protocol: &str) {
+    async fn rejected_upgrade(path: &str, key: Option<&str>, protocol: &str, connection: &str) {
         let (server_io, mut client_io) = tokio::io::duplex(4096);
         let proxy = Arc::new(Proxy {
             upstream: "http://127.0.0.1:28790".into(),
@@ -246,7 +266,7 @@ mod tests {
             .map(|key| format!("Sec-WebSocket-Key: {key}\r\n"))
             .unwrap_or_default();
         let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: {protocol}\r\nConnection: Upgrade\r\n{key}\r\n"
+            "GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: {protocol}\r\nConnection: {connection}\r\n{key}\r\n"
         );
         timeout(
             Duration::from_secs(3),
@@ -272,21 +292,94 @@ mod tests {
 
     #[tokio::test]
     async fn missing_client_key_destroys_socket_before_upstream_connect() {
-        rejected_upgrade("/ws?allowed=query", None, "websocket").await;
+        rejected_upgrade("/ws?allowed=query", None, "websocket", "Upgrade").await;
     }
 
     #[tokio::test]
     async fn only_ws_path_upgrades_and_other_paths_destroy_socket() {
         for path in ["/", "/WS", "/ws/", "/other?path=/ws"] {
-            rejected_upgrade(path, Some("arbitrary-key"), "websocket").await;
+            rejected_upgrade(path, Some("arbitrary-key"), "websocket", "Upgrade").await;
         }
     }
 
     #[tokio::test]
     async fn arbitrary_upgrade_protocol_uses_ts_path_and_key_rejections() {
         for protocol in ["h2c", "WebSocket, custom", "custom-protocol"] {
-            rejected_upgrade("/other", Some("key"), protocol).await;
-            rejected_upgrade("/ws", None, protocol).await;
+            rejected_upgrade("/other", Some("key"), protocol, "Upgrade").await;
+            rejected_upgrade("/ws", None, protocol, "Upgrade").await;
+        }
+    }
+
+    #[tokio::test]
+    async fn upgrade_header_without_connection_token_uses_http_proxy() {
+        timeout(Duration::from_secs(3), async {
+            // Inject the HTTP handler so this routing regression needs no
+            // listener or upstream service. Production uses Proxy::http.
+            for connection in [None, Some("keep-alive"), Some("x-upgrade")] {
+                let (server_io, client_io) = tokio::io::duplex(4096);
+                let proxy = Arc::new(Proxy {
+                    upstream: "http://fixture.invalid".into(),
+                    client: Client::builder(TokioExecutor::new()).build_http(),
+                });
+                let server = tokio::spawn(async move {
+                    let service = service_fn(move |request| {
+                        let proxy = proxy.clone();
+                        async move {
+                            proxy
+                                .serve_with_http(request, |request| async move {
+                                    assert_eq!(request.uri().path(), "/health");
+                                    assert_eq!(request.headers()[header::UPGRADE], "h2c");
+                                    plain(StatusCode::OK, "healthy")
+                                })
+                                .await
+                        }
+                    });
+                    http1::Builder::new()
+                        .serve_connection(TokioIo::new(server_io), service)
+                        .with_upgrades()
+                        .await
+                        .unwrap();
+                });
+                let (mut sender, client) =
+                    hyper::client::conn::http1::handshake(TokioIo::new(client_io))
+                        .await
+                        .unwrap();
+                let client = tokio::spawn(client);
+                let mut request = Request::builder()
+                    .uri("/health")
+                    .header(header::HOST, "localhost")
+                    .header(header::UPGRADE, "h2c")
+                    .body(Full::new(Bytes::new()))
+                    .unwrap();
+                if let Some(connection) = connection {
+                    request
+                        .headers_mut()
+                        .insert(header::CONNECTION, connection.parse().unwrap());
+                }
+                let response = sender.send_request(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response.into_body().collect().await.unwrap().to_bytes(),
+                    "healthy"
+                );
+                drop(sender);
+                client.await.unwrap().unwrap();
+                server.await.unwrap();
+            }
+        })
+        .await
+        .expect("HTTP routing test timeout");
+    }
+
+    #[tokio::test]
+    async fn connection_upgrade_token_list_uses_h2c_path_and_key_rejections() {
+        for connection in [
+            "keep-alive, Upgrade",
+            "keep-alive, uPgRaDe",
+            "keep-alive\r\nConnection: \tUPGRADE\t, close",
+        ] {
+            rejected_upgrade("/health", Some("key"), "h2c", connection).await;
+            rejected_upgrade("/ws", None, "h2c", connection).await;
         }
     }
 
