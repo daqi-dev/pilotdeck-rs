@@ -32,16 +32,27 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-# A2 evidence boundary; A3 schema tools and installed dependencies are separate.
+# A2 evidence boundary; only the three A3 tools and dependencies are separate.
 A2_SCRIPTS = (
     'check_frozen.py', 'check_ruler.py', 'common.py', 'compare.py',
     'controls/run_all.py', 'controls/prerequisites.py', 'driver.mts', 'mock.mjs',
     'observer.py', 'run_round.py', 'test_safety.py', 'watcher.mjs',
 )
+A3_SCRIPTS = ('check_schema.py', 'export_schema.mjs', 'validate_fixtures.mjs')
 
 
 def apparatus_hashes():
-    """Hash the explicit A2 apparatus; missing members fail rather than shrink it."""
+    """Reject unregistered scripts, then hash A2; missing members also fail."""
+    scripts = set()
+    for folder, dirs, files in os.walk(SCRIPT):
+        dirs[:] = [name for name in dirs if name != 'node_modules']
+        for name in files:
+            path = Path(folder) / name
+            if path.suffix in ('.py', '.mjs', '.mts'):
+                scripts.add(path.relative_to(SCRIPT).as_posix())
+    unknown = scripts - set(A2_SCRIPTS) - set(A3_SCRIPTS)
+    if unknown:
+        raise ValueError(f'unregistered gateway-parity scripts: {sorted(unknown)}')
     return {(SCRIPT / name).relative_to(ROOT).as_posix(): digest(SCRIPT / name)
             for name in sorted(A2_SCRIPTS)}
 

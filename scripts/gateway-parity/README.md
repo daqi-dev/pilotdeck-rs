@@ -15,9 +15,9 @@ python3 scripts/gateway-parity/controls/run_all.py --offline --output _tmp/20261
 
 运行 `check_ruler.py` 前须先在本目录执行 `npm ci --ignore-scripts --no-fund`，并提供已构建的只读 TS 基线；在线校准末尾也强制跑 A3 prerequisites，缺库/缺基线会 FAIL。
 
-默认产物 `_tmp/20261014-exp006/`。重新采集请选择新的 `--output _tmp/YYYYMMDD-名字`；脚本不覆盖既有 cur 或 label。每轮 run.json 与最终 ruler.json 记录 `common.py:A2_SCRIPTS` 白名单内 A2 装置脚本 sha256（含 controls、运行器和检查器；不绑定 A3 schema 脚本及 node_modules）。`check_ruler` 只复用脚本哈希完全匹配的六轮原件；无哈希的旧档案或版本不匹配均拒绝，要求新 output。复用时重新比 10 对 TS、代理，重新生成 controls 目录；原件损坏就 FAIL，不自动重跑盖掉失败。运行期间脚本改变也拒绝生成成功账本。每轮约 20 秒，整轮有 180 秒超时；独立 driver 上限 45 秒。等待共享锁默认 600 秒超时，可用 `--lock-timeout` 调整。全量 k=5 + 代理轮整体持有 `/tmp/pdrs-parity.lock`（owner.json、guard、陈旧接管、owner token 校验释放）。
+默认产物 `_tmp/20261014-exp006/`。重新采集请选择新的 `--output _tmp/YYYYMMDD-名字`；脚本不覆盖既有 cur 或 label。每轮 run.json 与最终 ruler.json 记录 `common.py:A2_SCRIPTS` 白名单内 A2 装置脚本 sha256（含 controls、运行器和检查器；不绑定 A3 schema 脚本及 node_modules）。本目录下 .py/.mjs/.mts（除任意层级 node_modules）必须属于 A2 白名单或 A3 三件 check_schema.py/export_schema.mjs/validate_fixtures.mjs，新增未登记脚本即 FAIL。`check_ruler` 只复用脚本哈希完全匹配的六轮原件；无哈希的旧档案或版本不匹配均拒绝，要求新 output。复用时重新比 10 对 TS、代理，重新生成 controls 目录；原件损坏就 FAIL，不自动重跑盖掉失败。运行期间脚本改变也拒绝生成成功账本。每轮约 20 秒，整轮有 180 秒超时；独立 driver 上限 45 秒。等待共享锁默认 600 秒超时，可用 `--lock-timeout` 调整。全量 k=5 + 代理轮整体持有 `/tmp/pdrs-parity.lock`（owner.json、guard、陈旧接管、owner token 校验释放）。
 
-A4 前置另有离线 prerequisites：拒绝空/畸形 fixtures、逐18别名移除 pass/fail 覆盖与开放 schema、完整 `$ref` 路径、时钟组合、独立输入哈希变动、导出器成功/不一致/配置写入失败三路临时目录清理。A3 输入单独记在 prerequisite 结果 `inputSha256`，不纳入 A2 apparatus；check_ruler 的 `prerequisite_controls` 和最终输入哈希检查都必须通过。
+A4 前置另有离线 prerequisites：拒绝空/畸形 fixtures、逐18别名移除 pass/fail 覆盖（断言具体缺例消息）与开放 schema、本地 `$ref` 仅允许 `#` 或 `#/definitions/<名>`、时钟组合、独立输入哈希变动、导出器成功/不一致/配置写入失败三路临时目录清理。A3 输入单独记在 prerequisite 结果 `inputSha256`，不纳入 A2 apparatus；审计文档起终使用与 check_ruler 相同的原始字节 digest；check_ruler 的 `prerequisite_controls` 和最终输入哈希检查都必须通过。
 
 r2 对照要求第一条失败规则等于 expectedRule；每项 comparison.json 和 results.json 保存 primaryRule。除原有对照，新增 receive 头部重编码（126→127、短长度→126/127、FIN、RSV、mask 位及四字节 mask key）、纯 UUID/实体列表换序、业务同名时钟边界、磁盘/HTTP/帧头元数据两侧同坏。正式尺子另从真实 proxy 原件验证 upstream.jsonl 缺失、为空、截断都主命中 G2.observer。
 
