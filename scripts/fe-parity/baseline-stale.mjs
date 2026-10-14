@@ -7,7 +7,7 @@ import { serialSuccessors, serialLocation } from './serial-topology.mjs';
 const digest = value => createHash('sha256').update(value).digest('hex');
 // Reviewed manifest fingerprint. Changing a character/identity/evidence line
 // requires an explicit new review in code, never an editable JSON allowance.
-const REVIEWED_DIGEST = 'b855a582a47ffa3cc6bc8865cf6a7ad36f7a4ab4749e15c3805c38ef2b3c85c6';
+const REVIEWED_DIGEST = 'e9cb926026bb3cf6e03761e0048b789c705c6e7aba8b4ea915e292d48288a165';
 const identity = row => JSON.stringify([row.file.replaceAll('\\', '/'), row.title]);
 const deepFreeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(deepFreeze); Object.freeze(value); }
@@ -15,8 +15,36 @@ const deepFreeze = value => {
 };
 export const BASELINE_STALE = deepFreeze(JSON.parse(await readFile(new URL('./baseline-stale.json', import.meta.url), 'utf8')));
 export function validateStaleManifest(catalog = BASELINE_STALE) {
+  validateOldSideNondeterminism(catalog);
   if (digest(JSON.stringify(catalog)) !== REVIEWED_DIGEST) throw new Error('Baseline stale manifest differs from reviewed exact identities/evidence');
   return catalog;
+}
+// This is reviewed identity-bound evidence, never a flag supplied by a report
+// or borrowed from another registration. The digest pins all historical facts.
+export function validateOldSideNondeterminism(catalog) {
+  for (const row of catalog.tests) {
+    const evidence = row.oldSideNondeterminism;
+    if (row.oldSideNondeterministic === undefined && evidence === undefined) continue;
+    const fail = () => { throw new Error(`Invalid old-side nondeterminism evidence: ${identity(row)}`); };
+    if (row.oldSideNondeterministic !== true || !evidence || !evidence.reason || !evidence.proofScript
+      || identity(evidence.identity ?? { file: '', title: '' }) !== identity(row)
+      || !evidence.sourceAnchors?.length || !evidence.observations?.length) fail();
+    if (!evidence.sourceAnchors.every(anchor => row.evidence?.some(source => source.file === anchor.file
+      && source.line === anchor.line && source.text && /^[a-f0-9]{64}$/.test(source.sha256)))) fail();
+    if (!evidence.observations.every(item => identity(item.identity ?? { file: '', title: '' }) === identity(row)
+      && item.trace && /^[a-f0-9]{64}$/.test(item.traceSha256) && item.traceMember && item.networkMember
+      && Number.isFinite(item.fill?.startMs) && Number.isFinite(item.fill?.endMs)
+      && Number.isFinite(item.searchClick?.startMs) && item.runtimeRequests?.length)) fail();
+    // The review must show both the pre-assertion timeout and a clean failure,
+    // not merely speculate that an otherwise deterministic failure is flaky.
+    if (!evidence.observations.some(item => item.rawStatus === 'timedOut' && item.searchClick.disabled
+      && item.queries?.length === 0 && item.loadingSnapshotsAfterFillStarted?.length)
+      || !evidence.observations.some(item => item.rawStatus === 'failed'
+        && item.errorLocation?.file === row.failure.assertion.file
+        && item.errorLocation?.line === row.failure.assertion.line
+        && item.errorLocation?.column === row.failure.assertion.column
+        && item.queries?.some(query => query.status === 501))) fail();
+  }
 }
 export async function validateStaleEvidence(catalog = BASELINE_STALE, readSource = file => readFile(resolve(dirname(baseline), file), 'utf8')) {
   for (const row of catalog.tests) for (const evidence of row.evidence) {
@@ -34,6 +62,15 @@ export async function validateBaselineStale(catalog = BASELINE_STALE) {
 await validateBaselineStale();
 const reviewedById = new Map(BASELINE_STALE.tests.map(row => [identity(row), row]));
 export const staleEntry = row => reviewedById.get(identity(row));
+export const HUMAN_CONFIRMATION = 'NEEDS_HUMAN_CONFIRMATION';
+export const stalePairingStatus = row => staleEntry(row)?.oldSideNondeterministic ? HUMAN_CONFIRMATION : 'UNPAIRED';
+export function staleMetadata(row) {
+  const stale = staleEntry(row);
+  if (!stale) return undefined;
+  return { defectType: stale.defectType, proofScript: stale.proofScript, evidence: stale.evidence,
+    ...(stale.oldSideNondeterministic ? { oldSideNondeterministic: true, oldSideNondeterminism: stale.oldSideNondeterminism } : {}),
+    behavioralCoverageCredit: 0 };
+}
 
 // Keep both the helper assertion and the spec callsite: reviewed helper failures share the
 // same helper, so comparing helper line alone would accept the wrong defect.
@@ -145,10 +182,13 @@ export function compareStaleRows(inventory, accounts, sourcesValid = true) {
     const consistent = sourcesValid && ['old', 'new'].every(side => observations[side].length > 0
       && observations[side].every(row => row.status === 'FAIL' && row.expectedStatus === 'passed'
         && matchesStaleFailure(registration, row.failureSignature)));
-    if (consistent) matchingIds.add(identity(registration));
-    else errors.push(`Baseline stale must be FAIL at reviewed assertion/callsite on both sides: ${identity(registration)}`);
+    const nondeterministic = staleEntry(registration).oldSideNondeterministic === true;
+    if (nondeterministic) errors.push(`${HUMAN_CONFIRMATION}: evidence-bound old-side nondeterminism ${identity(registration)}`);
+    else if (consistent) matchingIds.add(identity(registration));
+    if (!consistent) errors.push(`Baseline stale must be FAIL at reviewed assertion/callsite on both sides: ${identity(registration)}`);
     rows.push({ file: registration.file, title: registration.title, defectType: staleEntry(registration).defectType,
-      observations, consistency: consistent ? 'MATCHED_FAIL' : 'FAIL', behavioralCoverageCredit: 0 });
+      ...(nondeterministic ? { oldSideNondeterministic: true, oldSideNondeterminism: staleEntry(registration).oldSideNondeterminism } : {}),
+      observations, consistency: nondeterministic ? HUMAN_CONFIRMATION : consistent ? 'MATCHED_FAIL' : 'FAIL', behavioralCoverageCredit: 0 });
   }
   // Only remove exact behavioral-failure diagnostics for validated pairs. All
   // registration, provenance, skip, serial pending and retry errors survive.
@@ -165,5 +205,5 @@ export function compareStaleRows(inventory, accounts, sourcesValid = true) {
       else errors.push(`${side}: ${error}`);
     }
   }
-  return { rows, errors, matchingIds: [...matchingIds] };
+  return { rows, errors, matchingIds: [...matchingIds], needsHumanConfirmation: rows.filter(row => row.consistency === HUMAN_CONFIRMATION).length };
 }

@@ -109,6 +109,7 @@ async function command(args, env = {}) {
 function printAccount(frontend, account) {
   console.log(`${frontend}: 分母 ${account.denominator}; 应执行数 ${account.expected} vs 实际执行数 ${account.executed}; 显式 skip ${account.explicitSkips}; STALE_CASCADE ${account.staleCascade ?? 0}; 待编排 ${account.pendingOrchestration}; 原始断言 ${account.status}`);
   console.log(`${frontend}: 行为守护 ${account.behavioralCoverage.passed}/${account.behavioralCoverage.eligible}; 基线失效单列 ${account.behavioralCoverage.excludedBaselineStale}，覆盖记 0`);
+  if (account.needsHumanConfirmation) console.log(`${frontend}: NEEDS_HUMAN_CONFIRMATION ${account.needsHumanConfirmation} 身份；整体仍 FAIL`);
   if (account.oldGate) console.log(`${frontend}: 旧侧校准门 ${account.oldGate.status}; 失效 MATCHED_FAIL 条件满足 ${account.oldGate.matchedFailConditions}/${account.oldGate.expectedStaleFailures} (UNPAIRED); STALE_CASCADE ${account.oldGate.staleCascade}; 待编排 ${account.oldGate.pendingOrchestration}`);
   for (const row of account.rows) if (['SKIP', 'NOT_RUN', PENDING_STATUS, CASCADE_STATUS].includes(row.status)) console.log(`  ${row.status} ${row.file} :: ${row.title} — ${row.reason}${row.source ? ` — ${Object.values(row.source).join(', ')}` : ''}`);
 }
@@ -135,14 +136,15 @@ function table(inventory, accounts) {
   }
   const stale = inventory.filter(row => accounts.old?.rows.find(item => item.file === row.file && item.title === row.title)?.baselineStale);
   if (stale.length) {
-    lines.push('', '基线失效单列：照常执行、保留 FAIL；只有双侧均在清单绑定的断言及 spec 调用位置 FAIL 才一致；行为守护覆盖记 0。单侧运行不能证明一致。', '',
+    lines.push('', '基线失效单列：照常执行、保留原始状态；未标记身份只有双侧均在清单绑定的断言及 spec 调用位置 FAIL 才一致；旧侧不确定身份 NEEDS_HUMAN_CONFIRMATION，不自动 MATCHED_FAIL，整体仍 FAIL。行为守护覆盖记 0。单侧运行不能证明一致。', '',
       '| 身份 | 失效类型 | old / new 原始状态 | 双侧一致性 | 回源 / 离线证明 |', '|---|---|---|---|---|');
     for (const registration of stale) {
       const row = accounts.old.rows.find(item => item.file === registration.file && item.title === registration.title);
       const next = accounts.new?.rows.find(item => item.file === registration.file && item.title === registration.title);
       const comparison = Array.isArray(accounts.baselineStale) && accounts.baselineStale.find(item => item.file === registration.file && item.title === registration.title);
-      lines.push(`| ${cell(`${row.file} :: ${row.title}`)} | ${cell(row.baselineStale.defectType)} | ${row.status} / ${next?.status || 'NOT_RUN'} | ${comparison?.consistency || 'UNPAIRED'} | ${cell(row.baselineStale.evidence.map(item => `${item.file}:${item.line}`).join(', '))}; ${row.baselineStale.proofScript} |`);
+      lines.push(`| ${cell(`${row.file} :: ${row.title}`)} | ${cell(row.baselineStale.defectType)} | ${row.status} / ${next?.status || 'NOT_RUN'} | ${comparison?.consistency || row.pairedConsistency || 'UNPAIRED'} | ${cell(row.baselineStale.evidence.map(item => `${item.file}:${item.line}`).join(', '))}; ${row.baselineStale.proofScript} |`);
     }
+    if (accounts.needsHumanConfirmation) lines.push('', `NEEDS_HUMAN_CONFIRMATION：${accounts.needsHumanConfirmation} 身份；整体仍 FAIL。`);
     for (const side of ['old', 'new']) if (accounts[side]) lines.push('', `${side} 行为守护：${accounts[side].behavioralCoverage.passed}/${accounts[side].behavioralCoverage.eligible}；失效覆盖 0；级联不计执行/通过/覆盖；注册分母不变。`);
   }
   return lines.join('\n');
@@ -203,13 +205,13 @@ try {
     printAccount('old', deploy.accounting);
     for (const cell of Object.values(deploy.accounting.partitions)) console.log(`B ${cell.cell}: 应执行数 ${cell.expected} vs 实际执行数 ${cell.executed}; profile 排除 ${cell.profileExclusions}; ${cell.status}`);
     console.log(`B 全矩阵实例 ${deploy.accounting.instanceExecuted}/${deploy.accounting.instanceExpected}; BLOCKED ${deploy.accounting.blocked}; TCP/process audit ${deploy.audit.status}`);
-    for (const row of deploy.accounting.baselineStale) console.log(`B baseline-stale ${row.title}: ${row.status}; MATCHED_FAIL 旧侧条件 ${row.matchedFailCondition ? '满足' : '不满足'}; UNPAIRED; 行为覆盖 0`);
+    for (const row of deploy.accounting.baselineStale) console.log(`B baseline-stale ${row.title}: ${row.status}; MATCHED_FAIL 旧侧条件 ${row.matchedFailCondition ? '满足' : '不满足'}; ${row.pairedConsistency}; 行为覆盖 0`);
     for (const error of deploy.accounting.errors) console.error(error);
     await writeFile(resolve(output, 'deploy-parity.md'), table(deploy.accounting.rows, result.accounting) + '\n\n' +
       '| 部署格 | 应执行 | 实际执行 | profile 排除 | 状态 |\n|---|---|---|---|---|\n' +
       Object.values(deploy.accounting.partitions).map(cell => `| ${cell.cell} | ${cell.expected} | ${cell.executed} | ${cell.profileExclusions} | ${cell.status} |`).join('\n') + '\n\n' +
       '| 基线失效身份 | 原始状态 | MATCHED_FAIL 旧侧条件 | 双侧一致性 | 行为覆盖 | 证明 |\n|---|---|---|---|---|---|\n' +
-      deploy.accounting.baselineStale.map(row => `| ${row.title} | ${row.status} | ${row.matchedFailCondition ? '满足' : '不满足'} | UNPAIRED | 0 | ${row.baselineStale.proofScript} |`).join('\n') + '\n');
+      deploy.accounting.baselineStale.map(row => `| ${row.title} | ${row.status} | ${row.matchedFailCondition ? '满足' : '不满足'} | ${row.pairedConsistency} | 0 | ${row.baselineStale.proofScript}${row.baselineStale.oldSideNondeterminism ? `; ${row.baselineStale.oldSideNondeterminism.proofScript} --verify; trace 路径/哈希/时间戳见 result.json` : ''} |`).join('\n') + `\n\nNEEDS_HUMAN_CONFIRMATION：${deploy.accounting.needsHumanConfirmation} 身份；整体 ${deploy.accounting.status}。\n`);
     result.baselineExecution = { expected: inventory.length, actual: deploy.accounting.executed,
       status: 'PARTIAL_B_SUITE_ONLY', reason: 'Only requested B profiles/native auxiliary; source denominator 72 unchanged; A/C/D NOT_RUN' };
     result.status = deploy.accounting.status === 'PASS'

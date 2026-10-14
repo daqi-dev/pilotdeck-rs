@@ -92,7 +92,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     const unknown = make(); unknown.suites[0].specs[0].title = 'unknown'; assert.equal(reconcile(inventory, unknown, '').status, 'FAIL');
     const xfail = make(); xfail.suites[0].specs[0].tests[0].expectedStatus = 'failed'; assert.equal(reconcile(inventory, xfail, '').status, 'FAIL');
   });
-  await check('paired reports: 66 PASS + 6 matched FAIL vs 72 SKIP, skip identities and provenance', async () => {
+  await check('paired reports: 66 PASS + 5 matched FAIL + 1 human confirmation stays red; 72 SKIP, identities and provenance', async () => {
     const inventory = JSON.parse(await readFile(historicalInventory, 'utf8')).tests;
     assert.equal(inventory.length, 72);
     assert.equal(SKIP_ALLOWLIST.length, 9);
@@ -106,10 +106,14 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     const testDir = resolve(baseline, 'e2e');
     const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, rootDir: testDir, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: (SKIP_ALLOWLIST.find(entry => caseId(entry) === caseId(row)) || SKIP_ALLOWLIST[0]).skipReasons[0].description }] : [], results: [skipped.includes(index) ? { status: 'skipped' } : staleEntry(row) ? staleControlAttempt(staleEntry(row)) : { status: 'passed' }] }] })) }] });
     const pair = (old, next) => reconcilePair(inventory, { old, new: next }, testDir, origins);
-    assert.equal(pair(make('old'), make('new')).status, 'PASS');
+    const reviewed = pair(make('old'), make('new'));
+    assert.equal(reviewed.status, 'FAIL'); assert.equal(reviewed.needsHumanConfirmation, 1);
+    assert.equal(reviewed.baselineStale.filter(row => row.consistency === 'MATCHED_FAIL').length, 5);
     for (const skipped of [nonStaleAllowed.slice(0, 1), nonStaleAllowed]) {
       const accepted = pair(make('old', skipped), make('new', skipped));
-      assert.equal(accepted.status, 'PASS');
+      assert.equal(accepted.status, 'FAIL');
+      assert.equal(accepted.needsHumanConfirmation, 1);
+      assert.equal(accepted.errors.length, 3, 'Only human confirmation plus both formal failure diagnostics remain');
       for (const side of ['old', 'new']) {
         assert.equal(accepted[side].minimumExecuted, 63);
         assert.equal(accepted[side].executed, 72 - skipped.length);
@@ -198,6 +202,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     const pair = input => reconcilePair(inventory, input, '', origins);
     const accepted = pair(reports());
     assert.equal(accepted.status, 'PASS');
+    assert.equal(accepted.needsHumanConfirmation, 0);
     assert.equal(accepted.old.executed, 3); assert.equal(accepted.old.explicitSkips, 0);
     const repeated = reports(); repeated.old.push(make('old', 0));
     assert.equal(pair(repeated).old.executed, 3);

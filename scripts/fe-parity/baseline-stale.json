@@ -1,6 +1,6 @@
 {
   "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
-  "note": "Execute unchanged. Only FAIL observations at each exact reviewed assertion and callsite can match. Never PASS/skip or behavioral coverage. Real serial successors are mechanically derived STALE_CASCADE, with no execution/PASS credit. Files uses frozen default General route; no project or explorer UI precondition.",
+  "note": "Execute unchanged. Only FAIL observations at each exact reviewed assertion and callsite can match. Never PASS/skip or behavioral coverage. Real serial successors are mechanically derived STALE_CASCADE, with no execution/PASS credit. Files uses frozen default General route; no project or explorer UI precondition. Evidence-bound oldSideNondeterministic identities require NEEDS_HUMAN_CONFIRMATION and keep the pair red; exact failure matching is unchanged.",
   "tests": [
     {
       "file": "real/session.spec.mjs",
@@ -856,8 +856,407 @@
           "line": 81,
           "text": "    resultLimit: 3",
           "sha256": "f57f72febfbd7ed47e6942e97201b0a300ce34b85f861e48a7d2120f01c2efd9"
+        },
+        {
+          "file": "ui/e2e/formal-composition.spec.mjs",
+          "line": 62,
+          "text": "  await page.getByPlaceholder('Search the replacement knowledge service').fill('replacement proof');",
+          "sha256": "e817066b28410dd829b552969e8b87125c04d00d9539753c5440568a5d5bd9ae"
+        },
+        {
+          "file": "ui/e2e/formal-composition.spec.mjs",
+          "line": 63,
+          "text": "  await page.getByRole('button', { name: 'Search', exact: true }).click();",
+          "sha256": "e817066b28410dd829b552969e8b87125c04d00d9539753c5440568a5d5bd9ae"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 9,
+          "text": "  const [query, setQuery] = useState('');",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+          "line": 25,
+          "text": "    <div className=\"flex gap-2\"><input className=\"min-w-0 flex-1 rounded border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900\" value={query} onChange={event => setQuery(event.target.value)} placeholder=\"Search the replacement knowledge service\" /><button className=\"rounded bg-neutral-900 px-3 py-2 text-sm text-white disabled:opacity-50\" disabled={!query.trim()} onClick={() => void search()}>Search</button></div>",
+          "sha256": "4cb8532616d1bf0e73d8a94ef923357e536779325c48cc5f5d98719659843fba"
+        },
+        {
+          "file": "ui/src/composition/runtime.ts",
+          "line": 178,
+          "text": "    if (!runtime) return { assembly: null, profile, loading: true, error: null, runtime, runtimeWarning: null };",
+          "sha256": "fe4fd115dcff570c833f73795cf2d9c7476c46b84db00957093ece8b62622ec7"
+        },
+        {
+          "file": "ui/src/composition/runtime.ts",
+          "line": 205,
+          "text": "      .then((next) => { if (!cancelled) { setRuntime(next); setError(null); } })",
+          "sha256": "fe4fd115dcff570c833f73795cf2d9c7476c46b84db00957093ece8b62622ec7"
+        },
+        {
+          "file": "ui/src/composition/runtime.ts",
+          "line": 209,
+          "text": "      setRuntime(null);",
+          "sha256": "fe4fd115dcff570c833f73795cf2d9c7476c46b84db00957093ece8b62622ec7"
+        },
+        {
+          "file": "ui/src/composition/runtime.ts",
+          "line": 213,
+          "text": "    window.addEventListener('pilotdeck:module-runtime-changed', refresh);",
+          "sha256": "fe4fd115dcff570c833f73795cf2d9c7476c46b84db00957093ece8b62622ec7"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 85,
+          "text": "  const modulePage = composition.assembly?.pages.find((page) => page.path === location.pathname) ?? null;",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 165,
+          "text": "    if (selectedProject || !isLoadingProjects) window.dispatchEvent(new Event('pilotdeck:module-runtime-changed'));",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 166,
+          "text": "  }, [selectedProject?.name, isLoadingProjects]);",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 429,
+          "text": "  if (props.modulePage) {",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 435,
+          "text": "      <Page",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
         }
-      ]
+      ],
+      "oldSideNondeterministic": true,
+      "oldSideNondeterminism": {
+        "identity": {
+          "file": "formal-composition.spec.mjs",
+          "title": "formal replacement Knowledge switches frontend and backend implementation"
+        },
+        "reason": "Runtime refresh unmounts the module page between fill and Search click. The remounted SearchFixture starts with empty query and a disabled Search button. old3 desktop timedOut before the registered assertion; old2 desktop/mobile and old3 mobile reached the exact assertion after HTTP 501. No automatic MATCHED_FAIL, even when both sides happen to match.",
+        "proofScript": "scripts/fe-parity/old-side-timing-proof.py",
+        "timeBasis": "trace monotonic milliseconds; network start + duration is only a completion estimate",
+        "observations": [
+          {
+            "identity": {
+              "file": "formal-composition.spec.mjs",
+              "title": "formal replacement Knowledge switches frontend and backend implementation"
+            },
+            "project": "desktop",
+            "rawStatus": "failed",
+            "report": "_tmp/fe-parity/coordinator-b-old2/old-replacement-formal.json",
+            "reportSha256": "c2a4871260db8268045e43741668fa3fa318888d3d97b593bcf3ea5d44529b8f",
+            "trace": "_tmp/fe-parity/coordinator-b-old2/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-desktop/trace.zip",
+            "traceSha256": "860ec0309e952574ab8f09e1b7233ba04966defa7225c5c579ac4a265ae4dc15",
+            "traceMember": "0-trace.trace",
+            "networkMember": "0-trace.network",
+            "fill": {
+              "callId": "call@12",
+              "startMs": 5721.092,
+              "endMs": 5726.91
+            },
+            "searchClick": {
+              "callId": "call@14",
+              "startMs": 5728.267,
+              "disabled": false,
+              "firstNotEnabledMs": null
+            },
+            "runtimeRequests": [
+              {
+                "requestStartMs": 5620.171,
+                "completionEstimateMs": 5629.309,
+                "wallRequestStart": "2026-10-14T18:26:49.935Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 5620.35,
+                "completionEstimateMs": 5636.011,
+                "wallRequestStart": "2026-10-14T18:26:49.935Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 5662.787,
+                "completionEstimateMs": 5670.747,
+                "wallRequestStart": "2026-10-14T18:26:49.977Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 5664.557,
+                "completionEstimateMs": 5673.011,
+                "wallRequestStart": "2026-10-14T18:26:49.979Z",
+                "status": 200
+              }
+            ],
+            "loadingSnapshotsAfterFillStarted": [],
+            "queries": [
+              {
+                "requestStartMs": 5755.926,
+                "status": 501,
+                "errorCode": "MODULE_IDENTITY_UNAVAILABLE"
+              }
+            ],
+            "errorLocation": {
+              "file": "formal-composition.spec.mjs",
+              "column": 131,
+              "line": 64
+            },
+            "errorContext": "_tmp/fe-parity/coordinator-b-old2/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-desktop/error-context.md"
+          },
+          {
+            "identity": {
+              "file": "formal-composition.spec.mjs",
+              "title": "formal replacement Knowledge switches frontend and backend implementation"
+            },
+            "project": "mobile",
+            "rawStatus": "failed",
+            "report": "_tmp/fe-parity/coordinator-b-old2/old-replacement-formal.json",
+            "reportSha256": "c2a4871260db8268045e43741668fa3fa318888d3d97b593bcf3ea5d44529b8f",
+            "trace": "_tmp/fe-parity/coordinator-b-old2/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-mobile/trace.zip",
+            "traceSha256": "6416ec1f581cd56b60fd20afa5198979b18f8f79df37d74f12a6ee43ef7ba2ed",
+            "traceMember": "0-trace.trace",
+            "networkMember": "0-trace.network",
+            "fill": {
+              "callId": "call@12",
+              "startMs": 12292.906,
+              "endMs": 12297.872
+            },
+            "searchClick": {
+              "callId": "call@14",
+              "startMs": 12299.01,
+              "disabled": false,
+              "firstNotEnabledMs": null
+            },
+            "runtimeRequests": [
+              {
+                "requestStartMs": 12247.386,
+                "completionEstimateMs": 12252.283,
+                "wallRequestStart": "2026-10-14T18:26:56.562Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 12247.453,
+                "completionEstimateMs": 12259.426,
+                "wallRequestStart": "2026-10-14T18:26:56.562Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 12280.88,
+                "completionEstimateMs": 12286.147,
+                "wallRequestStart": "2026-10-14T18:26:56.596Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 12280.959,
+                "completionEstimateMs": 12286.628,
+                "wallRequestStart": "2026-10-14T18:26:56.596Z",
+                "status": 200
+              }
+            ],
+            "loadingSnapshotsAfterFillStarted": [],
+            "queries": [
+              {
+                "requestStartMs": 12325.618,
+                "status": 501,
+                "errorCode": "MODULE_IDENTITY_UNAVAILABLE"
+              }
+            ],
+            "errorLocation": {
+              "file": "formal-composition.spec.mjs",
+              "column": 131,
+              "line": 64
+            },
+            "errorContext": "_tmp/fe-parity/coordinator-b-old2/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-mobile/error-context.md"
+          },
+          {
+            "identity": {
+              "file": "formal-composition.spec.mjs",
+              "title": "formal replacement Knowledge switches frontend and backend implementation"
+            },
+            "project": "desktop",
+            "rawStatus": "timedOut",
+            "report": "_tmp/fe-parity/coordinator-b-old3/old-replacement-formal.json",
+            "reportSha256": "1a90212c959655b48bca2265ca2a9f468f64cbadd1656b711929881fe04735a8",
+            "trace": "_tmp/fe-parity/coordinator-b-old3/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-desktop/trace.zip",
+            "traceSha256": "9e43277411b2ef81827199105d238df466388973fad9152801afa7250f2cd752",
+            "traceMember": "0-trace.trace",
+            "networkMember": "0-trace.network",
+            "fill": {
+              "callId": "call@12",
+              "startMs": 3143.777,
+              "endMs": 3160.368
+            },
+            "searchClick": {
+              "callId": "call@14",
+              "startMs": 3165.128,
+              "disabled": true,
+              "firstNotEnabledMs": 3224.528
+            },
+            "runtimeRequests": [
+              {
+                "requestStartMs": 3099.403,
+                "completionEstimateMs": 3113.027,
+                "wallRequestStart": "2026-10-14T18:44:15.557Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 3099.523,
+                "completionEstimateMs": 3118.812,
+                "wallRequestStart": "2026-10-14T18:44:15.557Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 3164.148,
+                "completionEstimateMs": 3170.254,
+                "wallRequestStart": "2026-10-14T18:44:15.622Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 3164.264,
+                "completionEstimateMs": 3170.752,
+                "wallRequestStart": "2026-10-14T18:44:15.622Z",
+                "status": 200
+              }
+            ],
+            "loadingSnapshotsAfterFillStarted": [
+              {
+                "name": "after@call@12",
+                "timestampMs": 3164.381
+              }
+            ],
+            "queries": [],
+            "errorLocation": null,
+            "errorContext": "_tmp/fe-parity/coordinator-b-old3/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-desktop/error-context.md"
+          },
+          {
+            "identity": {
+              "file": "formal-composition.spec.mjs",
+              "title": "formal replacement Knowledge switches frontend and backend implementation"
+            },
+            "project": "mobile",
+            "rawStatus": "failed",
+            "report": "_tmp/fe-parity/coordinator-b-old3/old-replacement-formal.json",
+            "reportSha256": "1a90212c959655b48bca2265ca2a9f468f64cbadd1656b711929881fe04735a8",
+            "trace": "_tmp/fe-parity/coordinator-b-old3/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-mobile/trace.zip",
+            "traceSha256": "9a256c833187c98a64aa748403463ed8444ecb417da7754031d890a10e1e2ad0",
+            "traceMember": "0-trace.trace",
+            "networkMember": "0-trace.network",
+            "fill": {
+              "callId": "call@12",
+              "startMs": 48389.01,
+              "endMs": 48399.423
+            },
+            "searchClick": {
+              "callId": "call@14",
+              "startMs": 48403.985,
+              "disabled": false,
+              "firstNotEnabledMs": null
+            },
+            "runtimeRequests": [
+              {
+                "requestStartMs": 48346.365,
+                "completionEstimateMs": 48355.033,
+                "wallRequestStart": "2026-10-14T18:45:00.804Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 48346.439,
+                "completionEstimateMs": 48358.408,
+                "wallRequestStart": "2026-10-14T18:45:00.804Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 48375.925,
+                "completionEstimateMs": 48379.657,
+                "wallRequestStart": "2026-10-14T18:45:00.834Z",
+                "status": 200
+              },
+              {
+                "requestStartMs": 48378.715,
+                "completionEstimateMs": 48381.764,
+                "wallRequestStart": "2026-10-14T18:45:00.836Z",
+                "status": 200
+              }
+            ],
+            "loadingSnapshotsAfterFillStarted": [],
+            "queries": [
+              {
+                "requestStartMs": 48448.622,
+                "status": 501,
+                "errorCode": "MODULE_IDENTITY_UNAVAILABLE"
+              }
+            ],
+            "errorLocation": {
+              "file": "formal-composition.spec.mjs",
+              "column": 131,
+              "line": 64
+            },
+            "errorContext": "_tmp/fe-parity/coordinator-b-old3/test-results/old-replacement-formal/formal-composition-formal--bf506--and-backend-implementation-mobile/error-context.md"
+          }
+        ],
+        "sourceAnchors": [
+          {
+            "file": "ui/e2e/formal-composition.spec.mjs",
+            "line": 62
+          },
+          {
+            "file": "ui/e2e/formal-composition.spec.mjs",
+            "line": 63
+          },
+          {
+            "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+            "line": 9
+          },
+          {
+            "file": "ui/src/composition/modules/fixture-knowledge-search.tsx",
+            "line": 25
+          },
+          {
+            "file": "ui/src/composition/runtime.ts",
+            "line": 178
+          },
+          {
+            "file": "ui/src/composition/runtime.ts",
+            "line": 205
+          },
+          {
+            "file": "ui/src/composition/runtime.ts",
+            "line": 209
+          },
+          {
+            "file": "ui/src/composition/runtime.ts",
+            "line": 213
+          },
+          {
+            "file": "ui/src/components/app-shell/AppShellV2.tsx",
+            "line": 85
+          },
+          {
+            "file": "ui/src/components/app-shell/AppShellV2.tsx",
+            "line": 165
+          },
+          {
+            "file": "ui/src/components/app-shell/AppShellV2.tsx",
+            "line": 166
+          },
+          {
+            "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+            "line": 429
+          },
+          {
+            "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+            "line": 435
+          }
+        ]
+      }
     },
     {
       "file": "real-auth-composition.spec.mjs",

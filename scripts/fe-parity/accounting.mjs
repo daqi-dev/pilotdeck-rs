@@ -1,6 +1,6 @@
 import { relative, isAbsolute, resolve } from 'node:path';
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { staleEntry, failureSignature, matchesStaleFailure, behavioralCoverage, compareStaleRows, deriveStaleCascade, validateStaleCascade, oldRealGate, CASCADE_STATUS } from './baseline-stale.mjs';
+import { staleEntry, failureSignature, matchesStaleFailure, behavioralCoverage, compareStaleRows, deriveStaleCascade, validateStaleCascade, oldRealGate, CASCADE_STATUS, staleMetadata, stalePairingStatus, HUMAN_CONFIRMATION } from './baseline-stale.mjs';
 import { cellInventory, activeRegistration, deployOrigin, deployInstanceId, DEPLOY_CELLS, selectDeployCells } from './deploy-matrix.mjs';
 export { CASCADE_STATUS } from './baseline-stale.mjs';
 
@@ -84,8 +84,7 @@ function reconcileSingle(inventory, report, testDir, { staleCascade = false } = 
     const matches = grouped.get(caseId(registration)) || [];
     const stale = staleEntry(registration);
     const base = { file: registration.file, title: registration.title,
-      ...(stale ? { baselineStale: { defectType: stale.defectType, proofScript: stale.proofScript, evidence: stale.evidence,
-        behavioralCoverageCredit: 0 } } : {}) };
+      ...(stale ? { baselineStale: staleMetadata(registration), pairedConsistency: stalePairingStatus(registration) } : {}) };
     if (matches.length !== 1) {
       errors.push(`${matches.length ? 'duplicate' : 'missing'} result ${caseId(registration)}`);
       return { ...base, status: 'NOT_RUN', reason: matches.length ? 'duplicate results' : 'No execution result' };
@@ -199,7 +198,7 @@ export function reconcilePair(inventory, reports, testDir, origins) {
   for (const id of newSkips) if (!oldSkips.has(id)) errors.push(`skip identity only in new: ${id}`);
   const stale = compareStaleRows(inventory, accounts, !errors.some(error => error.includes('report config.metadata')));
   errors.push(...stale.errors);
-  return { ...accounts, errors, baselineStale: stale.rows,
+  return { ...accounts, errors, baselineStale: stale.rows, needsHumanConfirmation: stale.needsHumanConfirmation,
     status: errors.length ? 'FAIL' : 'PASS' };
 }
 
@@ -278,7 +277,7 @@ export function reconcileRealPair(inventory, reports, testDir, origins) {
   }
   const stale = compareStaleRows(inventory, accounts);
   errors.push(...stale.errors);
-  return { ...accounts, errors, baselineStale: stale.rows,
+  return { ...accounts, errors, baselineStale: stale.rows, needsHumanConfirmation: stale.needsHumanConfirmation,
     scope: 'D_28_PAIR_ONLY', status: errors.length ? 'FAIL' : 'PASS' };
 }
 
@@ -328,13 +327,13 @@ export function reconcileDeployCell(inventory, report, testDir, cell) {
     const status = attempt.status === 'passed' && row.expectedStatus === 'passed' && !base.rawSkipAnnotations.length ? 'PASS' : 'FAIL';
     if (status === 'FAIL') errors.push(`${cell.id}: B behavioral failure ${caseId(registration)}`);
     const stale = staleEntry(registration);
+    if (stale?.oldSideNondeterministic) errors.push(`${cell.id}: ${HUMAN_CONFIRMATION} ${caseId(registration)}`);
     const signature = stale ? failureSignature(attempt, testDir, report.config?.rootDir) : undefined;
     const matched = Boolean(stale && validOriginalReport
       && row.expectedStatus === 'passed' && !base.rawSkipAnnotations.length && matchesStaleFailure(registration, signature));
     return { ...base, status, executed: true, rawStatus: attempt.status, reason: attempt.error?.message || '',
       ...(stale ? { expectedStatus: row.expectedStatus, failureSignature: signature,
-        baselineStale: { defectType: stale.defectType, proofScript: stale.proofScript, evidence: stale.evidence,
-          behavioralCoverageCredit: 0 }, matchedFailCondition: matched, pairedConsistency: 'UNPAIRED' } : {}) };
+        baselineStale: staleMetadata(registration), matchedFailCondition: matched, pairedConsistency: stalePairingStatus(registration) } : {}) };
   });
   const executed = rows.filter(row => row.executed).length;
   if (expected !== executed) errors.push(`${cell.id}: 应执行数 ${expected} vs 实际执行数 ${executed}`);
@@ -374,9 +373,8 @@ export function reconcileDeploy(inventory, reports, testDir, cells) {
       : matches.some(row => row.status !== 'PASS') ? 'FAIL' : 'PASS';
     const stale = staleEntry(registration);
     return { file: registration.file, title: registration.title, status, reason: matches.map(row => row.reason).filter(Boolean).join('; '), observations: matches,
-      ...(stale ? { baselineStale: { defectType: stale.defectType, proofScript: stale.proofScript, evidence: stale.evidence,
-        behavioralCoverageCredit: 0 }, matchedFailCondition: matches.length > 0 && matches.every(row => row.matchedFailCondition === true),
-        pairedConsistency: 'UNPAIRED' } : {}) };
+      ...(stale ? { baselineStale: staleMetadata(registration), matchedFailCondition: matches.length > 0 && matches.every(row => row.matchedFailCondition === true),
+        pairedConsistency: matches.length ? stalePairingStatus(registration) : 'UNPAIRED' } : {}) };
   });
   const expected = rows.filter(row => row.observations.length).length;
   const executed = rows.filter(row => row.observations.some(item => item.executed)).length;
@@ -390,5 +388,6 @@ export function reconcileDeploy(inventory, reports, testDir, cells) {
       passed: rows.filter(row => row.status === 'PASS' && !staleEntry(row)).length,
       excludedBaselineStale: rows.filter(row => row.observations.length && staleEntry(row)).length },
     baselineStale: rows.filter(row => row.observations.length && staleEntry(row)),
+    needsHumanConfirmation: rows.filter(row => row.pairedConsistency === HUMAN_CONFIRMATION).length,
     scope: cells.length === DEPLOY_CELLS.length ? 'B_ALL_9_OLD_ONLY' : 'B_PARTIAL_PROFILES_OLD_ONLY', status: errors.length ? 'FAIL' : 'PASS', errors };
 }

@@ -14,7 +14,7 @@ import { deploymentConfig, prepareDeployment } from './deploy-launch.mjs';
 import { compositionPlugin } from './deploy-vite.mjs';
 import { installNetworkIsolation } from './real-network.mjs';
 import { tcpRecords, forbiddenTCP, startTCPAudit } from './real-tcp-audit.mjs';
-import { staleEntry } from './baseline-stale.mjs';
+import { staleEntry, HUMAN_CONFIRMATION } from './baseline-stale.mjs';
 import { staleControlAttempt } from './baseline-stale-self-check.mjs';
 import { proveReplacementBaselineStale } from './replacement-stale-proof.mjs';
 
@@ -101,7 +101,7 @@ export async function deploySelfCheck(check) {
       const specs = []; const visit = suite => { specs.push(...suite.specs || []); (suite.suites || []).forEach(visit); };
       report.suites.forEach(visit); return specs.find(spec => cell.activeLines.includes(spec.line));
     };
-    await check('B replacement stale: frozen host rejects before module call; exact original FAIL stays red and UNPAIRED with zero coverage', async () => {
+    await check('B replacement stale: frozen host rejects before module call; exact FAIL stays red; formal needs human confirmation, auth UNPAIRED; zero coverage', async () => {
       assert(inventory, 'B source listing prerequisite failed');
       const proof = await proveReplacementBaselineStale();
       assert.equal(proof.hostUpstreamCalls, 0);
@@ -124,7 +124,7 @@ export async function deploySelfCheck(check) {
         const good = reconcileDeployCell(inventory, make(), testDir, cell);
         assert.equal(good.status, 'FAIL'); assert.equal(good.executed, good.expected);
         assert(good.rows.filter(row => row.required).every(row => row.status === 'FAIL' && row.matchedFailCondition
-          && row.pairedConsistency === 'UNPAIRED' && row.baselineStale.behavioralCoverageCredit === 0));
+          && row.pairedConsistency === (cell.kind === 'formal' ? HUMAN_CONFIRMATION : 'UNPAIRED') && row.baselineStale.behavioralCoverageCredit === 0));
         for (const mutate of [
           (r, s) => { s.tests[0].results[0].error.location.line++; },
           (r, s) => { s.tests[0].results[0].error.location.column++; },
@@ -185,7 +185,13 @@ export async function deploySelfCheck(check) {
       assert(inventory, 'B source listing prerequisite failed');
       for (const cell of DEPLOY_CELLS) {
         const original = completed(cell);
-        assert.equal(reconcileDeployCell(inventory, original, testDir, cell).status, 'PASS');
+        const originalAccount = reconcileDeployCell(inventory, original, testDir, cell);
+        assert.equal(originalAccount.status, cell.id === 'replacement-formal' ? 'FAIL' : 'PASS');
+        if (cell.id === 'replacement-formal') {
+          assert(originalAccount.rows.filter(row => row.required).every(row => row.status === 'PASS'
+            && row.pairedConsistency === HUMAN_CONFIRMATION && !row.matchedFailCondition));
+          assert(originalAccount.errors.every(error => error.includes(HUMAN_CONFIRMATION)));
+        }
         const active = cellInventory(inventory, cell).filter(row => activeRegistration(row, cell));
         for (const registration of active) {
           const catalog = SKIP_ALLOWLIST.find(row => row.file === registration.file && row.title === registration.canonicalTitle);
@@ -228,7 +234,12 @@ export async function deploySelfCheck(check) {
       }
       const runnable = DEPLOY_CELLS.filter(cell => !cell.blocked), inputs = Object.fromEntries(runnable.map(cell => [cell.id, completed(cell)]));
       const partial = reconcileDeploy(inventory, inputs, testDir, runnable);
-      assert.equal(partial.status, 'PASS'); assert.equal(partial.executed, 5); assert.equal(partial.instanceExecuted, 11);
+      assert.equal(partial.status, 'FAIL'); assert.equal(partial.needsHumanConfirmation, 1);
+      assert.equal(partial.executed, 5); assert.equal(partial.instanceExecuted, 11);
+      const minimalCells = selectDeployCells(['minimal']);
+      const minimalInputs = Object.fromEntries(minimalCells.map(cell => [cell.id, inputs[cell.id]]));
+      const unchanged = reconcileDeploy(inventory, minimalInputs, testDir, minimalCells);
+      assert.equal(unchanged.status, 'PASS'); assert.equal(unchanged.needsHumanConfirmation, 0);
       const full = reconcileDeploy(inventory, inputs, testDir, DEPLOY_CELLS);
       assert.equal(full.status, 'FAIL'); assert.equal(full.blocked, 4); assert.equal(full.expected, 9);
       assert.equal(full.executed, 5); assert.equal(full.instanceExpected, 18); assert.equal(full.instanceExecuted, 11);
