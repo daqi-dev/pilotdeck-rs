@@ -1,0 +1,17 @@
+//! Parsed WebSocket proxy. TS still owns authentication and all gateway methods.
+mod acceptor;
+mod dispatch;
+mod frame;
+pub mod http_proxy;
+mod pairing;
+mod upstream;
+
+use bytes::Bytes;
+use http_body_util::combinators::BoxBody;
+use hyper::body::Incoming;
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use std::error::Error;
+
+pub type ProxyError = Box<dyn Error + Send + Sync>;
+pub type Body = BoxBody<Bytes, ProxyError>;
+pub type HttpClient = Client<HttpConnector, Incoming>;
