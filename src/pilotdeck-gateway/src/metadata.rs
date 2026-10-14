@@ -37,7 +37,7 @@ pub(crate) struct Stat {
 }
 
 pub(crate) trait Files {
-    /// scandir order and Dirent.isDirectory (does not follow symlinks).
+    /// OS readdir order, without sorting; Dirent.isDirectory does not follow symlinks.
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>>;
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
     fn session_summary(&self, path: &Path, _size: u64) -> Result<bool, ()> {
@@ -53,7 +53,7 @@ pub(crate) trait Files {
 pub(crate) struct NativeFiles;
 impl Files for NativeFiles {
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
-        let mut entries = fs::read_dir(path)?
+        fs::read_dir(path)?
             .map(|entry| {
                 let entry = entry?;
                 Ok((
@@ -61,9 +61,7 @@ impl Files for NativeFiles {
                     entry.file_type()?.is_dir(),
                 ))
             })
-            .collect::<io::Result<Vec<_>>>()?;
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(entries)
+            .collect()
     }
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         fs::read(path)
@@ -141,6 +139,8 @@ impl Metadata {
     pub fn from_env() -> Option<Self> {
         let home = std::env::var("PILOT_HOME").ok()?;
         // Explicit PILOT_HOME only: never open the user's real default home.
+        // Deployment must use the same cwd as TS process.cwd(): relative
+        // project keys, .cwd markers and PILOT_HOME all resolve against it.
         let cwd = std::env::current_dir().ok()?;
         let home = if home == "~" || home.starts_with("~/") {
             let user_home = std::env::var("HOME").ok()?;
@@ -263,6 +263,7 @@ impl<F: Files> Metadata<F> {
             }
             projects.push(self.summary(&root, Some(&dir), JsString::from(root.as_str())));
         }
+        // Stable, like JS Array.sort: activity ties retain directory order.
         projects.sort_by(|left, right| {
             let activity = |project: &JsValue| {
                 project

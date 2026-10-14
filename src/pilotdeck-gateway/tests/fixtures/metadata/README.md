@@ -11,3 +11,21 @@ The archived cur directory has since moved. Unit tests inject the original proje
 The optional `PDRS_METADATA_NATIVE_CHECK=1` test additionally reads the freshly generated fixture tree through the production filesystem adapter, comparing the final response and every Node stat timestamp byte-for-byte/numerically. It requires that recorded scratch tree to still exist; default Cargo tests use only the portable snapshots. Source-oracle regeneration changes dynamic times/paths and thus requires rebuilding tests.
 
 `controls.json` is raw wire output captured from the actual TS TextWebSocketConnection and GatewayWsConnection, invoking InProcessGateway.prototype.supportedAgents on an EventEmitter-backed socket. `../../record_metadata_controls.mts` records coalesced native request + ping, close, and invalid JSON without opening a listener. These bytes cover pong-before-response and suppression of a pending response after close.
+
+`order.json` records the same real parser/RPC consumer with a coalesced
+`describe_server` then `supported_agents` batch. `describeServer` is an injected
+provider: either an already fulfilled promise or a promise explicitly released
+after recording the first output phase. The native method calls the real
+`InProcessGateway.prototype.supportedAgents`. There is no listener or timer race.
+TS outputs forwarded/local for the immediate provider, but local/forwarded for
+the delayed provider; its concurrent handlers do not impose global request FIFO.
+The Rust duplex diagnostic **asserts the known immediate-provider mismatch**
+and delayed-provider parity. A passing diagnostic is not mixed-batch parity
+evidence or an accepted difference in the frozen ruler. No production response
+queue was added: it would invert the captured delayed-provider behavior.
+
+Regenerate from the repository root (fixed TS baseline `cc7c4e6`, Node 22):
+
+```sh
+node --import /Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/tsx/dist/loader.mjs src/pilotdeck-gateway/tests/record_metadata_order.mts /Users/da/ws/pilotdeck-rs/resources/PilotDeck src/pilotdeck-gateway/tests/fixtures/metadata/order.json
+```
