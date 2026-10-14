@@ -364,16 +364,21 @@ fn source_error(
 mod tests;
 
 fn read_hint(e: &std::io::Error, path: &str) -> String {
+    io_hint(e, path, "open")
+}
+
+pub(crate) fn io_hint(e: &std::io::Error, path: &str, syscall: &str) -> String {
     let name = match e.kind() {
         std::io::ErrorKind::PermissionDenied => Some(("EACCES", "permission denied")),
         std::io::ErrorKind::NotFound => Some(("ENOENT", "no such file or directory")),
+        std::io::ErrorKind::NotADirectory => Some(("ENOTDIR", "not a directory")),
         std::io::ErrorKind::IsADirectory => {
             return "EISDIR: illegal operation on a directory, read".into();
         }
         _ => None,
     };
     if let Some((code, msg)) = name {
-        format!("{code}: {msg}, open '{path}'")
+        format!("{code}: {msg}, {syscall} '{path}'")
     } else {
         e.to_string()
     }

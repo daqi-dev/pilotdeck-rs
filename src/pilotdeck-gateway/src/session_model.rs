@@ -152,13 +152,13 @@ fn execute<F: Files>(
     let mut entries = vec![];
     match metadata.files.stat(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(io_error(&e, &path)),
+        Err(e) => return Err(io_error(&e, &path, "stat")),
         Ok(stat) if stat.size > 50 * 1024 * 1024 => {}
         Ok(_) => {
             let bytes = match metadata.files.read(&path) {
                 Ok(b) => b,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
-                Err(e) => return Err(io_error(&e, &path)),
+                Err(e) => return Err(io_error(&e, &path, "open")),
             };
             for line in String::from_utf8_lossy(&bytes).split('\n') {
                 if let Ok(entry) = parse_json(line.strip_suffix('\r').unwrap_or(line))
@@ -326,17 +326,7 @@ fn path_argument(v: &JsValue) -> Error {
         format!("The \"paths[0]\" argument must be of type string. Received {received}"),
     )
 }
-fn io_error(e: &std::io::Error, path: &std::path::Path) -> Error {
+fn io_error(e: &std::io::Error, path: &std::path::Path, syscall: &str) -> Error {
     let code = config::binding::io_code(e);
-    let message = match code {
-        "EISDIR" => "EISDIR: illegal operation on a directory, read".into(),
-        "ENOENT" => format!(
-            "ENOENT: no such file or directory, open '{}'",
-            path.display()
-        ),
-        "EACCES" => format!("EACCES: permission denied, open '{}'", path.display()),
-        "ENOTDIR" => format!("ENOTDIR: not a directory, stat '{}'", path.display()),
-        _ => e.to_string(),
-    };
-    error(code, message)
+    error(code, config::io_hint(e, &path.to_string_lossy(), syscall))
 }

@@ -5,6 +5,7 @@ import argparse,base64,hashlib,json,os,signal,socket,struct,subprocess,threading
 from pathlib import Path
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--output',required=True,type=Path);args=parser.parse_args()
 root=Path(__file__).resolve().parents[3];out=args.output.resolve()
+if os.geteuid()==0:raise ValueError('non-root user required for real EACCES cases')
 if not out.is_relative_to(root/'_tmp'):raise ValueError('output must be inside this worktree _tmp')
 out.mkdir(parents=True,exist_ok=False)
 for d in ['isolation/home','isolation/xdg','isolation/tmp']:(out/d).mkdir(parents=True)
@@ -15,11 +16,16 @@ lock=subprocess.Popen(['/bin/sh','-c','echo ready; read owned_input; exit 0'],st
 assert lock.stdout.readline()=='ready\n'
 fixture_path=root/'src/pilotdeck-gateway/tests/fixtures/session-model/cases.json'
 fixture_bytes=fixture_path.read_bytes();fixture=json.loads(fixture_bytes)
+io_fixture_path=fixture_path.with_name('io-errors.json')
+io_fixture_bytes=io_fixture_path.read_bytes();io_fixture=json.loads(io_fixture_bytes)
+fixture['cases'].extend(io_fixture['cases'])
 def native_case(row):
  # Forwarding and injected errno are mandatory unit controls. A NUL-bearing
  # env object is also a loader-only control: OS process environments cannot
  # contain NUL, so it cannot be supplied to a real Rust proxy process.
- return not row['forward'] and not row['process']['eperm'] and not any('\0' in v for v in row['env'].values())
+ # Controlled mutations between check and read are replayed by mandatory unit
+ # fixtures; a real proxy has no test hook at that filesystem boundary.
+ return not row['forward'] and not row['process']['eperm'] and not row.get('io',{}).get('race',False) and not any('\0' in v for v in row['env'].values())
 rows=[];observations=[];errors=[];processes=[]
 listener=socket.socket();listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);listener.bind(('127.0.0.1',28860));listener.listen();listener.settimeout(.2)
 stop=threading.Event()
@@ -92,6 +98,17 @@ try:
       else:s=s.replace(str(old),str(lock.pid))
       b=s.encode()
      target.write_bytes(b)
+  permission_path=None
+  if 'io' in row:
+   target=Path(replace(row['io']['target']));scenario=row['io']['scenario']
+   if scenario.endswith('denied'):
+    permission_path=target.parent if scenario.startswith('stat') else target
+    permission_path.chmod(0)
+   elif scenario.endswith('missing'):target.unlink()
+   elif scenario.endswith('notdir'):
+    target.parent.rename(target.parent.with_name(target.parent.name+'.held'))
+    target.parent.write_text('parent replaced')
+   elif scenario.endswith('directory'):target.unlink();target.mkdir()
   runenv=env.copy();runenv.update({k:replace(v) for k,v in row['env'].items()});runenv.update(PILOTDECK_PROXY_LISTEN='127.0.0.1:28861',PILOTDECK_PROXY_UPSTREAM='http://127.0.0.1:28860')
   log=(case/'proxy.log').open('w');proc=subprocess.Popen([str(root/'src/target/debug/pilotdeck-gateway')],env=runenv,cwd=case,stdout=log,stderr=subprocess.STDOUT)
   processes.append({'id':row['id'],'pid':proc.pid,'argv':[str(root/'src/target/debug/pilotdeck-gateway')],'cwd':str(case),'env':{k:runenv[k] for k in ['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR']}})
@@ -129,11 +146,12 @@ try:
   finally:
    if sock:sock.close()
    proc.send_signal(signal.SIGINT);proc.wait(timeout=5);log.close();processes[-1]['exitCode']=proc.returncode
+   if permission_path:permission_path.chmod(0o700)
   print(row['id'],'PASS',flush=True)
 except Exception as e:
  errors.append(repr(e));raise
 finally:
  if lock.poll() is None:lock.stdin.close();lock.wait(timeout=5)
  stop.set();thread.join(timeout=2);listener.close()
- (out/'observations.json').write_text(json.dumps({'passed':not errors and len(rows)==sum(native_case(r) for r in fixture['cases']) and all(r['byteEqual'] for r in rows),'fixtureSha256':hashlib.sha256(fixture_bytes).hexdigest(),'cases':rows,'excluded':[r['id'] for r in fixture['cases'] if not native_case(r)],'errors':errors,'processes':processes,'ownedLockHolder':{'pid':lock.pid,'exitCode':lock.returncode}},indent=2)+'\n')
+ (out/'observations.json').write_text(json.dumps({'passed':not errors and len(rows)==sum(native_case(r) for r in fixture['cases']) and all(r['byteEqual'] for r in rows),'fixtureSha256':hashlib.sha256(fixture_bytes).hexdigest(),'ioFixtureSha256':hashlib.sha256(io_fixture_bytes).hexdigest(),'cases':rows,'excluded':[r['id'] for r in fixture['cases'] if not native_case(r)],'errors':errors,'processes':processes,'ownedLockHolder':{'pid':lock.pid,'exitCode':lock.returncode}},indent=2)+'\n')
  assert not errors,errors
