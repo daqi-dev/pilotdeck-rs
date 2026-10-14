@@ -132,6 +132,14 @@ impl TurnEventPort for Events {
         Ok(())
     }
     fn emit_accepted(&mut self, event: BoundarySnapshot) -> PortResult<()> {
+        if Self::label(&event) == "turn_completed" {
+            let result = event.value().get("result").unwrap();
+            assert_eq!(result.get("type"), Some(&JsValue::from("aborted")));
+            assert_eq!(
+                result.get("stopReason"),
+                Some(&JsValue::from("aborted_streaming"))
+            );
+        }
         push(&self.0, Self::label(&event));
         Ok(())
     }
@@ -282,6 +290,7 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
         deadline: Some(Instant::now() - Duration::from_secs(1)),
     };
     let (sent, received) = mpsc::channel();
+    let (capture_seen, capture_received) = mpsc::channel();
     let writer_owner = owner.clone();
     let writer = std::thread::spawn(move || writer_owner.drive_writer(Wire(sent, vec![])));
     let peer_owner = owner.clone();
@@ -355,6 +364,7 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
                 continue;
             }
             assert_eq!(operation, "capture_turn", "no model/tool replay");
+            capture_seen.send(()).unwrap();
             assert_eq!(
                 request
                     .get("payload")
@@ -370,10 +380,17 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
             };
             assert_eq!(messages.len(), 2, "safe partial assistant is retained");
             if !tool {
+                let Some(JsValue::Array(content)) = messages[1].get("content") else {
+                    panic!("safe partial content");
+                };
+                assert_eq!(content.len(), 1);
+                assert_eq!(content[0].get("type"), Some(&JsValue::from("text")));
                 assert_eq!(
-                    messages[1].get("content").unwrap(),
-                    &json(r#"[{"type":"text","text":"safe partial text","blockId":"id:text:0"}]"#)
+                    content[0].get("text"),
+                    Some(&JsValue::from("safe partial text"))
                 );
+                assert_eq!(content[0].get("blockId"), Some(&JsValue::from("id:text:0")));
+                assert_eq!(content[0].get("timeline").is_some(), !requested);
             }
             if matches!(capture, Capture::RetiredDuring) {
                 assert!(!cancellation.cancel(CancelCause::OwnerRetired));
@@ -433,6 +450,14 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
         &mut tool_hints(),
     );
     let elapsed = start.elapsed();
+    if !matches!(
+        capture,
+        Capture::Absent | Capture::RetiredBefore | Capture::UncancelledUnknown
+    ) {
+        capture_received
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+    }
     let records = receipts.lock().unwrap().clone();
     assert_eq!(
         records.iter().filter(|(_, op)| op == "stream_next").count(),
@@ -453,7 +478,60 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     assert!(
         matches!(result, Err(PortError::AcceptedUnknown { identity: actual, last_applied_sequence: None }) if *actual == original.identity)
     );
-    assert!(!log.lock().unwrap().iter().any(|e| e == "turn_completed"));
+    let completed = !requested && !matches!(capture, Capture::UncancelledUnknown);
+    let events: Vec<_> = log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| !matches!(e.as_str(), "prepare" | "project_assembly"))
+        .cloned()
+        .collect();
+    if completed {
+        assert_eq!(
+            events,
+            if tool {
+                vec![
+                    "model_request_started",
+                    "model_event",
+                    "model_event",
+                    "model_event",
+                    "model_event",
+                    "assistant_message",
+                    "tool_calls_detected",
+                    "turn_completed",
+                ]
+            } else {
+                vec![
+                    "model_request_started",
+                    "model_event",
+                    "assistant_message",
+                    "turn_completed",
+                ]
+            },
+            "deadline publishes source aborted events without tool results/status"
+        );
+    } else {
+        assert!(!events.iter().any(|e| e == "turn_completed"));
+        if requested {
+            assert_eq!(
+                events,
+                if tool {
+                    vec![
+                        "model_request_started",
+                        "model_event",
+                        "model_event",
+                        "model_event",
+                        "model_event",
+                        "assistant_message",
+                        "tool_calls_detected",
+                    ]
+                } else {
+                    vec!["model_request_started", "model_event"]
+                },
+                "unresolved user cancellation keeps its original event sequence"
+            );
+        }
+    }
     assert!(
         elapsed < Duration::from_secs(6),
         "capture did not respect its bound: {elapsed:?}"
@@ -462,6 +540,23 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
         let retained = owner.call_record(&records[2].0).unwrap();
         assert_ne!(retained.identity, original.identity);
         assert!(retained.phase == DispatchPhase::Unresolved || retained.response.is_some());
+    }
+    if !requested && !matches!(capture, Capture::UncancelledUnknown) {
+        let mut late_ack = JsObject::new();
+        late_ack.insert("kind".into(), "response".into());
+        late_ack.insert("messageId".into(), "late-ack".into());
+        late_ack.insert("inReplyTo".into(), JsValue::String(records[1].0.clone()));
+        late_ack.insert("ok".into(), JsValue::Bool(true));
+        let late_ack = JsValue::Object(late_ack);
+        owner.receive_response(&late_ack);
+        assert_eq!(
+            owner.call_record(&records[1].0).unwrap().phase,
+            DispatchPhase::Unresolved
+        );
+        assert_eq!(
+            owner.receive_response(&late_ack),
+            pilotdeck_transport::stdio::ResponseDisposition::Duplicate
+        );
     }
     owner.release_known_calls(&identity);
     // Replay and unrelated advancement remain blocked by the ORIGINAL identity.

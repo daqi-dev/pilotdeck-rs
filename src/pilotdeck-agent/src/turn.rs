@@ -767,6 +767,29 @@ pub fn run_admitted_turn(
         if let InvocationDisposition::PortFailure(error) = &invocation.disposition
             && matches!(error.as_ref(), PortError::AcceptedUnknown { .. })
         {
+            if is_deadline_unknown(error, control) {
+                if let Ok(raw) = invocation.assembled {
+                    // Aborted is a turn fact, not proof that the accepted model
+                    // call settled. Publish the source catch's cleanup/events,
+                    // then return the original uncertainty to its owner.
+                    let _ = finish_aborted_stream(
+                        state,
+                        started_at,
+                        raw,
+                        CancelCause::Deadline,
+                        AbortedStreamBranch::StreamThrew,
+                        AbortedTurnPorts {
+                            host,
+                            preparation,
+                            events,
+                            clock,
+                            input,
+                            control,
+                        },
+                    );
+                }
+                return Err(error.as_ref().clone());
+            }
             let mut capture_messages = state.messages.clone();
             if let Ok(assembled) = &invocation.assembled
                 && let Some(partial) = safe_unknown_capture_partial(assembled)
@@ -1709,17 +1732,39 @@ pub fn run_admitted_turn(
                 arguments: call.input.clone(),
             })
             .collect();
-        let batch = host
-            .call(
-                control,
-                HostCall::ExecuteBatch {
-                    calls,
-                    hints: tool_hints.clone(),
-                },
-            )
-            .map_err(|error| {
-                capture_after_unknown_abort(host, control, input, &state.messages, error)
-            })?;
+        let batch = match host.call(
+            control,
+            HostCall::ExecuteBatch {
+                calls,
+                hints: tool_hints.clone(),
+            },
+        ) {
+            Ok(batch) => batch,
+            Err(error) if is_deadline_unknown(&error, control) => {
+                let _ = finish_aborted_after_tools(
+                    state,
+                    started_at,
+                    clock,
+                    TerminalTurnPorts {
+                        host,
+                        events,
+                        input,
+                        control,
+                    },
+                    true,
+                );
+                return Err(error);
+            }
+            Err(error) => {
+                return Err(capture_after_unknown_abort(
+                    host,
+                    control,
+                    input,
+                    &state.messages,
+                    error,
+                ));
+            }
+        };
         let (results, notify_observer) = match batch {
             HostReply::ToolResults(results) => (results, true),
             HostReply::ToolBatchRejected { message, .. } => {
@@ -1750,7 +1795,7 @@ pub fn run_admitted_turn(
             match preparation.observe_tool_results(host, control, input, &results) {
                 Ok(()) => results,
                 Err(PortError::Cancelled {
-                    cause: CancelCause::Requested(_) | CancelCause::Deadline,
+                    cause: cause @ (CancelCause::Requested(_) | CancelCause::Deadline),
                 }) => {
                     // The stock ordinary catch constructs missing results before
                     // its abort check. Preserve that clock/advice/exception phase
@@ -1776,7 +1821,23 @@ pub fn run_admitted_turn(
                             input,
                             control: cleanup,
                         },
+                        matches!(cause, CancelCause::Deadline),
                     );
+                }
+                Err(error) if is_deadline_unknown(&error, control) => {
+                    let _ = finish_aborted_after_tools(
+                        state,
+                        started_at,
+                        clock,
+                        TerminalTurnPorts {
+                            host,
+                            events,
+                            input,
+                            control,
+                        },
+                        true,
+                    );
+                    return Err(error);
                 }
                 Err(error) => {
                     let Some(message) = known_tool_observer_exception(&error) else {
@@ -1810,7 +1871,7 @@ pub fn run_admitted_turn(
         // before publishing these results. Unknown and retirement never recover.
         match control.check() {
             Err(PortError::Cancelled {
-                cause: CancelCause::Requested(_) | CancelCause::Deadline,
+                cause: cause @ (CancelCause::Requested(_) | CancelCause::Deadline),
             }) => {
                 return finish_aborted_after_tools(
                     state,
@@ -1822,6 +1883,7 @@ pub fn run_admitted_turn(
                         input,
                         control: cleanup,
                     },
+                    matches!(cause, CancelCause::Deadline),
                 );
             }
             Err(error) => return Err(error),
@@ -2616,6 +2678,7 @@ fn finish_aborted_after_tools(
     started_at: JsString,
     clock: &dyn TurnClock,
     ports: TerminalTurnPorts<'_>,
+    deadline_unknown: bool,
 ) -> PortResult<TurnOutput> {
     // AgentLoop's post-execute abort path creates the result before capture,
     // retains the admitted assistant, and publishes no tool results/status.
@@ -2627,13 +2690,16 @@ fn finish_aborted_after_tools(
         TurnStopReason::AbortedStreaming,
     );
     let capture_cleanup = fresh_capture_cleanup(ports.control);
-    capture_turn_advisory(
+    let capture = capture_turn_advisory(
         ports.host,
         &capture_cleanup,
         ports.input,
         &state.messages,
         false,
-    )?;
+    );
+    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline_unknown) {
+        capture?;
+    }
     emit_accepted_event(
         ports.events,
         &mut state.timeline,
@@ -3766,6 +3832,17 @@ fn capture_after_unknown_abort(
     original
 }
 
+fn is_deadline_unknown(error: &PortError, control: &CallControl) -> bool {
+    matches!(error, PortError::AcceptedUnknown { .. })
+        && control.cancellation.hard_stop_cause().is_none()
+        && matches!(
+            control.check(),
+            Err(PortError::Cancelled {
+                cause: CancelCause::Deadline,
+            })
+        )
+}
+
 /// Source's capture hook is advisory for known failures. An accepted effect
 /// whose reply is missing retains its owner identity and prevents completion.
 fn capture_turn_advisory(
@@ -4089,6 +4166,7 @@ fn finish_aborted_stream(
         input,
         control,
     } = ports;
+    let deadline = matches!(cause, CancelCause::Deadline);
     // Source safeFinalTextMessage forbids all pending tool calls, removes only
     // thinking blocks, and keeps the original full message/metadata otherwise.
     let no_tools = matches!(assembled.value().get("toolCalls"), Some(JsValue::Array(calls)) if calls.is_empty());
@@ -4174,7 +4252,10 @@ fn finish_aborted_stream(
         }
     }
     let capture_cleanup = fresh_capture_cleanup(control);
-    capture_turn_advisory(host, &capture_cleanup, input, &state.messages, false)?;
+    let capture = capture_turn_advisory(host, &capture_cleanup, input, &state.messages, false);
+    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline) {
+        capture?;
+    }
     let result = make_result(
         &state,
         started_at,

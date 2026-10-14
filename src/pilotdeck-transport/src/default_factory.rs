@@ -770,15 +770,34 @@ impl EventSink<'_> {
             .get("type")
             .and_then(JsValue::as_string)
             .ok_or_else(|| gap("AgentEvent type admission"))?;
-        // Source loop completion remains internal until accepted advisory calls
-        // have a known outcome. This IO owner is shared only by the one turn
-        // thread's preparation and event ports; the reader remains independent.
+        // An aborted turn under deadline is an informational source event, not
+        // a successful execution or a settled host call. The factory still
+        // returns its original Unknown and keeps every accepted-call fence.
+        let deadline_abort = accepted
+            && matches!(
+                self.context.control.check(),
+                Err(PortError::Cancelled {
+                    cause: pilotdeck_agent::ports::CancelCause::Deadline,
+                })
+            )
+            && payload.get("result").is_some_and(|result| {
+                result
+                    .get("type")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|kind| kind.equals_str("aborted"))
+            });
         if kind.equals_str("turn_completed") {
-            self.context.check_accepted_uncertainty()?;
-            self.notifications
+            if !deadline_abort {
+                self.context.check_accepted_uncertainty()?;
+            }
+            let settled = self
+                .notifications
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .finish()?;
+                .finish();
+            if !matches!(&settled, Err(PortError::AcceptedUnknown { .. }) if deadline_abort) {
+                settled?;
+            }
         }
         let mut name: Vec<u16> = "agent.".encode_utf16().collect();
         name.extend_from_slice(kind.units());

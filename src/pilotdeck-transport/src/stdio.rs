@@ -20,7 +20,8 @@ pub enum DispatchPhase {
     Replied,
     InvalidReply,
     /// A dispatched call exhausted its owning reconciliation bound. A later
-    /// correlated ACK can still settle the retained record; no resend follows.
+    /// correlated ACK can settle user cancellation, but cannot undo a deadline
+    /// rejection; no resend follows.
     Unresolved,
 }
 #[derive(Debug, Clone)]
@@ -43,6 +44,9 @@ pub struct CallRecord {
     admission_rejected: Option<PortError>,
     response_control: CallControl,
     abort_capture_payload: bool,
+    /// The execution's deadline abort listener already rejected this call.
+    /// A late ACK is diagnostic only and cannot release its uncertainty fence.
+    deadline_rejected: bool,
 }
 #[derive(Debug)]
 struct Packet {
@@ -252,13 +256,16 @@ impl ConnectionOwner {
             return ResponseDisposition::Uncorrelated;
         };
         let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(record) = state.calls.get_mut(response.in_reply_to) else {
+        let Some(record) = state.calls.get(response.in_reply_to) else {
             return ResponseDisposition::Uncorrelated;
         };
+        let deadline_cleanup = deadline_cleanup(&state, record);
+        let record = state.calls.get_mut(response.in_reply_to).unwrap();
         if matches!(
             record.phase,
             DispatchPhase::Replied | DispatchPhase::InvalidReply
-        ) {
+        ) || record.response.is_some()
+        {
             return ResponseDisposition::Duplicate;
         }
         // A peer cannot satisfy a queued request it has not yet received.
@@ -295,8 +302,21 @@ impl ConnectionOwner {
                     .response_control
                     .deadline
                     .is_some_and(|deadline| deadline <= received_at);
+            record.deadline_rejected |= deadline_cleanup
+                || (record.cancelled_before_response
+                    && !is_abort_cleanup(record)
+                    && matches!(
+                        record.response_control.check(),
+                        Err(PortError::Cancelled {
+                            cause: pilotdeck_agent::ports::CancelCause::Deadline,
+                        })
+                    ));
             record.response = Some(BoundarySnapshot::capture(value));
-            record.phase = DispatchPhase::Replied;
+            record.phase = if record.deadline_rejected {
+                DispatchPhase::Unresolved
+            } else {
+                DispatchPhase::Replied
+            };
             ResponseDisposition::Completed
         };
         drop(state);
@@ -529,6 +549,7 @@ impl BoundExchange {
                         admission_rejected: None,
                         response_control: control.clone(),
                         abort_capture_payload,
+                        deadline_rejected: false,
                     },
                 );
                 state.data.push_back(Packet {
@@ -588,6 +609,33 @@ impl PendingExchange {
                 owner.0.wake.notify();
                 return Err(error);
             }
+            // TS sends its advisory capture even though the global abort
+            // listener rejects its Promise. Preserve send-before-final order,
+            // waiting only for the writer, never for the host's ACK.
+            let deadline_cleanup = deadline_cleanup(&state, record);
+            if deadline_cleanup {
+                if matches!(
+                    record.phase,
+                    DispatchPhase::Queued | DispatchPhase::Dispatching
+                ) && !state.closed
+                    && control.check().is_ok()
+                {
+                    drop(state);
+                    owner.0.wake.wait(generation, control.deadline);
+                    continue;
+                }
+                let original =
+                    known_uncertainty(&state, &identity).unwrap_or_else(|| unknown(&identity));
+                let record = state.calls.get_mut(&message_id).unwrap();
+                record.deadline_rejected = true;
+                record.phase = DispatchPhase::Unresolved;
+                drop(state);
+                owner.0.wake.notify();
+                return Err(original);
+            }
+            if record.deadline_rejected {
+                return Err(unknown(&identity));
+            }
             if let Some(response) = &record.response {
                 let boundary = response.clone();
                 let cancelled_before_response = record.cancelled_before_response;
@@ -617,6 +665,12 @@ impl PendingExchange {
             let dispatched = record.phase != DispatchPhase::Queued;
             let invalid = record.phase == DispatchPhase::InvalidReply;
             let cancellation = control.check().err();
+            let deadline_exceeded = matches!(
+                cancellation,
+                Some(PortError::Cancelled {
+                    cause: pilotdeck_agent::ports::CancelCause::Deadline,
+                })
+            );
             let hard_stopped = matches!(
                 cancellation,
                 Some(PortError::Cancelled {
@@ -624,7 +678,7 @@ impl PendingExchange {
                         | pilotdeck_agent::ports::CancelCause::TransportClosed,
                 })
             );
-            if dispatched && cancellation.is_some() {
+            if dispatched && cancellation.is_some() && !deadline_exceeded {
                 // Reconcile only this already-dispatched identity. Cancellation
                 // cannot prove its outcome; a later valid ACK can settle it.
                 // The bound is monotonic and never extended by duplicate wakes.
@@ -644,6 +698,7 @@ impl PendingExchange {
             if invalid
                 || state.closed
                 || hard_stopped
+                || deadline_exceeded
                 || reconciliation_expired
                 || (cancellation.is_some() && !dispatched)
             {
@@ -656,11 +711,13 @@ impl PendingExchange {
                         .retain(|packet| packet.pending.as_ref() != Some(&message_id));
                 }
                 if dispatched && !invalid {
-                    state
+                    let record = state
                         .calls
                         .get_mut(&message_id)
-                        .expect("accepted responsibility retained")
-                        .phase = DispatchPhase::Unresolved;
+                        .expect("accepted responsibility retained");
+                    record.phase = DispatchPhase::Unresolved;
+                    // A cleanup's own bound is not an execution deadline abort.
+                    record.deadline_rejected = deadline_exceeded && !is_abort_cleanup(record);
                 }
                 drop(state);
                 owner.0.wake.notify();
@@ -684,6 +741,37 @@ fn same_execution(a: &ExecutionIdentity, b: &ExecutionIdentity) -> bool {
         && a.turn_id == b.turn_id
         && a.module_instance_id == b.module_instance_id
         && a.connection_generation == b.connection_generation
+}
+fn is_abort_cleanup(call: &CallRecord) -> bool {
+    matches!(
+        (call.module, call.operation),
+        ("context", "capture_turn") | ("model", "close_stream")
+    )
+}
+fn deadline_cleanup(state: &State, record: &CallRecord) -> bool {
+    ((record.module == "context"
+        && record.operation == "capture_turn"
+        && record.abort_capture_payload)
+        || owned_containment_cleanup(
+            state,
+            &record.identity,
+            record.module,
+            record.operation,
+            record.preparation_id.as_ref(),
+        ))
+        && state.calls.values().any(|call| {
+            same_execution(&call.identity, &record.identity)
+                && (call.deadline_rejected
+                    || (matches!(
+                        (call.module, call.operation),
+                        ("model", "stream_next" | "stream") | ("capability", "execute_batch")
+                    ) && matches!(
+                        call.response_control.check(),
+                        Err(PortError::Cancelled {
+                            cause: pilotdeck_agent::ports::CancelCause::Deadline,
+                        })
+                    )))
+        })
 }
 /// Only the close of a handle already carried by an accepted pull or a known
 /// successful prepare in this exact execution may contain an uncertain stream.
@@ -987,90 +1075,161 @@ mod reconciliation_tests {
 
     #[test]
     fn reply_reader_freezes_cancel_ack_order_before_a_late_waiter() {
-        for cancel_first in [false, true] {
-            for ok in [false, true] {
-                let owner = ConnectionOwner::new(
-                    SidecarBinding {
-                        module_id: "pilotdeck-agent-loop".into(),
+        for deadline in [false, true] {
+            for cancel_first in [false, true] {
+                for ok in [false, true] {
+                    let owner = ConnectionOwner::new(
+                        SidecarBinding {
+                            module_id: "pilotdeck-agent-loop".into(),
+                            module_instance_id: "instance".into(),
+                            connection_generation: "generation".into(),
+                            capabilities_version: "1".into(),
+                        },
+                        4,
+                    );
+                    let control = CallControl {
+                        cancellation: Cancellation::default(),
+                        deadline: None,
+                    };
+                    let identity = ExecutionIdentity {
+                        session_id: "s".into(),
+                        turn_id: "t".into(),
+                        run_id: "r".into(),
+                        operation_id: "o".into(),
+                        request_id: "q".into(),
+                        idempotency_key: None,
                         module_instance_id: "instance".into(),
                         connection_generation: "generation".into(),
-                        capabilities_version: "1".into(),
-                    },
-                    4,
-                );
-                let control = CallControl {
-                    cancellation: Cancellation::default(),
-                    deadline: None,
-                };
-                let identity = ExecutionIdentity {
-                    session_id: "s".into(),
-                    turn_id: "t".into(),
-                    run_id: "r".into(),
-                    operation_id: "o".into(),
-                    request_id: "q".into(),
-                    idempotency_key: None,
-                    module_instance_id: "instance".into(),
-                    connection_generation: "generation".into(),
-                };
-                let pending = owner
-                    .bound_exchange(identity)
-                    .unwrap()
-                    .start(
-                        &control,
-                        "capability",
-                        "execute_batch",
-                        CallEffect::SideEffect,
-                        JsObject::new(),
-                    )
-                    .unwrap();
-                let (sent, received) = mpsc::channel();
-                let writer_owner = owner.clone();
-                let writer = std::thread::spawn(move || {
-                    writer_owner.drive_writer(Recorder {
-                        bytes: Vec::new(),
-                        sent,
-                    })
-                });
-                let wire = received.recv_timeout(Duration::from_secs(2)).unwrap();
-                let request =
-                    pilotdeck_protocol::parse_json(std::str::from_utf8(&wire).unwrap()).unwrap();
-                let id = request.get("messageId").unwrap().as_string().unwrap();
-                let cancel = || {
-                    assert!(
-                        control
-                            .cancellation
-                            .cancel(CancelCause::Requested("stop".into()))
+                    };
+                    let pending = owner
+                        .bound_exchange(identity)
+                        .unwrap()
+                        .start(
+                            &control,
+                            "capability",
+                            "execute_batch",
+                            CallEffect::SideEffect,
+                            JsObject::new(),
+                        )
+                        .unwrap();
+                    let (sent, received) = mpsc::channel();
+                    let writer_owner = owner.clone();
+                    let writer = std::thread::spawn(move || {
+                        writer_owner.drive_writer(Recorder {
+                            bytes: Vec::new(),
+                            sent,
+                        })
+                    });
+                    let wire = received.recv_timeout(Duration::from_secs(2)).unwrap();
+                    let request =
+                        pilotdeck_protocol::parse_json(std::str::from_utf8(&wire).unwrap())
+                            .unwrap();
+                    let id = request.get("messageId").unwrap().as_string().unwrap();
+                    let cancel = || {
+                        assert!(control.cancellation.cancel(if deadline {
+                            CancelCause::Deadline
+                        } else {
+                            CancelCause::Requested("stop".into())
+                        }));
+                    };
+                    if cancel_first {
+                        cancel();
+                    }
+                    let mut reply = JsObject::new();
+                    reply.insert("kind".into(), "response".into());
+                    reply.insert("messageId".into(), "ack".into());
+                    reply.insert("inReplyTo".into(), JsValue::String(id.clone()));
+                    reply.insert("ok".into(), JsValue::Bool(ok));
+                    let reply = JsValue::Object(reply);
+                    assert_eq!(
+                        owner.receive_response(&reply),
+                        ResponseDisposition::Completed
                     );
-                };
-                if cancel_first {
-                    cancel();
+                    if !cancel_first {
+                        cancel();
+                    }
+                    // A later duplicate and an already-cancelled worker cannot
+                    // change the frozen winner for either success or failure ACK.
+                    assert_eq!(
+                        owner.receive_response(&reply),
+                        ResponseDisposition::Duplicate
+                    );
+                    assert!(control.check().is_err());
+                    let result = pending.wait(&control);
+                    if deadline && cancel_first {
+                        let retained = owner.call_record(id).unwrap();
+                        assert!(
+                            matches!(result, Err(PortError::AcceptedUnknown { identity, .. }) if *identity == retained.identity)
+                        );
+                        assert_eq!(retained.phase, DispatchPhase::Unresolved);
+                        owner.release_known_calls(&retained.identity);
+                        assert!(owner.call_record(id).is_some());
+                    } else {
+                        let response = result.unwrap();
+                        assert_eq!(response.cancelled_before_response, cancel_first);
+                        assert_eq!(response.boundary.value(), &reply);
+                        assert_eq!(response.identity, owner.call_record(id).unwrap().identity);
+                        if deadline || cancel_first {
+                            // ACK-first settled the batch. The later deadline
+                            // still rejects a fresh advisory capture after send.
+                            let fresh = CallControl {
+                                cancellation: control.cancellation.cleanup_scope(),
+                                deadline: Some(Instant::now() + Duration::from_secs(1)),
+                            };
+                            let mut payload = JsObject::new();
+                            payload.insert("input".into(), pilotdeck_protocol::parse_json(
+                                r#"{"sessionId":"s","turnId":"t","errored":false,"messages":[]}"#
+                            ).unwrap());
+                            let capture = owner
+                                .bound_exchange(response.identity)
+                                .unwrap()
+                                .start(
+                                    &fresh,
+                                    "context",
+                                    "capture_turn",
+                                    CallEffect::SideEffect,
+                                    payload,
+                                )
+                                .unwrap();
+                            let wire = received.recv_timeout(Duration::from_secs(2)).unwrap();
+                            let request =
+                                pilotdeck_protocol::parse_json(std::str::from_utf8(&wire).unwrap())
+                                    .unwrap();
+                            let capture_id = request.get("messageId").unwrap().as_string().unwrap();
+                            let retained = owner.call_record(capture_id).unwrap();
+                            if !deadline {
+                                // Only the capture's local cleanup budget expires;
+                                // the execution's first cause remains Requested.
+                                fresh.cancellation.cancel(CancelCause::Deadline);
+                            }
+                            assert!(
+                                matches!(capture.wait(&fresh), Err(PortError::AcceptedUnknown { identity, .. }) if *identity == retained.identity)
+                            );
+                            assert_eq!(
+                                owner.call_record(capture_id).unwrap().phase,
+                                DispatchPhase::Unresolved
+                            );
+                            if !deadline {
+                                let mut late_ack = reply.as_object().unwrap().clone();
+                                late_ack.insert(
+                                    "inReplyTo".into(),
+                                    JsValue::String(capture_id.clone()),
+                                );
+                                assert_eq!(
+                                    owner.receive_response(&JsValue::Object(late_ack)),
+                                    ResponseDisposition::Completed
+                                );
+                                assert_eq!(
+                                    owner.call_record(capture_id).unwrap().phase,
+                                    DispatchPhase::Replied,
+                                    "Requested capture keeps its original late-ACK reconciliation"
+                                );
+                            }
+                        }
+                    }
+                    owner.close();
+                    assert!(writer.join().unwrap().is_ok());
                 }
-                let mut reply = JsObject::new();
-                reply.insert("kind".into(), "response".into());
-                reply.insert("messageId".into(), "ack".into());
-                reply.insert("inReplyTo".into(), JsValue::String(id.clone()));
-                reply.insert("ok".into(), JsValue::Bool(ok));
-                let reply = JsValue::Object(reply);
-                assert_eq!(
-                    owner.receive_response(&reply),
-                    ResponseDisposition::Completed
-                );
-                if !cancel_first {
-                    cancel();
-                }
-                // A later duplicate and an already-cancelled worker cannot
-                // change the frozen winner for either success or failure ACK.
-                assert_eq!(
-                    owner.receive_response(&reply),
-                    ResponseDisposition::Duplicate
-                );
-                assert!(control.check().is_err());
-                let response = pending.wait(&control).unwrap();
-                assert_eq!(response.cancelled_before_response, cancel_first);
-                assert_eq!(response.boundary.value(), &reply);
-                assert_eq!(response.identity, owner.call_record(id).unwrap().identity);
-                owner.close();
-                assert!(writer.join().unwrap().is_ok());
             }
         }
     }

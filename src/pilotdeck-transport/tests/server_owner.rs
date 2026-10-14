@@ -278,7 +278,7 @@ fn explicit_unknown_retains_accepted_call_sequence_in_terminal() {
     close(io, handle);
 }
 #[test]
-fn deadline_does_not_replace_unresolved_accepted_call_identity() {
+fn deadline_prioritizes_public_terminal_over_accepted_call_diagnostic() {
     let (mut io, handle, calls) = setup(true);
     send(&mut io, &execute(Some("future")));
     let _accepted = read(&io);
@@ -289,9 +289,15 @@ fn deadline_does_not_replace_unresolved_accepted_call_identity() {
         field(&terminal, "outcome"),
         &JsValue::from("result_unknown")
     );
-    let retained = field(field(&terminal, "error"), "acceptedCall");
-    assert_eq!(field(retained, "requestId"), field(&call, "requestId"));
-    assert_eq!(field(retained, "operationId"), field(&call, "operationId"));
+    assert_eq!(
+        field(&terminal, "code"),
+        &JsValue::from("DEADLINE_EXCEEDED")
+    );
+    assert_eq!(
+        field(&terminal, "payload"),
+        &JsValue::Object(JsObject::new())
+    );
+    assert_eq!(field(&call, "operationId"), &JsValue::from("o"));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     close(io, handle);
 }
@@ -325,13 +331,16 @@ fn accepted_deadline_returns_unknown_and_freezes_pending_effect() {
         field(&terminal, "outcome"),
         &JsValue::from("result_unknown")
     );
-    // A dispatched call whose ACK is unresolved keeps the stronger Unknown
-    // classification and identity even when the parent deadline also expires.
-    assert_eq!(field(&terminal, "code"), &JsValue::from("RESULT_UNKNOWN"));
-    assert!(matches!(
-        field(field(&terminal, "error"), "acceptedCall"),
-        JsValue::Object(_)
-    ));
+    // Deadline owns the public terminal; the connection keeps the unresolved
+    // host receipt independently of the intentionally empty terminal payload.
+    assert_eq!(
+        field(&terminal, "code"),
+        &JsValue::from("DEADLINE_EXCEEDED")
+    );
+    assert_eq!(
+        field(&terminal, "payload"),
+        &JsValue::Object(JsObject::new())
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     close(io, handle);
 }
