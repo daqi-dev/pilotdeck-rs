@@ -212,6 +212,12 @@ def build_env(out, label, port_extra=None):
             env.pop(key)
     env.update(
         EXP008_OUT=str(out),
+        HOME=str(home),
+        XDG_CONFIG_HOME=str(home / ".config"),
+        XDG_CACHE_HOME=str(home / ".cache"),
+        XDG_DATA_HOME=str(home / ".local/share"),
+        XDG_STATE_HOME=str(home / ".local/state"),
+        XDG_RUNTIME_DIR=str(out / "tmp/xdg-runtime"),
         PILOT_HOME=str(home),
         PILOTDECK_CONFIG_PATH=str(home / 'pilotdeck.yaml'),
         TMPDIR=str(out / 'tmp'),
@@ -239,7 +245,7 @@ def build_env(out, label, port_extra=None):
 def make_home(out):
     home = out / 'home'
     (home / 'projects/exp008-fixture').mkdir(parents=True, exist_ok=False)
-    (out / 'tmp').mkdir(parents=True)
+    (out / 'tmp/xdg-runtime').mkdir(parents=True, mode=0o700)
     (out / 'workspaces').mkdir()
     project = out / 'project'
     project.mkdir()

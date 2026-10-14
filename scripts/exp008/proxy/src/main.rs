@@ -37,7 +37,7 @@ use hyper_util::{
 };
 use tokio::net::TcpListener;
 use tokio_tungstenite::{
-    connect_async_with_config,
+    client_async_with_config,
     tungstenite::{
         handshake::derive_accept_key,
         protocol::{Role, WebSocketConfig},
@@ -57,6 +57,70 @@ use recording::{RecordedBody, Recorder, WireTap};
 // Match the A1 bounds: buffer at most a complete (possibly fragmented) message.
 const MAX_WS_MESSAGE: usize = 16 * 1024 * 1024;
 const MAX_WS_FRAME: usize = 4 * 1024 * 1024;
+// Baseline ws/lib/websocket.js: closeTimeout defaults to 30000 ms.
+const CLOSE_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+
+// Readers retain tungstenite validation/reassembly, but their automatic control
+// writes are discarded. Only a separate write-only encoder may put frames on
+// the wire. During the HTTP handshake, writes are still enabled.
+struct RelayIo<S> {
+    inner: S,
+    discard_writes: bool,
+}
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for RelayIo<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for RelayIo<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.discard_writes {
+            return std::task::Poll::Ready(Ok(buf.len()));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.discard_writes {
+            return std::task::Poll::Ready(Ok(()));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.discard_writes {
+            return std::task::Poll::Ready(Ok(()));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+async fn reader_socket<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    stream: S,
+    role: Role,
+) -> WebSocketStream<RelayIo<S>> {
+    WebSocketStream::from_raw_socket(
+        RelayIo {
+            inner: stream,
+            discard_writes: true,
+        },
+        role,
+        Some(websocket_config()),
+    )
+    .await
+}
+
 struct FrameLog {
     recorder: Arc<Recorder>,
     connection: u64,
@@ -397,11 +461,22 @@ impl Proxy {
         // terminates WS framing on both legs and cannot honour an extension.
         let builder = websocket_request(url, request.headers())?;
         let config = websocket_config();
-        let (mut upstream, upstream_response) = tokio::time::timeout(
-            Duration::from_secs(10),
-            connect_async_with_config(builder, Some(config), false),
-        )
-        .await??;
+        let (mut upstream, upstream_response) =
+            tokio::time::timeout(Duration::from_secs(10), async {
+                let socket = tokio::net::TcpStream::connect(&self.upstream_ws_authority).await?;
+                client_async_with_config(
+                    builder,
+                    RelayIo {
+                        inner: socket,
+                        discard_writes: false,
+                    },
+                    Some(config),
+                )
+                .await
+                .map_err(ProxyError::from)
+            })
+            .await??;
+        upstream.get_mut().discard_writes = true;
         let upgraded = hyper::upgrade::on(request);
         let frame_recorder = self
             .recorder
@@ -422,12 +497,7 @@ impl Proxy {
         tokio::spawn(async move {
             match upgraded.await {
                 Ok(io) => {
-                    let mut downstream = WebSocketStream::from_raw_socket(
-                        TokioIo::new(io),
-                        Role::Server,
-                        Some(config),
-                    )
-                    .await;
+                    let mut downstream = reader_socket(TokioIo::new(io), Role::Server).await;
                     if let Err(error) =
                         relay_websocket(&mut upstream, &mut downstream, frames.as_deref()).await
                     {
@@ -481,8 +551,8 @@ async fn tee_message(
 // reading Close queues an automatic receipt. Only the other peer's actual reply
 // belongs on the wire; flushing the queued receipt would send a second close.
 async fn relay_websocket<U, D>(
-    upstream: &mut WebSocketStream<U>,
-    downstream: &mut WebSocketStream<D>,
+    upstream: &mut WebSocketStream<RelayIo<U>>,
+    downstream: &mut WebSocketStream<RelayIo<D>>,
     frames: Option<&FrameLog>,
 ) -> Result<(), ProxyError>
 where
@@ -493,7 +563,7 @@ where
         let keep_open = tokio::select! {
             frame = downstream.next() => {
                 let closing = matches!(&frame, Some(Ok(Message::Close(_))));
-                let keep_open = relay(frame, upstream, frames, "c2u").await?;
+                let keep_open = forward_frame(frame, upstream, frames, "c2u", Role::Client).await?;
                 if closing {
                     relay_close_reply(upstream, downstream, frames, "u2c", Role::Server).await?;
                 }
@@ -501,7 +571,7 @@ where
             },
             frame = upstream.next() => {
                 let closing = matches!(&frame, Some(Ok(Message::Close(_))));
-                let keep_open = relay(frame, downstream, frames, "u2c").await?;
+                let keep_open = forward_frame(frame, downstream, frames, "u2c", Role::Server).await?;
                 if closing {
                     relay_close_reply(downstream, upstream, frames, "c2u", Role::Client).await?;
                 }
@@ -511,15 +581,14 @@ where
         if !keep_open {
             return Ok(());
         }
-        // Preserve normal-message/Ping behaviour, but not automatic Close replies.
-        let _ = upstream.flush().await;
-        let _ = downstream.flush().await;
+        // Readers may flush queued automatic Pong/Close internally on next(),
+        // but RelayIo discards those bytes. Peer frames alone reach the wire.
     }
 }
 
 async fn relay_close_reply<S, T>(
-    source: &mut WebSocketStream<S>,
-    target: &mut WebSocketStream<T>,
+    source: &mut WebSocketStream<RelayIo<S>>,
+    target: &mut WebSocketStream<RelayIo<T>>,
     frames: Option<&FrameLog>,
     dir: &str,
     role: Role,
@@ -528,12 +597,15 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    tokio::time::timeout(Duration::from_secs(1), async {
+    tokio::time::timeout(CLOSE_REPLY_TIMEOUT, async {
         // A write-only encoder bypasses target's queued automatic receipt. It
         // still masks client-to-upstream frames with fresh random mask keys.
-        let mut writer =
-            WebSocketStream::from_raw_socket(target.get_mut(), role, Some(websocket_config()))
-                .await;
+        let mut writer = WebSocketStream::from_raw_socket(
+            &mut target.get_mut().inner,
+            role,
+            Some(websocket_config()),
+        )
+        .await;
         while let Some(frame) = source.next().await {
             let frame = frame?;
             tee_message(frames, dir, &frame).await?;
@@ -572,6 +644,9 @@ fn websocket_config() -> WebSocketConfig {
 }
 
 fn websocket_accept(method: &hyper::Method, headers: &hyper::HeaderMap) -> Option<String> {
+    if headers.get_all(header::SEC_WEBSOCKET_KEY).iter().count() != 1 {
+        return None;
+    }
     let key = headers.get(header::SEC_WEBSOCKET_KEY)?;
     if method != hyper::Method::GET
         || headers
@@ -590,6 +665,9 @@ fn websocket_request(
     headers: &hyper::HeaderMap,
 ) -> Result<Request<()>, ProxyError> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    if headers.get_all(header::SEC_WEBSOCKET_KEY).iter().count() != 1 {
+        return Err("expected exactly one Sec-WebSocket-Key".into());
+    }
     let mut forwarded = headers.clone();
     strip_hop_headers(&mut forwarded)?;
     let mut request = ClientRequestBuilder::new(url).into_client_request()?;
@@ -626,11 +704,12 @@ fn websocket_response(mut headers: hyper::HeaderMap) -> Result<Response<Body>, P
     Ok(response)
 }
 
-async fn relay<S>(
+async fn forward_frame<S>(
     frame: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
-    target: &mut WebSocketStream<S>,
+    target: &mut WebSocketStream<RelayIo<S>>,
     frames: Option<&FrameLog>,
     dir: &str,
+    role: Role,
 ) -> Result<bool, ProxyError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -641,7 +720,13 @@ where
     let frame = frame?;
     tee_message(frames, dir, &frame).await?;
     let closing = frame.is_close();
-    target.send(frame).await?;
+    let mut writer = WebSocketStream::from_raw_socket(
+        &mut target.get_mut().inner,
+        role,
+        Some(websocket_config()),
+    )
+    .await;
+    writer.send(frame).await?;
     Ok(!closing)
 }
 
@@ -696,6 +781,12 @@ fn plain(status: StatusCode, message: &'static str) -> Response<Body> {
             .boxed(),
     );
     *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::DATE,
+        httpdate::fmt_http_date(std::time::SystemTime::now())
+            .parse()
+            .expect("HTTP date"),
+    );
     response
 }
 
@@ -838,18 +929,8 @@ mod tests {
             let (mut browser, proxy_down) = tokio::io::duplex(4096);
             let (proxy_up, mut server) = tokio::io::duplex(4096);
             let task = tokio::spawn(async move {
-                let mut upstream = WebSocketStream::from_raw_socket(
-                    proxy_up,
-                    Role::Client,
-                    Some(websocket_config()),
-                )
-                .await;
-                let mut downstream = WebSocketStream::from_raw_socket(
-                    proxy_down,
-                    Role::Server,
-                    Some(websocket_config()),
-                )
-                .await;
+                let mut upstream = reader_socket(proxy_up, Role::Client).await;
+                let mut downstream = reader_socket(proxy_down, Role::Server).await;
                 relay_websocket(&mut upstream, &mut downstream, None)
                     .await
                     .unwrap();
@@ -970,12 +1051,14 @@ mod tests {
             .await
             .unwrap();
         let frame = downstream.next().await; // queues tungstenite's automatic receipt
-        relay(frame, &mut upstream, None, "c2u").await.unwrap();
+        upstream.send(frame.unwrap().unwrap()).await.unwrap();
         assert_eq!(read_close(&mut server, true).await, [3, 232]);
         server.write_all(&close_wire(close, false)).await.unwrap();
-        relay_close_reply(&mut upstream, &mut downstream, None, "u2c", Role::Server)
-            .await
-            .unwrap();
+        let receipt = upstream.next().await.unwrap().unwrap();
+        let mut writer =
+            WebSocketStream::from_raw_socket(downstream.get_mut(), Role::Server, None).await;
+        writer.send(receipt).await.unwrap();
+        drop(writer);
         let _ = downstream.flush().await; // the pre-#72 loop did this unconditionally
         drop(downstream);
         assert_eq!(read_close(&mut browser, false).await, [3, 232]);
@@ -992,10 +1075,8 @@ mod tests {
                 let (mut browser, proxy_down) = tokio::io::duplex(4096);
                 let (proxy_up, mut server) = tokio::io::duplex(4096);
                 let task = tokio::spawn(async move {
-                    let mut upstream =
-                        WebSocketStream::from_raw_socket(proxy_up, Role::Client, None).await;
-                    let mut downstream =
-                        WebSocketStream::from_raw_socket(proxy_down, Role::Server, None).await;
+                    let mut upstream = reader_socket(proxy_up, Role::Client).await;
+                    let mut downstream = reader_socket(proxy_down, Role::Server).await;
                     assert!(relay_websocket(&mut upstream, &mut downstream, None)
                         .await
                         .is_err());
@@ -1019,6 +1100,181 @@ mod tests {
             .await
             .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn duplicate_websocket_keys_rejected_over_memory_http() {
+        let (mut client, server) = tokio::io::duplex(8192);
+        let task = tokio::spawn(async move {
+            let service = service_fn(|request: Request<Incoming>| async move {
+                assert!(websocket_accept(request.method(), request.headers()).is_none());
+                assert!(
+                    websocket_request("ws://memory/ws".parse().unwrap(), request.headers())
+                        .is_err()
+                );
+                Ok::<_, Infallible>(plain(StatusCode::BAD_REQUEST, "invalid websocket upgrade"))
+            });
+            downstream_http()
+                .serve_connection(TokioIo::new(server), service)
+                .await
+                .unwrap();
+        });
+        client.write_all(format!("GET /ws HTTP/1.1\r\nHost: memory\r\nConnection: Upgrade, close\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Key: {}\r\n\r\n", STANDARD.encode(b"another nonce123")).as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 400"));
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_errors_have_date_over_memory_http() {
+        for status in [
+            StatusCode::BAD_REQUEST,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
+        ] {
+            let (mut client, server) = tokio::io::duplex(8192);
+            let task = tokio::spawn(async move {
+                let service = service_fn(move |_: Request<Incoming>| async move {
+                    Ok::<_, Infallible>(plain(status, "local error"))
+                });
+                downstream_http()
+                    .serve_connection(TokioIo::new(server), service)
+                    .await
+                    .unwrap();
+            });
+            client
+                .write_all(b"GET / HTTP/1.1\r\nHost: memory\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            client.read_to_end(&mut response).await.unwrap();
+            let text = String::from_utf8(response).unwrap();
+            assert!(text.starts_with(&format!("HTTP/1.1 {}", status.as_u16())));
+            let dates: Vec<_> = text
+                .lines()
+                .filter_map(|line| line.strip_prefix("date: "))
+                .collect();
+            assert_eq!(dates.len(), 1);
+            assert!(httpdate::parse_http_date(dates[0]).is_ok());
+            task.await.unwrap();
+        }
+    }
+
+    fn control_wire(opcode: u8, payload: &[u8], masked: bool) -> Vec<u8> {
+        let mut wire = vec![
+            0x80 | opcode,
+            payload.len() as u8 | if masked { 0x80 } else { 0 },
+        ];
+        let mask = [1, 2, 3, 4];
+        if masked {
+            wire.extend(mask);
+        }
+        wire.extend(
+            payload
+                .iter()
+                .enumerate()
+                .map(|(i, b)| if masked { b ^ mask[i % 4] } else { *b }),
+        );
+        wire
+    }
+
+    async fn read_control(socket: &mut DuplexStream, opcode: u8, masked: bool) -> Vec<u8> {
+        let mut head = [0; 2];
+        socket.read_exact(&mut head).await.unwrap();
+        assert_eq!(head[0], 0x80 | opcode);
+        assert_eq!(head[1] & 128 != 0, masked);
+        let mut mask = [0; 4];
+        if masked {
+            socket.read_exact(&mut mask).await.unwrap();
+        }
+        let mut payload = vec![0; usize::from(head[1] & 127)];
+        socket.read_exact(&mut payload).await.unwrap();
+        if masked {
+            for (i, b) in payload.iter_mut().enumerate() {
+                *b ^= mask[i % 4];
+            }
+        }
+        payload
+    }
+
+    #[tokio::test]
+    async fn ping_only_forwards_peer_pong_even_after_more_reads() {
+        for client_first in [true, false] {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let (mut browser, proxy_down) = tokio::io::duplex(4096);
+                let (proxy_up, mut server) = tokio::io::duplex(4096);
+                let task = tokio::spawn(async move {
+                    let mut upstream = reader_socket(proxy_up, Role::Client).await;
+                    let mut downstream = reader_socket(proxy_down, Role::Server).await;
+                    relay_websocket(&mut upstream, &mut downstream, None)
+                        .await
+                        .unwrap();
+                });
+                let (initiator, peer) = if client_first {
+                    (&mut browser, &mut server)
+                } else {
+                    (&mut server, &mut browser)
+                };
+                for payload in [b"first".as_slice(), b"second".as_slice()] {
+                    initiator
+                        .write_all(&control_wire(9, payload, client_first))
+                        .await
+                        .unwrap();
+                    assert_eq!(read_control(peer, 9, client_first).await, payload);
+                    let mut byte = [0];
+                    assert!(tokio::time::timeout(
+                        Duration::from_millis(20),
+                        initiator.read(&mut byte)
+                    )
+                    .await
+                    .is_err());
+                    peer.write_all(&control_wire(10, b"actual peer receipt", !client_first))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        read_control(initiator, 10, !client_first).await,
+                        b"actual peer receipt"
+                    );
+                }
+                initiator
+                    .write_all(&close_wire(None, client_first))
+                    .await
+                    .unwrap();
+                assert!(read_close(peer, client_first).await.is_empty());
+                peer.write_all(&close_wire(None, !client_first))
+                    .await
+                    .unwrap();
+                assert!(read_close(initiator, !client_first).await.is_empty());
+                task.await.unwrap();
+                let mut extra = Vec::new();
+                browser.read_to_end(&mut extra).await.unwrap();
+                server.read_to_end(&mut extra).await.unwrap();
+                assert!(extra.is_empty(), "no synthetic/duplicate Pong: {extra:?}");
+            })
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn slow_close_receipt_within_node_budget_is_forwarded() {
+        let (mut browser, proxy_down) = tokio::io::duplex(4096);
+        let (proxy_up, mut server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(async move {
+            let mut upstream = reader_socket(proxy_up, Role::Client).await;
+            let mut downstream = reader_socket(proxy_down, Role::Server).await;
+            relay_websocket(&mut upstream, &mut downstream, None)
+                .await
+                .unwrap();
+        });
+        browser.write_all(&close_wire(None, true)).await.unwrap();
+        assert!(read_close(&mut server, true).await.is_empty());
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        server.write_all(&close_wire(None, false)).await.unwrap();
+        assert!(read_close(&mut browser, false).await.is_empty());
+        task.await.unwrap();
+        assert_eq!(CLOSE_REPLY_TIMEOUT, Duration::from_secs(30));
     }
 
     fn forbidden_headers(headers: &hyper::HeaderMap) -> Vec<&str> {

@@ -81,15 +81,18 @@ def utc_day():
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def size(paths, *, runner=None):
+def size(paths, *, runner=None, events=None):
     paths = [str(p) for p in paths if p.exists()]
     if not paths:
         return 0
     runner = runner or subprocess.run
     command = ['du', '-sk', *paths]
+    totals = []
     for attempt in range(4):  # Initial measurement plus at most three retries.
         result = runner(command, capture_output=True, text=True,
                         env=dict(os.environ, LC_ALL='C'))
+        total = sum(int(line.split()[0]) * 1024 for line in result.stdout.splitlines())
+        totals.append(total)
         if result.returncode == 0:
             break
         # macOS du: "du: <path>: No such file or directory". Never hide other errors.
@@ -100,11 +103,14 @@ def size(paths, *, runner=None):
                                                 output=result.stdout, stderr=result.stderr)
         if attempt < 3:
             time.sleep(1)
-    total = sum(int(line.split()[0]) * 1024 for line in result.stdout.splitlines())
     if result.returncode:
-        print(json.dumps({'event': 'du_size', 'approximate': True, 'bytes': total,
-                          'attempts': 4, 'paths': paths, 'stderr': result.stderr}),
-              file=sys.stderr, flush=True)
+        total = max(totals)
+        event = {'event': 'du_size', 'approximate': True, 'bytes': total,
+                 'attempts': len(totals), 'attempt_bytes': totals,
+                 'paths': paths, 'stderr': result.stderr}
+        if events is not None:
+            events.append(event)
+        print(json.dumps(event), file=sys.stderr, flush=True)
     return total
 
 
@@ -114,22 +120,29 @@ def resource_root():
     return Path(common).resolve().parent
 
 
+class SpaceBudgetExceeded(ValueError):
+    def __init__(self, estimate):
+        self.estimate = estimate
+        super().__init__("space budget exceeded; preserve evidence: " + json.dumps(estimate))
+
+
 def space_check(resource, reference, remaining=26, *, build=True):
     if not reference.is_dir() or not (reference / 'direct/recording.jsonl').is_file():
         raise ValueError('--size-reference must be a whole live3 run directory (with direct/recording.jsonl)')
-    reference_bytes = size([reference])
+    events = []
+    reference_bytes = size([reference], events=events)
     # 50% above measured run size; logs, rejected runs remain on disk.
     per_run = math.ceil(reference_bytes * 1.5)
-    used = size([resource / '_build', resource / '_tmp'])
+    used = size([resource / '_build', resource / '_tmp'], events=events)
     needed = per_run * remaining + REPORT_RESERVE_BYTES + (BUILD_RESERVE_BYTES if build else 0)
     free = shutil.disk_usage(resource).free
     result = {'resource_root': str(resource), 'cap_bytes': CAP_BYTES, 'used_bytes': used,
               'size_reference': str(reference), 'reference_bytes': reference_bytes,
               'per_run_estimate_bytes': per_run, 'remaining_runs': remaining,
               'estimated_additional_bytes': needed, 'projected_bytes': used + needed,
-              'filesystem_free_bytes': free}
+              'filesystem_free_bytes': free, 'approximate': bool(events), 'events': events}
     if used + needed > CAP_BYTES or needed > free:
-        raise ValueError('space budget exceeded; preserve evidence: ' + json.dumps(result))
+        raise SpaceBudgetExceeded(result)
     return result
 
 
@@ -165,6 +178,18 @@ class Batch:
     def save(self):
         write(self.path / 'batch.json', self.state)
 
+    def record_space(self, remaining=26, *, build=False):
+        try:
+            estimate = space_check(Path(self.state["resource_root"]),
+                                   Path(self.state["size_reference"]), remaining, build=build)
+        except SpaceBudgetExceeded as error:
+            self.state.setdefault("space_checks", []).append(error.estimate)
+            self.save()
+            raise
+        self.state.setdefault("space_checks", []).append(estimate)
+        self.save()
+        return estimate
+
     def build(self):
         # Refuse even an empty pre-existing target: every batch starts from nothing.
         try:
@@ -184,7 +209,7 @@ class Batch:
                                   root=ROOT, stdout=output, stderr=subprocess.STDOUT)
                 except subprocess.CalledProcessError as error:
                     raise ApparatusUnsafe(f'batch Cargo {mode} failed; see {self.path / (mode + ".log")}') from error
-            space_check(Path(self.state['resource_root']), Path(self.state['size_reference']), build=False)
+            self.record_space()
         self.state['build'] = {'target_dir': str(self.target), 'binary': str(self.binary),
                                'cargo_home': str(self.cargo_home), 'toolchain': toolchain,
                                'sha256': hashlib.sha256(self.binary.read_bytes()).hexdigest()}
@@ -220,7 +245,7 @@ class Batch:
             raise ValueError('REFUSED: batch crossed UTC midnight; start a NEW batch without reusing these runs')
         if self.pin() != self.state['pinned']:
             raise ApparatusUnsafe('FAIL: apparatus/source changed; start a NEW batch, never edit capture metadata')
-        return space_check(Path(self.state['resource_root']), Path(self.state['size_reference']), remaining, build=False)
+        return self.record_space(remaining)
 
     def admit(self, name):
         side = 'proxy' if name == 'proxy' else 'direct'

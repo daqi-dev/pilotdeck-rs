@@ -82,7 +82,8 @@ BINARY = None
 
 # Only fixture values that B1 explicitly sets are admitted. Inherited settings
 # (including Node loaders, proxy variables and dynamic loaders) never reach Node.
-FIXTURE_ENV = ('EXP008_OUT', 'PILOT_HOME', 'PILOTDECK_CONFIG_PATH', 'TMPDIR',
+FIXTURE_ENV = ('HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME',
+               'XDG_STATE_HOME', 'XDG_RUNTIME_DIR', 'EXP008_OUT', 'PILOT_HOME', 'PILOTDECK_CONFIG_PATH', 'TMPDIR',
                'WORKSPACES_ROOT', 'PILOTDECK_GATEWAY_HOST', 'PILOTDECK_GATEWAY_PORT',
                'PILOTDECK_GATEWAY_TOKEN', 'PILOTDECK_GATEWAY_TOKEN_PATH',
                'PILOTDECK_GATEWAY_URL', 'HOST', 'SERVER_PORT', 'VITE_PORT',

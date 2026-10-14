@@ -40,3 +40,7 @@ S2 coverage.json 里的 244 条首批豁免只是未执行路由的范围登记�
 ## 第 6 轮：更正为两个独立事件单元（替代第 5 轮联合约束）
 
 按用户更正及 [multimodal.md](multimodal.md)，U1 为两连接第一次 projects_updated.changeType（17/3），U2 为第二次 projects_updated.changedFile（18/2）。两次调度周期分别定类，每单元池 >=20、每类 >=2、必须命中该类全体成员；同次广播两连接仍须同值。U1/U2 可独立组合，首次 add + 第二次 .jsonl 是合法正例，不要求该联合组合在池里出现。第 5 轮“第四组合必须 FAIL”的结论撤销。其他字段边界不变，proxy 的 Date/额外 close 仍未登记；DRAFT 与独立评审 null 不变。
+
+## #59 / B3 前置审批规则更正（待定标）
+
+前文「Rust 豁免须人工」由 acceptance.md 的静态清单与 FROZEN 同款 `Approved-By` / `Approval-Basis` 门落实：具名人或精确的「AI 代批，待人复核（协调者）」均需三份真实依据。旧的任意 `approver` 字符串不再能批准 Rust 接管豁免。这是 #59 明确授权的装置修复，不登记任何 TS/Rust 行为差异；已有用例的实际 Rust 处理证明仍须成立。合并后重新定标并由两家独立评审确认。

@@ -14,7 +14,7 @@ import shutil
 import stat
 import subprocess
 
-SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md', 'multimodal.md')
+SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md', 'multimodal.md', 'rust-routes.json')
 # All git-tracked exp008 files are apparatus, including its other entrypoints.
 EXP008_FILES = ('compare.py', 'controls.py', 'driver.mjs', 'enumerate_hook.mjs',
                 'preload.mjs', 'proxy/Cargo.lock', 'proxy/Cargo.toml', 'proxy/src/main.rs',
@@ -240,9 +240,10 @@ def cargo_identity(cwd, home, target, root=None):
         versions[name] = cargo_process([name, *args], cwd, home, target,
                                       root=root, capture_output=True, text=True).stdout.strip()
     channel = rust_toolchain_admission(cwd, home, root)
-    expected = channel if channel.count('.') == 2 else channel + '.0'
     release = re.search(r'^release: (.+)$', versions['rustc'], re.M)
-    if not release or release[1] != expected:
+    # rustup accepts major.minor selectors; patches resolve within that series.
+    expected = re.escape(channel) + (r'\.[0-9]+' if channel.count('.') == 1 else '')
+    if not release or re.fullmatch(expected, release[1]) is None:
         raise ApparatusUnsafe('rustc release differs from root declaration: ' + channel)
     return versions
 
@@ -357,3 +358,41 @@ def node_environment(values=None):
     env.pop('NODE_PATH', None)
     env.pop('NODE_OPTIONS', None)
     return env
+
+
+def approval_valid(approver, basis, root):
+    """Shared FROZEN / Rust waiver approval admission (report + two reviews)."""
+    import unicodedata
+    approvals = [approver] if isinstance(approver, str) else []
+    bases = [basis] if isinstance(basis, str) else []
+    root = Path(root).resolve()
+
+    def concrete(value):
+        return bool(value.strip()) and not re.search(r'<|>|TODO|pending|null|待批准|待人批准|待定标', value, re.I)
+
+    def visible(value):
+        return all(char.isprintable() and unicodedata.category(char)[0] not in ('C', 'M')
+                   and ord(char) not in (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800)
+                   and not (0xFE00 <= ord(char) <= 0xFE0F or 0xE0100 <= ord(char) <= 0xE01EF)
+                   and not (char.isspace() and char != ' ') for char in value)
+
+    approved = (len(approvals) == 1 and concrete(approvals[0]) and visible(approvals[0])
+                and not re.search(r'Claude|GPT|GLM|Gemini|DeepSeek|Qwen|Doubao|ChatGPT|模型', approvals[0], re.I))
+    if approved and re.search(r'AI|代批|待人复核', approvals[0], re.I):
+        approved = approvals[0].strip() == 'AI 代批，待人复核（协调者）'
+    # Both approval modes require one concrete basis: calibration report + two reviews.
+    basis_paths = re.findall(r'(?:[^\s`+;,，；]+/)+[^\s`+;,，；]+\.(?:json|md|log|txt)', bases[0]) if len(bases) == 1 else []
+    allowed = [root]
+    try:
+        common = subprocess.check_output(['git', '-C', str(root), 'rev-parse',
+                                         '--path-format=absolute', '--git-common-dir'],
+                                        text=True, stderr=subprocess.PIPE).strip()
+        allowed.append(Path(common).resolve().parent / '_tmp')
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    resolved_basis = [(root / name).resolve() for name in basis_paths]
+    valid_basis = (len(bases) == 1 and concrete(bases[0]) and visible(bases[0])
+                   and len(set(resolved_basis)) >= 3
+                   and all(path.is_file() and any(path.is_relative_to(base) for base in allowed)
+                           for path in resolved_basis))
+    return approved and valid_basis

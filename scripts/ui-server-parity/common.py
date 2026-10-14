@@ -65,7 +65,12 @@ def dependency_roots(baseline):
     node_ancestor_admission(baseline)
     modules, packages, links, directories = set(), set(), [], []
 
+    discovered = set()
+
     def discover(directory):
+        if directory in discovered:
+            return
+        discovered.add(directory)
         with os.scandir(directory) as entries:
             for entry in entries:
                 path = Path(entry.path)
@@ -82,11 +87,31 @@ def dependency_roots(baseline):
     if not top.is_dir() or top.is_symlink():
         raise ApparatusUnsafe('missing/nonregular baseline node_modules tree: ' + str(top))
     manifest = baseline / 'package.json'
-    if manifest.exists():
-        workspaces = json.loads(manifest.read_text()).get('workspaces', [])
-        if isinstance(workspaces, dict):
+    pnpm = baseline / 'pnpm-workspace.yaml'
+    if manifest.exists() or pnpm.exists():
+        # pnpm owns workspace membership when its manifest is present.
+        if pnpm.exists():
+            try:
+                import yaml
+            except ImportError as error:
+                raise ApparatusUnsafe('pnpm workspace parser requires host PyYAML') from error
+            try:
+                declaration = yaml.safe_load(pnpm.read_text())
+            except yaml.YAMLError as error:
+                raise ApparatusUnsafe('invalid pnpm workspace YAML: ' + str(error)) from error
+            if declaration is None:
+                declaration = {}
+            if not isinstance(declaration, dict):
+                raise ApparatusUnsafe('invalid pnpm workspace declaration')
+            workspaces = declaration.get('packages')
+            # Baseline pnpm 10.32.1 defaults omitted packages to all projects.
+            if workspaces is None:
+                workspaces = ['**']
+        else:
+            workspaces = json.loads(manifest.read_text()).get('workspaces', [])
+        if not pnpm.exists() and isinstance(workspaces, dict):
             workspaces = workspaces.get('packages', [])
-        if not isinstance(workspaces, list) or any(not isinstance(p, str) for p in workspaces):
+        if not isinstance(workspaces, list) or any(not isinstance(p, str) or (pnpm.exists() and not p) for p in workspaces):
             raise ApparatusUnsafe('invalid baseline workspaces declaration')
         for pattern in workspaces:
             if Path(pattern.lstrip('!')).is_absolute() or '..' in Path(pattern).parts:
@@ -103,23 +128,38 @@ def dependency_roots(baseline):
 
         for path in directories:
             relative = path.relative_to(baseline).parts
+            if pnpm.exists() and any(part in ("node_modules", "bower_components") for part in relative):
+                continue
             if (any(workspace_match(relative, Path(p).parts) for p in workspaces if not p.startswith('!'))
                     and not any(workspace_match(relative, Path(p[1:]).parts) for p in workspaces if p.startswith('!'))
                     and (path / 'package.json').is_file()):
                 packages.add(path)
-    # Actual links cover undeclared local/file: packages too. pnpm store targets
-    # already live in node_modules; outside that tree include the entire package.
+    # Bind the transitive closure of actual link targets, including plain files
+    # and trees without package.json. Inventory first; never recurse via links
+    # while hashing. Seen physical directories make cycles terminate.
+    targets = set()
     for link in links:
         target = link.resolve()
+        if not target.exists():
+            continue  # target spelling is still bound, including broken links
+        targets.add(target)
         if (target != baseline and target.is_relative_to(baseline) and target.is_dir()
-                and 'node_modules' not in target.relative_to(baseline).parts
-                and (target / 'package.json').is_file()):
+                and (target / 'package.json').is_file()
+                and 'node_modules' not in target.relative_to(baseline).parts):
             packages.add(target)
-    roots = modules | packages
+        if target.is_dir():
+            discover(target)
+    roots = modules | packages | targets
     effective = [p for p in sorted(roots) if not any(parent in roots for parent in p.parents)]
-    return {'node_modules': sorted(str(p.relative_to(baseline)) for p in modules),
-            'workspace_packages': sorted(str(p.relative_to(baseline)) for p in packages),
-            'covered_roots': [str(p.relative_to(baseline)) for p in effective]}
+
+    def label(path):
+        return str(path.relative_to(baseline)) if path.is_relative_to(baseline) else str(path)
+
+    return {'node_modules': sorted(label(p) for p in modules),
+            'workspace_packages': sorted(label(p) for p in packages),
+            'link_targets': sorted(label(p) for p in targets),
+            'covered_roots': [label(p) for p in effective]}
+
 
 
 def node_ancestor_admission(baseline):
@@ -149,7 +189,7 @@ def node_modules_hash(baseline, *, coverage=None):
 
     def visit(path):
         mode = path.lstat().st_mode
-        frame(os.fsencode(path.relative_to(baseline)))
+        frame(os.fsencode(path.relative_to(baseline) if path.is_relative_to(baseline) else path))
         if stat.S_ISLNK(mode):
             frame(b'symlink')
             frame(os.fsencode(os.readlink(path)))
@@ -169,7 +209,7 @@ def node_modules_hash(baseline, *, coverage=None):
 
     try:
         inventory = dependency_roots(baseline)
-        frame(b'baseline-dependencies-v2')
+        frame(b'baseline-dependencies-v3')
         frame(json.dumps(inventory, sort_keys=True, separators=(',', ':')).encode())
         for relative in inventory['covered_roots']:
             visit(baseline / relative)
@@ -190,7 +230,8 @@ def source_hashes(baseline, recorder):
         if not directory.is_dir():
             raise ValueError(f'missing baseline code tree: {directory}')
         files.extend(p for p in directory.rglob('*') if p.is_file())
-    for name in ('package.json', 'pnpm-lock.yaml', 'ui/package.json'):
+    for name in ('package.json', 'pnpm-lock.yaml', 'ui/package.json',
+                 *(['pnpm-workspace.yaml'] if (baseline / 'pnpm-workspace.yaml').exists() else [])):
         path = baseline / name
         if not path.is_file():
             raise ValueError(f'missing baseline dependency manifest: {path}')

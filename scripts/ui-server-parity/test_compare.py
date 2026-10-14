@@ -49,10 +49,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from check_frozen import check as frozen
 from check_ruler import check as ruler
-from compare import Normalizer, Side, compare_sides, diff, read_jsonl, sse_events
+from compare import Normalizer, Side, compare_sides, diff, read_jsonl, sse_events, validate_ndjson
 from policy import (CHAT_FIXTURE_SESSIONS, CLOCK_FORMATS, CLOCK_PAIRS,
                     ISO_MS, SQL_S, EPOCH_MS, MTIME_MS)
 from snapshot import capture
@@ -80,6 +81,69 @@ class ComparatorBoundaries(unittest.TestCase):
         rows = read_jsonl(path)
         fn(rows)
         controls.write_log(path, rows)
+
+    def test_activity_revision_gaps_and_interleaved_sessions_use_exact_oob(self):
+        for side, revision_map in ((self.left, {7: 101, 11: 900}), (self.right, {7: 3, 11: 8000})):
+            rows = read_jsonl(side / 'recording.jsonl')
+            def rewrite(body):
+                if body.get('type') == 'session-activity':
+                    body['activity']['revision'] = revision_map[body['activity']['revision']]
+                elif body.get('type') == 'session-activity-snapshot':
+                    for item in body['activities']:
+                        item['revision'] = revision_map[item['revision']]
+            controls.mutate_frames(rows, rewrite)
+            controls.write_log(side / 'recording.jsonl', rows)
+            path = side / 'activity-direct.jsonl'
+            observers = read_jsonl(path)
+            for row in observers:
+                for item in row['frame']['activities']:
+                    item['revision'] = revision_map[item['revision']]
+            # Other sessions/users consume global revisions between this user's
+            # revisions. An overlapping session is witnessed only via direct IO.
+            extra = dict(observers[1], kind='ws_frame', dir='u2c', opcode='text')
+            extra.pop('frame')
+            extra['payload_b64'] = controls.b64(json.dumps({'type': 'session-activity', 'activity': {
+                'sessionId': 'session-2', 'revision': revision_map[7]+1, 'processing': True}}))
+            observers.insert(2, extra)
+            for index, row in enumerate(observers, 1):
+                row['seq'], row['arrival_ns'] = index, str(index)
+            path.write_text(''.join(json.dumps(row)+'\n' for row in observers))
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+        def shift_only_dut(rows):
+            controls.mutate_frames(rows, lambda body: body.get('activity', {}).update(revision=999999)
+                                   if body.get('type') == 'session-activity' else None)
+        self.mutate_log(shift_only_dut)
+        self.assertIn('activity.out-of-band', self.compare()['rules'])
+
+    def test_ndjson_integrity_is_checked_even_when_both_sides_have_same_bad_bytes(self):
+        for raw, valid, path in ((b'{"value":"a"}\n{"value":"b"}\n', True, '/api/ndjson'),
+                                 (b'{"value":"unterminated', False, '/api/ndjson'),
+                                 (b'{"stage":"complete"}', False, '/api/update/apply/')):
+            for side in (self.left, self.right):
+                rows = read_jsonl(side / 'recording.jsonl')
+                rows = [row for row in rows if row.get('id') != 99]
+                response = copy.deepcopy(next(row for row in rows if row['kind'] == 'http_response' and row['id'] == 3))
+                response['id'] = 99
+                response['headers'] = [controls.hdr('content-type', 'application/x-ndjson')] + (
+                    [controls.hdr('x-pilotdeck-handler', 'ts')] if side == self.right else [])
+                method = 'POST' if path.startswith('/api/update') else 'GET'
+                extra = [{'kind': 'http_request', 'id': 99, 'method': method, 'path': path,
+                          'query': None, 'headers': [], 'case': f'_probe:{method}:{path}'},
+                         {'kind': 'http_end', 'id': 99, 'direction': 'request', 'offset': 0},
+                         response,
+                         {'kind': 'http_chunk', 'id': 99, 'direction': 'response', 'offset': 0,
+                          'bytes': len(raw), 'body_b64': controls.b64(raw)},
+                         {'kind': 'http_end', 'id': 99, 'direction': 'response', 'offset': len(raw)}]
+                for row in extra:
+                    row["arrival_ns"] = rows[-1]["arrival_ns"]
+                rows[-1:-1] = extra
+                controls.write_log(side / 'recording.jsonl', rows)
+            report = self.compare()
+            if valid:
+                self.assertEqual(report['verdict'], 'PASS', report['differences'])
+            else:
+                self.assertTrue(any(d['rule'] == 'evidence.integrity' and '.ndjson' in d['location']
+                                    for d in report['differences']))
 
     def test_multivalue_header_name_case_and_grouping(self):
         def mutate(rows):
@@ -263,6 +327,10 @@ class ComparatorBoundaries(unittest.TestCase):
 
     def test_handler_rust_declared_requires_actual_rust_case(self):
         self.matrix['routes'][0]['handler'] = 'rust'
+        self.assertEqual(self.compare()['verdict'], 'FAIL')  # static list is still empty
+        owned = {self.matrix['routes'][0]['route']}
+        self.enterContext(patch('check_coverage.rust_routes', return_value=owned))
+        self.enterContext(patch('compare.rust_routes', return_value=owned))
         report = self.compare()
         self.assertTrue(any(d['rule'] == 'coverage.handler' and 'auth.register' in d['location'] for d in report['differences']))
         # A real marker, not client metadata, must change when TS claims Rust.
@@ -528,6 +596,20 @@ class ClockTests(unittest.TestCase):
         self.assertEqual(n.value({'createdAt': s['createdAt']}, 'http', 'unknown'), {'createdAt': s['createdAt']})
         self.assertEqual(n.value({'sessions': [{'createdAt': None}]}, 'http', 'readonly.sessions'), {'sessions': [{'createdAt': None}]})
         self.assertFalse(errors)
+
+
+class NDJSONIntegrity(unittest.TestCase):
+    def test_valid_lines_and_corruption_in_both_sides(self):
+        for raw, valid in ((b'{"stage":"progress"}\n{"stage":"complete"}\n', True),
+                           (b'{"stage":"complete"}', True), (b'{bad}\n', False),
+                           (b'\xff\n', False), (b'', True), (b'{}\n\n', False)):
+            for side in ('left', 'right'):
+                errors = []
+                validate_ndjson(raw, errors, 'stream', side)
+                self.assertEqual(not errors, valid)
+        errors = []
+        validate_ndjson(b'{"stage":"complete"}', errors, 'update', 'left', require_final_newline=True)
+        self.assertTrue(errors)
 
 
 if __name__ == '__main__':

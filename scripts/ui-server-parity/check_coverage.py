@@ -42,6 +42,34 @@ import argparse
 import json
 import re
 from pathlib import Path
+from enum import Enum
+from apparatus import approval_valid
+
+ROOT = Path(__file__).resolve().parents[2]
+RUST_ROUTES = ROOT / "specs/ui-server-parity/rust-routes.json"
+
+
+class Handler(str, Enum):
+    TS = "ts"
+    RUST = "rust"
+
+
+def rust_routes(manifest=None):
+    """Static Rust router/config export; never infer ownership from traffic."""
+    manifest = json.loads(RUST_ROUTES.read_text()) if manifest is None else manifest
+    if type(manifest.get("schema")) is not int or manifest["schema"] != 1 or not isinstance(manifest.get("routes"), list):
+        raise ValueError("invalid Rust route manifest")
+    routes = set()
+    for row in manifest["routes"]:
+        if (Handler(row["handler"]) != Handler.RUST or row["method"] not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ALL")
+                or not isinstance(row["path"], str) or not row["path"].startswith("/")
+                or any(c.isspace() for c in row["path"]) or "?" in row["path"]):
+            raise ValueError("invalid Rust route declaration")
+        key = route_key(row["method"], row["path"])
+        if key in routes:
+            raise ValueError("duplicate Rust route: " + key)
+        routes.add(key)
+    return routes
 
 
 def route_key(method, path):
@@ -58,8 +86,9 @@ def matches(route, method, path):
     return re.fullmatch(pattern + '/?', path.split('?', 1)[0]) is not None
 
 
-def check(enumeration, matrix, scenarios, evidence=None):
+def check(enumeration, matrix, scenarios, evidence=None, *, takeover=None):
     errors = []
+    owned = rust_routes(takeover)
     if enumeration.get('appCaptured') is not True or not enumeration.get('routes'):
         errors.append('invalid/empty runtime enumeration')
     routes = {route_key(r['method'], r['path']) for r in enumeration.get('routes', [])}
@@ -83,14 +112,18 @@ def check(enumeration, matrix, scenarios, evidence=None):
         waiver = row.get('exemption')
         if not cases and not waiver:
             errors.append(f'{route}: missing direct HTTP case or exemption')
-        if waiver and (waiver.get('route') != route or not all(isinstance(waiver.get(k), str) and waiver[k].strip() for k in ('reason', 'approver'))):
+        if waiver and (waiver.get('route') != route or not all(isinstance(waiver.get(k), str) and waiver[k].strip() for k in (('reason',) if route in owned else ('reason', 'approver')))):
             errors.append(f'{route}: malformed exemption')
-        if evidence is not None and waiver and isinstance(waiver.get('approver'), str) and 'AI 代批' in waiver['approver']:
-            # Check all observed handlers, including failures and cases outside
-            # the declared coverage list; a waiver cannot hide Rust takeover.
-            if any(e.get('kind') == 'case_http' and e.get('handler') == 'rust'
-                   and e.get('route') == route for e in evidence):
-                errors.append(f'{route}: Rust-handled route exemption requires human approval (AI 代批 forbidden)')
+        if route in owned and waiver and not approval_valid(
+                waiver.get('Approved-By'), waiver.get('Approval-Basis'), ROOT):
+            errors.append(f'{route}: Rust exemption requires valid Approved-By / Approval-Basis')
+        if 'handler' in row:
+            try:
+                declared = Handler(row['handler'])
+                if (declared == Handler.RUST) != (route in owned):
+                    errors.append(f'{route}: handler disagrees with static Rust routes')
+            except (ValueError, TypeError):
+                errors.append(f'{route}: invalid handler enum')
         for case_id in cases:
             case = definitions.get(case_id)
             if not case or case.get('transport') != 'http' or case.get('route') != route or not isinstance(case.get('expected_statuses'), list) or not case['expected_statuses'] or any(type(status) is not int or not 100 <= status < 600 for status in case['expected_statuses']):
@@ -103,6 +136,19 @@ def check(enumeration, matrix, scenarios, evidence=None):
                              and e.get('route') == route and e.get('ok') is True and e.get('status') in case['expected_statuses'] and matches(route, e.get('method', ''), e.get('path', ''))]
                     if not found:
                         errors.append(f'{route}: missing successful {side} HTTP evidence for {case_id}')
+    for route in sorted(owned - routes):
+        errors.append(f'{route}: Rust route absent from runtime enumeration')
+    for event in evidence or []:
+        if event.get('kind') != 'case_http' or event.get('handler') is None:
+            continue
+        try:
+            handler = Handler(event['handler'])
+        except (ValueError, TypeError):
+            errors.append('invalid observed handler enum')
+            continue
+        route = event.get('route')
+        if event.get('side') == 'proxy' and (handler == Handler.RUST) != (route in owned):
+            errors.append(f'{route}: observed handler disagrees with static Rust routes')
     for route in sorted(routes - rows.keys()):
         errors.append(f'{route}: absent from matrix')
     for route in sorted(rows.keys() - routes):
