@@ -172,3 +172,65 @@ def projection_path(path):
 
 DISK_IDS['@projection'] = {projection_path(p): c for p, c in DISK_IDS['@projection'].items()}
 DISK_TIMES['@projection'] = {projection_path(p) for p in DISK_TIMES['@projection']}
+
+# Round 7: representation is a property of the complete source path, never
+# inferred from the candidate value. See normalization.md for producer lines.
+ISO_MS = 'iso-ms-utc'
+SQL_S = 'sql-s-utc'
+EPOCH_MS = 'epoch-ms'
+MTIME_MS = 'epoch-ms-fractional'
+CLOCK_FORMATS = {
+    ('http', 'readonly.projects'): {
+        '*.lastActivity': EPOCH_MS,
+        **{'*.sessions.*.' + name: ISO_MS for name in SESSION_CLOCK_NAMES}},
+    ('http', 'readonly.sessions'): {'sessions.*.' + name: ISO_MS for name in SESSION_CLOCK_NAMES},
+    ('http', 'readonly.messages'): {'messages.*.timestamp': ISO_MS, 'stream.messages.*.timestamp': ISO_MS},
+    ('http', 'shadow.files'): {'items.*.mtimeMs': MTIME_MS},
+    ('http', '_probe:GET:/health'): {'timestamp': ISO_MS, 'startedAt': ISO_MS},
+    ('ws', 'projects_updated'): {
+        **{'projects.*.sessions.*.' + name: ISO_MS for name in SESSION_CLOCK_NAMES},
+        'projects.*.lastActivity': EPOCH_MS, 'projectListRevision': EPOCH_MS, 'timestamp': ISO_MS},
+    ('disk', 'home/auth.db'): {
+        'tables.users.rows.*.created_at': SQL_S, 'tables.users.rows.*.last_login': SQL_S,
+        'tables.app_config.rows.*.created_at': SQL_S, 'tables.vapid_keys.rows.*.created_at': SQL_S},
+    ('disk', '@upload'): {'createdAt': ISO_MS, 'updatedAt': ISO_MS, 'expiresAt': ISO_MS},
+    ('disk', '@chat'): {'*.createdAt': ISO_MS, '*.metadata.updatedAt': ISO_MS,
+                         '*.result.startedAt': ISO_MS, '*.result.completedAt': ISO_MS},
+    ('disk', '@projection'): {projection_path(p): ISO_MS for p in (
+        'anchor.createdAt', 'projections.agent-transcript.conversation.state.entries.*.entry.createdAt',
+        'projections.agent-transcript.conversation.state.entries.*.entry.result.completedAt',
+        'projections.agent-transcript.conversation.state.entries.*.entry.result.startedAt',
+        'projections.agent-transcript.metadata.state.updatedAt',
+        'projections.web-history.agent-statuses.state.*.createdAt')},
+    ('disk', '@registry'): {'records.*.acceptedAt': ISO_MS, 'records.*.updatedAt': ISO_MS},
+}
+for context in ('upload.create', 'upload.content', 'upload.read'):
+    CLOCK_FORMATS['http', context] = {'expiresAt': ISO_MS}
+for context in ('upload_started', 'upload_progress', 'upload_completed'):
+    CLOCK_FORMATS['sse', 'upload.events:' + context] = {'expiresAt': ISO_MS}
+for context in ('config:reloaded', 'status', 'stream_delta', 'text', 'complete'):
+    CLOCK_FORMATS['ws', context] = {'timestamp': ISO_MS}
+# Fail immediately if a new normalization path lacks a representation contract.
+for channel, contexts in (('http', HTTP_TIMES), ('ws', WS_TIMES), ('disk', DISK_TIMES)):
+    for context, paths in contexts.items():
+        assert set(CLOCK_FORMATS[channel, context]) == paths
+
+# Complete object paths and semantic <= relations; '*' is only an array index.
+SESSION_CLOCK_PAIRS = tuple((a, b) for a in ('createdAt', 'created_at')
+                            for b in ('lastActivity', 'updated_at'))
+CLOCK_PAIRS = {
+    ('http', 'readonly.projects'): {'*.sessions.*': SESSION_CLOCK_PAIRS},
+    ('http', 'readonly.sessions'): {'sessions.*': SESSION_CLOCK_PAIRS},
+    ('ws', 'projects_updated'): {'projects.*.sessions.*': SESSION_CLOCK_PAIRS},
+    ('http', '_probe:GET:/health'): {'': (('startedAt', 'timestamp'),)},
+    ('disk', '@upload'): {'': (('createdAt', 'updatedAt'),)},
+    ('disk', '@chat'): {'*.result': (('startedAt', 'completedAt'),)},
+    ('disk', '@projection'): {projection_path('projections.agent-transcript.conversation.state.entries.*.entry.result'):
+                             (('startedAt', 'completedAt'),)},
+    ('disk', '@registry'): {'records.*': (('acceptedAt', 'updatedAt'),)},
+    ('disk', 'home/auth.db'): {'tables.users.rows.*': (('created_at', 'last_login'),)},
+}
+# These lists expose cross-entity ordering to the frontend. Rank the entire
+# response/broadcast. Other pairs retain order/equality within their object.
+CLOCK_RESPONSE_ORDER = {('http', 'readonly.projects'), ('http', 'readonly.sessions'),
+                        ('ws', 'projects_updated')}

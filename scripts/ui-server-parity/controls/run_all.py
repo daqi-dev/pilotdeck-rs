@@ -15,7 +15,7 @@ from compare import RULES, compare_sides, read_jsonl  # noqa: E402
 from snapshot import capture  # noqa: E402
 from controls.identity_paths import run_identity_controls  # noqa: E402
 from controls.multimodal import run_multimodal_controls
-from controls.streams_and_clocks import run_stream_clock_controls  # noqa: E402
+from controls.streams_and_clocks import run_stream_clock_controls, run_http_clock_controls  # noqa: E402
 
 
 def b64(value):
@@ -70,11 +70,11 @@ def fixture(root):
         (side / 'project/note.txt').write_text('offline fixture\n')
         upload_meta = side / 'home/.tmp/chat-uploads/upload-1'
         upload_meta.mkdir(parents=True)
-        write_json(upload_meta / 'metadata.json', {'uploadId': 'upload-1', 'createdAt': 1000, 'updatedAt': 2000, 'expiresAt': 2000000, 'status': 'completed'})
+        write_json(upload_meta / 'metadata.json', {'uploadId': 'upload-1', 'createdAt': '2023-11-14T22:13:20.000Z', 'updatedAt': '2023-11-14T22:13:21.000Z', 'expiresAt': '2023-11-15T22:13:20.000Z', 'status': 'completed'})
         write_json(side / 'snapshot.json', capture(side))
         write_json(side / 'run-meta.json', {'schema': 1, 'mode': mode, 'fixture_path': '/fixture/common/direct',
                                           'run_id': f'offline-{label}', 'observer_port': 13102,
-                                          'wall_start_ms': 1000, 'wall_end_ms': 2000, 'synthetic': True})
+                                          'wall_start_ms': 1700000000000, 'wall_end_ms': 1700000010000, 'synthetic': True})
         write_json(side / 'scenarios.json', {'probe': {'status': 'PASS'}})
         rows = []
         clock = 0
@@ -102,8 +102,8 @@ def fixture(root):
             emit('http_response', id=rid, status=200, handler='ts' if mode == 'proxy' else None,
                  headers=response_headers('text/event-stream' if method == 'GET' else 'application/json'))
             if case == 'upload.events':
-                chunks = [b'event: upload_started\nid: 1\ndata: {"uploadId":"upload-1","status":"created","expiresAt":2000000}\n\n',
-                          b'event: upload_completed\nid: 2\ndata: {"uploadId":"upload-1","status":"completed","expiresAt":2000000}\n\n']
+                chunks = [b'event: upload_started\nid: 1\ndata: {"uploadId":"upload-1","status":"created","expiresAt":"2023-11-15T22:13:20.000Z"}\n\n',
+                          b'event: upload_completed\nid: 2\ndata: {"uploadId":"upload-1","status":"completed","expiresAt":"2023-11-15T22:13:20.000Z"}\n\n']
                 offset = 0
                 for part in chunks:
                     clock += 1_000_000_000
@@ -214,7 +214,7 @@ def mutation(name, side):
         # Keep events and chunk bytes identical, change only arrival times.
         sse_chunks[0]['arrival_ns'] = sse_chunks[-1]['arrival_ns']
     elif name == 'clock-invalid':
-        response_body(rows, 3, lambda raw: raw.replace(b'2000000', b'"bad"'))
+        response_body(rows, 3, lambda raw: raw.replace(b'2023-11-15T22:13:20.000Z', b'bad'))
     elif name == 'snapshot-revision-offset':
         def offset(body):
             if body.get('type') == 'session-activity':
@@ -306,6 +306,7 @@ def run_controls(output=None):
         results.extend(run_identity_controls())
         results.extend(run_stream_clock_controls(fixture, write_log))
         results.extend(run_multimodal_controls())
+        results.extend(run_http_clock_controls())
         exercised = {row['expected_rule'] for row in results if row.get('passed') and 'expected_rule' in row}
         missing = sorted(RULES - exercised)
         report = {'verdict': 'PASS' if all(row['passed'] for row in results) and not missing else 'FAIL',

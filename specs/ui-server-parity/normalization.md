@@ -50,7 +50,7 @@ ID 在同一侧、同一分类的所有白名单位置共用映射；跨侧标�
 
 上传 `http.{upload.create,upload.content,upload.read}.body.expiresAt`、`sse.upload.events.{upload_started,upload_progress,upload_completed}.data.expiresAt` 与 `@upload.expiresAt`：必须等于本侧真实 backend metadata.json 的原始 expiresAt，然后保留原类型，改为 expiresAt−createdAt 的 TTL 毫秒数。metadata 的 uploadId 须等于目录 ID，createdAt 须在本轮 wall_start/end 内，TTL 须正；不把改了一年的过期时间擦成 TIME。后端 metadata 和 wire 一起改也会保留 TTL 差异。
 
-下表列出所有常规 ID/时间规则。时间只在所列位置验证合法时间类型/表示后替同类型 TIME 标记；该规则不把确定的 TTL、计数、revision、大小、状态或未知 timestamp 擦掉。SQL created_at/last_login 使用数据库时间格式，null 保留。不新增基于被测 DUT 的路径。
+下表列出所有常规 ID/时间规则。时间只在所列位置按文末第 7 轮逐路径格式、单位、采集 wall 区间验证后替同类型 TIME 标记；已登记成对时钟另保留排名和先后约束；该规则不把确定的 TTL、计数、revision、大小、状态或未知 timestamp 擦掉。SQL created_at/last_login 使用数据库时间格式，null 保留。不新增基于被测 DUT 的路径。
 
 | 通道/用例或文件 | 完整 data/body 字段路径 | 规则 |
 |---|---|---|
@@ -282,3 +282,95 @@ ID 在同一侧、同一分类的所有白名单位置共用映射；跨侧标�
 `projects_updated.changedFile` 保持 literal。live2 TS1/TS5 第二次广播为第二会话 `.jsonl`，TS2/TS3/TS4 为 `.jsonl.projections.json`。本轮没有批准把它删除、折叠或映射；来源 `ui/server/index.js:332`–340 将 debounce 调度器给出的 filePath 原样转相对路径。剩余诊断如实 FAIL。
 
 分片边界对照另验证：同方向 ping 从一个非 output 分片消息中间移到它之前必须 FAIL；非 output 使用原始帧序列，不按消息完成顺序重新排列控制帧。
+
+
+## 第 7 轮：严格时钟表示、采集区间与 HTTP / 磁盘成对时序（2026-10-14，DRAFT）
+
+本节收紧并取代上文“同类型 TIME”的宽松解释，也将第 3 轮 watcher 排名推广至 HTTP `readonly.projects`、`readonly.sessions` 和下列成对路径。不能用 `fromisoformat` 能解析或数值落在 0～2^53 作为时间合法的充分条件。`policy.CLOCK_FORMATS` 按通道、上下文、完整字段路径登记；新增时钟白名单没有对应格式时导入即失败。以下基线路径均相对 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck/`，仅只读回源，无 DUT 推导。
+
+- **ISO ms UTC**：字符串必须完整匹配 `[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z`，并通过真实日历解析。空格分隔、缺时区、`+00:00`、缺毫秒、额外精度、非法日期及数值替代均拒绝。对应 JS `toISOString()`，精度单位 ms。
+- **SQL s UTC**：字符串必须完整匹配 `[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}`，通过真实日历解析后按 UTC 解释。SQLite `CURRENT_TIMESTAMP` 的秒精度是此路径的生产格式，不允许 ISO 字符串替代。精度单位 s。
+- **epoch ms**：有限、正、低于 2^53 的 JSON 数值且值为整数；bool 不算数值。**mtime ms** 单独允许有限小数，以保留 Node `stat.mtimeMs` 的亚毫秒精度。当前白名单没有 epoch 秒数路径，绝不按数值大小自动猜测 ms/s。
+- **本次 wall 范围**：所有常规时钟转为 UTC 毫秒后，必须在本侧 `run-meta.wall_start_ms ≤ t ≤ wall_end_ms + 1000` 内，和 `x-projects-revision` 相同。SQL 的下界先按源精度向下截到整秒；这是 CURRENT_TIMESTAMP 的表示精度，不是额外时间容差。ISO 和数值不截断下界。缺失/null 仍按原 schema 保留，未知路径 literal。
+- **到期时间是明确例外**：`expiresAt` 本来在未来，不能要求它处于采集区间。所有已登记 `expiresAt` 必须先满足 ISO ms UTC，再和本侧 backend metadata 原值严格相等并保留 TTL；backend `createdAt` 严格限制在采集 start/end，`updatedAt` 使用常规 wall 门。后端和 wire 同改 expiry 仍暴露 TTL 差异。没有增加新的 expiry 豁免。
+
+### 每条时钟路径的基线格式与生成依据
+
+下表每行均对应 `CLOCK_FORMATS` 中一条完整路径。投影名字中的引号表示含点号的字面对象 key。
+
+| 通道 / 上下文 | 完整 body/data 路径 | 格式 / 单位 | 基线生成处与传递处（路径:行号） |
+|---|---|---|---|
+| `disk / @chat` | `*.createdAt` | ISO ms UTC | `src/session/events/SessionRuntime.ts:57–65（this.now().toISOString）` |
+| `disk / @chat` | `*.metadata.updatedAt` | ISO ms UTC | `src/session/metadata/SessionMetadataStore.ts:23,37,46,51,58,62,92` |
+| `disk / @chat` | `*.result.completedAt` | ISO ms UTC | `src/agent/loop/AgentLoop.ts:3036（this.now().toISOString）` |
+| `disk / @chat` | `*.result.startedAt` | ISO ms UTC | `src/agent/loop/AgentLoop.ts:366（this.now().toISOString）` |
+| `disk / @projection` | `anchor.createdAt` | ISO ms UTC | `src/session/events/SessionRuntime.ts:57–65（this.now().toISOString） → src/session/projection/checkpoint/SessionProjectionCheckpointStore.ts:127` |
+| `disk / @projection` | `projections."agent-transcript.conversation".state.entries.*.entry.createdAt` | ISO ms UTC | `src/session/events/SessionRuntime.ts:57–65（this.now().toISOString） → src/session/projection/AgentTranscriptProjections.ts:94,102,322（原 entry / metadata 投影）` |
+| `disk / @projection` | `projections."agent-transcript.conversation".state.entries.*.entry.result.completedAt` | ISO ms UTC | `src/agent/loop/AgentLoop.ts:3036（this.now().toISOString） → src/session/projection/AgentTranscriptProjections.ts:94,102,322（原 entry / metadata 投影）` |
+| `disk / @projection` | `projections."agent-transcript.conversation".state.entries.*.entry.result.startedAt` | ISO ms UTC | `src/agent/loop/AgentLoop.ts:366（this.now().toISOString） → src/session/projection/AgentTranscriptProjections.ts:94,102,322（原 entry / metadata 投影）` |
+| `disk / @projection` | `projections."agent-transcript.metadata".state.updatedAt` | ISO ms UTC | `src/session/metadata/SessionMetadataStore.ts:23,37,46,51,58,62,92 → src/session/projection/AgentTranscriptProjections.ts:94,102,322（原 entry / metadata 投影）` |
+| `disk / @projection` | `projections."web-history.agent-statuses".state.*.createdAt` | ISO ms UTC | `src/session/events/SessionRuntime.ts:57–65（this.now().toISOString） → src/session/projection/WebHistoryProjections.ts:124–126` |
+| `disk / @registry` | `records.*.acceptedAt` | ISO ms UTC | `src/gateway/run/RunRegistry.ts:220–228` |
+| `disk / @registry` | `records.*.updatedAt` | ISO ms UTC | `src/gateway/run/RunRegistry.ts:228,252,296` |
+| `disk / @upload` | `createdAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:86` |
+| `disk / @upload` | `expiresAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:88` |
+| `disk / @upload` | `updatedAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:87,324` |
+| `disk / home/auth.db` | `tables.app_config.rows.*.created_at` | SQL s UTC | `ui/server/database/db.js:68（CURRENT_TIMESTAMP）` |
+| `disk / home/auth.db` | `tables.users.rows.*.created_at` | SQL s UTC | `ui/server/database/init.sql:9（CURRENT_TIMESTAMP）` |
+| `disk / home/auth.db` | `tables.users.rows.*.last_login` | SQL s UTC | `ui/server/database/db.js:207（CURRENT_TIMESTAMP）` |
+| `disk / home/auth.db` | `tables.vapid_keys.rows.*.created_at` | SQL s UTC | `ui/server/database/init.sql:67（CURRENT_TIMESTAMP）` |
+| `http / _probe:GET:/health` | `startedAt` | ISO ms UTC | `ui/server/index.js:23 → :400 → :534` |
+| `http / _probe:GET:/health` | `timestamp` | ISO ms UTC | `ui/server/index.js:531` |
+| `http / readonly.messages` | `messages.*.timestamp` | ISO ms UTC | `src/session/events/SessionRuntime.ts:57–65 → ui/server/routes/messages.js:197` |
+| `http / readonly.messages` | `stream.messages.*.timestamp` | ISO ms UTC | `ui/server/pilotdeck-message.js:32 → ui/server/pilotdeck-bridge.js:1267–1279 → ui/server/routes/messages.js:74–75` |
+| `http / readonly.projects` | `*.lastActivity` | epoch ms | `ui/server/projects.js:247–250,266–270` |
+| `http / readonly.projects` | `*.sessions.*.createdAt` | ISO ms UTC | `ui/server/projects.js:106–108；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / readonly.projects` | `*.sessions.*.created_at` | ISO ms UTC | `ui/server/projects.js:109–111；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / readonly.projects` | `*.sessions.*.lastActivity` | ISO ms UTC | `ui/server/projects.js:115–117；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / readonly.projects` | `*.sessions.*.updated_at` | ISO ms UTC | `ui/server/projects.js:112–114；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / readonly.sessions` | `sessions.*.createdAt` | ISO ms UTC | `ui/server/projects.js:106–108；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / readonly.sessions` | `sessions.*.created_at` | ISO ms UTC | `ui/server/projects.js:109–111；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / readonly.sessions` | `sessions.*.lastActivity` | ISO ms UTC | `ui/server/projects.js:115–117；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / readonly.sessions` | `sessions.*.updated_at` | ISO ms UTC | `ui/server/projects.js:112–114；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `http / shadow.files` | `items.*.mtimeMs` | mtime ms（允许小数） | `src/gateway/dialog/projectFiles.ts:99（info.mtimeMs）` |
+| `http / upload.content` | `expiresAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:88 → ui/server/routes/uploads.js:209` |
+| `http / upload.create` | `expiresAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:88 → ui/server/routes/uploads.js:209` |
+| `http / upload.read` | `expiresAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:88 → ui/server/routes/uploads.js:209` |
+| `sse / upload.events:upload_completed` | `expiresAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:88 → ui/server/routes/uploads.js:209 → :217（SSE）` |
+| `sse / upload.events:upload_progress` | `expiresAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:88 → ui/server/routes/uploads.js:209 → :217（SSE）` |
+| `sse / upload.events:upload_started` | `expiresAt` | ISO ms UTC | `src/gateway/dialog/UploadStore.ts:88 → ui/server/routes/uploads.js:209 → :217（SSE）` |
+| `ws / complete` | `timestamp` | ISO ms UTC | `ui/server/pilotdeck-message.js:32（toISOString 默认值）→ ui/server/pilotdeck-bridge.js:1267–1279` |
+| `ws / config:reloaded` | `timestamp` | ISO ms UTC | `ui/server/services/pilotdeckConfigWatcher.js:58,67,78,91,99；ui/server/routes/config.js:527,756,995,1038 → ui/server/index.js:299` |
+| `ws / projects_updated` | `projectListRevision` | epoch ms | `ui/server/projects.js:68–79 → ui/server/index.js:336` |
+| `ws / projects_updated` | `projects.*.lastActivity` | epoch ms | `ui/server/projects.js:247–250,266–270` |
+| `ws / projects_updated` | `projects.*.sessions.*.createdAt` | ISO ms UTC | `ui/server/projects.js:106–108；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `ws / projects_updated` | `projects.*.sessions.*.created_at` | ISO ms UTC | `ui/server/projects.js:109–111；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `ws / projects_updated` | `projects.*.sessions.*.lastActivity` | ISO ms UTC | `ui/server/projects.js:115–117；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `ws / projects_updated` | `projects.*.sessions.*.updated_at` | ISO ms UTC | `ui/server/projects.js:112–114；HTTP projects 映射 :244，HTTP sessions 映射 :411，WS index.js:335` |
+| `ws / projects_updated` | `timestamp` | ISO ms UTC | `ui/server/index.js:337` |
+| `ws / status` | `timestamp` | ISO ms UTC | `ui/server/pilotdeck-message.js:32（toISOString 默认值）→ ui/server/pilotdeck-bridge.js:1267–1279` |
+| `ws / stream_delta` | `timestamp` | ISO ms UTC | `ui/server/pilotdeck-message.js:32（toISOString 默认值）→ ui/server/pilotdeck-bridge.js:1267–1279` |
+| `ws / text` | `timestamp` | ISO ms UTC | `ui/server/pilotdeck-message.js:32（toISOString 默认值）→ ui/server/pilotdeck-bridge.js:1267–1279` |
+
+
+### 排名与独立先后校验
+
+HTTP `readonly.projects`、`readonly.sessions` 与 WS `projects_updated` 均在整个响应/广播内，对所有已登记、非 null、校验成功的时钟建立同一 UTC 毫秒轴的不同值排名；在原字段保留 `{clock: <TIME:原类型>, order: ordinal}`。该排名包括跨会话顺序、等值、兼容别名、项目数值时钟与会话字符串时钟的关系。只替换叶子，不排序项目/会话列表、不增删字段。任一同会话 `createdAt/created_at > lastActivity/updated_at` 独立命中 `normalization.field`，即使两侧同坏也拒绝。
+
+其他已登记毫秒语义对在各自完整对象路径内保留排名/等值，并独立执行左列 ≤ 右列；SQL 秒精度对见下方量化说明：
+
+| 通道 / 上下文 | 完整对象路径 | 先 ≤ 后 |
+|---|---|---|
+| HTTP `_probe:GET:/health` | 根 | `startedAt ≤ timestamp` |
+| DISK `@upload` | 根 | `createdAt ≤ updatedAt` |
+| DISK `@chat` | `*.result` | `startedAt ≤ completedAt` |
+| DISK `@projection` | `projections."agent-transcript.conversation".state.entries.*.entry.result` | `startedAt ≤ completedAt` |
+| DISK `@registry` | `records.*` | `acceptedAt ≤ updatedAt` |
+| DISK `home/auth.db` | `tables.users.rows.*` | `created_at ≤ last_login` |
+
+chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前构造 metadata 的时间，不把它们误当作实体创建/活动对；result 的 started/completed 才是生命周期对。也不拿所有日志时钟跨事件做无依据的全局排名。上述语义对的每条路径都有同坏反转单测。
+
+第 7 轮对照在既有 `controls/streams_and_clocks.py` 增加 HTTP projects/sessions 等价、格式、单位、互换、超区间、跨实体、别名排名及同坏双侧用例；每次重写响应都同步 Express ETag、Content-Length 和 recorder 字节/offset。格式、单位、互换、超区间必须命中 `normalization.field`；顺序/等值改变命中 `http.body`。原 synthetic fixture 的上传与 watcher 时间也按回源格式修为 ISO Z，不能靠放宽生产解析保住旧合成样本。
+
+
+**SQL 源精度复核。** `users.created_at`（init.sql:9）与 `last_login`（db.js:207）来自两次独立的 `CURRENT_TIMESTAMP`，不是同一时钟的兼容别名。live3 ref1/ref2 分别出现跨秒/同秒；将这些量化结果的“等于/小于”当成跨采集必须相等的排名会误报。该精确 SQL 对只执行严格秒格式、按秒量化的 wall 门和 `created_at ≤ last_login`，不把量化相等当成别名等值硬门。反转仍独立 FAIL，两侧同坏同样 FAIL。HTTP/WS 的 ISO 毫秒字段、别名与跨实体排名不受此条影响。此边界回源于两个 SQL 生成位置，未放宽任何表示/单位/区间检查，未新增允许格式。

@@ -3,6 +3,7 @@ import base64
 import copy
 from datetime import datetime, timezone
 import json
+import hashlib
 from pathlib import Path
 import shutil
 import tempfile
@@ -62,9 +63,9 @@ def run_stream_clock_controls(fixture, write_log):
             shell += [{**next(r for r in rows if r['kind'] == 'ws_end'), 'connection': 2}]
             rows[-1:-1] = handshake + shell
             # Two entities with equal aliases and strictly ordered lifetimes.
-            offset = 0 if label == 'left' else 86400000
+            offset = 0 if label == 'left' else 1000
             def iso(ms):
-                return datetime.fromtimestamp((1700000000000 + offset + ms) / 1000, timezone.utc).isoformat(timespec='milliseconds')
+                return datetime.fromtimestamp((1700000000000 + offset + ms) / 1000, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
             sessions = []
             for i in (1, 2):
                 sessions.append({'id': 'fixed-' + str(i), 'createdAt': iso(i * 1000),
@@ -184,4 +185,90 @@ def run_stream_clock_controls(fixture, write_log):
                             'both_sides': name.startswith('both-'), 'matched': hits[:3],
                             'passed': report['verdict'] == expected and (bool(hits) if rule else True),
                             'rules': report['rules']})
+    return results
+
+
+def replace_response(rows, rid, body):
+    from controls.run_all import response_body, hdr
+    raw = json.dumps(body, separators=(',', ':')).encode()
+    response_body(rows, rid, lambda _: raw)
+    response = next(r for r in rows if r['kind'] == 'http_response' and r['id'] == rid)
+    response['headers'] = [h for h in response['headers'] if h['name'].lower() not in ('etag', 'content-length')]
+    tag = base64.b64encode(hashlib.sha1(raw).digest()).decode().rstrip('=')
+    response['headers'] += [hdr('etag', f'W/"{len(raw):x}-{tag}"'), hdr('content-length', str(len(raw)))]
+
+
+def mutate_clock(body, context, name):
+    sessions = body[0]['sessions'] if context == 'readonly.projects' else body['sessions']
+    session = sessions[0]
+    if name == 'format':
+        session['createdAt'] = session['createdAt'].replace('T', ' ').removesuffix('Z')
+    elif name == 'unit':
+        body[0]['lastActivity'] //= 1000
+    elif name == 'swap':
+        session['createdAt'], session['lastActivity'] = session['lastActivity'], session['createdAt']
+    elif name == 'outside-wall':
+        session['createdAt'] = '2023-11-13T22:13:21.000Z'
+    elif name == 'cross-entity':
+        sessions[0], sessions[1] = sessions[1], sessions[0]
+    elif name == 'alias':
+        session['created_at'] = session['lastActivity']
+    else:
+        raise AssertionError(name)
+
+
+def run_http_clock_controls():
+    from controls.run_all import fixture, write_log, b64
+    results = []
+    with tempfile.TemporaryDirectory(prefix='b2-http-clock-') as tmp:
+        root = Path(tmp)
+        enumeration, matrix, manifest = fixture(root)
+        sessions = []
+        for i in (1, 3):
+            sessions.append({'createdAt': f'2023-11-14T22:13:2{i}.000Z',
+                             'created_at': f'2023-11-14T22:13:2{i}.000Z',
+                             'lastActivity': f'2023-11-14T22:13:2{i+1}.000Z',
+                             'updated_at': f'2023-11-14T22:13:2{i+1}.000Z'})
+        for label in ('left', 'right'):
+            path = root / label / 'recording.jsonl'
+            rows = read_jsonl(path)
+            template = [copy.deepcopy(r) for r in rows if r.get('id') == 2]
+            for rid, context, body in ((6, 'readonly.projects', [{'lastActivity': 1700000004000, 'sessions': sessions}]),
+                                       (7, 'readonly.sessions', {'sessions': sessions})):
+                extra = copy.deepcopy(template)
+                for r in extra:
+                    r['id'] = rid
+                    if r['kind'] == 'http_request':
+                        r.update(method='GET', path='/api/' + context.split('.')[1], case=context)
+                        r['headers'] = [h for h in r['headers'] if h['name'] != 'x-pdrs-parity-case']
+                        r['headers'].append({'name': 'x-pdrs-parity-case', 'value_b64': b64(context)})
+                rows[-1:-1] = extra
+                replace_response(rows, rid, body)
+            write_log(path, rows)
+        for context, rid in (('readonly.projects', 6), ('readonly.sessions', 7)):
+            for name in ('equivalence', 'format', 'swap', 'outside-wall', 'cross-entity', 'alias', 'unit'):
+                if name == 'unit' and rid == 7:
+                    continue
+                for both in ((False, True) if name in ('format', 'swap', 'unit', 'outside-wall') else (False,)):
+                    test = root / f'{context}-{name}-{both}'
+                    for label in ('left', 'right'):
+                        shutil.copytree(root / label, test / label)
+                        if name == 'equivalence' or label == 'left' and not both:
+                            continue
+                        path = test / label / 'recording.jsonl'
+                        rows = read_jsonl(path)
+                        raw = b''.join(base64.b64decode(r['body_b64']) for r in rows if r['kind'] == 'http_chunk' and r['id'] == rid and r['direction'] == 'response')
+                        body = json.loads(raw)
+                        mutate_clock(body, context, name)
+                        replace_response(rows, rid, body)
+                        write_log(path, rows)
+                    report = compare_sides(test / 'left', test / 'right', enumeration, matrix, manifest)
+                    expected = 'PASS' if name == 'equivalence' else 'FAIL'
+                    rule = 'http.body' if name in ('cross-entity', 'alias') else 'normalization.field'
+                    hits = [d for d in report['differences'] if d['rule'] == rule and context in d['location']]
+                    results.append({'name': f'http-clock-{context}-{name}' + ('-both' if both else ''),
+                                    'level': 'end-to-end', 'expect': expected, 'actual': report['verdict'],
+                                    'both_sides': both, 'expected_rule': rule if expected == 'FAIL' else None,
+                                    'passed': report['verdict'] == expected and (bool(hits) if expected == 'FAIL' else True),
+                                    'matched': hits[:3], 'differences': report['differences'][:5]})
     return results
