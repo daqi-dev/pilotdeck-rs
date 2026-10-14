@@ -40,6 +40,7 @@ bash scripts/ui-server-parity/calibrate.sh --batch /absolute/path/to/batch --ret
 REFUSED 原档和日志保留在 `attempts/`；重采只能替换那一个尚未接受的轮次。PASS 轮次不可覆盖；计分开始后不可替换参考池，池与计分身份/录制 hash 不重复、区间不重叠。跨 UTC 日、源码/装置变更、已有 slot 尚未归档、采集 FAIL、池分类 REFUSED 等需查看证据，不能用改 metadata 或 replay 标记补救。跨日/变更必须新建完整 batch。因中断留下 slot 时脚本拒绝覆盖，先按 audit 核实自有进程清理再人工归档。
 
 磁盘按 git common dir 找到共享主仓，统计其 `_build` + `_tmp`（包括 worktree 内输出），上限保守取十进制 30 GB。默认只读查找历史 live3 单遍目录，取实际占用最大的完整遍作尺寸参考；也可显式 `--size-reference` 指定。预计每遍尺寸为历史尺寸 ×1.5，另预留构建 1 GB、报告 1 GB；开始、构建后、每遍前后和尺子检查前后重查，并校验文件系统可用空间。估算是启动门，若输出增长耗尽预算则停止并保留证据。历史 live3 只作磁盘估算，不进入新 TS 参考池。
+`du` 非零退出仅在 stderr 每行均为 macOS 实测的 `du: <路径>: No such file or directory` 时按 1 秒间隔最多重试 3 次（共 4 次测量），仍失败则采用最后一次 stdout 合计并向 stderr 记录 `approximate: true`；权限等其他或混合错误仍 FAIL，预算上限与估算方式不变。
 
 构建输入边界：只从仓内 `_build/cargo-home/registry/{index,cache}` 复制索引和压缩 `.crate`，不复制 `registry/src`、`git/checkouts`、config 或 credentials；装置在每次 fetch/build 前按 Cargo.lock 显式校验缓存 .crate 的 SHA256（Cargo 离线可能直接信任缓存），再由 Cargo 重新解压。fetch/build 都带 `--locked --offline`，缓存不足即 FAIL，须在开始新批次前备好压缩包。Cargo 的 cwd 为批次目录（独立 run 为 out），manifest 用绝对 `--manifest-path`。每次 cargo/rustc 启动前检查 cwd 与新 CARGO_HOME 的全部祖先，不得出现 `.cargo/config` 或 `.cargo/config.toml`（含断链）；新 CARGO_HOME 本身的 config/credentials 也拒绝。继承环境全部丢弃，只设置 HOME、受限 PATH、新 CARGO_HOME/CARGO_TARGET_DIR、宿主 RUSTUP_HOME 和禁止自动下载的 RUSTUP_AUTO_INSTALL。PATH 只含宿主 `~/.cargo/bin` 与系统目录，因此仓内 wrapper、RUST*/CARGO_*、linker 和动态加载变量不生效。构建前记录 `rustc -vV` / `cargo -V` 到 batch.json（独立 run 到 toolchain.json），每次 guard 复核同一工具链版本。
 
