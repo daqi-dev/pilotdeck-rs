@@ -134,3 +134,483 @@ S3/S4 接续时保留这些原始字段；在新 PR 决定比较/归一化、SSE
 - 第 2 次 `_tmp/20261014-exp010-run2`：**六场景直连 / 反代全部 PASS**；当时 `result.json` status=PASS；`check_coverage.py`（本轮枚举 + 用例证据）PASS。审计：监听全在 127.0.0.1（13101–13104、28990），自有进程组全部退出，cleanup_errors=[]。第 2 轮评审核实两侧各有 30 条 `http_aborted`、27 条 `http_end`，正常定长 body 读满后被误记为中断；这些旧录制在第 3 轮的新完整性门下拒收，不能作为完整 body 证据。修复后的实录需新建 `_tmp/20261014-exp010-run3` 由协调者重跑，见 `_tmp/RESULT.md`「第 3 轮」。
 - 边界：本 PR 只有录制与覆盖门，**没有行为比较**（S3）；覆盖矩阵 244 条为 AI 代批豁免——当前没有路由由 Rust 接管，豁免只是占位，B3 起每接管一条路由须先补直接用例。
 - 第 3 次 `_tmp/20261014-exp010-run3`（PR #57 第 2 轮评审修改后）：六场景两侧 PASS；每侧 `http_end` 57、`http_aborted` **0**（修前误记 30 条）；覆盖门 PASS。
+
+## B2 第 3 个 PR：S3/S4 草稿（2026-10-14）
+
+新增 `compare.py`、按完整字段路径登记的 `policy.py`、停服务后的 `snapshot.py`、`controls/`、`check_ruler.py` 与 `check_frozen.py`，以及 `specs/ui-server-parity/{acceptance,normalization,accepted-diffs}.md`。规约为 **DRAFT**，独立评审为 null；不修改 C/A 的冻结尺子。此前 S1/S2 的声明/录制 PASS 与本次离线 controls PASS 都不能当 B2 已冻结或 Rust 路由等价。
+
+S3 消费原始 recording，不回用 exp008 的 snapshot offset。HTTP 同名多值头按列表比较；处理侧先验证 recorder 原始头，再剥离。WS 在客户端边界按每连接全序比较后再比完整 JSON message 的 type/确定字段，seq 断言保留。SSE 按事件结束空行的字节到齐计算到达，完整事件/id/retry/data 保留，chunk 边界只诊断。带外每会话 revision 的原值与内容必须一致；watch snapshot 对稳定的 after-scenarios 带外列表，不按用户最大 revision 估全局基准。目录实际内容重新采集核对保存快照；SQLite schema/逻辑 rows、密码/JWT/VAPID 验证也入门。
+
+S1 写锁前取 arrival_ns，故不同 task 的时钟采样可能相对 seq 轻微倒退；S3 以 seq 判全序，仅 HTTP 同一 body 方向要求 arrival_ns 单调，不按全局时钟重新排序 WS。
+
+真实 auth/落盘验证使用 `run-meta.baseline_path` 下**已安装**的 TS bcrypt 与 Node 内置 crypto，不安装依赖、不下载二进制。新 run.py 保持原双侧入口，另增加 `--side direct|proxy --slot direct` 单侧入口与 run-meta/snapshot。为满足绝对路径一致，定标与等价比较应全部复用同一 --out，跑完只改名保存；下列脚本由协调者在沙箱外执行。
+
+```bash
+# 从本 worktree 根执行；当前源与规约在所有轮次之间保持不变。
+export CARGO_HOME="$PWD/_build/cargo-home"
+export CARGO_TARGET_DIR="$PWD/_build/exp010-target"
+task_prefix="$PWD/_tmp/20261014-b2-live"
+mkdir /tmp/pdrs-parity.lock
+trap 'rmdir /tmp/pdrs-parity.lock' EXIT
+for task_index in 1 2 3 4 5; do
+  test ! -e "$task_prefix"
+  test ! -e "${task_prefix}-ts${task_index}"
+  python3 scripts/ui-server-parity/run.py --out "$task_prefix" --side direct --slot direct
+  mv "$task_prefix" "${task_prefix}-ts${task_index}"
+done
+test ! -e "$task_prefix"
+test ! -e "${task_prefix}-proxy"
+python3 scripts/ui-server-parity/run.py --out "$task_prefix" --side proxy --slot direct
+mv "$task_prefix" "${task_prefix}-proxy"
+python3 scripts/ui-server-parity/check_ruler.py \
+  --round "${task_prefix}-ts1/direct" --round "${task_prefix}-ts2/direct" \
+  --round "${task_prefix}-ts3/direct" --round "${task_prefix}-ts4/direct" \
+  --round "${task_prefix}-ts5/direct" \
+  --enumeration "${task_prefix}-ts1/enumeration/router-enumeration.json" \
+  --proxy "${task_prefix}-proxy/direct" --out "${task_prefix}-ruler.json"
+# 此处退出 2 是 PENDING_REVIEW，独立评审仍 null；退出 1 是 FAIL。
+python3 scripts/ui-server-parity/compare.py \
+  "${task_prefix}-ts1/direct" "${task_prefix}-proxy/direct" \
+  --enumeration "${task_prefix}-ts1/enumeration/router-enumeration.json" \
+  --out "${task_prefix}-compare-proxy.json"
+```
+
+所有 `run-meta.fixture_path` 都必须等于 `$task_prefix/direct`。归档目录名不同不影响已录制的原始路径；不要在新 ts1/ts2 输出路径分别采集，也不要把两侧参数改成不同 slot。运行使用既有回环端口 13101/13102/13103/13104/28990，只停自有进程组，不碰 3001/18789 或真实 home。
+
+离线验证：`python3 -m py_compile scripts/ui-server-parity/*.py scripts/ui-server-parity/controls/*.py`；`python3 scripts/ui-server-parity/controls/run_all.py`；`python3 scripts/ui-server-parity/test_compare.py`；S1/S2 的 test_recording.py/test_coverage.py。`check_ruler.py` 不给 --round 时只运行离线对照，self_compare=null/PENDING_CALIBRATION/退出 2；`check_frozen.py` 缺人批 manifest 返回 DRAFT/退出 2。本次还用主仓只读 run3 direct 归档做了格式兼容自比（适配的 metadata 明确 synthetic），PASS；这不是五次独立 TS 采集。真实 k=5、direct/DUT、两家评审、人批冻结与前端回归门仍待协调者执行。
+
+## B2 第 3 个 PR · 第 2 轮：真实 TS k=5 标定修正（2026-10-14）
+
+**结果：旧五轮真实数据重放仍为 0/10 PASS，self_compare=false；如实保留 FAIL。** 总 differences 从 3913 降为 2389；这包含全序、按 type 和 identity 的重复诊断，不代表 2389 个独立缺陷。per_rule_negative=true、same_bad_rejected=true、independent_review=null。没有修改/补写原始录制或 run-meta，没有提交，没有改 `state/`、C/A 冻结规约与尺子，也没有启动服务。
+
+本轮新增九条精确 ID 路径（HTTP 历史/stream 各三条，registry event 三条），详见 `specs/ui-server-parity/normalization.md`「第 2 轮」，每条有 TS 随机生成/传递处路径和行号。原分类映射升级为跨 HTTP/WS/落盘共用 UUID 单射；块后缀与消息种类前缀保留。以两个固定输入 session 及各自 chat 原事件顺序预分配记号，修复“按 HTTP 返回列表顺序给会话命名”导致的编号漂移，同时继续让真正的列表翻转 FAIL。十对中的 `readonly.messages` 与 `disk.snapshot` 差异现均为 0。
+
+| 差异族 | 字段路径 × 规则的典型簇 | 五遍分析与处置 |
+|---|---|---|
+| 未归一随机块/turn 引用 | `http[readonly.messages#0].body.{messages,stream.messages}[*].{blockId,timeline.id,timeline.turnId}` × `http.body`；`disk[@registry].data.events[*].entries[*].event.{blockId,timeline.id,timeline.turnId}` × `disk.snapshot` | 补全九条路径；只重命名 UUID 根；跨渠道引用与后缀保留。新报告这些簇均为 0 |
+| 首见编号漂移及真正列表翻转 | `http[readonly.messages#0].request.path`、各 sessionId/runId × `identity.consistency`；`http[readonly.{projects,sessions}#0]...sessions[*].id` × `http.body` | 预分配只影响实体命名，不排序比较内容；TS1 的 HTTP 列表 `21` 与其余 `12` 仍报 4 个 http.body 差异/对 |
+| 并发广播/关闭前文件监听 | `ws."ws.chat.{2,3}#0"[*].body.*` × `ws.sequence` 与 `ws.by_type...session-activity` × `ws.structure` | 同一连接内已有交错，不是简单去掉“跨连接总序”能解决。驱动现在逐会话发送，完成后等待两连接同 run idle + 之后的 project watcher。旧录制保留原顺序与全部事件，仍 FAIL |
+| 终端 onData 分帧与 URL 顺序 | `ws."ws.watch.{6,7}#0"[*].body.data`、`ws.by_type...output` / `.auth_url[*].body.url` × WS 两规则 | 五遍拼接输出字节一致但分帧不同；TS4 的 auth_url 顺序还真实翻转。登记为阶段 C 多态候选，未批准也未执行豁免 |
+
+`specs/ui-server-parity/accepted-diffs.md` 登记五遍 activity 顺序、连接长度、watcher 消息数、PTY output 数/拼接 SHA256 与 URL 顺序。逐原始 seq 的证据保存在 `_tmp/b2-round2-variants.json`。PTY fixture 另改为固定 prompt、禁 rc、抑制 macOS bash 启动公告，并用 prompt 屏障替换 sleep；这可能消除 URL 噪声，但内核 onData 分帧仍可能不同。本轮只完成无服务驱动测试，**没有声称新驱动已被 TS 实跑验证**；project watcher 的时间字段、重复通知等也需新数据再定标，当前没有直接归一或忽略它们。
+
+离线对照 **181/181 PASS**：原 28 条端到端 + 153 条完整路径级对照（113 个 ID 路径；每条重命名 PASS、实体合并 FAIL，20 个 block/timeline 路径另测种类和序号变化 FAIL）。Python S1/S2/S3 合计 **43/43 PASS**；新增 WS/落盘端到端引用断裂对照、跨通道一致性、数组保序和默认/重放哈希门回归。Node 驱动对照验证第二次发送必须等待双连接 idle 与之后的 watcher、早期 watcher 不算完成屏障、第一轮错误不继续。编译、Node 语法与 diff 检查通过；Python 报告还包含旧 SQLite 测试未显式 close 的 ResourceWarning，不影响测试结果。
+
+原数据每份各自与自身比较都为 PASS（`_tmp/b2-round2-same-archive.json`），这是格式/完整性检查，**不是独立 k=5 标定通过**。旧 proxy 也用新比较器单独重放：FAIL、253 个诊断；其中另有七个 101 响应 Date 头只在 proxy 出现。未用这些 DUT 差异添加任何规则。
+
+原录制绑定上一轮装置哈希，默认 compare/check_ruler 继续拒收过期哈希。为执行用户要求的旧五轮重算，增加显式 `--replay-of`，校验原报告绑定的哈希/run ID/PID、保存新旧哈希与原报告摘要，并标记 `historical-replay / calibration_eligible=false`。旧数据不能证明修改后的串行驱动已标定；即使重放全过也只能 REPLAY_ONLY。本轮真实执行的重算命令（退出 1 = FAIL）：
+
+```bash
+python3 scripts/ui-server-parity/check_ruler.py \
+  --round _tmp/20261014-b2-live-ts1/direct \
+  --round _tmp/20261014-b2-live-ts2/direct \
+  --round _tmp/20261014-b2-live-ts3/direct \
+  --round _tmp/20261014-b2-live-ts4/direct \
+  --round _tmp/20261014-b2-live-ts5/direct \
+  --enumeration _tmp/20261014-b2-live-ts1/enumeration/router-enumeration.json \
+  --replay-of _tmp/20261014-b2-live-ruler.json \
+  --proxy _tmp/20261014-b2-live-proxy/direct \
+  --out _tmp/20261014-b2-round2-ruler.json
+python3 scripts/ui-server-parity/summarize_ruler.py \
+  --before _tmp/20261014-b2-live-ruler.json \
+  --after _tmp/20261014-b2-round2-ruler.json \
+  --out _tmp/b2-round2-clusters.json
+```
+
+以下新驱动采集命令**本轮未执行**，留协调者在沙箱外运行；使用新 prefix，旧五轮及原 ruler 保留。全量采集之间保持源文件不变，固定相同 --out 与 --slot，归档只在停服务后改名。不承诺这次修改即可全绿：若 PTY 全帧门、watcher 仍不稳定，必须保留结果并独立评审多态规则。
+
+```bash
+# 从本 worktree 根运行；与上一轮相同隔离环境和固定回环端口。
+export CARGO_HOME="$PWD/_build/cargo-home"
+export CARGO_TARGET_DIR="$PWD/_build/exp010-target"
+task_prefix="$PWD/_tmp/20261014-b2-serial"
+mkdir /tmp/pdrs-parity.lock || exit 1
+trap 'rmdir /tmp/pdrs-parity.lock' EXIT
+for task_index in 1 2 3 4 5; do
+  test ! -e "$task_prefix" && test ! -e "${task_prefix}-ts${task_index}" || exit 1
+  python3 scripts/ui-server-parity/run.py --out "$task_prefix" --side direct --slot direct || exit 1
+  mv "$task_prefix" "${task_prefix}-ts${task_index}" || exit 1
+done
+test ! -e "$task_prefix" && test ! -e "${task_prefix}-proxy" || exit 1
+python3 scripts/ui-server-parity/run.py --out "$task_prefix" --side proxy --slot direct || exit 1
+mv "$task_prefix" "${task_prefix}-proxy" || exit 1
+# 不传 --replay-of：新真实录制必须与当前装置哈希完全相等。
+python3 scripts/ui-server-parity/check_ruler.py \
+  --round "${task_prefix}-ts1/direct" --round "${task_prefix}-ts2/direct" \
+  --round "${task_prefix}-ts3/direct" --round "${task_prefix}-ts4/direct" \
+  --round "${task_prefix}-ts5/direct" \
+  --enumeration "${task_prefix}-ts1/enumeration/router-enumeration.json" \
+  --proxy "${task_prefix}-proxy/direct" --out "${task_prefix}-ruler.json"
+```
+
+下面表格由 `summarize_ruler.py` 逐对处理全部原始 differences 生成，包含旧/新并集 266 个完整字段路径 × 规则簇。JSON 存每簇每对计数和两版具体值例子，表格保留原本重复诊断。
+
+<!-- BEGIN B2 ROUND2 CLUSTERS -->
+### 十对逐对结果
+
+| TS 对 | 原 differences | 第 2 轮 differences | 第 2 轮结果 |
+|---|---:|---:|---|
+| 1-2 | 605 | 339 | FAIL |
+| 1-3 | 554 | 214 | FAIL |
+| 1-4 | 554 | 294 | FAIL |
+| 1-5 | 446 | 186 | FAIL |
+| 2-3 | 232 | 211 | FAIL |
+| 2-4 | 338 | 236 | FAIL |
+| 2-5 | 282 | 180 | FAIL |
+| 3-4 | 361 | 285 | FAIL |
+| 3-5 | 363 | 287 | FAIL |
+| 4-5 | 178 | 157 | FAIL |
+
+### 字段路径 × 比较规则：完整聚类表
+
+逐对遍历原报告和重放报告的全部 `differences`，仅将数组数字下标换为 `[*]`；字段缺失、长度和错位产生的重复诊断也计入，不把条数当成独立缺陷数。WS 全序与 by_type 是两道独立门，因此表中保留两套位置。磁盘槽位解析为以下文件别名：
+
+- `@chat:1` = `home/projects/exp008-fixture/chats/web:33333333-3333-4333-8333-000000000001.jsonl`
+- `@chat:2` = `home/projects/exp008-fixture/chats/web:33333333-3333-4333-8333-000000000002.jsonl`
+- `@projection:1` = `home/projects/exp008-fixture/chats/web:33333333-3333-4333-8333-000000000001.jsonl.projections.json`
+- `@projection:2` = `home/projects/exp008-fixture/chats/web:33333333-3333-4333-8333-000000000002.jsonl.projections.json`
+- `@registry` = `home/runs/registry.json`
+
+表中“原→新”是十对累计数；“涉及 TS 对”取前后并集。每簇逐对计数与原始完整 location/值例子另存同名 JSON，便于复核。没有过滤掉任何一对或规则。
+
+| 规则 | 完整字段路径（数组下标归一） | 原→新 | 涉及 TS 对 |
+|---|---|---:|---|
+| `disk.snapshot` | `disk[@chat:1].data[*].result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@chat:1].data[*].sessionId` | 76→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@chat:2].data[*].detail.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `disk.snapshot` | `disk[@chat:2].data[*].result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@chat:2].data[*].sessionId` | 76→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:1].data.projections."agent-transcript.conversation".state.entries[*].entry.result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:1].data.projections."agent-transcript.conversation".state.entries[*].entry.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:1].data.projections."web-history.agent-statuses".state[*].sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:1].data.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:2].data.projections."agent-transcript.conversation".state.entries[*].entry.result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:2].data.projections."agent-transcript.conversation".state.entries[*].entry.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:2].data.projections."web-history.agent-statuses".state[*].detail.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `disk.snapshot` | `disk[@projection:2].data.projections."web-history.agent-statuses".state[*].sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@projection:2].data.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `disk.snapshot` | `disk[@registry].data.events[*].entries[*].event.blockId` | 40→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `disk.snapshot` | `disk[@registry].data.events[*].entries[*].event.runId` | 96→0 | 1-2, 1-3, 1-4, 1-5, 2-4, 2-5, 3-4, 3-5 |
+| `disk.snapshot` | `disk[@registry].data.events[*].entries[*].event.timeline.id` | 40→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `disk.snapshot` | `disk[@registry].data.events[*].entries[*].event.timeline.turnId` | 40→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `disk.snapshot` | `disk[@registry].data.events[*].key` | 12→0 | 1-2, 1-3, 1-4, 1-5, 2-4, 2-5, 3-4, 3-5 |
+| `disk.snapshot` | `disk[@registry].data.records[*].result.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `disk.snapshot` | `disk[@registry].data.records[*].runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `disk.snapshot` | `disk[@registry].data.records[*].sessionKey` | 8→0 | 1-2, 1-3, 1-4, 1-5 |
+| `http.body` | `http[readonly.messages#0].body.messages[*].blockId` | 10→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `http.body` | `http[readonly.messages#0].body.messages[*].sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `http.body` | `http[readonly.messages#0].body.messages[*].timeline.id` | 10→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `http.body` | `http[readonly.messages#0].body.messages[*].timeline.turnId` | 10→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `http.body` | `http[readonly.messages#0].body.stream.messages[*].blockId` | 20→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `http.body` | `http[readonly.messages#0].body.stream.messages[*].sessionId` | 28→0 | 1-2, 1-3, 1-4, 1-5 |
+| `http.body` | `http[readonly.messages#0].body.stream.messages[*].timeline.id` | 20→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `http.body` | `http[readonly.messages#0].body.stream.messages[*].timeline.turnId` | 20→0 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `http.body` | `http[readonly.projects#0].body[*].sessions[*].id` | 0→8 | 1-2, 1-3, 1-4, 1-5 |
+| `http.body` | `http[readonly.sessions#0].body.sessions[*].id` | 0→8 | 1-2, 1-3, 1-4, 1-5 |
+| `http.request` | `http[readonly.messages#0].request.path` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@chat:1].data[*].result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@chat:1].data[*].sessionId` | 76→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@chat:2].data[*].detail.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `disk[@chat:2].data[*].result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@chat:2].data[*].sessionId` | 76→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:1].data.projections."agent-transcript.conversation".state.entries[*].entry.result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:1].data.projections."agent-transcript.conversation".state.entries[*].entry.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:1].data.projections."web-history.agent-statuses".state[*].sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:1].data.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:2].data.projections."agent-transcript.conversation".state.entries[*].entry.result.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:2].data.projections."agent-transcript.conversation".state.entries[*].entry.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:2].data.projections."web-history.agent-statuses".state[*].detail.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `disk[@projection:2].data.projections."web-history.agent-statuses".state[*].sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@projection:2].data.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `disk[@registry].data.events[*].entries[*].event.runId` | 96→0 | 1-2, 1-3, 1-4, 1-5, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `disk[@registry].data.records[*].result.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `disk[@registry].data.records[*].runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `disk[@registry].data.records[*].sessionKey` | 8→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `http[readonly.messages#0].body.messages[*].sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `http[readonly.messages#0].body.stream.messages[*].sessionId` | 28→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `http[readonly.projects#0].body[*].sessions[*].id` | 0→8 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `http[readonly.sessions#0].body.sessions[*].id` | 0→8 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws."ws.chat.2#0"[*].body.activity.completedRunId` | 9→6 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.chat.2#0"[*].body.activity.runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.chat.2#0"[*].body.activity.sessionId` | 13→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.chat.2#0"[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws."ws.chat.2#0"[*].body.sessionId` | 27→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws."ws.chat.3#0"[*].body.activity.completedRunId` | 9→6 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.chat.3#0"[*].body.activity.runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.chat.3#0"[*].body.activity.sessionId` | 13→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.chat.3#0"[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws."ws.chat.3#0"[*].body.runId` | 39→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.chat.3#0"[*].body.sessionId` | 27→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws."ws.watch.4#0"[*].body.sessionId` | 8→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws."ws.watch.5#0"[*].body.activities[*].completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.watch.5#0"[*].body.activities[*].runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.watch.5#0"[*].body.activities[*].sessionId` | 8→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `identity.consistency` | `ws."ws.watch.5#0"[*].body.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".complete[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".model-selection-changed[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".pilotdeck-command[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".session-activity[*].body.activity.completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".session-activity[*].body.activity.runId` | 27→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".session-activity[*].body.activity.sessionId` | 20→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".session-input-accepted[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".status[*].body.id` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".status[*].body.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".stream_delta[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.2#0".text[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".complete[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".complete[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".model-selection-changed[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".model-selection-changed[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".pilotdeck-command[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".session-activity[*].body.activity.completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".session-activity[*].body.activity.runId` | 27→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".session-activity[*].body.activity.sessionId` | 20→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".session-input-accepted[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".session-input-accepted[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".status[*].body.runId` | 18→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".status[*].body.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".stream_delta[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".stream_delta[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".text[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.chat.3#0".text[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.4#0".input-queue-state[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.4#0".watch-session[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.5#0".input-queue-state[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.5#0".session-activity-snapshot[*].body.activities[*].completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.5#0".session-activity-snapshot[*].body.activities[*].runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.5#0".session-activity-snapshot[*].body.activities[*].sessionId` | 8→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.5#0".unwatch-session[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `identity.consistency` | `ws.by_type."ws.watch.5#0".watch-session[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.activity` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.activity.completedRunId` | 9→6 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.activity.runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.activity.sessionId` | 13→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.changedFile` | 1→1 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.current` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.exitCode` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.finishReason` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.id` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.kind` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.phase` | 12→12 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.processed` | 12→12 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.projectListRevision` | 1→1 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.projects[*].lastActivity` | 1→1 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.projects[*].sessions[*].createdAt` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.projects[*].sessions[*].created_at` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.projects[*].sessions[*].id` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.projects[*].sessions[*].lastActivity` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.projects[*].sessions[*].updated_at` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.provider` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.raw_b64` | 12→12 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.runId` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.sessionId` | 51→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.success` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.text` | 12→12 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.timestamp` | 25→25 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.total` | 12→12 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.type` | 36→36 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.usage` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].dir` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].masked` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].opcode` | 12→12 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.2#0"[*].type` | 36→36 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"` | 8→8 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.activity` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.activity.completedRunId` | 9→6 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.activity.runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.activity.sessionId` | 13→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.changeType` | 2→2 | 1-2, 2-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.changedFile` | 3→3 | 1-2, 1-4, 2-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.current` | 10→10 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.exitCode` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.finishReason` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.id` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.kind` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.phase` | 14→14 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.processed` | 14→14 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projectListRevision` | 3→3 | 1-2, 1-4, 2-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projects` | 2→2 | 1-2, 2-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projects[*].lastActivity` | 1→1 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projects[*].sessions[*].createdAt` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projects[*].sessions[*].created_at` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projects[*].sessions[*].id` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projects[*].sessions[*].lastActivity` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.projects[*].sessions[*].updated_at` | 2→2 | 1-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.provider` | 24→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.raw_b64` | 14→14 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.runId` | 63→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.sessionId` | 51→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.success` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.text` | 12→12 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.timestamp` | 27→27 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.total` | 12→12 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.type` | 38→38 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.usage` | 12→12 | 1-2, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.watchProvider` | 2→2 | 1-2, 2-4 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].dir` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].masked` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].opcode` | 14→14 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].type` | 38→38 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.4#0"[*].body.sessionId` | 8→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.sequence` | `ws."ws.watch.5#0"[*].body.activities[*].completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.watch.5#0"[*].body.activities[*].runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.watch.5#0"[*].body.activities[*].sessionId` | 8→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.sequence` | `ws."ws.watch.5#0"[*].body.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"` | 8→8 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].body.autoOpen` | 24→24 | 1-2, 1-3, 1-4, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].body.data` | 90→90 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].body.raw_b64` | 10→10 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].body.type` | 46→46 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].body.url` | 24→24 | 1-2, 1-3, 1-4, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].dir` | 30→30 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].masked` | 30→30 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].opcode` | 10→10 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.6#0"[*].type` | 46→46 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"` | 8→8 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].body.cols` | 16→16 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].body.data` | 165→165 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].body.raw_b64` | 10→10 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].body.rows` | 16→16 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].body.type` | 54→54 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].dir` | 54→54 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].masked` | 54→54 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].opcode` | 10→10 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.sequence` | `ws."ws.watch.7#0"[*].type` | 54→54 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".complete[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".loading_progress` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".model-selection-changed[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".pilotdeck-command[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.changedFile` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.projectListRevision` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.projects[*].lastActivity` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.projects[*].sessions[*].createdAt` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.projects[*].sessions[*].created_at` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.projects[*].sessions[*].id` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.projects[*].sessions[*].lastActivity` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.projects[*].sessions[*].updated_at` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.timestamp` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".session-activity[*].body.activity.completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".session-activity[*].body.activity.runId` | 27→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".session-activity[*].body.activity.sessionId` | 20→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".session-input-accepted[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".status[*].body.id` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".status[*].body.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".stream_delta[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".text[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".complete[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".complete[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".loading_progress` | 8→8 | 1-2, 1-3, 1-5, 2-3, 2-4, 2-5, 3-4, 4-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".model-selection-changed[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".model-selection-changed[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".pilotdeck-command[*].body.options.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated` | 6→6 | 1-2, 1-3, 1-5, 2-4, 3-4, 4-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.changedFile` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.projectListRevision` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.projects[*].lastActivity` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.projects[*].sessions[*].createdAt` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.projects[*].sessions[*].created_at` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.projects[*].sessions[*].id` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.projects[*].sessions[*].lastActivity` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.projects[*].sessions[*].updated_at` | 2→2 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.timestamp` | 1→1 | 1-4 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".session-activity[*].body.activity.completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".session-activity[*].body.activity.runId` | 27→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".session-activity[*].body.activity.sessionId` | 20→24 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".session-input-accepted[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".session-input-accepted[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".status[*].body.runId` | 18→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".status[*].body.sessionId` | 12→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".stream_delta[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".stream_delta[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".text[*].body.runId` | 6→0 | 1-2, 1-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".text[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.watch.4#0".input-queue-state[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.watch.4#0".watch-session[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.watch.5#0".input-queue-state[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.watch.5#0".session-activity-snapshot[*].body.activities[*].completedRunId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.watch.5#0".session-activity-snapshot[*].body.activities[*].runId` | 15→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.watch.5#0".session-activity-snapshot[*].body.activities[*].sessionId` | 8→12 | 1-2, 1-3, 1-4, 1-5, 2-3, 3-4, 3-5 |
+| `ws.structure` | `ws.by_type."ws.watch.5#0".unwatch-session[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.watch.5#0".watch-session[*].body.sessionId` | 4→0 | 1-2, 1-3, 1-4, 1-5 |
+| `ws.structure` | `ws.by_type."ws.watch.6#0".auth_url[*].body.url` | 8→8 | 1-4, 2-4, 3-4, 4-5 |
+| `ws.structure` | `ws.by_type."ws.watch.6#0".output` | 8→8 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.structure` | `ws.by_type."ws.watch.6#0".output[*].body.data` | 60→60 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+| `ws.structure` | `ws.by_type."ws.watch.7#0".output` | 8→8 | 1-2, 1-3, 1-4, 2-3, 2-4, 2-5, 3-5, 4-5 |
+| `ws.structure` | `ws.by_type."ws.watch.7#0".output[*].body.data` | 130→130 | 1-2, 1-3, 1-4, 1-5, 2-3, 2-4, 2-5, 3-4, 3-5, 4-5 |
+
+<!-- END B2 ROUND2 CLUSTERS -->
+
+## 第 3 轮（2026-10-14）：串行 live2 k=5 离线重算
+
+**最终 self_compare=false，4/10 PASS；十对共 1718 → 24 条诊断，只剩 changedFile 内容差异。** PTY 输出分块/双向交错与七条 watcher 时钟路径的差异已经全部消失。没有为达成 10/10 擦掉 watcher 文件名。
+
+本轮未提交、未启动服务，保留上一轮未提交成果；未修改 `state/`、`specs/parity/`、`specs/gateway-parity/`、`scripts/parity/`、`scripts/gateway-parity/` 或 live2 原始归档及原 ruler.json。原始归档哈希记录在 `_tmp/b2-round3-archive-sha256.json`，收尾再次核对一致。
+
+| TS 对 | live2 原诊断数 | 第 3 轮诊断数 | 结果 |
+|---|---:|---:|---|
+| 1–2 | 161 | 4 | FAIL |
+| 1–3 | 184 | 4 | FAIL |
+| 1–4 | 174 | 4 | FAIL |
+| 1–5 | 178 | 0 | PASS |
+| 2–3 | 186 | 0 | PASS |
+| 2–4 | 173 | 0 | PASS |
+| 2–5 | 182 | 4 | FAIL |
+| 3–4 | 180 | 0 | PASS |
+| 3–5 | 115 | 4 | FAIL |
+| 4–5 | 185 | 4 | FAIL |
+
+**实施内容与边界**
+
+1. `/shell` 只通过实际成功握手路径选择。完整验证原始 wire、mask、seq、分片链、双向 close 后，按连接/方向将 `output.data` 还原为 UTF-8 完整字节流比较；分块长度、累计偏移、wire 帧数进入 `pty_chunk_diagnostics`，不进入硬门。output envelope 必须恰好为 type/data，额外字段失败。resize 的值、次数及方向内顺序完整保留，其他非 output 帧也按原始方向内顺序比较；不比跨方向交错。普通 `/ws` 的全序不变，auth_url 不丢不排序。
+2. WS `projects_updated` 新增完整路径 `projects.*.sessions.*.{createdAt,created_at,lastActivity,updated_at}`，以及原报告同样有差异且源码证明是墙钟的 `projects.*.lastActivity`、`projectListRevision`、`timestamp`。每个非 null 已登记时钟保留原类型和本广播的时间排名，同实体、跨实体的大小/相等关系都在；数组不排序。每侧独立拒绝创建时间晚于活动时间，因此两侧同坏也 FAIL。未知路径、null 与缺字段不擦。未修改其他既有时钟规则或 SSE 门限。
+3. normalization.md 第 3 轮逐条给出完整字段路径、来源和对照。PTY 来源链包括 `ui/node_modules/node-pty/lib/unixTerminal.js:92`–95 的 tty.ReadStream、`lib/terminal.js:90`–93 的 data→onData、`ui/server/index.js:2900`–2953 的 output；resize 在 `index.js:2994`–2999。session 时钟在 `ui/server/projects.js:106`–117，project/revision/broadcast 时钟在 `projects.js:68`–79、247–270 和 `index.js:334`–337。全部为基线只读。
+4. 新增 `controls/streams_and_clocks.py` **27 条端到端对照**，包含 2 条等价 PASS、25 条故障/同坏 FAIL；加既有 181 条，共 **208/208 PASS**。用户要求的输出改一个字节、少一段、多一段、resize 改值/少一次、同实体两个时钟交换，全部命中预期 rule/location。还验证输出换序/方向、resize 重复/换序、mask、envelope 未知字段、auth_url 次序、跨实体时间交换、别名相等关系、类型/null/缺失/非法/未知字段和 changedFile；非 output 分片中 ping 的位置也保留。
+
+**PTY 实录诊断。** 只取客户端边界 downstream-read/downstream-write，避免把同一数据另一条转发腿重复计入。`ws.watch.6` 五轮 output 分块数为 `10/12/8/9/8`，总字节数每轮均 **192**，SHA256 前缀 `5c9496822d76`；`ws.watch.7` 为 `20/20/17/18/16`，每轮均 **220** 字节，SHA256 前缀 `0da245cdaa7d`。完整哈希、原 seq 和 watcher 值见 `_tmp/b2-round3-variants.json`。
+
+**剩余 4 簇。** 均为第二次 `projects_updated.changedFile`：TS1/TS5 是 `exp008-fixture/chats/web:33333333-3333-4333-8333-000000000002.jsonl`，TS2/TS3/TS4 是同文件名后追加 `.projections.json`。因此组内 1–5、2–3、2–4、3–4 PASS；跨组的六对各 4 条 FAIL。每对两个 chat 连接，各有全序与 by_type 两个诊断；不是四种独立内容问题。
+
+| 比较规则 | 剩余完整字段簇 | 十对累计 |
+|---|---|---:|
+| `ws.sequence` | `ws."ws.chat.2#0"[*].body.changedFile` | 6 |
+| `ws.sequence` | `ws."ws.chat.3#0"[*].body.changedFile` | 6 |
+| `ws.structure` | `ws.by_type."ws.chat.2#0".projects_updated[*].body.changedFile` | 6 |
+| `ws.structure` | `ws.by_type."ws.chat.3#0".projects_updated[*].body.changedFile` | 6 |
+
+完整前后聚类为 `_tmp/b2-round3-clusters.json` / `.md`，仅把数组数字下标折叠，按现有 summarize 脚本得到 54 个前后并集簇，其中 4 个仍有差异；十对所有 differences 均计入。单独剩余表为 `_tmp/b2-round3-remaining.json`。来源 `ui/server/index.js:332`–340 把 scheduler 的 filePath 转相对路径发出。本轮不接受把不同文件视为等价，后续应单独研究 watcher 触发来源与前端消费语义。
+
+**最终验证与产物**
+
+- `_tmp/20261014-b2-round3-ruler.json`：全部十对及 proxy 原始结果，`per_rule_negative=true`、`same_bad_rejected=true`、`independent_review=null`、`errors=[]`；整体 FAIL，exit 1。报告中的当前 apparatus 哈希与收尾源码一致。
+- `_tmp/b2-round3-controls.json`：208/208 PASS，missing_rule_controls=[]；与最终 ruler 内 controls 一致。
+- `_tmp/b2-round3-tests.txt`：Python 43/43 PASS；旧 SQLite 测试仍有 ResourceWarning，无失败。`_tmp/b2-round3-chat-tests.txt`：串行驱动离线屏障测试 PASS。Python 编译、Node 语法及 git diff --check 通过。
+- `_tmp/b2-round3-same-archive.json`：五个归档各自与自身比较均 PASS/0 differences，仅证明完整性，不计入独立十对。
+- `_tmp/b2-round3-strict-rejection.json`：未带 replay 时，旧归档被当前 apparatus 哈希门拒收；没有修改 run-meta 或关闭完整性门。
+- live2 proxy 与 TS1 重放 **FAIL / 20 条诊断**：7 个 101 响应仅 proxy 有 Date；7 个连接各多 1 个下行 close，产生 9 条序列/结构诊断；另 4 条 changedFile。没有据此改变规则。
+- `check_frozen.py` 仍为 DRAFT/未批准。报告 `comparison_mode=historical-replay`、`calibration_eligible=false`；原报告 SHA256 与原装置哈希保留在 replay_provenance。该离线结果不充当当前装置的新采集、独立评审或冻结证明。
+
+复现最终重算（不启动服务；预期 exit 1，因为仍有 changedFile 差异）：
+
+```sh
+python3 scripts/ui-server-parity/check_ruler.py \
+  --round _tmp/20261014-b2-live2-ts1/direct \
+  --round _tmp/20261014-b2-live2-ts2/direct \
+  --round _tmp/20261014-b2-live2-ts3/direct \
+  --round _tmp/20261014-b2-live2-ts4/direct \
+  --round _tmp/20261014-b2-live2-ts5/direct \
+  --enumeration _tmp/20261014-b2-live2-ts1/enumeration/router-enumeration.json \
+  --replay-of _tmp/20261014-b2-live2-ruler.json \
+  --proxy _tmp/20261014-b2-live2-proxy/direct \
+  --out _tmp/20261014-b2-round3-ruler.json
+```
+
+
+## B2 第 3 个 PR · 第 4 轮：原版多态参考池（DRAFT）
+
+按人已批的阶段 C 1B 原则，将 chat 两连接第二次 projects_updated.body.changedFile 登记为精确多态字段，见 [multimodal.md](../../../specs/ui-server-parity/multimodal.md)。参考池 >=20 遍 TS、每类 >=2；同日、同源、同采集路径且与全新 k=5/proxy 独立。类别先由 TS 全部两两严格比较确定，候选须完整命中某类所有成员；其他字段严格比较不变。
+
+本轮离线 controls 221/221、Python 49/49；原 live2 严格重放仍 4/10 PASS。没有新真实参考池/live3，不声称定标完成。完整交接和证据在本 worktree `_tmp/RESULT.md`「第 4 轮」，协调者运行 `_tmp/b2-round4-coordinator.zsh` 采 20+5+1 并验收；该脚本共用一个 live3 --out 前缀，完整停服务后改名，所有实际路径字节相等。compare/check_ruler 正式入口需显式 --reference-pool；只作旧配对诊断时传 --paired-only，不能据此定标。
