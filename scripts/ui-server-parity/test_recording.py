@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
 """Offline recording completeness controls; no behavioral comparator."""
+# Admit source-only apparatus before json or any local module can be imported.
+import os as _boot_os
+import sys as _boot_sys
+_boot_sys.dont_write_bytecode = True
+_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+_boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
+if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+with open(_boot_source, 'rb') as _boot_file:
+    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+_boot_namespace['preflight'](_boot_dir)
 import json
 import base64
 from pathlib import Path
@@ -206,7 +219,7 @@ class CaptureClockControls(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp, patch('common.threading.Thread'), \
                     patch.object(run, 'ClockMonitor', return_value=monitor), \
                     patch.object(run, 'source_hashes', return_value={}), \
-                    patch.object(run, 'record_monitored_side', return_value={}):
+                    patch.object(run, 'record_monitored_side', return_value={str(i): {'status': 'PASS'} for i in range(6)}):
                 with self.subTest(phase=phase), self.assertRaises(ClockRefused):
                     run.record_side(Path(tmp), 'direct')
                 check = json.loads((Path(tmp) / 'direct/run-meta.json').read_text())['clock_regression_check']
@@ -236,7 +249,11 @@ class CaptureClockControls(unittest.TestCase):
         with patch('common.threading.Thread'):
             meta = {'wall_start_ms': monitor.start()}
             for _ in elapsed[1:-1]:
-                monitor.sample('periodic')
+                try:
+                    monitor.sample('periodic')
+                except ClockRefused as error:
+                    monitor.error = str(error)  # Same retention as the production polling thread.
+                    break
             monitor.finish(meta)
         return meta
 
@@ -325,7 +342,7 @@ class CaptureClockControls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch('common.threading.Thread'), \
                 patch.object(run, 'ClockMonitor', return_value=monitor), \
                 patch.object(run, 'source_hashes', return_value={}), \
-                patch.object(run, 'record_monitored_side', return_value={}):
+                patch.object(run, 'record_monitored_side', return_value={str(i): {'status': 'PASS'} for i in range(6)}):
             with self.assertRaises(ClockRefused):
                 run.record_side(Path(tmp), 'direct')
             meta = json.loads((Path(tmp) / 'direct/run-meta.json').read_text())
@@ -345,6 +362,89 @@ class CaptureClockControls(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(report['status'], 'REFUSED')
             self.assertEqual(report['sides']['direct']['device']['status'], 'REFUSED')
+
+    def test_rejected_broad_sample_with_proven_rollback_cannot_be_retried_away(self):
+        for walls in ([0, -1, 252_000_001], [0, 250_000_000, 249_999_999]):
+            monitor = self.monitor([(1_000_000, 1_000_100), (251_000_000, 253_000_000),
+                                    (253_000_001, 253_000_101)], walls)
+            monitor.sample('start')
+            with self.subTest(walls=walls), self.assertRaisesRegex(ClockRefused, 'including rejected brackets'):
+                monitor.sample('periodic')
+            self.assertEqual(len(monitor.samples), 1)
+            self.assertEqual(monitor.rejected_samples[-1]['reason'], 'wall clock regression between adjacent samples')
+
+    def test_broad_start_retry_with_wall_rollback_is_refused(self):
+        monitor = self.monitor([(1_000_000, 3_000_000), (3_000_001, 3_000_101)], [0, -1])
+        with self.assertRaisesRegex(ClockRefused, 'including rejected brackets'):
+            monitor.start()
+        check = monitor.finish({})
+        self.assertEqual(check['status'], 'REFUSED')
+        self.assertEqual(len(check['rejected_samples']), 2)
+
+    def test_archive_cannot_claim_PASS_after_rollback_in_rejected_sample(self):
+        meta = self.simulate_monitor([0, 250_000_000], [0, 250_000_000])
+        first = meta['clock_regression_check']['samples'][0]
+        meta['clock_regression_check']['rejected_samples'] = [{
+            'phase': 'periodic', 'wall_ns': first['wall_ns'] - 1,
+            'mono_before_ns': first['mono_after_ns'] + 1, 'mono_after_ns': first['mono_after_ns'] + 2_000_001}]
+        with self.assertRaisesRegex(ClockRefused, 'including rejected brackets'):
+            validate_clock_check(meta)
+
+    def test_dut_fail_and_clock_refusal_are_both_saved_without_masking_fail(self):
+        import run
+        for scenario_fail in (False, True):
+            monitor = self.monitor([(1_000_000, 1_000_100), (251_000_000, 251_000_100)], [0, -1])
+            outcome = {'return_value': {'case': {'status': 'FAIL'}}} if scenario_fail else {
+                'side_effect': RuntimeError('DUT recording FAIL')}
+            with tempfile.TemporaryDirectory() as tmp, patch('common.threading.Thread'), \
+                    patch.object(run, 'ClockMonitor', return_value=monitor), \
+                    patch.object(run, 'source_hashes', return_value={}), \
+                    patch.object(run, 'record_monitored_side', **outcome):
+                with self.subTest(scenario_fail=scenario_fail), self.assertRaises(RuntimeError) as caught:
+                    run.record_side(Path(tmp), 'proxy')
+                self.assertNotIsInstance(caught.exception, ClockRefused)
+                meta = json.loads((Path(tmp) / 'proxy/run-meta.json').read_text())
+                self.assertEqual(meta['dut_result']['status'], 'FAIL')
+                self.assertEqual(meta['clock_regression_check']['status'], 'REFUSED')
+
+    def test_recording_exit_precedence_across_sides_and_coverage(self):
+        import run
+        passed = {str(i): {'status': 'PASS'} for i in range(6)}
+        failed = {**passed, '0': {'status': 'FAIL'}}
+        cases = [([ClockRefused('clock'), RuntimeError('DUT FAIL')], 1, 'FAIL'),
+                 ([RuntimeError('DUT FAIL'), ClockRefused('clock')], 1, 'FAIL'),
+                 ([ClockRefused('clock'), failed], 1, 'FAIL'),
+                 ([ClockRefused('clock'), passed], 2, 'REFUSED'),
+                 ([passed, passed], 0, 'PASS')]
+        for outcomes, expected_code, status in cases:
+            with tempfile.TemporaryDirectory() as tmp, \
+                    patch('sys.argv', ['run.py', '--out', str(Path(tmp) / 'capture')]), \
+                    patch.object(run, 'build'), patch.object(run, 'enumerate_routes'), \
+                    patch.object(run.b1, 'make_home'), \
+                    patch.object(run.subprocess, 'run', return_value=type('Result', (), {'returncode': 0})()), \
+                    patch.object(run, 'record_side', side_effect=outcomes), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                with self.subTest(status=status, outcomes=outcomes):
+                    self.assertEqual(run.main(), expected_code)
+                    report = json.loads((Path(tmp) / 'capture/result.json').read_text())
+                    self.assertEqual(report['status'], status)
+
+    def test_real_wrapper_to_main_keeps_dut_FAIL_and_clock_REFUSED_in_result(self):
+        import run
+        monitor = self.monitor([(1_000_000, 1_000_100), (251_000_000, 251_000_100)], [0, -1])
+        with tempfile.TemporaryDirectory() as tmp, patch('common.threading.Thread'), \
+                patch('sys.argv', ['run.py', '--out', str(Path(tmp) / 'capture'), '--side', 'proxy']), \
+                patch.object(run, 'ClockMonitor', return_value=monitor), \
+                patch.object(run, 'source_hashes', return_value={}), \
+                patch.object(run, 'build'), patch.object(run, 'enumerate_routes'), \
+                patch.object(run.b1, 'make_home'), patch.object(run.subprocess, 'run'), \
+                patch.object(run, 'record_monitored_side', side_effect=RuntimeError('DUT failed')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(run.main(), 1)
+            report = json.loads((Path(tmp) / 'capture/result.json').read_text())
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertEqual(report['capture_checks']['proxy']['dut_result']['status'], 'FAIL')
+            self.assertEqual(report['capture_checks']['proxy']['clock_regression_check']['status'], 'REFUSED')
 
 
 if __name__ == '__main__':

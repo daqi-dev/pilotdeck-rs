@@ -1,6 +1,10 @@
 # B2 装置与待定标采集
 
-规约正本为 `specs/ui-server-parity/{acceptance,normalization,accepted-diffs,multimodal}.md`，均为 DRAFT。`FROZEN.md` 首行保留「待定标」，哈希检查通过也只能 DRAFT/2；去掉占位、登记具名人批之前不能宣称冻结。采集装置 hash 绑定四份规约、全部装置及 B1 共用依赖；审批清单 FROZEN.md 自身不参与 capture hash，避免补定标/评审/人批字段后反过来使本批采集失效。
+规约正本为 `specs/ui-server-parity/{acceptance,normalization,accepted-diffs,multimodal}.md`，均为 DRAFT。`FROZEN.md` 首行保留「待定标」，哈希检查通过也只能 DRAFT/2；去掉占位、登记审批与依据之前不能宣称冻结。`Approved-By:` 接受具名人，或精确的「AI 代批，待人复核（协调者）」；两种方式都必须同时有唯一的 `Approval-Basis:`，写明定标报告路径及两家独立评审路径（至少三个不同的具体文件路径）。空值、占位与重复字段不能批准。采集装置 hash 绑定四份规约、全部装置及 B1 共用依赖；审批清单 FROZEN.md 自身不参与 capture hash，避免补定标/评审/审批字段后反过来使本批采集失效。
+
+装置目录 `scripts/ui-server-parity/` 与共用依赖目录 `scripts/exp008/` 用 `os.walk(followlinks=False)` 扫描；任何符号链接（目录/文件/断链）、`.pyc` 或 `__pycache__` 一律 FAIL，不是排除后继续。每个 Python 入口在导入 json 或本目录模块前，仅用解释器启动模块 sys/os 按源码执行 `apparatus.py`，预检后才允许正常导入；关闭字节码写入，并拒绝已有缓存，因 `-B` 仅阻止写入、仍会加载伪造 pyc。预检源码本身拒绝符号链接，并随冻结清单登记。检查器与 capture hash 共用同一扫描规则。
+
+FROZEN 与 capture hash 共用 exp008 依赖名单：`run.py`、`compare.py`、`enumerate_hook.mjs`、`preload.mjs`、`reconcile_routes.py` 及 proxy `Cargo.toml`、`Cargo.lock`、`src/main.rs`。前三件 proxy 构建文件原已登记；本轮补齐漏登的四个脚本，并补实际调用的路由核对脚本。proxy 引入的 `recording.rs` 位于 B2 全目录登记范围内。
 
 离线验证（不监听）：
 
