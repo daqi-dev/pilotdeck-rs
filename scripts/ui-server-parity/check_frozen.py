@@ -45,8 +45,7 @@ from pathlib import Path
 import re
 import tempfile
 import subprocess
-import unicodedata
-from apparatus import scan, ApparatusUnsafe, SPEC_FILES, EXP008_FILES, toolchain_files
+from apparatus import scan, ApparatusUnsafe, SPEC_FILES, EXP008_FILES, toolchain_files, approval_valid
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / 'specs/ui-server-parity'
@@ -82,35 +81,8 @@ def check(folder=SPEC, *, root=ROOT):
     approvals = re.findall(r'^[ \t]*Approved-By:([^\n]*)$', raw, re.M)
     bases = re.findall(r'^[ \t]*Approval-Basis:([^\n]*)$', raw, re.M)
 
-    def concrete(value):
-        return bool(value.strip()) and not re.search(r'<|>|TODO|pending|null|待批准|待人批准|待定标', value, re.I)
-
-    def visible(value):
-        return all(char.isprintable() and unicodedata.category(char)[0] not in ('C', 'M')
-                   and ord(char) not in (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800)
-                   and not (0xFE00 <= ord(char) <= 0xFE0F or 0xE0100 <= ord(char) <= 0xE01EF)
-                   and not (char.isspace() and char != ' ') for char in value)
-
-    approved = (len(approvals) == 1 and concrete(approvals[0]) and visible(approvals[0])
-                and not re.search(r'Claude|GPT|GLM|Gemini|DeepSeek|Qwen|Doubao|ChatGPT|模型', approvals[0], re.I))
-    if approved and re.search(r'AI|代批|待人复核', approvals[0], re.I):
-        approved = approvals[0].strip() == 'AI 代批，待人复核（协调者）'
-    # Both approval modes require one concrete basis: calibration report + two reviews.
-    basis_paths = re.findall(r'(?:[^\s`+;,，；]+/)+[^\s`+;,，；]+\.(?:json|md|log|txt)', bases[0]) if len(bases) == 1 else []
-    allowed = [root]
-    try:
-        common = subprocess.check_output(['git', '-C', str(root), 'rev-parse',
-                                         '--path-format=absolute', '--git-common-dir'],
-                                        text=True, stderr=subprocess.PIPE).strip()
-        allowed.append(Path(common).resolve().parent / '_tmp')
-    except (OSError, subprocess.CalledProcessError):
-        pass
-    resolved_basis = [(root / name).resolve() for name in basis_paths]
-    valid_basis = (len(bases) == 1 and concrete(bases[0]) and visible(bases[0])
-                   and len(set(resolved_basis)) >= 3
-                   and all(path.is_file() and any(path.is_relative_to(base) for base in allowed)
-                           for path in resolved_basis))
-    approved = approved and valid_basis
+    approved = approval_valid(approvals[0] if len(approvals) == 1 else None,
+                              bases[0] if len(bases) == 1 else None, root)
     if not draft and not approved:
         errors.append('missing/invalid Approved-By or Approval-Basis (calibration report + two reviews)')
     entries = re.findall(r'^([0-9a-f]{64})  ([^\s]+)\s*$', raw, re.M)

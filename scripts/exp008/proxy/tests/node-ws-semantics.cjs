@@ -54,6 +54,7 @@ async function upgradeAndClose(initiator, code, reason) {
     'Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n' +
     `Sec-WebSocket-Key: ${Buffer.from('the sample nonce').toString('base64')}\r\n\r\n`);
   const ws = await connected;
+  assert.equal(ws._closeTimeout, 30000, "baseline ws default close receipt budget");
   const handshake = Buffer.concat(socket.output).toString();
   assert.ok(!/^date:/im.test(handshake));
   assert.ok(handshake.startsWith('HTTP/1.1 101 Switching Protocols\r\n'));
@@ -96,6 +97,42 @@ async function serverResponse101() {
   socket.destroy();
   return wire;
 }
+async function pingAndDuplicateKey() {
+  const request = 'GET /ws HTTP/1.1\r\nHost: memory\r\nConnection: Upgrade\r\n' +
+    'Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n' +
+    `Sec-WebSocket-Key: ${Buffer.from('the sample nonce').toString('base64')}\r\n`;
+  const server = http.createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  const socket = new MemorySocket();
+  const connected = new Promise(resolve => server.on('upgrade', (req, sock, head) =>
+    wss.handleUpgrade(req, sock, head, resolve)));
+  server.emit('connection', socket);
+  socket.push(request + '\r\n');
+  const ws = await connected;
+  assert.equal(ws._closeTimeout, 30000);
+  socket.output.length = 0;
+  const ping = closeFrame(Buffer.from('ping payload'), true);
+  ping[0] = 0x89;
+  socket.push(ping);
+  await new Promise(resolve => setImmediate(resolve));
+  const pong = decodeFrames(Buffer.concat(socket.output));
+  assert.equal(pong.length, 1);
+  assert.equal(pong[0].opcode, 10);
+  assert.equal(pong[0].payload_hex, Buffer.from('ping payload').toString('hex'));
+  ws.terminate(); wss.close(); socket.destroy();
+  const badServer = http.createServer();
+  const badWss = new WebSocketServer({ noServer: true });
+  const badSocket = new MemorySocket();
+  badServer.on('upgrade', (req, sock, head) => badWss.handleUpgrade(req, sock, head, () =>
+    assert.fail('duplicate key cannot upgrade')));
+  badServer.emit('connection', badSocket);
+  badSocket.push(request + `Sec-WebSocket-Key: ${Buffer.from('another nonce123').toString('base64')}\r\n\r\n`);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(Buffer.concat(badSocket.output).toString(), /^HTTP\/1.1 400/);
+  badSocket.destroy(); badWss.close();
+  return { closeTimeout: 30000, onePong: true, duplicateKeyStatus: 400 };
+}
+
 (async () => {
   const results = [];
   for (const initiator of ['client', 'server']) {
@@ -104,5 +141,5 @@ async function serverResponse101() {
     }
   }
   console.log(JSON.stringify({ node: process.version, ws: baselineRequire('ws/package.json').version,
-    serverResponse101: await serverResponse101(), upgrade: results }, null, 2));
+    serverResponse101: await serverResponse101(), controls: await pingAndDuplicateKey(), upgrade: results }, null, 2));
 })().catch(error => { console.error(error); process.exitCode = 1; });

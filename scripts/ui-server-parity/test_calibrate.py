@@ -79,20 +79,23 @@ class DiskSizeControls(unittest.TestCase):
         sleep.assert_called_once_with(1)
         self.assertEqual(output.getvalue(), '')
 
-    def test_retry_exhaustion_uses_only_last_stdout_and_logs_approximate(self):
+    def test_retry_exhaustion_uses_max_stdout_and_records_approximate(self):
         missing = ('du: /temporary/first: No such file or directory\n'
                    'du: /temporary/second: No such file or directory\n')
         runner = Mock(side_effect=[subprocess.CompletedProcess(['du'], 1,
-                                   f'{i}\tfirst\n2\tsecond\n', missing) for i in range(1, 5)])
+                                   f'{i}\tfirst\n2\tsecond\n', missing) for i in (9, 3, 4, 1)])
         output = io.StringIO()
+        events = []
         with tempfile.TemporaryDirectory() as tmp, patch('calibrate.time.sleep') as sleep, \
                 contextlib.redirect_stderr(output):
-            self.assertEqual(calibrate.size([Path(tmp)], runner=runner), 6 * 1024)
+            self.assertEqual(calibrate.size([Path(tmp)], runner=runner, events=events), 11 * 1024)
         self.assertEqual(runner.call_count, 4)
         self.assertEqual(sleep.call_args_list, [call(1)] * 3)
         log = json.loads(output.getvalue())
         self.assertIs(log['approximate'], True)
-        self.assertEqual(log['bytes'], 6 * 1024)
+        self.assertEqual(log['bytes'], 11 * 1024)
+        self.assertEqual(events, [log])
+        self.assertEqual(log['attempt_bytes'], [11*1024, 5*1024, 6*1024, 3*1024])
         self.assertEqual(log['attempts'], 4)
         self.assertEqual(log['stderr'], missing)
         self.assertEqual(log['paths'], [tmp])
@@ -366,7 +369,7 @@ class CalibrationControls(unittest.TestCase):
             batch_path.mkdir(parents=True)
             batch = self.batch(batch_path)
             batch.state.update(resource_root=str(root), size_reference=str(root))
-            with patch.object(calibrate, 'ROOT', root), patch('calibrate.space_check'):
+            with patch.object(calibrate, 'ROOT', root), patch('calibrate.space_check', return_value={}):
                 batch.build()
                 batch.verify_build()
                 self.assertEqual(subprocess.check_output([str(batch.binary)], text=True).strip(), 'FRESH')
@@ -433,7 +436,8 @@ class CalibrationControls(unittest.TestCase):
             link.symlink_to(outside)
             original = node_modules_hash(root)
             outside.write_bytes(b'two')
-            self.assertEqual(node_modules_hash(root), original)  # not followed
+            self.assertNotEqual(node_modules_hash(root), original)  # target bytes are bound
+            outside.write_bytes(b"one")
             for mutation in ('bytes', 'rename', 'empty-directory', 'link-target', 'file-type'):
                 with self.subTest(mutation=mutation):
                     if mutation == 'bytes':
@@ -689,6 +693,12 @@ class CalibrationControls(unittest.TestCase):
                                          'LD_PRELOAD': '/fake', 'PARITY_ATTACK': '1', 'HTTP_PROXY': '/fake'}):
                 for env in (node_environment(), run.build_env(root, 'probe'),
                             run.build_env(root, 'enumerate', {'PARITY_BASELINE': str(root)})):
+                    if 'HOME' in env:
+                        self.assertEqual(env['HOME'], str(root / 'home'))
+                        self.assertEqual(env['TMPDIR'], str(root / 'tmp'))
+                        self.assertEqual(env['PILOTDECK_SKIP_BROWSER_OPEN'], '1')
+                        for name in ('XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR'):
+                            self.assertTrue(Path(env[name]).is_relative_to(root))
                     self.assertNotIn('NODE_PATH', env)
                     self.assertNotIn('NODE_OPTIONS', env)
                     self.assertNotIn('HTTP_PROXY', env)
@@ -747,7 +757,95 @@ class CalibrationControls(unittest.TestCase):
             selector.write_text('[toolchain]\nchannel="1.99"\n')
             env = cargo_environment(root, root / 'home', root / 'target', root=root)
             self.assertEqual(env['RUSTUP_TOOLCHAIN'], '1.99')
-            for release in ('1.98.0', '1.99.1', '1.99.0-nightly', ''):
+            for release in ('1.98.0', '1.100.0', '1.99.0-nightly', ''):
                 with patch('apparatus.cargo_process', return_value=type('Result', (), {'stdout': 'release: ' + release})()), \
                         self.assertRaisesRegex(ValueError, 'release differs'):
                     cargo_identity(root, root / 'home', root / 'target', root=root)
+
+
+class B3DependencyBoundaries(unittest.TestCase):
+    def test_plain_external_link_targets_and_cycles_are_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'baseline'
+            (root / 'node_modules').mkdir(parents=True)
+            external = Path(tmp) / 'external'
+            external.mkdir()
+            file = external / 'plain.js'
+            file.write_text('one')
+            (root / 'node_modules/plain').symlink_to(external)
+            (external / 'cycle').symlink_to(external)
+            original = node_modules_hash(root)
+            file.write_text('two')
+            self.assertNotEqual(node_modules_hash(root), original)
+            (root / 'node_modules/file').symlink_to(file)
+            original = node_modules_hash(root)
+            file.write_text('three')
+            self.assertNotEqual(node_modules_hash(root), original)
+
+    def test_pnpm_takes_precedence_and_supports_exclusions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'node_modules').mkdir()
+            (root / 'package.json').write_text('{"workspaces":["legacy/*"]}')
+            for name in ('pnpm/included', 'pnpm/excluded', 'legacy/pkg'):
+                package = root / name
+                package.mkdir(parents=True)
+                (package / 'package.json').write_text('{}')
+                (package / 'plain.js').write_text('one')
+            (root / 'pnpm-workspace.yaml').write_text("packages: ['pnpm/*', '!pnpm/excluded']\n")
+            from common import dependency_roots
+            self.assertEqual(dependency_roots(root)['workspace_packages'], ['pnpm/included'])
+            original = node_modules_hash(root)
+            (root / 'pnpm/included/plain.js').write_text('two')
+            self.assertNotEqual(node_modules_hash(root), original)
+
+    def test_minor_selector_accepts_patches_but_exact_selector_does_not(self):
+        from apparatus import cargo_identity
+        for channel, release, accepted in (('1.99', '1.99.1', True), ('1.99', '1.100.0', False),
+                                           ('1.99.0', '1.99.1', False)):
+            with patch('apparatus.rust_toolchain_admission', return_value=channel), \
+                 patch('apparatus.cargo_process', return_value=type('Result', (), {'stdout': 'release: ' + release})()):
+                if accepted:
+                    cargo_identity(Path('/tmp'), Path('/tmp/home'), Path('/tmp/target'))
+                else:
+                    with self.assertRaisesRegex(ValueError, 'release differs'):
+                        cargo_identity(Path('/tmp'), Path('/tmp/home'), Path('/tmp/target'))
+
+    def test_approximate_space_checks_persist_in_batch_json(self):
+        event = {'event': 'du_size', 'approximate': True, 'bytes': 9000}
+        estimate = {'approximate': True, 'events': [event]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            batch = calibrate.Batch(root, {'resource_root': tmp, 'size_reference': tmp})
+            with patch('calibrate.space_check', return_value=estimate):
+                batch.record_space()
+            self.assertEqual(json.loads((root / 'batch.json').read_text())['space_checks'], [estimate])
+
+    def test_pnpm_omitted_packages_uses_baseline_v10_defaults_and_invalid_type_fails(self):
+        from common import dependency_roots
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'node_modules/pkg').mkdir(parents=True)
+            (root / 'node_modules/pkg/package.json').write_text('{}')
+            (root / 'local/pkg').mkdir(parents=True)
+            (root / 'local/pkg/package.json').write_text('{}')
+            (root / 'package.json').write_text('{"workspaces":["legacy/*"]}')
+            pnpm = root / 'pnpm-workspace.yaml'
+            pnpm.write_text('catalog: {}\n')
+            self.assertEqual(dependency_roots(root)['workspace_packages'], ['local/pkg'])
+            pnpm.write_text('packages: {packages: ["local/*"]}\n')
+            with self.assertRaisesRegex(ValueError, 'workspaces declaration'):
+                dependency_roots(root)
+            pnpm.write_text('packages: [')
+            with self.assertRaisesRegex(ValueError, 'invalid pnpm workspace YAML'):
+                dependency_roots(root)
+
+    def test_over_budget_approximate_evidence_still_persists(self):
+        estimate = {'approximate': True, 'events': [{'event': 'du_size', 'approximate': True}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            batch = calibrate.Batch(root, {'resource_root': tmp, 'size_reference': tmp})
+            with patch('calibrate.space_check', side_effect=calibrate.SpaceBudgetExceeded(estimate)), \
+                    self.assertRaises(calibrate.SpaceBudgetExceeded):
+                batch.record_space()
+            self.assertEqual(json.loads((root / 'batch.json').read_text())['space_checks'], [estimate])

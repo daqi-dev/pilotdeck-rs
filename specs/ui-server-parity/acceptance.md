@@ -21,7 +21,7 @@
 
 `coverage.handler` 以 recorder 原始 `X-PilotDeck-Handler` 为处理侧真相源，再交叉核对 metadata 与客户端证据。direct 必须没有 DUT 标记；proxy 每条响应必须唯一 ts/rust，冲突/伪造/缺失即 FAIL。标记验完才从 HTTP 等价 diff 剥离。
 
-任一路由观察到 rust，或 matrix 行预先声明 `handler: "rust"`，其 proxy 侧每个登记 case 必须实际由 rust 处理；TS reference 无须 rust 标记。漏 case/只有 TS 响应不能冒充 Rust 覆盖。Rust 路由豁免必须人工批准，含「AI 代批」的豁免失败；豁免不算行为验证，也不能替代该行已有 case 的 Rust 执行证明。没有枚举或 matrix 的 Rust 请求失败。
+Rust 接管由 `specs/ui-server-parity/rust-routes.json` 的静态路由表/配置导出决定，schema=1，routes 为 `{method, path, handler: "rust"}` 数组（空清单合法，当前没有 Rust ui-server）。首次接管必须同步更新此表；不能按流量推断归属。路由规范化后与 runtime/matrix 求交，静态表未枚举的路由、matrix 声明或观测 handler 与静态表矛盾均 FAIL；handler 按结构化枚举 ts/rust 校验，别名失败。接管路由的豁免无论有无用例/流量都必须带 `Approved-By` / `Approval-Basis`，复用 FROZEN 的审批规则（具名人或精确的「AI 代批，待人复核（协调者）」及三份存在的依据文件）。TS reference 无须 rust 标记；proxy 每个登记 case 必须实际由 rust 处理。豁免不算行为验证，也不能替代已有 case 的执行证明。静态表纳入装置哈希；本机同时篡改配置、装置、审批仍在威胁模型之外。
 
 ## 行为硬门
 
@@ -46,7 +46,7 @@ WS **先比较同一连接内全序帧序列，再比较按 type/kind 的结构�
 
 装置完整性威胁模型（协调者自决，**AI 代批，待人复核**）：防 (a) 意外漂移；(b) worker / 开发者在仓库内对装置的改动，包括未跟踪文件、影子模块和旧构建产物。不防拥有本机写权限、能够同时改装置、清单与审批的恶意者；该模型之外的发现按 P2 跟进。Git 跟踪清单、FROZEN 哈希与审批材料构成本模型的信任依据。
 
-B2 与 exp008 目录实际文件必须恰好等于 Git 跟踪内容；额外文件（包括忽略文件）、缺失跟踪文件、任意链接、Python 缓存与非普通文件一律 FAIL，不得过滤后继续。FROZEN 必须完整登记两目录及四份规约，重复/逃逸路径、漏项或哈希漂移均 FAIL。所有 Python 入口及子进程带 `-I`，预检断言 isolated / ignore_environment / no_user_site 和未启用 pycache prefix；Python 环境变量不生效。装置预检源码及本目录模块须经 hash 校验，显式从绝对路径按源码加载；B1 加载后恢复 sys.path，reconcile 同样使用隔离子进程。
+B2 与 exp008 目录实际文件必须恰好等于 Git 跟踪内容；额外文件（包括忽略文件）、缺失跟踪文件、任意链接、Python 缓存与非普通文件一律 FAIL，不得过滤后继续。FROZEN 必须完整登记两目录及四份规约与静态 Rust 路由表，重复/逃逸路径、漏项或哈希漂移均 FAIL。所有 Python 入口及子进程带 `-I`，预检断言 isolated / ignore_environment / no_user_site 和未启用 pycache prefix；Python 环境变量不生效。装置预检源码及本目录模块须经 hash 校验，显式从绝对路径按源码加载；B1 加载后恢复 sys.path，reconcile 同样使用隔离子进程。
 
 calibrate 开始与续跑要求装置/规约路径 Git status 为空，并将 HEAD 绑定到 batch.json；批次内 HEAD 漂移即拒绝。每批创建新的 CARGO_TARGET_DIR 于批次目录中，已存在 target 不可复用；构建后登记可执行产物 hash，每遍及续跑重新核验，禁止钉住 `_build` 旧产物。缺 manifest 只允许 HEAD 源码且返回 DRAFT/2；首行「待定标」且完整哈希正确也返回 DRAFT/2；正式 manifest 缺有效审批返回 FAIL。负例自检为 `python3 -I scripts/ui-server-parity/check_frozen.py --self-test`。真实 k=5、TS 池、直连/DUT 比较、前端 page.route 与双谱系评审仍是后续验收，离线 controls 不替代它们。
 
@@ -67,4 +67,6 @@ calibrate 开始与续跑要求装置/规约路径 Git status 为空，并将 HE
 
 多态范围以 multimodal.md 第 6 轮为准：U1 为两连接第一次 changeType，U2 为第二次 changedFile，分别满足池 >=20、每类 >=2、全成员命中；同单元两连接同值，跨单元类独立组合。判定一个单元时只将另一个单元的精确登记差异交给其独立判定，其他完整比较/健康门不变。报告 TS_calibration.units 与 multimodal 各侧的 units 分别保存 U1/U2 类和全成员证据；保留原始严格比较。历史池离线入口及其 calibration_eligible=false 标记不变。
 
-构建输入与 JS 依赖也属于装置威胁模型：基线整个 node_modules 按路径、文件类型、普通文件字节摘要与链接目标（不跟随）计算单一摘要，在批次开始、每遍 source 前后、批次结束与续跑复核，不一致 FAIL。每批新 CARGO_HOME 只复制 registry/index 和 registry/cache，装置按 Cargo.lock 显式校验缓存 .crate 的 SHA256 后由 Cargo 重新解压，不复用 registry/src、git/checkouts 或配置/凭据。Cargo cwd 为批次目录，使用绝对 --manifest-path；启动前拒绝 cwd/CARGO_HOME 全部祖先的 .cargo/config(.toml) 及新 CARGO_HOME 配置/凭据。构建环境只设必要白名单，PATH 限宿主 rustup/cargo 目录与系统目录；记录并复核 rustc -vV、cargo -V，根 rust-toolchain(.toml) 若存在纳入 Git admission 与 hash。精确名为 .DS_Store 的普通文件不执行、不登记、不参与装置 hash；同名非普通文件及其他未跟踪文件仍 FAIL。
+构建输入与 JS 依赖也属于装置威胁模型：基线整个 node_modules 按路径、文件类型、普通文件字节摘要与链接的原始/解析目标与目标内容（先枚举物理树及链接闭包，再对树并集读取；包含无 package.json 的目录、文件及仓外目标）计算单一摘要，在批次开始、每遍 source 前后、批次结束与续跑复核，不一致 FAIL。每批新 CARGO_HOME 只复制 registry/index 和 registry/cache，装置按 Cargo.lock 显式校验缓存 .crate 的 SHA256 后由 Cargo 重新解压，不复用 registry/src、git/checkouts 或配置/凭据。Cargo cwd 为批次目录，使用绝对 --manifest-path；启动前拒绝 cwd/CARGO_HOME 全部祖先的 .cargo/config(.toml) 及新 CARGO_HOME 配置/凭据。构建环境只设必要白名单，PATH 限宿主 rustup/cargo 目录与系统目录；记录并复核 rustc -vV、cargo -V，根 rust-toolchain(.toml) 若存在纳入 Git admission 与 hash。精确名为 .DS_Store 的普通文件不执行、不登记、不参与装置 hash；同名非普通文件及其他未跟踪文件仍 FAIL。
+
+#59 流式变体核实：基线 `ui/server/routes/webUpdate.js:16-20` 的 `/api/update/apply` 与 `routes/modules.js:100-110` 的 host capability 流支持 application/x-ndjson。完整性门对 application/x-ndjson / application/ndjson 验 UTF-8、逐行 JSON、完整末行 JSON（host 透传 bytes/string 支持空流和完整 JSON 末行无换行；更新路由按其编码器验非空与最终换行）；现有 HTTP chunk/end/offset 门继续覆盖传输完整性，原始流字节按序比较。不借此次修复添加产品更新等副作用场景；未来扩场景时登记具体生命周期。

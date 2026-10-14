@@ -57,7 +57,7 @@ from pathlib import Path
 import re
 import sys
 
-from check_coverage import check as check_matrix, matches
+from check_coverage import check as check_matrix, matches, Handler, rust_routes
 from policy import (HEADER_OMIT, SSE_ABSOLUTE_NS, SSE_DELAY_NS, field_key, fields, pattern,
                     UUID_VALUE, BLOCK_VALUE, MESSAGE_VALUE, CHAT_FIXTURE_SESSIONS,
                     CLOCK_FORMATS, CLOCK_PAIRS, CLOCK_RESPONSE_ORDER, ISO_MS, SQL_S, EPOCH_MS, MTIME_MS)
@@ -558,6 +558,23 @@ def complete_body(records, request_id, direction, metadata):
     return bytes(raw), chunks, trailers
 
 
+def validate_ndjson(raw, out, location, side, *, require_final_newline=False):
+    """Validate JSON lines; host byte streams may finish with a complete final JSON."""
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeError:
+        issue(out, 'evidence.integrity', location, 'invalid UTF-8 NDJSON stream', side=side)
+        return
+    if require_final_newline and (not text or not text.endswith('\n')):
+        issue(out, 'evidence.integrity', location, 'empty/unterminated NDJSON stream', side=side)
+    lines = text.split("\n") if text else []
+    if lines and not lines[-1]:
+        lines.pop()
+    for index, line in enumerate(lines):
+        if not line.strip() or parse(line) is NOT_JSON:
+            issue(out, 'evidence.integrity', f'{location}[{index}]', 'invalid NDJSON item', side=side)
+
+
 def sse_events(raw, chunks, start_ns, out, location, side):
     """Parse SSE lines; every dispatch remains separate. BOM/CR/LF per SSE grammar."""
     try:
@@ -1002,10 +1019,10 @@ class Side:
                 headers(metadata)  # validate lossless header schema
             raw_handler = headers(response).get('x-pilotdeck-handler', [])
             expected_handler = response.get('handler')
-            if (len(raw_handler) > 1 or raw_handler not in ([], [b'ts'], [b'rust'])
+            if (len(raw_handler) > 1 or raw_handler not in [[], *[[handler.value.encode()] for handler in Handler]]
                     or expected_handler != (raw_handler[0].decode() if raw_handler else None)):
                 issue(self.out, 'coverage.handler', location, 'marker metadata/header inconsistent', side=self.label)
-            if self.meta['mode'] == 'proxy' and expected_handler not in ('ts', 'rust'):
+            if self.meta['mode'] == 'proxy' and expected_handler not in set(Handler):
                 issue(self.out, 'coverage.handler', location, 'proxy missing handler proof', side=self.label)
             if self.meta['mode'] == 'direct' and expected_handler is not None:
                 issue(self.out, 'coverage.handler', location, 'direct fixture unexpectedly handled by proxy', side=self.label)
@@ -1041,12 +1058,14 @@ class Side:
                 evidence.append({'kind': 'case_http', 'side': 'direct' if self.label == 'left' else 'proxy',
                                  'case': case, 'route': definition['route'], 'method': request['method'],
                                  'path': request['path'], 'status': response['status'], 'handler': expected_handler, 'ok': status_ok})
-            if expected_handler == 'rust':
+            if expected_handler == Handler.RUST:
                 routes = {row['route'] for row in matrix['routes'] if matches(row['route'], request['method'], request['path'])}
                 if case in definitions:
                     routes = {definitions[case]['route']}
                 if not routes:
                     issue(self.out, 'coverage.handler', location, 'Rust request absent from matrix', side=self.label)
+                for route in routes - rust_routes():
+                    issue(self.out, 'coverage.handler', location, 'Rust handler absent from static takeover list', side=self.label, route=route)
                 observed_rust.update(routes)
             req_body = parse(req_raw)
             res_body = parse(res_raw)
@@ -1064,6 +1083,9 @@ class Side:
                 self.validate_token(res_body.get('token'), res_body.get('user', {}), location + '.body.token')
             content_types = headers(response).get('content-type', [])
             is_sse = any(value.split(b';', 1)[0].strip().lower() == b'text/event-stream' for value in content_types)
+            if any(value.split(b';', 1)[0].strip().lower() in (b'application/x-ndjson', b'application/ndjson') for value in content_types):
+                validate_ndjson(res_raw, self.out, location + '.ndjson', self.label,
+                                require_final_newline=request['path'].rstrip('/') == '/api/update/apply')
             if is_sse:
                 events = sse_events(res_raw, chunks, int(request['arrival_ns']), self.out, location, self.label)
                 normalized_events = []
@@ -1098,10 +1120,8 @@ class Side:
         self.evidence = evidence
         for row in matrix['routes']:
             route = row['route']
-            if (row.get('handler') == 'rust' and self.meta['mode'] == 'proxy') or route in observed_rust:
+            if (route in rust_routes() and self.meta['mode'] == 'proxy') or route in observed_rust:
                 waiver = row.get('exemption')
-                if waiver and 'AI 代批' in waiver.get('approver', ''):
-                    issue(self.out, 'coverage.handler', route, 'Rust exemption requires human approval', side=self.label)
                 if not row.get('cases') and not waiver:
                     issue(self.out, 'coverage.handler', route, 'Rust route has no case/exemption', side=self.label)
                 for case in row.get('cases', []):
@@ -1218,7 +1238,7 @@ def compare_sides(left, right, enumeration, matrix=None, scenarios=None, *, reco
         for error in declaration['errors']:
             issue(out, 'coverage.matrix', 'matrix', error)
         for index, row in enumerate(matrix['routes']):
-            if 'handler' in row and row['handler'] not in ('ts', 'rust'):
+            if 'handler' in row and row['handler'] not in set(Handler):
                 issue(out, 'coverage.handler', f'matrix.routes[{index}].handler', 'invalid declared handler (expected ts/rust)')
         sides = []
         for label, directory in (('left', left), ('right', right)):

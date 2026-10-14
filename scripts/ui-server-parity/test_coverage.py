@@ -45,7 +45,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from check_coverage import check
+from check_coverage import check, rust_routes
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 ENUM = {'appCaptured': True, 'uniqueRouteCount': 2, 'routes': [
@@ -94,22 +95,40 @@ class CoverageControls(unittest.TestCase):
         evidence[1]['method'] = 'POST'
         self.assertEqual(check(ENUM, MATRIX, SCENARIOS, evidence)['verdict'], 'FAIL')
 
-    def test_rust_ai_waiver_fails_and_human_approval_passes(self):
-        evidence = successful_evidence()
-        # This exempt route has no declared case. Even unsuccessful Rust
-        # evidence must trigger the approval gate rather than be filtered out.
-        evidence.append({'kind': 'case_http', 'case': 'b.probe', 'route': 'POST /api/b/:id',
-                         'side': 'proxy', 'ok': False, 'status': 500,
-                         'method': 'POST', 'path': '/api/b/42', 'handler': 'rust'})
-        failed = check(ENUM, MATRIX, SCENARIOS, evidence)
-        self.assertEqual(failed['verdict'], 'FAIL')
-        self.assertTrue(any('human approval' in error for error in failed['errors']))
-        matrix = copy.deepcopy(MATRIX)
-        matrix['routes'][1]['exemption']['approver'] = '协调者人工批准'
-        self.assertEqual(check(ENUM, matrix, SCENARIOS, evidence)['verdict'], 'PASS')
-        # Declaration alone is not execution evidence and retains its scope.
-        self.assertEqual(check(ENUM, MATRIX, SCENARIOS)['verdict'], 'PASS')
-        print('CONTROL Rust + AI waiver FAIL; Rust + human waiver PASS')
+    def test_static_rust_waiver_requires_frozen_style_approval_without_cases(self):
+        takeover = {'schema': 1, 'routes': [{'method': 'POST', 'path': '/api/b/:id', 'handler': 'rust'}]}
+        self.assertEqual(check(ENUM, MATRIX, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            basis = []
+            for name in ('report.json', 'review-one.md', 'review-two.md'):
+                path = root / name
+                path.write_text('evidence')
+                basis.append(str(path))
+            matrix = copy.deepcopy(MATRIX)
+            waiver = matrix['routes'][1]['exemption']
+            waiver['Approval-Basis'] = '; '.join(basis)
+            with patch('check_coverage.ROOT', root):
+                for approver in ('张三', 'AI 代批，待人复核（协调者）'):
+                    waiver['Approved-By'] = approver
+                    self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'PASS')
+                for approver in ('Claude', 'AI', 'AI 代批，待人复核', '待批准', 'GPT批准', '张三\u200b'):
+                    waiver['Approved-By'] = approver
+                    self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+                waiver['Approved-By'] = '张三'
+                waiver['Approval-Basis'] = str(root / 'missing.md')
+                self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+
+    def test_invalid_and_unlisted_handlers_cannot_hide_takeover(self):
+        for handler in ('Rust', 'rust-v2', 'AI', 'rust'):
+            evidence = successful_evidence() + [{'kind': 'case_http', 'side': 'proxy',
+                'route': 'POST /api/b/:id', 'handler': handler, 'ok': False}]
+            self.assertEqual(check(ENUM, MATRIX, SCENARIOS, evidence)['verdict'], 'FAIL')
+        self.assertEqual(rust_routes({'schema': 1, 'routes': []}), set())
+        for manifest in ({'schema': True, 'routes': []}, {'schema': 1, 'routes': [
+                {'method': 'POST', 'path': '/api/b', 'handler': 'Rust'}]}):
+            with self.assertRaises(ValueError):
+                rust_routes(manifest)
 
     def test_non_rust_ai_waivers_still_pass(self):
         for handler in ('ts', None):
