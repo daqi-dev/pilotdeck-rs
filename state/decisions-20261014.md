@@ -191,14 +191,14 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 ## 待你拍板 · D4 第二步：#19 超时收尾，Rust 照抄还是修正（实测已完成，exp014 / #103）
 
 **实测结果**（TS 基线 cc7c4e6，36 个子例 × 模型/工具两阶段 × 5 遍，全部稳定；两家评审均从源码独立推出同一结论）：
-- **生产默认（有 registry）**：用户超时那一刻，**客户端实时流里收不到任何收尾帧**——timeout 的 status/error 要等 registry 异步写完才入队，而队列在发出后立即被同步关闭（`InProcessGateway.ts:1216-1227, 1432`）。界面上这一轮就停在「进行中」，直到重连从 registry 回放才看到结果（`:913`）。
+- **生产默认（有 registry）**：用户超时那一刻，**客户端实时流里收不到任何收尾帧**——timeout 的 status/error 要等 registry 异步写完才入队，而队列在发出后立即被同步关闭（`InProcessGateway.ts:1216-1227, 1432`）。实时流随队列关闭而结束，却没有超时说明；界面此时显示什么**尚未验证**，重连后可从 registry 回放看到结果（`:913`）。
 - registry 里随后又追加一条迟到的 `gateway_submit_failed`，**最终 result 被它覆盖**（显示成「提交失败」而非「超时」）；durable status 同时记了「超时」和「提交失败」两条。
 - **无 registry**（非生产拓扑）：客户端能看到「超时」帧，但 durable status 仍是两条。
 - 写入失败时各格的具体变化见 `docs/experiments/exp014-a52-session-fixtures/readme.md` 逐项表。
 
 | 选项 | Rust 宿主怎么做 | 后果 |
 |---|---|---|
-| A 照抄 | 逐格复刻上表（实时流无收尾帧、result 被覆盖、两条 status） | 对拍可直接比；但把「界面卡在进行中」「超时显示成提交失败」这两个 bug 带进 Rust |
+| A 照抄 | 逐格复刻上表（实时流无收尾帧、result 被覆盖、两条 status） | 对拍可直接比；但把「实时流不告诉用户已超时」「超时被记成提交失败」这两个 bug 带进 Rust |
 | **B 精确修正（AI 建议）** | 超时一旦取得收尾权，同一轮只收尾一次：客户端实时收到一套 timeout status + error；durable 只记 timeout；registry result 保持 timeout，不再追加迟到失败；「执行结果未知」的责任记录照旧保留；写入失败如实报错，不伪称成功 | 修掉两个 bug；这 6 格登记为批准差异（`A19-HOST`），每格写明 Rust 的确切期望输出，对拍按期望判，不是放宽；阶段 C 的 deadline ×2 在 A7 Rust 宿主上按此口径计分 |
 | C 吞掉「未知」 | 超时一律当成功或静默 | 丢失「副作用可能已发生」的责任记录，AI 不建议 |
 
