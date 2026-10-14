@@ -170,3 +170,18 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 ### 夜间事故记录
 - **F2 real 编排未隔离 HOME（old1–old6）**：测试 server 扫描过你真实的 `~/.pilotdeck/plugins` 和 `plugins.json`，可能新建过 plugins 目录、可能拉起过已启用的插件；每次 server 启动都调用 `open http://127.0.0.1:3010`，用你的默认浏览器打开过页面。Claude 评审发现，GLM 漏了。已修，并写进记忆和派活模板。
 - **old7 `GoogleUpdater --install`**：最多 250ms 内被审计终止；是否已写入 launchd 未知，可查 `~/Library/LaunchAgents`。
+
+## 待你拍板 · D6：汉字排序与 Node 不一致（影响 model_catalog_list 与已合并的 project_files_list）
+
+**卡在哪**：Node 内置 ICU 78.2 的 root 汉字排序是 Unihan「部首笔画序」；Rust 侧 ICU4X 2.1 编译进来的默认数据是 Unicode 码位序（`CollationRootHan::Implicit`）。CLDR 版本两边相同（48），差别在生成数据时的一个选项。实测（PR #96 第 2 轮，fixture `src/pilotdeck-gateway/tests/fixtures/collation/`）：
+- 英文 locale 下，扩展 A、扩展 B 和**基本区**汉字的相对顺序都会不同；中文、日文 locale 下也有字符对不同。
+- 影响：**中文文件名**的文件列表排序与分页成员（`project_files_list`，PR #69 已合并），以及自定义中文 provider/model id 的模型列表排序（#96）。内置 57 个模型 id 都是 ASCII，不受影响。
+- 当前 main 上 `project_files_list` 已由 Rust 应答，**只要文件名含汉字，就与 TS 不一致**。
+
+| 选项 | 做什么 | 后果 |
+|---|---|---|
+| A 生成 Unihan root 数据 | 用 ICU4X datagen，以 `CollationRootHan::Unihan` 选项从 CLDR/ICU 源数据生成 collation 数据（**需从 unicode.org 下载源数据**，属于数据而非预编译二进制；新增构建期 crate），生成结果入仓 | 与 Node 精确对齐；约 0.5–1 天；仓库多几 MB 数据；以后升级 ICU 要重新生成 |
+| B 登记为已知差异 | `A4-CJK-ROOT-HAN-001` 写入 accepted-diffs | 零成本；违反 2A 原则（Rust 引起的差异不豁免）；中文用户会看到文件列表顺序与 TS 不同 |
+| C 含非 ASCII 时回退给 TS | 列表里出现非 ASCII 字符时，请求透传给 TS 宿主 | 保住一致性；但这类请求只是「部分本地化」，A8 退役 TS 之前仍然要在 A、B 中选一个 |
+
+**AI 建议：先 C（立即修补 main 上 project_files_list 的不一致，#96 同样处理），再 A（A8 之前完成）。** 请确认 A 里「从 unicode.org 下载 CLDR/ICU 源数据」是否在允许范围内。
