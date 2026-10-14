@@ -89,6 +89,8 @@ def verdict_summary(result):
 
 
 def run_controls(source):
+    from controls.multimodal import run_controls as multimodal_controls
+
     cases = {}
     for rule, (good, bad) in rule_pairs().items():
         good, bad = deepcopy(good), deepcopy(bad)
@@ -141,11 +143,14 @@ def run_controls(source):
         empty = Path(tmp) / 'empty'; empty.mkdir()
         result = G.compare_directories(empty, empty)
         cases['both_empty_directories'] = dict(ok=result['verdict'] == 'FAIL' and not result['complete'], **verdict_summary(result))
+    multimodal = multimodal_controls(source)
+    cases.update(multimodal)
     negative_names = list(rule_pairs()) + ['semantic_injection', 'missing_scenario', 'truncated_prefix', 'truncated_json']
+    negative_names += [name for name in multimodal if name != 'multimodal_set_positive']
     return {'ok': all(c['ok'] for c in cases.values()),
             'negative_controls': all(cases[n]['ok'] for n in negative_names),
             'both_broken': all(cases[n]['ok'] for n in ('both_empty_traces', 'both_same_error', 'both_empty_directories')),
-            'positive_controls': all(cases[n]['ok'] for n in ('real_self_positive', 'cross_channel_positive')),
+            'positive_controls': all(cases[n]['ok'] for n in ('real_self_positive', 'cross_channel_positive', 'multimodal_set_positive')),
             'source': str(source), 'cases': cases}
 
 
