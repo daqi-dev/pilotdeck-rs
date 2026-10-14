@@ -1,0 +1,12 @@
+[
+  {
+    "file": "browser-dioxus-coordinator.json",
+    "bytes": 1330,
+    "sha256": "72be0e98d2f49c05795f25cf8e8a1e33fa241eaeb44a7b0017e5e96822eed26e"
+  },
+  {
+    "file": "browser-leptos-coordinator.json",
+    "bytes": 1331,
+    "sha256": "8b7ca1f6fcece4375361e304e0c6c2594a76eea20d00ecc4e3b8618e4924053e"
+  }
+]
