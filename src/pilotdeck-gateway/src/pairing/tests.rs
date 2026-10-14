@@ -783,6 +783,75 @@ fn hex(value: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn mixed_batch_wire_goldens_document_immediate_gap_and_delayed_parity() {
+    // TS has concurrent request handlers, not a global FIFO. Keep both cases:
+    // a forwarded promise that is already fulfilled and one released later.
+    // This is a diagnostic of the known immediate-forward ordering gap, NOT
+    // a claim that every mixed batch matches TS (nor an accepted ruler diff).
+    let cases =
+        crate::dispatch::parse(include_bytes!("../../tests/fixtures/metadata/order.json")).unwrap();
+    let pilotdeck_protocol::JsValue::Array(cases) = &cases else {
+        panic!("cases")
+    };
+    assert_eq!(cases.len(), 2);
+    for case in cases {
+        let name = crate::metadata::text_field(case, "name").unwrap();
+        let bytes = |field| hex(&crate::metadata::text_field(case, field).unwrap());
+        let input = bytes("inputHex");
+        let expected_ts = bytes("outputHex");
+        let mut decoder = Decoder::default();
+        decoder.buffer.extend_from_slice(&expected_ts);
+        let first = decoder.next_server().unwrap().unwrap();
+        let second = decoder.next_server().unwrap().unwrap();
+        assert!(decoder.next_server().unwrap().is_none());
+        let (forwarded, local) = match name.as_str() {
+            "immediate-forward" => {
+                assert_eq!(bytes("beforeReleaseHex"), expected_ts);
+                assert!(bytes("afterReleaseHex").is_empty());
+                (first, second)
+            }
+            "delayed-forward" => {
+                assert_eq!(bytes("beforeReleaseHex"), first.wire);
+                assert_eq!(bytes("afterReleaseHex"), second.wire);
+                (second, first)
+            }
+            _ => panic!("unknown order case"),
+        };
+        for (frame, id) in [(&forwarded, "forwarded"), (&local, "local")] {
+            assert_eq!(
+                crate::metadata::text_field(&dispatch::parse(&frame.payload).unwrap(), "id")
+                    .as_deref(),
+                Some(id)
+            );
+        }
+        let mut pair = fixture_pair();
+        authenticate(&mut pair).await;
+        write(&mut pair.client, &input).await;
+        let mut requests = Decoder::default();
+        requests.buffer.extend_from_slice(&input);
+        let request = requests.next().unwrap().unwrap();
+        read(&mut pair.server, &request.wire).await;
+        if name == "delayed-forward" {
+            read(&mut pair.client, &local.wire).await;
+            silent(&mut pair.client).await;
+        }
+        write(&mut pair.server, &forwarded.wire).await;
+        let actual = [local.wire, forwarded.wire.clone()].concat();
+        if name == "immediate-forward" {
+            read(&mut pair.client, &actual).await;
+            assert_ne!(actual, expected_ts, "known mixed-batch ordering gap");
+        } else {
+            read(&mut pair.client, &forwarded.wire).await;
+            assert_eq!(actual, expected_ts);
+        }
+        silent(&mut pair.client).await;
+        silent(&mut pair.server).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+    }
+}
+
+#[tokio::test]
 async fn local_and_coalesced_controls_match_actual_ts_parser_raw_wire_goldens() {
     let cases = crate::dispatch::parse(include_bytes!(
         "../../tests/fixtures/metadata/controls.json"

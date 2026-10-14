@@ -27,6 +27,7 @@ async fn main() -> Result<(), ProxyError> {
     });
     let listener = TcpListener::bind(listen).await?;
     eprintln!("proxy listening {listen} -> {}", proxy.upstream);
+    eprintln!("metadata cwd: {}", std::env::current_dir()?.display());
     loop {
         tokio::select! {
             accepted = listener.accept() => {

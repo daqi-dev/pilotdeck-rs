@@ -173,6 +173,121 @@ fn projected_cases() -> JsValue {
     .unwrap()
 }
 
+fn ordered_projects(entries: &[(&str, &str)]) -> Metadata<FixtureFiles> {
+    let home = PathBuf::from("/fixture/home");
+    let projects = home.join("projects");
+    let mut files = FixtureFiles::default();
+    files.directories.insert(
+        projects.clone(),
+        entries.iter().map(|(id, _)| ((*id).into(), true)).collect(),
+    );
+    for (index, (id, root)) in entries.iter().enumerate() {
+        let dir = projects.join(id);
+        let stat = Stat {
+            directory: true,
+            size: 0,
+            birth_ms: (index + 1) as f64,
+            ctime_ms: 0.0,
+            mtime_ms: 0.0,
+        };
+        files.stats.insert(dir.clone(), stat.clone());
+        files.stats.insert(PathBuf::from(root), stat);
+        files
+            .data
+            .insert(dir.join(".cwd"), root.as_bytes().to_vec());
+        files.directories.insert(dir.join("chats"), Vec::new());
+    }
+    Metadata {
+        home,
+        cwd: PathBuf::from("/fixture"),
+        files,
+    }
+}
+
+#[test]
+fn native_entries_preserve_os_read_dir_order() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let expected: Vec<_> = std::fs::read_dir(&path)
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                entry.file_type().unwrap().is_dir(),
+            )
+        })
+        .collect();
+    assert_eq!(NativeFiles.entries(&path).unwrap(), expected);
+}
+
+#[test]
+fn tied_projects_preserve_injected_readdir_order_instead_of_name_order() {
+    let metadata = ordered_projects(&[
+        ("z-storage", "/projects/zebra"),
+        ("a-storage", "/projects/alpha"),
+        ("m-storage", "/projects/middle"),
+    ]);
+    let result = metadata.list_projects();
+    let JsValue::Array(projects) = result.get("projects").unwrap() else {
+        panic!("projects array")
+    };
+    assert!(projects.iter().all(|project| {
+        project.get("sessionCount").and_then(JsValue::as_number) == Some(0.0)
+            && project.get("lastActivity").unwrap().is_undefined()
+    }));
+    let roots: Vec<_> = projects
+        .iter()
+        .map(|project| text_field(project, "fullPath").unwrap())
+        .collect();
+    assert_eq!(
+        roots,
+        ["/projects/zebra", "/projects/alpha", "/projects/middle"]
+    );
+}
+
+#[test]
+fn duplicate_markers_use_first_readdir_match_for_storage_and_chats() {
+    let mut metadata = ordered_projects(&[
+        ("z-collision", "/projects/shared"),
+        ("a-collision", "/projects/shared"),
+    ]);
+    // Only the first entry has a visible session. Both storage birthtime and
+    // the chat catalog must select it, even though its name sorts last.
+    let chat = metadata.home.join("projects/z-collision/chats");
+    let transcript = br#"{"type":"session_metadata","metadata":{"title":"first"}}"#;
+    metadata
+        .files
+        .directories
+        .insert(chat.clone(), vec![("visible.jsonl".into(), false)]);
+    metadata
+        .files
+        .data
+        .insert(chat.join("visible.jsonl"), transcript.to_vec());
+    metadata.files.stats.insert(
+        chat.join("visible.jsonl"),
+        Stat {
+            directory: false,
+            size: transcript.len() as u64,
+            birth_ms: 0.0,
+            ctime_ms: 0.0,
+            mtime_ms: 1234.0,
+        },
+    );
+    let summary = metadata.describe_project(&"/projects/shared".into());
+    assert_eq!(
+        summary.get("createdAt").and_then(JsValue::as_number),
+        Some(1.0)
+    );
+    assert_eq!(
+        summary.get("sessionCount").and_then(JsValue::as_number),
+        Some(1.0)
+    );
+    assert_eq!(
+        summary.get("lastActivity").and_then(JsValue::as_number),
+        Some(1234.0)
+    );
+}
+
 fn files_from_case(case: &JsValue) -> FixtureFiles {
     let mut files = FixtureFiles::default();
     for (path, fact) in case.get("files").unwrap().as_object().unwrap().entries() {

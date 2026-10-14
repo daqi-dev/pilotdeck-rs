@@ -60,6 +60,14 @@ bash scripts/check-tools.sh --mirrors  # 装不上时的国内镜像
 
 *由 `aias-meta-init` 生成于 2026-10-13。*
 
+## Gateway 元数据部署前提
+
+Rust 代理与 TS 上游必须以**相同工作目录（cwd）**启动，并指向同一份显式
+`PILOT_HOME`。代理用自身 cwd 对齐 TS 的 `process.cwd()`，解析相对
+`projectKey`、`.cwd` marker 和相对 `PILOT_HOME`；cwd 不同会改变项目路径与匹配结果。
+启动日志中的 `metadata cwd: ...` 会打印代理所用的目录，可与 TS 启动目录核对。
+没有显式 `PILOT_HOME` 时，磁盘元数据请求继续透传给 TS。
+
 ## 来源与许可
 
 本仓库是 [OpenBMB/PilotDeck](https://github.com/OpenBMB/PilotDeck) 后端的 Rust 重写，基线为 `standalone_alpha1` 分支的 `cc7c4e6`（2026-10-13）。
