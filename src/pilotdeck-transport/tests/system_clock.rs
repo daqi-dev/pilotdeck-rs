@@ -2,6 +2,7 @@
 //! Fixed local resolver fixtures declare Asia/Shanghai +08:00 for these observed
 //! dates; they do not prove arbitrary timezone/ICU historical equivalence.
 use pilotdeck_protocol::JsString;
+use pilotdeck_protocol::{JsValue, parse_json};
 use pilotdeck_transport::server;
 use server::ExecutionClock;
 #[path = "../src/system_clock.rs"]
@@ -17,6 +18,56 @@ fn shanghai(input: &JsString) -> Option<f64> {
 }
 fn parse(input: &str) -> Option<f64> {
     shanghai(&input.into())
+}
+
+#[test]
+fn slim2_actual_node22_fixture_preserves_valid_legacy_and_invalid_dates() {
+    let fixture = parse_json(include_str!("fixtures/node22-date-parse.json")).unwrap();
+    assert_eq!(fixture.get("node"), Some(&JsValue::from("v22.22.0")));
+    let Some(JsValue::Array(zones)) = fixture.get("zones") else {
+        panic!("missing Node timezone observations");
+    };
+    let la = la_tzif();
+    let mut checked = 0;
+    for zone in zones {
+        let Some(JsValue::String(tz)) = zone.get("tz") else {
+            panic!("missing timezone");
+        };
+        let tz = tz.to_utf8().unwrap();
+        let Some(JsValue::Array(cases)) = zone.get("cases") else {
+            panic!("missing cases");
+        };
+        for case in cases {
+            let Some(JsValue::String(input)) = case.get("input") else {
+                panic!("missing UTF16 input");
+            };
+            let expected = match case.get("epoch") {
+                Some(JsValue::Number(ms)) => Some(*ms),
+                Some(JsValue::Null) => None,
+                _ => panic!("missing Node result"),
+            };
+            // These supplied rules cover the fixture's local dates only;
+            // they make no claim about arbitrary system/ICU tzdata parity.
+            let actual = parse_with(input, &|wall| match tz.as_str() {
+                "UTC" => Ok(wall),
+                "Asia/Shanghai" => Ok(wall - 28_800_000),
+                "America/Los_Angeles" => system_clock::resolve_tzif_local(wall, &la),
+                _ => panic!("unexpected timezone"),
+            })
+            .unwrap();
+            assert_eq!(actual, expected, "{tz}: {:?}", case.get("id"));
+            if let Some(ms) = actual {
+                assert_eq!(
+                    case.get("iso"),
+                    Some(&JsValue::from(format_epoch_iso(ms as i64).as_str())),
+                    "{tz}: {:?}",
+                    case.get("id")
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 117);
 }
 
 #[test]

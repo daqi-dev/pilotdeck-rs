@@ -1,0 +1,725 @@
+{
+  "node": "v22.22.0",
+  "v8": "12.4.254.21-node.33",
+  "icu": "78.2",
+  "tzdata": "2026a",
+  "zones": [
+    {
+      "tz": "UTC",
+      "cases": [
+        {
+          "id": "iso-millis",
+          "input": "2026-10-14T05:01:18.204Z",
+          "epoch": 1791954078204,
+          "iso": "2026-10-14T05:01:18.204Z"
+        },
+        {
+          "id": "iso-offset-colon",
+          "input": "2024-01-02T03:04:05.678+08:00",
+          "epoch": 1704135845678,
+          "iso": "2024-01-01T19:04:05.678Z"
+        },
+        {
+          "id": "iso-offset-compact",
+          "input": "2024-01-02T03:04:05.678-0530",
+          "epoch": 1704184445678,
+          "iso": "2024-01-02T08:34:05.678Z"
+        },
+        {
+          "id": "iso-fraction-truncation",
+          "input": "2024-01-02T03:04:05.123456Z",
+          "epoch": 1704164645123,
+          "iso": "2024-01-02T03:04:05.123Z"
+        },
+        {
+          "id": "iso-next-day",
+          "input": "2024-01-02T24:00:00Z",
+          "epoch": 1704240000000,
+          "iso": "2024-01-03T00:00:00.000Z"
+        },
+        {
+          "id": "iso-normalized-day",
+          "input": "2024-02-30T00:00:00Z",
+          "epoch": 1709251200000,
+          "iso": "2024-03-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-extended-year",
+          "input": "+010000-01-01T00:00:00.000Z",
+          "epoch": 253402300800000,
+          "iso": "+010000-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-negative-year",
+          "input": "-000001-01-01T00:00:00.000Z",
+          "epoch": -62198755200000,
+          "iso": "-000001-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-timeclip-end",
+          "input": "+275760-09-13T00:00:00.000Z",
+          "epoch": 8640000000000000,
+          "iso": "+275760-09-13T00:00:00.000Z"
+        },
+        {
+          "id": "iso-date-only",
+          "input": "2024-01-02",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "iso-local",
+          "input": "2024-01-02T03:04:05.678",
+          "epoch": 1704164645678,
+          "iso": "2024-01-02T03:04:05.678Z"
+        },
+        {
+          "id": "iso-local-gap",
+          "input": "2024-03-10T02:30:00.123",
+          "epoch": 1710037800123,
+          "iso": "2024-03-10T02:30:00.123Z"
+        },
+        {
+          "id": "iso-local-fold",
+          "input": "2024-11-03T01:30:00.123",
+          "epoch": 1730597400123,
+          "iso": "2024-11-03T01:30:00.123Z"
+        },
+        {
+          "id": "iso-local-fold-end",
+          "input": "2024-11-03T02:00:00",
+          "epoch": 1730599200000,
+          "iso": "2024-11-03T02:00:00.000Z"
+        },
+        {
+          "id": "iso-local-future-gap",
+          "input": "2039-03-13T02:30:00",
+          "epoch": 2183596200000,
+          "iso": "2039-03-13T02:30:00.000Z"
+        },
+        {
+          "id": "legacy-rfc-gmt",
+          "input": "Thu, 01 Jan 1970 00:00:00 GMT",
+          "epoch": 0,
+          "iso": "1970-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-slashes",
+          "input": "01/02/2024",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-am-pm",
+          "input": "Jan 2 2024 3:04 PM GMT",
+          "epoch": 1704207840000,
+          "iso": "2024-01-02T15:04:00.000Z"
+        },
+        {
+          "id": "legacy-named-zone",
+          "input": "Jan 2 2024 03:04:05 PST",
+          "epoch": 1704193445000,
+          "iso": "2024-01-02T11:04:05.000Z"
+        },
+        {
+          "id": "legacy-two-digit-year",
+          "input": "01/02/49 GMT",
+          "epoch": 2493158400000,
+          "iso": "2049-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-single-number",
+          "input": "0",
+          "epoch": 946684800000,
+          "iso": "2000-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-width",
+          "input": "2024-1-2",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-whitespace",
+          "input": " 2024-01-02 ",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-comments",
+          "input": "Jan 2 2024 (comment) GMT",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-unknown-prefix",
+          "input": "junk (nested (comment)) 1 Jan 1970 GMT",
+          "epoch": 0,
+          "iso": "1970-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-smi-boundary",
+          "input": "Jan 1 2000 GMT+596523:14",
+          "epoch": -1200798840000,
+          "iso": "1931-12-13T20:46:00.000Z"
+        },
+        {
+          "id": "nul-terminates",
+          "input": "2024-01-02T00:00:00Z\u0000ignored",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "invalid-empty",
+          "input": "",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-text",
+          "input": "not a date",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-month",
+          "input": "2024-13-01T00:00:00Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-day",
+          "input": "2024-01-32T00:00:00Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-leap-second",
+          "input": "2024-01-02T03:04:60Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-offset",
+          "input": "2024-01-02T00:00:00+24:00",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-iso-trailing-space",
+          "input": "2024-01-02T00:00:00Z ",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-ampm",
+          "input": "Jan 2 2024 13:00 PM GMT",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-zone",
+          "input": "Jan 2 2024 00:00 XYZ",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-slashes",
+          "input": "13/32/2024",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-timeclip",
+          "input": "+275760-09-13T00:00:00.001Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-surrogate",
+          "input": "\ud800",
+          "epoch": null,
+          "iso": null
+        }
+      ]
+    },
+    {
+      "tz": "Asia/Shanghai",
+      "cases": [
+        {
+          "id": "iso-millis",
+          "input": "2026-10-14T05:01:18.204Z",
+          "epoch": 1791954078204,
+          "iso": "2026-10-14T05:01:18.204Z"
+        },
+        {
+          "id": "iso-offset-colon",
+          "input": "2024-01-02T03:04:05.678+08:00",
+          "epoch": 1704135845678,
+          "iso": "2024-01-01T19:04:05.678Z"
+        },
+        {
+          "id": "iso-offset-compact",
+          "input": "2024-01-02T03:04:05.678-0530",
+          "epoch": 1704184445678,
+          "iso": "2024-01-02T08:34:05.678Z"
+        },
+        {
+          "id": "iso-fraction-truncation",
+          "input": "2024-01-02T03:04:05.123456Z",
+          "epoch": 1704164645123,
+          "iso": "2024-01-02T03:04:05.123Z"
+        },
+        {
+          "id": "iso-next-day",
+          "input": "2024-01-02T24:00:00Z",
+          "epoch": 1704240000000,
+          "iso": "2024-01-03T00:00:00.000Z"
+        },
+        {
+          "id": "iso-normalized-day",
+          "input": "2024-02-30T00:00:00Z",
+          "epoch": 1709251200000,
+          "iso": "2024-03-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-extended-year",
+          "input": "+010000-01-01T00:00:00.000Z",
+          "epoch": 253402300800000,
+          "iso": "+010000-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-negative-year",
+          "input": "-000001-01-01T00:00:00.000Z",
+          "epoch": -62198755200000,
+          "iso": "-000001-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-timeclip-end",
+          "input": "+275760-09-13T00:00:00.000Z",
+          "epoch": 8640000000000000,
+          "iso": "+275760-09-13T00:00:00.000Z"
+        },
+        {
+          "id": "iso-date-only",
+          "input": "2024-01-02",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "iso-local",
+          "input": "2024-01-02T03:04:05.678",
+          "epoch": 1704135845678,
+          "iso": "2024-01-01T19:04:05.678Z"
+        },
+        {
+          "id": "iso-local-gap",
+          "input": "2024-03-10T02:30:00.123",
+          "epoch": 1710009000123,
+          "iso": "2024-03-09T18:30:00.123Z"
+        },
+        {
+          "id": "iso-local-fold",
+          "input": "2024-11-03T01:30:00.123",
+          "epoch": 1730568600123,
+          "iso": "2024-11-02T17:30:00.123Z"
+        },
+        {
+          "id": "iso-local-fold-end",
+          "input": "2024-11-03T02:00:00",
+          "epoch": 1730570400000,
+          "iso": "2024-11-02T18:00:00.000Z"
+        },
+        {
+          "id": "iso-local-future-gap",
+          "input": "2039-03-13T02:30:00",
+          "epoch": 2183567400000,
+          "iso": "2039-03-12T18:30:00.000Z"
+        },
+        {
+          "id": "legacy-rfc-gmt",
+          "input": "Thu, 01 Jan 1970 00:00:00 GMT",
+          "epoch": 0,
+          "iso": "1970-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-slashes",
+          "input": "01/02/2024",
+          "epoch": 1704124800000,
+          "iso": "2024-01-01T16:00:00.000Z"
+        },
+        {
+          "id": "legacy-am-pm",
+          "input": "Jan 2 2024 3:04 PM GMT",
+          "epoch": 1704207840000,
+          "iso": "2024-01-02T15:04:00.000Z"
+        },
+        {
+          "id": "legacy-named-zone",
+          "input": "Jan 2 2024 03:04:05 PST",
+          "epoch": 1704193445000,
+          "iso": "2024-01-02T11:04:05.000Z"
+        },
+        {
+          "id": "legacy-two-digit-year",
+          "input": "01/02/49 GMT",
+          "epoch": 2493158400000,
+          "iso": "2049-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-single-number",
+          "input": "0",
+          "epoch": 946656000000,
+          "iso": "1999-12-31T16:00:00.000Z"
+        },
+        {
+          "id": "legacy-width",
+          "input": "2024-1-2",
+          "epoch": 1704124800000,
+          "iso": "2024-01-01T16:00:00.000Z"
+        },
+        {
+          "id": "legacy-whitespace",
+          "input": " 2024-01-02 ",
+          "epoch": 1704124800000,
+          "iso": "2024-01-01T16:00:00.000Z"
+        },
+        {
+          "id": "legacy-comments",
+          "input": "Jan 2 2024 (comment) GMT",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-unknown-prefix",
+          "input": "junk (nested (comment)) 1 Jan 1970 GMT",
+          "epoch": 0,
+          "iso": "1970-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-smi-boundary",
+          "input": "Jan 1 2000 GMT+596523:14",
+          "epoch": -1200798840000,
+          "iso": "1931-12-13T20:46:00.000Z"
+        },
+        {
+          "id": "nul-terminates",
+          "input": "2024-01-02T00:00:00Z\u0000ignored",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "invalid-empty",
+          "input": "",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-text",
+          "input": "not a date",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-month",
+          "input": "2024-13-01T00:00:00Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-day",
+          "input": "2024-01-32T00:00:00Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-leap-second",
+          "input": "2024-01-02T03:04:60Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-offset",
+          "input": "2024-01-02T00:00:00+24:00",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-iso-trailing-space",
+          "input": "2024-01-02T00:00:00Z ",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-ampm",
+          "input": "Jan 2 2024 13:00 PM GMT",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-zone",
+          "input": "Jan 2 2024 00:00 XYZ",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-slashes",
+          "input": "13/32/2024",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-timeclip",
+          "input": "+275760-09-13T00:00:00.001Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-surrogate",
+          "input": "\ud800",
+          "epoch": null,
+          "iso": null
+        }
+      ]
+    },
+    {
+      "tz": "America/Los_Angeles",
+      "cases": [
+        {
+          "id": "iso-millis",
+          "input": "2026-10-14T05:01:18.204Z",
+          "epoch": 1791954078204,
+          "iso": "2026-10-14T05:01:18.204Z"
+        },
+        {
+          "id": "iso-offset-colon",
+          "input": "2024-01-02T03:04:05.678+08:00",
+          "epoch": 1704135845678,
+          "iso": "2024-01-01T19:04:05.678Z"
+        },
+        {
+          "id": "iso-offset-compact",
+          "input": "2024-01-02T03:04:05.678-0530",
+          "epoch": 1704184445678,
+          "iso": "2024-01-02T08:34:05.678Z"
+        },
+        {
+          "id": "iso-fraction-truncation",
+          "input": "2024-01-02T03:04:05.123456Z",
+          "epoch": 1704164645123,
+          "iso": "2024-01-02T03:04:05.123Z"
+        },
+        {
+          "id": "iso-next-day",
+          "input": "2024-01-02T24:00:00Z",
+          "epoch": 1704240000000,
+          "iso": "2024-01-03T00:00:00.000Z"
+        },
+        {
+          "id": "iso-normalized-day",
+          "input": "2024-02-30T00:00:00Z",
+          "epoch": 1709251200000,
+          "iso": "2024-03-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-extended-year",
+          "input": "+010000-01-01T00:00:00.000Z",
+          "epoch": 253402300800000,
+          "iso": "+010000-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-negative-year",
+          "input": "-000001-01-01T00:00:00.000Z",
+          "epoch": -62198755200000,
+          "iso": "-000001-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "iso-timeclip-end",
+          "input": "+275760-09-13T00:00:00.000Z",
+          "epoch": 8640000000000000,
+          "iso": "+275760-09-13T00:00:00.000Z"
+        },
+        {
+          "id": "iso-date-only",
+          "input": "2024-01-02",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "iso-local",
+          "input": "2024-01-02T03:04:05.678",
+          "epoch": 1704193445678,
+          "iso": "2024-01-02T11:04:05.678Z"
+        },
+        {
+          "id": "iso-local-gap",
+          "input": "2024-03-10T02:30:00.123",
+          "epoch": 1710066600123,
+          "iso": "2024-03-10T10:30:00.123Z"
+        },
+        {
+          "id": "iso-local-fold",
+          "input": "2024-11-03T01:30:00.123",
+          "epoch": 1730622600123,
+          "iso": "2024-11-03T08:30:00.123Z"
+        },
+        {
+          "id": "iso-local-fold-end",
+          "input": "2024-11-03T02:00:00",
+          "epoch": 1730628000000,
+          "iso": "2024-11-03T10:00:00.000Z"
+        },
+        {
+          "id": "iso-local-future-gap",
+          "input": "2039-03-13T02:30:00",
+          "epoch": 2183625000000,
+          "iso": "2039-03-13T10:30:00.000Z"
+        },
+        {
+          "id": "legacy-rfc-gmt",
+          "input": "Thu, 01 Jan 1970 00:00:00 GMT",
+          "epoch": 0,
+          "iso": "1970-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-slashes",
+          "input": "01/02/2024",
+          "epoch": 1704182400000,
+          "iso": "2024-01-02T08:00:00.000Z"
+        },
+        {
+          "id": "legacy-am-pm",
+          "input": "Jan 2 2024 3:04 PM GMT",
+          "epoch": 1704207840000,
+          "iso": "2024-01-02T15:04:00.000Z"
+        },
+        {
+          "id": "legacy-named-zone",
+          "input": "Jan 2 2024 03:04:05 PST",
+          "epoch": 1704193445000,
+          "iso": "2024-01-02T11:04:05.000Z"
+        },
+        {
+          "id": "legacy-two-digit-year",
+          "input": "01/02/49 GMT",
+          "epoch": 2493158400000,
+          "iso": "2049-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-single-number",
+          "input": "0",
+          "epoch": 946713600000,
+          "iso": "2000-01-01T08:00:00.000Z"
+        },
+        {
+          "id": "legacy-width",
+          "input": "2024-1-2",
+          "epoch": 1704182400000,
+          "iso": "2024-01-02T08:00:00.000Z"
+        },
+        {
+          "id": "legacy-whitespace",
+          "input": " 2024-01-02 ",
+          "epoch": 1704182400000,
+          "iso": "2024-01-02T08:00:00.000Z"
+        },
+        {
+          "id": "legacy-comments",
+          "input": "Jan 2 2024 (comment) GMT",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-unknown-prefix",
+          "input": "junk (nested (comment)) 1 Jan 1970 GMT",
+          "epoch": 0,
+          "iso": "1970-01-01T00:00:00.000Z"
+        },
+        {
+          "id": "legacy-smi-boundary",
+          "input": "Jan 1 2000 GMT+596523:14",
+          "epoch": -1200798840000,
+          "iso": "1931-12-13T20:46:00.000Z"
+        },
+        {
+          "id": "nul-terminates",
+          "input": "2024-01-02T00:00:00Z\u0000ignored",
+          "epoch": 1704153600000,
+          "iso": "2024-01-02T00:00:00.000Z"
+        },
+        {
+          "id": "invalid-empty",
+          "input": "",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-text",
+          "input": "not a date",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-month",
+          "input": "2024-13-01T00:00:00Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-day",
+          "input": "2024-01-32T00:00:00Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-leap-second",
+          "input": "2024-01-02T03:04:60Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-offset",
+          "input": "2024-01-02T00:00:00+24:00",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-iso-trailing-space",
+          "input": "2024-01-02T00:00:00Z ",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-ampm",
+          "input": "Jan 2 2024 13:00 PM GMT",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-zone",
+          "input": "Jan 2 2024 00:00 XYZ",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-slashes",
+          "input": "13/32/2024",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-timeclip",
+          "input": "+275760-09-13T00:00:00.001Z",
+          "epoch": null,
+          "iso": null
+        },
+        {
+          "id": "invalid-surrogate",
+          "input": "\ud800",
+          "epoch": null,
+          "iso": null
+        }
+      ]
+    }
+  ]
+}
