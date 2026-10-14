@@ -79,9 +79,13 @@ related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-se
 | 3 | ledger 只接受同 identity/stream 的已知 terminal 作为对账结果；写 unknown 不会凭空创造 known。 | `B/src/agent/modules/transport/sessionOperationLedger.ts:132-164` |
 | 4 | TurnRunner 对精确 `timeout:<runId>` 的 aborted signal + unknown 直接重抛，让 gateway timeout 路径收尾；其余错误走正常失败投影。 | `B/src/agent/turn/TurnRunner.ts:422-440,701-704` |
 | 5 | gateway catch 的 `!timedOut` 只保护 postFailure 字段；写 gateway_submit_failed 的分支检查的是 completion handle 当前性，**没有检查 timedOut**。写状态本身有 await。 | `B/src/gateway/client/InProcessGateway.ts:1708-1760`，状态写入/发布见 `:1252-1266` |
-| 6 | completion handle 只在外层 finally 的 complete 移除；timeout writer 返回或 queue.close 都不移除 handle。catch 在 handle 仍 current 时先落盘，再尝试发帧；queue 已关只会丢弃后续 enqueue，不会撤销或阻止此前的状态落盘。 | `B/src/gateway/client/InProcessGateway.ts:1252-1266,1745-1759,1774-1849`、`B/src/gateway/client/GatewayTurnCompletionFence.ts:26-41`、`B/src/gateway/util/AsyncQueue.ts:17-18` |
+| 6 | **运行期** completion handle 只在外层 finally 的 complete（:1848）移除；timeout writer 返回或 queue.close 都不移除 handle。:984 的 releasePreflight 是接纳前释放路径，不影响这里的 #19 运行期交错。catch 在 handle 仍 current 时先写 durable status，再尝试发布；queue.close 不会撤销此前的状态落盘，帧与 registry 的后续行为还须看第 7–8 步。 | `B/src/gateway/client/InProcessGateway.ts:974-986,1252-1266,1745-1759,1774-1849`、`B/src/gateway/client/GatewayTurnCompletionFence.ts:26-41` |
+| 7 | **无 runRegistry** 时直接 queue.enqueue；**有 runRegistry** 时每帧先异步 append，成功后的 .then 才 enqueue。timeout 路径调用 enqueueGatewayEvent 后紧接同步 queue.close，因此 timeout 自己的帧也可能在 append 完成前被关队列丢弃。生产 createLocalGateway 总会注入 registry，默认 FileRunRegistry；不能用无 registry 的夹具代表生产。 | `B/src/cli/createLocalGateway.ts:996`、`B/src/gateway/client/InProcessGateway.ts:1216-1229,1420-1434`、`B/src/gateway/util/AsyncQueue.ts:17-18` |
+| 8 | FileRunRegistry 的终态拒绝条件不含 failed；timeout error 可将 state 设为 failed，后到的 gateway_submit_failed error 仍可追加到 events 并覆盖 record.result。queue.close 不阻止 append，实时帧不可见不表示 registry events/result 未变；最终顺序和故障落盘结果待复现。 | `B/src/gateway/run/RunRegistry.ts:236-260` |
 
-**可证明的机制**：timeout 先到、unknown 后进入同一 current handle 的 catch 时（外层 finally 尚未 complete），只要状态写入成功，durable 就必多一条 gateway_submit_failed，**与 timeout writer 快慢无关**。慢 writer 不是 current 的原因；handle 的生命周期才是 fence 仍通过的原因。快 writer 已完成 timeout 落盘并关 queue 时，迟到失败仍落盘，只是其帧被关闭的 queue 丢弃；慢 writer 下，若失败帧在关 queue 前入队，实时流也会暴露该失败。帧只有 timeout 不能证明 durable 只有 timeout，这也解释为何“补一个 Completed”不足以证明宿主 race 消失。**尚未证明**：所有 #19 差异都来自上述唯一交错，以及 unknown-first、timer-first 在真实调度下各自比例；若 unknown 迟至外层 complete 之后，current 检查是另一边界，应单测，不能与 writer 快慢混为一谈。本次不把推导写成实测根因闭环。依据是上述第 1、4、5、6 步，精确复现和控制顺序交给 A5/#19。
+**源码支持的机制与待复现边界**：timeout-first 后 unknown 进入同一 current handle 的 catch 时，成功写入的 durable status 可追加 gateway_submit_failed；handle 的生命周期使 fence 仍通过，不能把慢 writer 当作其原因。**有 / 无 runRegistry 是独立维度**：无 registry 时直接入队，关闭后丢后续帧；生产有 registry 时 append 与入队之间存在异步边界，timeout 自己的帧也可能丢失，迟到失败还可能改变 registry events 并覆盖 result。因此“queue 关闭只隐藏帧”不能概括生产路径，也不能从帧只有 timeout 推断 durable status 或 registry 只有 timeout。
+
+**尚未实测**：两种 registry 拓扑 × 快/慢/失败 writer 下实际帧、durable status、registry events/result 的组合、顺序与故障结果；这些须在 A5.2 分开断言、实测复现，不把源码推导写成固定输出。也尚未证明所有 #19 差异都来自这一交错，或 unknown-first、timer-first 在真实调度下各自比例；unknown 迟至外层 complete 后的 current 检查另测，不能与 writer 快慢混为一谈。依据为上表，复现与 bug 归类仍交 A5/#19。
 
 ### 4.3 Rust 宿主建议：两条状态轴，一处裁决
 
@@ -92,13 +96,13 @@ related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-se
 
 | 交错/故障 | 建议 Rust 处理与应有断言 | 与 TS 的关系 |
 |---|---|---|
-| timeout 已取得收尾权，unknown 后到；分别覆盖快 writer 已关 queue、慢 writer 尚未关 queue | 当场 abort；unknown 照记执行账本；帧断言仅一套 timeout status/error，durable 独立断言仅 timeout、不追加 gateway_submit_failed（成功落盘分支）；不以 writer 阻塞或帧是否可见限制修复范围；队列不能早于应等待的 durable 写关闭 | **候选修 bug②**，需批准帧和 durable 的具体差异规则；测试唯一 timeout 帧断言见 `B/tests/gateway/operation-deadline.spec.ts:154-160`，重复落盘路径见 `B/src/gateway/client/InProcessGateway.ts:1252-1266,1727-1759`、`B/src/gateway/util/AsyncQueue.ts:17-18` |
+| timeout 已取得收尾权，unknown 后到；有 / 无 registry × 快/慢/失败 writer | 当场 abort；unknown 照记执行账本；成功持久化分支的候选断言为：帧仅一套 timeout status/error，durable status 不追加 gateway_submit_failed；有 registry 时另断言 events 不追加迟到失败、result 保持 timeout，不被覆盖，无 registry 时该项明确不适用；队列关闭须等待应持久化并发布的帧，失败分支另定标，不伪称写入成功 | **候选修 bug②，非基线实测结果**；需批准帧、durable status、registry events/result 的具体差异规则；依据 `B/tests/gateway/operation-deadline.spec.ts:154-160`、`B/src/gateway/client/InProcessGateway.ts:1216-1266,1433-1434,1727-1759`、`B/src/gateway/run/RunRegistry.ts:242-258` |
 | unknown 在本地 timeout 生效前到达 | 保持 fail-closed 与原失败投影；仅凭 code=DEADLINE_EXCEEDED 不能认定 gateway timeout 已成立；若要统一该交错，先补基线证据再扩 D4 | `B/src/agent/turn/TurnRunner.ts:424-439,701-704`；不预先扩大 bug 结论 |
 | 已知 final 与 timeout 同时到达 | 以拥有者串行接收/校验后的首次有效裁决为准，测试两种确定顺序；不会两个可见终态都赢 | **建议，需 A5 定标**；依据 TS 延后终态与 timeout 并行路径 `B/src/gateway/client/InProcessGateway.ts:1695-1699,1779-1790` |
 | 请求取消、工具已执行未回 ACK、sidecar 退出/重启 | 分开 Requested 与 Deadline；未确认 effect 保持 unknown；不自动重新 execute；旧 generation 回复只记诊断，不改新 run | `B/src/agent/modules/transport/agentLoopSidecarClient.ts:1000-1014,1040-1055,1123-1151`、`B/src/gateway/client/GatewayTurnCompletionFence.ts:26-41` |
-| timeout status 写失败 / run registry 写失败 | 前者继续返回 timeout error；后者暴露 result_unknown；失败都不能转成 success | `B/tests/gateway/operation-deadline.spec.ts:163-197`、`B/src/gateway/client/InProcessGateway.ts:1798-1809` |
+| timeout status 写失败 / run registry 写失败 | 候选目标：前者仍发布 timeout error，后者暴露持久化不确定性，均不转 success；生产 queue.close 与异步 append 可能使错误帧也不可见，基线帧及实际落盘须另行复现，不能写成既有保证 | `B/tests/gateway/operation-deadline.spec.ts:163-197`、`B/src/gateway/client/InProcessGateway.ts:1216-1243,1433-1434,1798-1809` |
 
-**bug 候选登记 A19-HOST（待定标、待批准，非 accepted diff）**：拟修正的是“gateway timeout 已拥有收尾权时，迟到 reconciliation failure 仍追加 operational failure”。类别建议为 intent bug②；证据为 catch 缺守卫与测试断言。A5 应把受控重现、帧/落盘差异、原/新断言回填现有 #19；A7 实现 Rust 收尾后，在获批的 `specs/gateway-parity/accepted-diffs.md` 追加精确条目。若影响阶段 C 评分，另按阶段 C 清单流程登记，不能由 A 的结论倒算 C 通过。本轮不写任何 specs，不新造“原版缺陷已批准”结论。依据：`.42cog/intent.md:23`、`specs/parity/accepted-diffs.md:3-11`、`CLAUDE.md:115-128`。
+**bug 候选登记 A19-HOST（待定标、待批准，非 accepted diff）**：拟修正的是“gateway timeout 已拥有收尾权时，迟到 reconciliation failure 仍追加 operational failure”。类别建议为 intent bug②；证据为 catch 缺守卫与测试断言。A5 应把有/无 registry 的受控重现、帧/durable status/registry events 与 result 差异、原/新断言回填现有 #19；A7 实现 Rust 收尾后，在获批的 `specs/gateway-parity/accepted-diffs.md` 追加精确条目。若影响阶段 C 评分，另按阶段 C 清单流程登记，不能由 A 的结论倒算 C 通过。本轮不写任何 specs，不新造“原版缺陷已批准”结论。依据：`.42cog/intent.md:23`、`specs/parity/accepted-diffs.md:3-11`、`CLAUDE.md:115-128`。
 
 ## 五、按阻断点安排验证
 
@@ -109,6 +113,6 @@ related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-se
 | 全局写与旁路入口仍能触及 TS | P0 / A8 原生切换 | 41 项逐一明确实现/既有可选不可用分支；HTTP/channel/cron 与 WS 共享 Rust owner；无 TS gateway 的进程与出站连接证据 | `B/src/cli/GatewayRuntimeRefreshBundle.ts:134-163`、`B/src/gateway/server/GatewayServer.ts:96-131`、`B/src/cli/pilotdeck.ts:233-249` |
 | 当前装置不支持原生拓扑 | P1 / 新宿主验收 | 运行器增加明确 topology/sidecar 选择；native 轮不得启动 TS gateway，加入“偷偷回退到 TS”阳性失败对照 | `scripts/gateway-parity/README.md:35-39`、`scripts/gateway-parity/run_round.py:221-230` |
 | 真实 UI 自动恢复缺陷 | P0 / 完整 UI 恢复声明 | D5 拍板并有真实 bridge 录帧；不可用协议探针替代这道门 | `docs/experiments/exp003-transparent-proxy/readme.md:55,65-70` |
-| #19 未完成严格归类与受控复现 | P1 / #19 关闭和 A7 超时验收 | 模型等待/工具等待 × timeout-first/unknown-first × 快/慢/失败 writer；帧与 durable.status 分开断言，另测 unknown 在外层 complete 后到达的 fence 边界 | `B/src/gateway/client/InProcessGateway.ts:1252-1266,1384-1439,1708-1760,1848`、`B/tests/gateway/operation-deadline.spec.ts:117-197` |
+| #19 未完成严格归类与受控复现 | P1 / #19 关闭和 A7 超时验收 | 模型等待/工具等待 × timeout-first/unknown-first × 有/无 registry × 快/慢/失败 writer；实测复现后分别断言帧、durable status、registry events/result，另测外层 complete 后的 fence 边界，不预判结果 | `B/src/cli/createLocalGateway.ts:996`、`B/src/gateway/client/InProcessGateway.ts:1216-1266,1384-1439,1708-1760,1848`、`B/src/gateway/run/RunRegistry.ts:242-258` |
 
 阶段 A 的 TS gateway 退役不等于删整个 TS 仓或 Node：原版 ui/server 仍按阶段边界保留，桌面仍有自己的启动路径；验收应检查被替换的 **gateway/宿主进程及内部回调**，而非禁止 TS 测试驱动或前端进程。依据：`.42cog/intent.md:24,42`、`B/apps/desktop/src/main.ts:250-258`。

@@ -14,7 +14,9 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 
 为什么这样设计见 `docs/research/006_phase-b-ui-server/`（`must-know` / `gap` / `decision` / `route-inventory`，行号均已回源核对）。一句话：**浏览器 `ui/src` 一行不改**，Rust 以反代站上浏览器唯一入口（默认 3001；实验一律高位端口），**逐路由**从 TS `ui/server` 手里接管；未接管的 HTTP / SSE 与整条 WS 连接反代给跑在私有回环端口的 TS `ui/server`。取舍卡九条代拍（切法 / WS 切法 / 38 处 `src/` / 装置 / 鉴权 / 编排 / 迁移分组 / 分母与覆盖率 / 阶段门）均为 **AI 代拍，待人复核**（`006/decision.md`）。
 
-**阶段门（原 AI 代拍 #7 待人复核；本轮 D5 解环补充仍等人）**：B1–B2（探针、装置、规约）只读基线、只写本仓 `scripts|docs|specs`，不写产品代码，可与阶段 A / C 并行。原“B3 起严格等阶段 A 对拍达标”未定义里程碑；若包含等 B 修客户端的完整 UI 门，会形成互等。[008 decision D5](../research/008_phase-a-session-domain/decision.md) 提议将 B3 的 A 侧前置明确为 **A8「gateway 退役验证完成（不含 UI 自动恢复）」**，完整证据清单见 [计划 005 的依赖顺序与 A8](005_phase-a-session-domain.md)。**仅在人批准 D5 解环方案后**，采用 A8 → B3 → B 后续客户端恢复修复 → 完整 UI 验收的顺序，B3 自身仍须 B1/B2 前置齐备；D5 未批不得把 A8 报告自动当作 B3 放行。当前 `.42cog/intent.md:24` 已把上述旧串行原话划掉并另记并行说明，不能再把旧原话引用为现行红线，也不能据并行说明代批本次 D5。本轮只补待批依赖，不填写拍板结果。并行期全量对拍同一时刻只跑 1 个（`CLAUDE.md` §五）。
+**阶段门（AI 代拍 #7，待人复核）**：B1–B2（探针、装置、规约）只读基线、只写本仓 `scripts|docs|specs`，不写产品代码，可与阶段 A / C 并行；**B3 起（Rust `ui-server` crate 进 `src/`）严格等阶段 A 对拍达标**（`.42cog/intent.md`「不做什么」红线收窄的原话：「前一阶段对拍达标之前不进下一阶段」）。并行期全量对拍同一时刻只跑 1 个（`CLAUDE.md` §五）。
+
+**D5 待批补充**：为避免“完整 UI 恢复等 B 修复、B3 又等 A 完整验收”的互等，[008 decision D5](../research/008_phase-a-session-domain/decision.md) 建议以 A8「gateway 退役验证完成（不含 UI 自动恢复）」作为 B3 的 A 侧闸门，证据清单见 [计划 005](005_phase-a-session-domain.md)；此解环建议**须人批准，未批准前维持上述原闸门**。上段按原文保留，其所引串行原话在当前 `.42cog/intent.md:24` 已划掉并另记并行说明；该现状不构成对 D5 的批准。
 
 ## 现状（已确认）
 
@@ -39,7 +41,9 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 
 ## 执行步骤
 
-> 拆分逻辑与计划 001 / 002 相同：issue 之间隔着人的闸门（B2 冻结规约、B3 的 A 侧前置按上文 D5 待批方案明确）。**只先开 B1**，后续 issue 在前一条合并后再开。
+> 拆分逻辑与计划 001 / 002 相同：issue 之间隔着人的闸门（B2 冻结规约、B3 等阶段 A 达标）。**只先开 B1**，后续 issue 在前一条合并后再开。
+
+> D5 待批补充：B3 改用 A8「gateway 退役验证完成（不含 UI 自动恢复）」作 A 侧闸门须人批准；未批准前维持上述原闸门，B1/B2 前置要求仍保留。
 
 ### Issue B1 · 探针：Rust 反代站在高位端口前，真浏览器经它访问 TS `ui/server` 一切照常（可立即开工，与 A/C 并行）
 
@@ -90,9 +94,7 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 - [ ] TS 自比（直连 vs 直连）在冻结口径下 100% 一致，否则装置不可信
 - [ ] `ui/e2e` 的 `page.route` 支线作为**前端回归门**接入：切到 Rust 入口后重跑仍绿（证明前端没改）
 
-### Issue B3 · Rust `pilotdeck-ui-server` crate：反代 + 鉴权 + 无状态只读（**A 侧闸门见 D5 待批方案**）
-
-**候选前置**：D5 解环方案获人批准，且 A8 gateway 退役验证（不含 UI 自动恢复）与 B1/B2 前置均完成；不等待依赖 B 修复的完整 UI 门。本轮没有批准开工。客户端恢复修复须在 B 的后续工作包中显式登记并验收，不属于下列 B3 鉴权/只读路由成果。
+### Issue B3 · Rust `pilotdeck-ui-server` crate：反代 + 鉴权 + 无状态只读（**阶段 A 达标后才开工**）
 
 **S1 crate 骨架**：`src/pilotdeck-ui-server`（单 crate，先不拆）；`pilotdeck-cli` 加 `ui-server` 子命令。模块：`proxy`（HTTP/SSE/WS 反代，B1 代码转正）、`router`（路由归属表加载）、`auth`（读 `auth.db`、HS256、bcrypt、`X-Refreshed-Token`、`DISABLE_LOCAL_AUTH`）、`static`（`ui/dist` 与 `/memory-dashboard`）。
 **S2 鉴权与静态接管**：`/api/auth/*`（register / login 写 `auth.db`，属 G-AUTHDB）、静态资源、`/health` 切 Rust。**接管前先落 G-AUTHDB 写者协调**：要么把 `/api/settings/{api-keys,credentials,notification-preferences,push}/*`、`/api/user/git-config`、`/api/sessions/:id/rename`（`index.js:995` `sessionNamesDb.setName`）、**`DELETE /api/projects/:projectName/sessions/:sessionId`（`index.js:954` 入口、`index.js:963` `sessionNamesDb.deleteName`）** 同批纳入，要么明确 TS 为唯一写者、Rust 只读 secret 不写（`006/decision.md` #7）。**注意删除会话是跨三组的路径**：除 G-AUTHDB 的 `sessionNamesDb` 外还删 transcript（G-SESS）并向同用户广播 `session-deleted`（G-EVT，`index.js:964-968`）；「同批纳入」必须连这两组一起处理，否则该路由整条留 TS。对拍绿。
@@ -103,6 +105,8 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 - [ ] 鉴权对拍含 register / login / 刷新 / WS token / 默认关鉴权分支；G-AUTHDB 写者协调落地（同组同批或单一写者代理）
 - [ ] CI `check` 绿；阳性对照仍会 FAIL
 - [ ] 人肉验收：真浏览器经 Rust 入口走通（此步不交给 AI）
+
+**D5 待批补充（B3）**：建议在人批准后，以 A8「gateway 退役验证完成（不含 UI 自动恢复）」连同 B1/B2 前置作为 B3 开工条件，再由 B 后续工作包显式承担客户端恢复修复，最后完成真实 UI 验收。**此解环建议须人批准，未批准前维持原闸门「阶段 A 达标后才开工」**；A7 或一次协议探针不足以代替 A8，完整 UI 门继续保留，本轮不放行 B3。
 
 ### Issue B4 · 写路由组按共享资源接管（B3 合并后，一组一 issue）
 
@@ -151,16 +155,18 @@ cd resources/PilotDeck/ui && PILOTDECK_E2E_SERVER_PORT=13001 npx playwright test
 |---|---|---|
 | R1 | Express 路由优先级 / 中间件顺序在反代或 Rust 实现里被改变（`/api/projects/files` 必须先于 `/api/projects`，`index.js:545-547, 589`；`/api/sessions/model` 先于 `/api/sessions`，`index.js:637-640`；`mcp.js:413` 被 `mcp.js:36` 遮蔽） | 路由表按**注册顺序 + 挂载穿透**生成（`006/decision.md` #1）；每条双注册 / 遮蔽各配 1 条探针用例；逐组对拍 |
 | R2 | 无类型 WS 的比对口径不稳（自比就有噪声），且按 `type` 分组会掩盖错序 | B2 S4 自比 k 遍定口径（照计划 001）；**冻结「同一连接全序 + `seq` 断言」**，加「交换两帧顺序」阳性对照；不比跨连接 |
-| R3 | 38 处 `src/` 里依赖阶段 A 未就绪的 gateway method | B3 的 A 侧前置按 D5 待批方案核验 A8 gateway 证据；未就绪的条目路由表留 `ts`（`006/decision.md` #2 的 C 桶） |
+| R3 | 38 处 `src/` 里依赖阶段 A 未就绪的 gateway method | B3 起等 A 达标；未就绪的条目路由表留 `ts`（`006/decision.md` #2 的 C 桶） |
 | R4 | `/shell` PTY 跨连接/跨平台状态复杂 | 初期保持整条反代；迁移单列 issue，比握手 + **固定命令输出哨兵 + 退出 + 重连** |
 | R5 | 与阶段 A / C 并行造成机器负载假差异 | 全量对拍串行锁沿用（`mkdir /tmp/pdrs-parity.lock` 模式）；B1/B2 小规模手跑 |
 | R6 | 误碰用户环境（3001、18789、`~/.pilotdeck`、用户进程） | 一律高位端口（130xx/151xx/287xx）+ `PILOT_HOME`/`DATABASE_PATH`/`TMPDIR` 指向 `_tmp/`；每次实验把端口清单写进 readme；绝不 kill 用户进程 |
 | R7 | `auth.db` 双写（Rust 与 TS 同时处理鉴权/登录/设置） | 按 **G-AUTHDB 共享资源组**同组同批；或指定单一写者、另一侧经协议代理；接管前 Rust 只读 secret（`006/decision.md` #7） |
 | R8 | SSE 在反代里被缓冲、改写 framing，或事件被延迟 / 合并 / 丢 | B1 S3 用**事件到达时刻**证明逐步到达；保留 `X-Accel-Buffering: no` 等头；**完整事件序列 + 到达延迟上界**口径 + `丢事件 / 并事件 / 攒流到结束` 阳性对照；`read()` 分块元数据仅诊断、不作硬门（`006/decision.md` #5） |
-| R9 | A 完整 UI 门等 B 修复、B3 又等 A 全部完成而互等，或未经批准提前放行 | D5 待人批准以 A8 gateway 退役验证（不含 UI 自动恢复）作为 B3 的 A 侧前置；最终 UI 门独立保留，未批不放行；B1/B2 可继续 |
+| R9 | B3 被迫在阶段 A 未达标时开工（进度压力） | 阶段门是红线；B1/B2 的产出（探针结论、装置、规约）本身可合并，不越界 |
 | R10 | 改 `ui/server` 与 `apps/desktop` 时越界改到 `ui/src` | 每次提交前 `git diff --stat` 核对路径；`ui/src` 出现改动即回退 |
 | R11 | 跨进程广播桥不一致 / 有漏洞（G-EVT） | 桥仅回环（**`HOST=127.0.0.1` 绑定断言**）+ `<PILOT_HOME>/server-token` 鉴权、**按事件类型/用户分发**、默认关；payload 与 `broadcastConfigReloaded` 同形；探针先验文件 watcher 二次广播；`/ws` 接管后删桥 |
 | R12 | 覆盖率门形同虚设（用例不驱动真实路由，反代冒充 Rust） | 装置记录处理侧 `X-PilotDeck-Handler`；直接 HTTP 用例直连 Rust 端口；缺用例且无豁免即 FAIL；分母以运行时枚举为准 |
+
+**D5 待批补充（R3 / R9）**：风险表原文保留；解环建议为以 A8「gateway 退役验证完成（不含 UI 自动恢复）」作为 B3 的 A 侧闸门，须人批准。未批准前维持原闸门，不凭 A8 报告自动放行；完整 UI 恢复仍须 B 修复后单独验收。
 
 ## 范围外
 
@@ -169,7 +175,9 @@ cd resources/PilotDeck/ui && PILOTDECK_E2E_SERVER_PORT=13001 npx playwright test
 ## 拍板记录
 
 上一轮已拍（见 `002/decision.md`）：先 C 再 A 再 B · 驱动用 TS · 默认修 bug · 阶段 A 编排不改入口。
-本轮 AI 代拍（待人复核，详据见 `006/decision.md`）：① 切法 = Rust 前置逐路由接管、未实现反代给 TS、WS 整条连接反代；② 38 处 `src/` = 分三桶，4 条走 gateway、其余 Rust 直接实现或随路由留守；③ 装置 = 黑盒录放反代 + Playwright 场景 + 本地 mock 模型 + 阳性对照，另立 `specs/ui-server-parity/`；④ 鉴权 = Rust 自实现、读同一 `auth.db`、G-AUTHDB 写者协调；⑤ SSE = 流式透传、逐路由接管，冻结**完整事件序列 / 到达延迟**口径并覆盖 `GET .../staffdeck-sdk/events` 的 `Last-Event-ID` 续传；⑥ 编排 = 先装置自编排、B6 再改 supervisor/桌面端；⑦ 原阶段门 = B1/B2 可与 A/C 并行、B3 起严格等 A 达标（该旧表述的里程碑缺口见上文；本轮 D5 的 A8→B3 解环方案仍等人，未形成新拍板）；⑧ 迁移分组 = 按共享资源（同一文件 / 同一 SQLite / 同一进程内事件）同组同批，G-EVT 走过渡期跨进程广播桥；⑨ 分母与覆盖 = 运行时枚举为准 + 路由 × 用例覆盖矩阵硬门（每条 Rust 路由 ≥1 直接用例或显式豁免，装置记录处理侧）。
+本轮 AI 代拍（待人复核，详据见 `006/decision.md`）：① 切法 = Rust 前置逐路由接管、未实现反代给 TS、WS 整条连接反代；② 38 处 `src/` = 分三桶，4 条走 gateway、其余 Rust 直接实现或随路由留守；③ 装置 = 黑盒录放反代 + Playwright 场景 + 本地 mock 模型 + 阳性对照，另立 `specs/ui-server-parity/`；④ 鉴权 = Rust 自实现、读同一 `auth.db`、G-AUTHDB 写者协调；⑤ SSE = 流式透传、逐路由接管，冻结**完整事件序列 / 到达延迟**口径并覆盖 `GET .../staffdeck-sdk/events` 的 `Last-Event-ID` 续传；⑥ 编排 = 先装置自编排、B6 再改 supervisor/桌面端；⑦ 阶段门 = B1/B2 可与 A/C 并行、B3 起严格等 A 达标；⑧ 迁移分组 = 按共享资源（同一文件 / 同一 SQLite / 同一进程内事件）同组同批，G-EVT 走过渡期跨进程广播桥；⑨ 分母与覆盖 = 运行时枚举为准 + 路由 × 用例覆盖矩阵硬门（每条 Rust 路由 ≥1 直接用例或显式豁免，装置记录处理侧）。
+
+**D5 待批补充（拍板记录）**：以上历史记录原文保留；以 A8「gateway 退役验证完成（不含 UI 自动恢复）」作为 B3 闸门只是解环建议，须人批准，未批准前维持原闸门。D5 仍为「等人」，本轮没有新增拍板结果。
 
 ## 相关
 
