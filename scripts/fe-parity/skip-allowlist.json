@@ -10,7 +10,17 @@
         "ui/e2e/formal-composition.spec.mjs:7",
         "ui/e2e/formal-composition.spec.mjs:8"
       ],
-      "rationale": "FORMAL_COMPOSITION_URL 指向真实 Web+StaffDeck 部署；FORMAL_REPLACEMENT=1 时此 Knowledge 查询/引用用例不适用。"
+      "rationale": "FORMAL_COMPOSITION_URL 指向真实 Web+StaffDeck 部署；FORMAL_REPLACEMENT=1 时此 Knowledge 查询/引用用例不适用。",
+      "skipReasons": [
+        {
+          "description": "Set FORMAL_COMPOSITION_URL to run against a formal Web+StaffDeck deployment.",
+          "source": "ui/e2e/formal-composition.spec.mjs:6"
+        },
+        {
+          "description": "Replacement profile only runs its conformance workflow.",
+          "source": "ui/e2e/formal-composition.spec.mjs:8"
+        }
+      ]
     },
     {
       "file": "formal-composition.spec.mjs",
@@ -21,7 +31,17 @@
         "ui/e2e/formal-composition.spec.mjs:7",
         "ui/e2e/formal-composition.spec.mjs:8"
       ],
-      "rationale": "依赖 FORMAL_COMPOSITION_URL 的真实 StaffDeck SOP 运行时、会话与继续流程；replacement profile 不适用。"
+      "rationale": "依赖 FORMAL_COMPOSITION_URL 的真实 StaffDeck SOP 运行时、会话与继续流程；replacement profile 不适用。",
+      "skipReasons": [
+        {
+          "description": "Set FORMAL_COMPOSITION_URL to run against a formal Web+StaffDeck deployment.",
+          "source": "ui/e2e/formal-composition.spec.mjs:6"
+        },
+        {
+          "description": "Replacement profile only runs its conformance workflow.",
+          "source": "ui/e2e/formal-composition.spec.mjs:8"
+        }
+      ]
     },
     {
       "file": "formal-composition.spec.mjs",
@@ -32,7 +52,17 @@
         "ui/e2e/formal-composition.spec.mjs:7",
         "ui/e2e/formal-composition.spec.mjs:8"
       ],
-      "rationale": "依赖 FORMAL_COMPOSITION_URL 的实际 SOP/Skills 路由组合；replacement profile 不适用。"
+      "rationale": "依赖 FORMAL_COMPOSITION_URL 的实际 SOP/Skills 路由组合；replacement profile 不适用。",
+      "skipReasons": [
+        {
+          "description": "Set FORMAL_COMPOSITION_URL to run against a formal Web+StaffDeck deployment.",
+          "source": "ui/e2e/formal-composition.spec.mjs:6"
+        },
+        {
+          "description": "Replacement profile only runs its conformance workflow.",
+          "source": "ui/e2e/formal-composition.spec.mjs:8"
+        }
+      ]
     },
     {
       "file": "formal-composition.spec.mjs",
@@ -43,7 +73,17 @@
         "ui/e2e/formal-composition.spec.mjs:7",
         "ui/e2e/formal-composition.spec.mjs:9"
       ],
-      "rationale": "依赖真实部署的 replacement Knowledge 前后端实现；仅 FORMAL_REPLACEMENT=1 适用。"
+      "rationale": "依赖真实部署的 replacement Knowledge 前后端实现；仅 FORMAL_REPLACEMENT=1 适用。",
+      "skipReasons": [
+        {
+          "description": "Set FORMAL_COMPOSITION_URL to run against a formal Web+StaffDeck deployment.",
+          "source": "ui/e2e/formal-composition.spec.mjs:6"
+        },
+        {
+          "description": "Replacement conformance requires FORMAL_REPLACEMENT=1.",
+          "source": "ui/e2e/formal-composition.spec.mjs:9"
+        }
+      ]
     },
     {
       "file": "formal-route-matrix.spec.mjs",
@@ -54,7 +94,13 @@
         "ui/e2e/formal-route-matrix.spec.mjs:5",
         "ui/e2e/formal-route-matrix.spec.mjs:11"
       ],
-      "rationale": "FORMAL_ROUTE_PROFILE 与 FORMAL_COMPOSITION_URL 同时门控真实部署路由矩阵，可选 FORMAL_ROUTE_AUTH 认证；身份保留 exp007 未设置 profile 时展开的 undefined，不采用通配符。"
+      "rationale": "FORMAL_ROUTE_PROFILE 与 FORMAL_COMPOSITION_URL 同时门控真实部署路由矩阵，可选 FORMAL_ROUTE_AUTH 认证；身份保留 exp007 未设置 profile 时展开的 undefined，不采用通配符。",
+      "skipReasons": [
+        {
+          "description": "Set FORMAL_ROUTE_PROFILE and FORMAL_COMPOSITION_URL for a formal route-matrix run.",
+          "source": "ui/e2e/formal-route-matrix.spec.mjs:5"
+        }
+      ]
     },
     {
       "file": "real-auth-composition.spec.mjs",
@@ -67,7 +113,17 @@
         "ui/e2e/real-auth-composition.spec.mjs:11",
         "ui/e2e/real-auth-composition.spec.mjs:53"
       ],
-      "rationale": "REAL_COMPOSITION_URL 与 REAL_COMPOSITION_PROFILE 门控真实认证部署，注册/登录后保存设置并查询 Knowledge 运行时；仅 staffdeck profile 适用。"
+      "rationale": "REAL_COMPOSITION_URL 与 REAL_COMPOSITION_PROFILE 门控真实认证部署，注册/登录后保存设置并查询 Knowledge 运行时；仅 staffdeck profile 适用。",
+      "skipReasons": [
+        {
+          "description": "Set REAL_COMPOSITION_URL and REAL_COMPOSITION_PROFILE for an authenticated composition run.",
+          "source": "ui/e2e/real-auth-composition.spec.mjs:7"
+        },
+        {
+          "description": "StaffDeck acceptance only.",
+          "source": "ui/e2e/real-auth-composition.spec.mjs:53"
+        }
+      ]
     },
     {
       "file": "real-auth-composition.spec.mjs",
@@ -80,7 +136,17 @@
         "ui/e2e/real-auth-composition.spec.mjs:11",
         "ui/e2e/real-auth-composition.spec.mjs:135"
       ],
-      "rationale": "依赖真实认证 composition 部署并检查被禁用的模块路由及请求；仅 minimal profile 适用。"
+      "rationale": "依赖真实认证 composition 部署并检查被禁用的模块路由及请求；仅 minimal profile 适用。",
+      "skipReasons": [
+        {
+          "description": "Set REAL_COMPOSITION_URL and REAL_COMPOSITION_PROFILE for an authenticated composition run.",
+          "source": "ui/e2e/real-auth-composition.spec.mjs:7"
+        },
+        {
+          "description": "Minimal-profile acceptance only.",
+          "source": "ui/e2e/real-auth-composition.spec.mjs:135"
+        }
+      ]
     },
     {
       "file": "real-auth-composition.spec.mjs",
@@ -94,7 +160,17 @@
         "ui/e2e/real-auth-composition.spec.mjs:151",
         "ui/e2e/real-auth-composition.spec.mjs:170"
       ],
-      "rationale": "依赖真实认证 replacement 部署、保存后的 result limit 与独立运行时证据文件 REPLACEMENT_KNOWLEDGE_EVIDENCE_PATH；仅 replacement profile 适用。"
+      "rationale": "依赖真实认证 replacement 部署、保存后的 result limit 与独立运行时证据文件 REPLACEMENT_KNOWLEDGE_EVIDENCE_PATH；仅 replacement profile 适用。",
+      "skipReasons": [
+        {
+          "description": "Set REAL_COMPOSITION_URL and REAL_COMPOSITION_PROFILE for an authenticated composition run.",
+          "source": "ui/e2e/real-auth-composition.spec.mjs:7"
+        },
+        {
+          "description": "Replacement-profile acceptance only.",
+          "source": "ui/e2e/real-auth-composition.spec.mjs:151"
+        }
+      ]
     },
     {
       "file": "real-auth-native.spec.mjs",
@@ -104,7 +180,13 @@
         "ui/e2e/real-auth-native.spec.mjs:4",
         "ui/e2e/real-auth-native.spec.mjs:7"
       ],
-      "rationale": "REAL_NATIVE_URL 门控真实 native profile 部署，注册/登录真实账号，验证设置保存/重载及 runtime/config 请求的认证。"
+      "rationale": "REAL_NATIVE_URL 门控真实 native profile 部署，注册/登录真实账号，验证设置保存/重载及 runtime/config 请求的认证。",
+      "skipReasons": [
+        {
+          "description": "Set REAL_NATIVE_URL for the local authenticated native-profile acceptance run.",
+          "source": "ui/e2e/real-auth-native.spec.mjs:4"
+        }
+      ]
     }
   ]
 }

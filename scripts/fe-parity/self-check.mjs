@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { verifyBaseline } from './baseline.mjs';
 import { readFile, readdir, stat, mkdtemp, writeFile, symlink, link, rm, mkdir } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { resolve, dirname } from 'node:path';
 import { createMock, TOKEN } from './mock.mjs';
-import { reconcile, reconcilePair, loadReportPair, SKIP_REASONS, SKIP_ALLOWLIST, caseId, checkInventory } from './accounting.mjs';
+import { reconcile, reconcilePair, loadReportPair, SKIP_ALLOWLIST, caseId, checkInventory } from './accounting.mjs';
 import { oldDist, newDist, ports, ownedPath, root, baseline, historicalInventory, origin } from './env.mjs';
 import { assetPath } from './serve.mjs';
 import { checkMessageMap } from './message-map.mjs';
@@ -44,22 +46,22 @@ export async function selfCheck() {
     const make = (status = 'passed', reason = '') => ({ config: { forbidOnly: true }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: reason && index === 1 ? [{ type: 'skip', description: reason }] : [], results: [{ status: index === 1 ? status : 'passed' }] }] })) }] });
     assert.equal(reconcile(inventory, make(), '').status, 'PASS');
     const unguarded = make(); delete unguarded.config; assert.equal(reconcile(inventory, unguarded, '').status, 'FAIL');
-    assert.equal(reconcile(inventory, make('skipped', SKIP_REASONS[0]), '').status, 'PASS');
+    assert.equal(reconcile(inventory, make('skipped', SKIP_ALLOWLIST[0].skipReasons[0].description), '').status, 'PASS');
     for (const field of ['file', 'title']) {
       const changed = inventory.map(row => ({ ...row }));
       changed[1][field] += '-not-allowlisted';
-      const report = make('skipped', SKIP_REASONS[0]);
+      const report = make('skipped', SKIP_ALLOWLIST[0].skipReasons[0].description);
       report.suites[0].specs[1][field] = changed[1][field];
       const rejected = reconcile(changed, report, '');
       assert.equal(rejected.status, 'FAIL');
       assert.equal(rejected.minimumExecuted, 2);
       assert(rejected.errors.some(error => error.startsWith('skip identity not in fixed allowlist')));
     }
-    for (const reason of ['arbitrary reason', ` ${SKIP_REASONS[0]}`, `${SKIP_REASONS[0]} `, [SKIP_REASONS[0]]]) {
+    for (const reason of ['arbitrary reason', ` ${SKIP_ALLOWLIST[0].skipReasons[0].description}`, `${SKIP_ALLOWLIST[0].skipReasons[0].description} `, [SKIP_ALLOWLIST[0].skipReasons[0].description]]) {
       assert.equal(reconcile(inventory, make('skipped', reason), '').status, 'FAIL');
     }
-    const multiSkip = make('skipped', SKIP_REASONS[0]);
-    multiSkip.suites[0].specs[1].tests[0].annotations.push({ type: 'skip', description: SKIP_REASONS[0] });
+    const multiSkip = make('skipped', SKIP_ALLOWLIST[0].skipReasons[0].description);
+    multiSkip.suites[0].specs[1].tests[0].annotations.push({ type: 'skip', description: SKIP_ALLOWLIST[0].skipReasons[0].description });
     assert.equal(reconcile(inventory, multiSkip, '').status, 'FAIL');
     for (const status of ['skipped', 'interrupted', 'timedOut', 'failed']) assert.equal(reconcile(inventory, make(status), '').status, 'FAIL');
     const missing = make(); missing.suites[0].specs.pop(); assert.equal(reconcile(inventory, missing, '').status, 'FAIL');
@@ -77,7 +79,7 @@ export async function selfCheck() {
     const allowed = inventory.flatMap((row, i) => SKIP_ALLOWLIST.some(entry => caseId(entry) === caseId(row)) ? [i] : []);
     assert.equal(allowed.length, 9);
     const origins = { old: origin('old'), new: origin('new') };
-    const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: SKIP_REASONS[0] }] : [], results: [{ status: skipped.includes(index) ? 'skipped' : 'passed' }] }] })) }] });
+    const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: (SKIP_ALLOWLIST.find(entry => caseId(entry) === caseId(row)) || SKIP_ALLOWLIST[0]).skipReasons[0].description }] : [], results: [{ status: skipped.includes(index) ? 'skipped' : 'passed' }] }] })) }] });
     const pair = (old, next) => reconcilePair(inventory, { old, new: next }, '', origins);
     assert.equal(pair(make('old'), make('new')).status, 'PASS');
     for (const skipped of [allowed.slice(0, 1), allowed]) {
@@ -114,7 +116,7 @@ export async function selfCheck() {
         config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } },
         suites: [{ specs: inventory.map(row => {
           const skip = scenario === 'both sides all skipped' || (scenario === 'one side all skipped' ? frontend === 'new' : caseId(row) === caseId(outsider));
-          return { ...row, tests: [{ expectedStatus: 'passed', annotations: skip ? [{ type: 'skip', description: SKIP_REASONS[0] }] : [], results: [{ status: skip ? 'skipped' : 'passed' }] }] };
+          return { ...row, tests: [{ expectedStatus: 'passed', annotations: skip ? [{ type: 'skip', description: SKIP_ALLOWLIST[0].skipReasons[0].description }] : [], results: [{ status: skip ? 'skipped' : 'passed' }] }] };
         }) }],
       }]));
       const account = reconcilePair(inventory, reports, '', origins);
@@ -136,6 +138,74 @@ export async function selfCheck() {
       }
     });
   }
+  await check('every source-bound skip reason accepts original and rejects one-character drift', async () => {
+    for (const registration of SKIP_ALLOWLIST) {
+      for (const binding of registration.skipReasons) {
+        const [path, line] = binding.source.split(':');
+        const source = (await readFile(resolve(dirname(baseline), path), 'utf8')).split('\n')[Number(line) - 1];
+        assert(source.includes('test.skip('));
+        assert(source.includes(`'${binding.description}'`)); // All nine identities use literal reasons at this commit.
+        const make = (row, reason) => ({ config: { forbidOnly: true }, suites: [{ specs: [{ ...row,
+          tests: [{ expectedStatus: 'skipped', annotations: [{ type: 'skip', description: reason }], results: [{ status: 'skipped' }] }],
+        }] }] });
+        assert.equal(reconcile([registration], make(registration, binding.description), '').status, 'PASS');
+        assert.equal(reconcile([registration], make(registration, binding.description.slice(0, -1) + '!'), '').status, 'FAIL');
+        const outsider = { ...registration, title: registration.title + ' outsider' };
+        assert.equal(reconcile([outsider], make(outsider, binding.description), '').status, 'FAIL');
+        const foreign = SKIP_ALLOWLIST.flatMap(row => row.skipReasons).find(reason => !registration.skipReasons.some(own => own.description === reason.description));
+        assert.equal(reconcile([registration], make(registration, foreign.description), '').status, 'FAIL');
+      }
+    }
+  });
+  await check('profile merge counts execution once and never masks invalid original reports', () => {
+    const inventory = [SKIP_ALLOWLIST[5], SKIP_ALLOWLIST[6], SKIP_ALLOWLIST[7]];
+    const origins = { old: origin('old'), new: origin('new') };
+    const make = (frontend, active) => ({ config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } },
+      suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed',
+        annotations: index === active ? [] : [{ type: 'skip', description: row.skipReasons[1].description }],
+        results: [{ status: index === active ? 'passed' : 'skipped' }],
+      }] })) }] });
+    const reports = () => Object.fromEntries(['old', 'new'].map(frontend => [frontend, [0, 1, 2].map(active => make(frontend, active))]));
+    const pair = input => reconcilePair(inventory, input, '', origins);
+    const accepted = pair(reports());
+    assert.equal(accepted.status, 'PASS');
+    assert.equal(accepted.old.executed, 3); assert.equal(accepted.old.explicitSkips, 0);
+    const repeated = reports(); repeated.old.push(make('old', 0));
+    assert.equal(pair(repeated).old.executed, 3);
+    assert.equal(pair(repeated).status, 'PASS');
+    for (const mutate of [
+      input => { input.old[0].suites[0].specs[0].tests[0].results[0].status = 'failed'; },
+      input => { input.old[0].suites[0].specs[1].tests[0].annotations[0].description += '!'; },
+      input => { input.old[0].suites[0].specs.pop(); },
+      input => { input.old[0].suites[0].specs.push(input.old[0].suites[0].specs[0]); },
+      input => { input.old[0].suites[0].specs[0].tests[0].results.push({ status: 'passed' }); },
+      input => { input.old[0].config.metadata.frontend = 'new'; },
+      input => { input.old[0].config.forbidOnly = false; },
+      input => { input.old[0].errors = [{ message: 'run failed' }]; },
+      input => { input.old = []; },
+      input => { input.old.pop(); }, // Merged skip sets must still agree.
+    ]) { const input = reports(); mutate(input); assert.equal(pair(input).status, 'FAIL'); }
+  });
+  await check('baseline commit gate rejects different HEAD, edited checkout and untracked copy', async () => {
+    assert.equal((await verifyBaseline(baseline)).status, 'PASS');
+    const fixture = await mkdtemp(resolve(root, '_tmp/fe-parity/baseline-control-'));
+    const git = args => execFileSync('git', ['-C', fixture, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } }).trim();
+    try {
+      const ui = resolve(fixture, 'ui'); await mkdir(resolve(ui, 'e2e'), { recursive: true });
+      await writeFile(resolve(ui, 'e2e/example.mjs'), 'original');
+      git(['init', '-q']); git(['add', 'ui']);
+      git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline fixture']);
+      const head = git(['rev-parse', 'HEAD']);
+      await assert.rejects(() => verifyBaseline(ui), /Baseline commit mismatch/);
+      assert.equal((await verifyBaseline(ui, head)).status, 'PASS');
+      await writeFile(resolve(ui, 'e2e/example.mjs'), 'edited');
+      await assert.rejects(() => verifyBaseline(ui, head), /tracked source differs/);
+      await writeFile(resolve(ui, 'e2e/example.mjs'), 'original');
+      await writeFile(resolve(ui, 'e2e/extra.spec.mjs'), 'untracked');
+      await assert.rejects(() => verifyBaseline(ui, head), /untracked e2e/);
+      await mkdir(resolve(fixture, 'copy')); await assert.rejects(() => verifyBaseline(resolve(fixture, 'copy'), head), /not an untracked copy/);
+    } finally { await rm(fixture, { recursive: true }); }
+  });
   await check('report files must differ: same path, symlink and hardlink rejected', async () => {
     const directory = resolve(root, '_tmp/fe-parity'); await mkdir(directory, { recursive: true });
     const fixture = await mkdtemp(resolve(directory, 'report-file-control-'));
@@ -144,6 +214,8 @@ export async function selfCheck() {
       await writeFile(old, '{"suites":[]}'); await writeFile(next, '{"suites":[]}');
       await loadReportPair({ old, new: next });
       await assert.rejects(() => loadReportPair({ old, new: old }), /different files/);
+      await assert.rejects(() => loadReportPair({ old: [old, old], new: [next] }), /different files/);
+      assert.equal((await loadReportPair({ old: [old], new: [next] })).old.length, 1);
       await symlink(old, resolve(fixture, 'symlink.json'));
       await link(old, resolve(fixture, 'hardlink.json'));
       for (const alias of ['symlink.json', 'hardlink.json']) await assert.rejects(() => loadReportPair({ old, new: resolve(fixture, alias) }), /different files/);

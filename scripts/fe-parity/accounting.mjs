@@ -1,11 +1,15 @@
 import { relative, isAbsolute } from 'node:path';
 import { readFile, realpath, stat } from 'node:fs/promises';
 
-// Both identity and description must be approved; reports cannot extend either list.
-export const SKIP_REASONS = Object.freeze(['deployment profile not applicable']);
+// Reasons belong to exact identities; there is no global reason whitelist.
 
 export const caseId = row => JSON.stringify([row.file.replaceAll('\\', '/'), row.title]);
-export const SKIP_ALLOWLIST = Object.freeze(JSON.parse(await readFile(new URL('./skip-allowlist.json', import.meta.url), 'utf8')).tests.map(row => Object.freeze(row)));
+const allowlist = JSON.parse(await readFile(new URL('./skip-allowlist.json', import.meta.url), 'utf8'));
+export const BASELINE_COMMIT = allowlist.baselineCommit;
+export const SKIP_ALLOWLIST = Object.freeze(allowlist.tests.map(row => Object.freeze({ ...row,
+  skipReasons: Object.freeze(row.skipReasons.map(reason => Object.freeze(reason))),
+})));
+const allowedSkipReasons = new Map(SKIP_ALLOWLIST.map(row => [caseId(row), row.skipReasons.map(reason => reason.description)]));
 const allowedSkipIds = new Set(SKIP_ALLOWLIST.map(caseId));
 if (allowedSkipIds.size !== SKIP_ALLOWLIST.length) throw new Error('duplicate skip allowlist identities');
 // JSON reporter carries loop-expanded tests, unlike a source regex count.
@@ -37,7 +41,7 @@ export function checkInventory(rows, historical) {
   for (const id of allowedSkipIds) if (!ids.includes(id)) errors.push(`skip allowlist identity not registered ${id}`);
   return errors;
 }
-export function reconcile(inventory, report, testDir) {
+function reconcileSingle(inventory, report, testDir) {
   const received = reportCases(report, testDir), grouped = new Map();
   const errors = (report.errors || []).map(error => error.message || String(error));
   if (report.config?.forbidOnly !== true) errors.push('Report must attest config.forbidOnly=true');
@@ -66,11 +70,11 @@ export function reconcile(inventory, report, testDir) {
       const annotations = row.annotations.filter(a => a.type === 'skip');
       const reason = annotations.map(a => a.description || '').join('; ');
       const allowedIdentity = allowedSkipIds.has(caseId(row));
-      const allowedReason = annotations.length === 1 && typeof annotations[0].description === 'string' && SKIP_REASONS.includes(reason);
+      const allowedReason = annotations.length === 1 && typeof annotations[0].description === 'string' && allowedSkipReasons.get(caseId(row))?.includes(reason);
       if (!allowedIdentity) errors.push(`skip identity not in fixed allowlist ${caseId(row)}`);
-      if (!allowedReason) errors.push(`skip reason not in fixed whitelist ${caseId(row)}: ${reason}`);
+      if (!allowedReason) errors.push(`skip reason not bound to identity ${caseId(row)}: ${reason}`);
       if (allowedIdentity && allowedReason) skipped++;
-      return { ...base, status: 'SKIP', reason: reason || 'FAIL: skip has no whitelisted reason' };
+      return { ...base, status: 'SKIP', allowedSkip: Boolean(allowedIdentity && allowedReason), reason: reason || 'FAIL: skip has no source-bound reason' };
     }
     if (!['passed', 'failed', 'timedOut'].includes(result.status)) {
       errors.push(`unexecuted/interrupted status ${result.status}: ${caseId(row)}`);
@@ -92,14 +96,41 @@ export function reconcile(inventory, report, testDir) {
   return { denominator: inventory.length, allowedSkips, minimumExecuted, expected, executed, explicitSkips: skipped, status: errors.length ? 'FAIL' : 'PASS', rows, errors };
 }
 
+// Merge complete profile runs only after validating every original report. A pass
+// never erases a failed attempt, malformed skip, missing identity or bad provenance.
+const reportList = reports => Array.isArray(reports) ? reports : [reports];
+export function reconcile(inventory, reports, testDir) {
+  const inputs = reportList(reports);
+  if (inputs.length === 1) return reconcileSingle(inventory, inputs[0], testDir);
+  const profiles = inputs.map(report => reconcileSingle(inventory, report, testDir));
+  const errors = profiles.flatMap((profile, index) => profile.errors.map(error => `report ${index + 1}: ${error}`));
+  if (!inputs.length) errors.push('No profile reports supplied');
+  const rows = inventory.map((registration, index) => {
+    const observations = profiles.map(profile => profile.rows[index]);
+    const selected = observations.find(row => row.status === 'FAIL')
+      || observations.find(row => row.status === 'PASS')
+      || observations.find(row => row.status === 'NOT_RUN') || observations[0]
+      || { file: registration.file, title: registration.title, status: 'NOT_RUN', reason: 'No profile reports' };
+    return { ...selected, observations };
+  });
+  const executed = rows.filter(row => ['PASS', 'FAIL'].includes(row.status)).length;
+  const skipped = rows.filter(row => row.status === 'SKIP' && row.observations.every(observation => observation.allowedSkip)).length;
+  const allowedSkips = inventory.filter(row => allowedSkipIds.has(caseId(row))).length;
+  return { denominator: inventory.length, allowedSkips, minimumExecuted: inventory.length - allowedSkips,
+    expected: inventory.length - skipped, executed, explicitSkips: skipped,
+    status: errors.length ? 'FAIL' : 'PASS', rows, errors, profiles };
+}
+
 // Metadata is emitted by the executing Playwright config, never assigned from CLI labels.
 export function reconcilePair(inventory, reports, testDir, origins) {
   const accounts = {}, errors = [];
   for (const frontend of ['old', 'new']) {
     accounts[frontend] = reconcile(inventory, reports[frontend], testDir);
-    const metadata = reports[frontend].config?.metadata;
-    if (metadata?.frontend !== frontend || metadata?.baseURL !== origins[frontend]) {
-      errors.push(`${frontend}: report config.metadata must attest frontend=${frontend}, baseURL=${origins[frontend]}`);
+    for (const [index, report] of reportList(reports[frontend]).entries()) {
+      const metadata = report.config?.metadata;
+      if (metadata?.frontend !== frontend || metadata?.baseURL !== origins[frontend]) {
+        errors.push(`${frontend} report ${index + 1}: report config.metadata must attest frontend=${frontend}, baseURL=${origins[frontend]}`);
+      }
     }
   }
   const skipIds = frontend => new Set(accounts[frontend].rows.filter(row => row.status === 'SKIP').map(caseId));
@@ -110,16 +141,20 @@ export function reconcilePair(inventory, reports, testDir, origins) {
 }
 
 export async function loadReportPair(paths) {
-  // realpath covers relative/absolute aliases and symlinks; dev+ino also covers hardlinks.
-  if (paths.old && paths.new) {
-    const [oldPath, newPath] = await Promise.all([realpath(paths.old), realpath(paths.new)]);
-    const [oldStat, newStat] = await Promise.all([stat(oldPath), stat(newPath)]);
-    if (oldPath === newPath || (oldStat.dev === newStat.dev && oldStat.ino === newStat.ino)) {
-      throw new Error('old/new reports must be different files (including symlink/hardlink aliases)');
+  // Check every original across and within sides, including symlinks/hardlinks.
+  const seen = [], reports = {};
+  for (const frontend of ['old', 'new']) {
+    const inputs = paths[frontend] ? reportList(paths[frontend]) : [];
+    const loaded = [];
+    for (const path of inputs) {
+      const canonical = await realpath(path), info = await stat(canonical);
+      if (seen.some(prior => prior.path === canonical || (prior.dev === info.dev && prior.ino === info.ino))) {
+        throw new Error('old/new profile reports must be different files (including symlink/hardlink aliases)');
+      }
+      seen.push({ path: canonical, dev: info.dev, ino: info.ino });
+      loaded.push(JSON.parse(await readFile(canonical, 'utf8')));
     }
+    reports[frontend] = Array.isArray(paths[frontend]) ? loaded : loaded[0] || { suites: [] };
   }
-  const reports = {};
-  for (const frontend of ['old', 'new']) reports[frontend] = paths[frontend]
-    ? JSON.parse(await readFile(paths[frontend], 'utf8')) : { suites: [] };
   return reports;
 }
