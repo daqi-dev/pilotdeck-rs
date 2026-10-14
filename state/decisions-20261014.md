@@ -128,3 +128,8 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 
 ### 3C 结果（2026-10-14 上午）
 人用真实拼音输入法亲测：Leptos、Dioxus 均正常 → 无反例，**定 Leptos**（写入 `docs/research/007_frontend/decision.md` a′ 定选）。
+
+### 阶段 A 深水区 D4 / D5（2026-10-14 下午，人定）
+- **D4 → B（两步）**：先实测 有/无 registry × writer 快/慢/失败 6 种情形（帧、durable、registry events/result 分开断言），看结果后再由人定具体差异与评分口径。
+- **D5 → A**：保留完整 UI 门；B3 闸门 = A8「gateway 退役验证完成（不含 UI 自动恢复）」；阶段 B 修客户端后以真实 UI 验收关最终门。
+- 过程记录：人第一次答复后又改为「等准确结果」——协调者撤回已写入的拍板，待卡片经三轮评审收敛、事实逐条读源码核实后再请人定。详见 `docs/research/008_phase-a-session-domain/decision.md`。
