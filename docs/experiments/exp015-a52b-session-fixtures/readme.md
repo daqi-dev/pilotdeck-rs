@@ -127,8 +127,8 @@ rename 测的是操作前与真实操作完成后两个边界：没有模拟 OS 
 
 | 交协调者的部分 | 当前证据 / 交付边界 |
 |---|---|
-| cold/running、cold/unknown，各 k=5 | **NOT_RUN**。脚本在子进程 A 的持久化 ready barrier 后终止并回收 A，再以同一 PILOT_HOME 启动不同 PID 的 B；采 run_get/run_events/run_reattach/resume/history/snapshot、fresh reader 与原文。unknown 初始事实由真实 registry.append 明确构造，不冒充 sidecar 执行事实。结果不预填 |
-| 真实 WS 双连接 / 多会话，15 子例 × k=5 | **NOT_RUN**。生产 GatewayServer + Node WebSocket 双录面，只使用 127.0.0.1:48789 或明确声明的高位端口；失败时留日志、只回收 launcher 自有 PID；端口忙不抢占。未运行的脚本只通过语法检查，运行期兼容性仍待验证 |
+| cold/running、cold/unknown，各 k=5 | **协调者已实跑**（`_tmp/a52b/coordinator-cold/`，沙箱外，同一 PILOT_HOME、不同 PID 的 B）。**cold/running**：A 被杀前 registry 为 running；B 启动后 run_get / run_reattach 均为 `state=interrupted`（revision 5、lastSeq 3），run_events / resume / history / snapshot 均 ok。**cold/unknown**：重启后仍为 interrupted，`result` 保留 `result_unknown`（lastSeq 4）。两组各 5/5 一致（去掉 PID 与时间戳后）。unknown 初始事实由真实 registry.append 构造，不冒充 sidecar 执行事实；resume 观察到的是 no-op RPC，不宣称已 hydrate 新 AgentSession |
+| 真实 WS 双连接 / 多会话，15 子例 × k=5 | **协调者已实跑**（`_tmp/a52b/coordinator-ws/`，127.0.0.1:48789，launcher 只回收自有子进程，exit 0）。15/15 子例、75 次全部执行，预注册哈希与进程内一致。**跨遍一致性与进程内结果的逐项对照尚未汇总**（WS 汇总器未实现，已开跟进，前置于 A5.4），本表不宣称其稳定或与进程内一致 |
 | 真 Web bridge 重连 | **NOT_RUN**。上述协议 driver 不使用 UI bridge，不能替代 exp003 的 D5 自动恢复门；需要原 bridge 录帧与 reconnect→有效 answer→终态闭环 |
 | 完整 E1 校准 / D4 评分 | 未接入冻结 scorer，未登记 accepted diff，未关闭 #19/#67 或替人定评分口径 |
 
