@@ -7,14 +7,18 @@
 
 - `catalog.json`：上轮的 32 个原件，迁移后 SHA-256 仍为
   `69a8df6daada735c75e8cf90660fb161d7820e7ef228c9db76dd9e0ee8f50830`。
-- `diagnostics.json`：2,696 个本地案例，覆盖合法配置、各节错误与优先级、
+- `diagnostics.json`：2,696 个配置案例，覆盖合法配置、各节错误与优先级、
   provider warning、env、StaffDeck、文件路径与读取错误、YAML alias/native
   类型、credential、模块绑定、locale 与孤立 surrogate。
 - `host-boundaries.json`：18 个宿主 intrinsic 案例，单独验证 dispatch 转发。
   它们不计入本地 wire 对拍通过数量。每个原型案例使用独立 Node，避免基线
   deepFreeze 对共享 Object.prototype 的影响污染其他案例。
 
-Rust 测试逐字节比较完整 response 字符串；诊断对象仅统一属性顺序后比较，
+按 D6 C，2,728 个 catalog/diagnostics 原件中 2,696 个仍逐字节本地对拍，
+另 32 个排序 id 含非 ASCII 的原件改为断言 Forward；全部 load 诊断仍核对。
+18 个宿主 intrinsic 边界继续单独断言转发。原件内容未改。
+
+Rust 测试对本地请求逐字节比较完整 response 字符串；诊断对象仅统一属性顺序后比较，
 保留数组顺序、字段有无、文本、code/path/source/hint/recoverable。
 原件中的 `<PILOT_HOME>` 只替换隔离目录位置，relative 配置路径仍为相对路径。
 credential 全部为测试用占位符。

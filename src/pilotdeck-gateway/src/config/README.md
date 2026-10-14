@@ -34,7 +34,15 @@ URL 检查使用固定版本 `url` crate；现有 Cargo.lock 包版本没有升�
 
 本地 dispatch 只拦截 `model_catalog_list`。加载先于 query 类型处理；provider
 采用 truthiness + 严格相等，includeAuto 采用严格 true，没有 filter/order 参数。
-catalog 排序和大小写使用既有系统 ICU 入口；wire 使用 protocol codec。
+catalog 排序和大小写使用既有 ICU4X compiled data 入口；wire 使用 protocol codec。
+CJK root Han 数据与 Node 的排序差异见 `tests/fixtures/collation/README.md`
+（从 gateway crate 根目录解析）。按 main 上 `state/decisions-20261014.md` D6
+方案 C（协调者自决·待复核），provider/query 过滤后的排序 id 中任一含非 ASCII
+UTF-16 单元就原样转发给 TS；displayName、未入选的 id 不触发。
+这是保守回退，重音、emoji、孤立 surrogate 也触发；没有批准排序差异豁免。
+`project_files_list` 使用同一判定，遍历目录名或最终 relativePath 非 ASCII
+时回退，判定在分页前；`project_file_read` 不排序，继续本地安全读取。
+内部 `TS_COLLATION_REQUIRED` 只选择 Forward，不出现在 wire。
 涉及宿主共享 intrinsic 的配置转发 upstream，内部 `JS_HOST_REQUIRED` 不出现在 wire。
 HOME 不可解析时同样转发，避免猜测系统账户 home。
 

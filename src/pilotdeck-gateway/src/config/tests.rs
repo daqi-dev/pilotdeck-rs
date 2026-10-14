@@ -111,7 +111,32 @@ fn verify(raw: &str) -> Vec<String> {
         let frame = parse_json(&request).unwrap();
         assert!(crate::dispatch::is_local(&frame));
         assert!(crate::dispatch::needs_files(&frame));
-        let actual = match crate::dispatch::route_catalog(&frame, Some(&metadata), &env) {
+        // The recorded TS response identifies the keys that survived filtering.
+        // D6 C gives these requests to TS, including lone UTF-16 surrogates.
+        let expected = parse_json(&response).unwrap();
+        let expects_forward = expected
+            .get("result")
+            .and_then(|v| v.get("items"))
+            .and_then(|v| match v {
+                JsValue::Array(items) => Some(items),
+                _ => None,
+            })
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    field(item, "id")
+                        .as_string()
+                        .unwrap()
+                        .units()
+                        .iter()
+                        .any(|u| *u > 127)
+                })
+            });
+        let route = crate::dispatch::route_catalog(&frame, Some(&metadata), &env);
+        if expects_forward {
+            assert!(matches!(route, crate::dispatch::Route::Forward), "{id}");
+            continue;
+        }
+        let actual = match route {
             crate::dispatch::Route::LocalResponse(bytes) => bytes,
             _ => panic!("catalog must terminate locally"),
         };
@@ -189,5 +214,59 @@ fn host_intrinsics_keep_upstream_ownership() {
         // The separate Node oracle records the host response; no synthetic Rust
         // response is compared or counted as a native wire match.
         assert!(!text(field(&test, "response")).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn catalog_collation_fallback_uses_filtered_ids_only() {
+    use crate::dispatch::{Route, route_catalog};
+    for (provider, model) in [
+        ("parity", "中"),
+        ("parity", "é"),
+        ("parity", "😀"),
+        ("中文", "ascii"),
+    ] {
+        let mut yaml = "schemaVersion: 1\nagent:\n  model: parity/ascii\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        ascii:\n          displayName: 中文 é 😀\n".to_owned();
+        if provider == "parity" {
+            yaml.push_str(&format!("        {model}: {{}}\n"));
+        } else {
+            yaml.push_str(&format!("    {provider}:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        {model}: {{}}\n"));
+        }
+        let metadata = Metadata {
+            home: "<PILOT_HOME>".into(),
+            cwd: "/offline".into(),
+            files: FixtureFiles {
+                data: yaml.into_bytes(),
+                kind: None,
+            },
+        };
+        let env = Env::new();
+        let request = |params| {
+            object([
+                ("type", "request".into()),
+                ("id", "catalog".into()),
+                ("method", "model_catalog_list".into()),
+                ("params", params),
+            ])
+        };
+        assert!(
+            matches!(
+                route_catalog(&request(object([])), Some(&metadata), &env),
+                Route::Forward
+            ),
+            "{provider}/{model}"
+        );
+        for params in [
+            object([("query", "ascii".into()), ("provider", "parity".into())]),
+            object([("query", "absent".into())]),
+        ] {
+            let Route::LocalResponse(bytes) =
+                route_catalog(&request(params), Some(&metadata), &env)
+            else {
+                panic!("filtered ASCII catalog forwarded")
+            };
+            let frame = parse_json(std::str::from_utf8(&bytes).unwrap()).unwrap();
+            assert_eq!(frame.get("ok").and_then(JsValue::as_bool), Some(true));
+        }
     }
 }

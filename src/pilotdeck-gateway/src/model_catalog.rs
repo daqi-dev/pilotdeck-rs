@@ -2,7 +2,7 @@
 use crate::{
     config::{self, Env},
     metadata::{Files, Metadata, object},
-    project_files::{node_collator, node_locale},
+    project_files::{needs_ts_collation, node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsString, JsValue, stringify_json};
 static UNDEFINED: JsValue = JsValue::Undefined;
@@ -102,13 +102,6 @@ pub(crate) fn execute<F: Files>(
         }
     };
     let provider_filter = field(params, "provider");
-    let collator = node_collator(&locale).map_err(|(code, msg)| config::Error {
-        code: code.into(),
-        message: msg.into(),
-        diagnostics: vec![],
-        name: "Error",
-        requires_host: false,
-    })?;
     let mut items = vec![];
     for p in &config.providers {
         if truthy(provider_filter) && provider_filter.as_string() != Some(&p.id) {
@@ -162,6 +155,22 @@ pub(crate) fn execute<F: Files>(
             ));
         }
     }
+    if needs_ts_collation(items.iter().map(|(id, _)| id)) {
+        return Err(config::Error {
+            code: "TS_COLLATION_REQUIRED".into(),
+            message: JsString::default(),
+            diagnostics: vec![],
+            name: "Error",
+            requires_host: true,
+        });
+    }
+    let collator = node_collator(&locale).map_err(|(code, msg)| config::Error {
+        code: code.into(),
+        message: msg.into(),
+        diagnostics: vec![],
+        name: "Error",
+        requires_host: false,
+    })?;
     items.sort_by(|a, b| collator.compare_utf16(a.0.units(), b.0.units()));
     if config.router_enabled
         && field(params, "includeAuto").as_bool() == Some(true)

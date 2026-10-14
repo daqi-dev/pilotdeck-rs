@@ -1,0 +1,1292 @@
+{
+  "node": "22.22.0",
+  "icu": "78.2",
+  "cldr": "48.0",
+  "rustCollator": "2.1.1",
+  "rustCompiledData": "2.1.1; CLDR 48.0.0; ICU release-78.1rc",
+  "productionSourceSha256": "cf0d48d99a01a177642d8d09d5f546a09c3168b9fbaba708abf552f34e9461fd",
+  "note": "Every scalar in these blocks, including unassigned positions; differences are signs vs U+4E2D, not an exhaustive pairwise classification.",
+  "rows": [
+    {
+      "env": {
+        "LANG": "C"
+      },
+      "locale": "en-US",
+      "corpusSize": 71360,
+      "rustAdjacentPairsReversedInNode": 940,
+      "firstInversions": [
+        [
+          "U+4E16",
+          "U+4E17"
+        ],
+        [
+          "U+4E2C",
+          "U+4E2D"
+        ],
+        [
+          "U+4E3C",
+          "U+4E3D"
+        ],
+        [
+          "U+4E48",
+          "U+4E49"
+        ],
+        [
+          "U+4E61",
+          "U+4E62"
+        ],
+        [
+          "U+4E62",
+          "U+4E63"
+        ],
+        [
+          "U+4E8F",
+          "U+4E90"
+        ],
+        [
+          "U+503B",
+          "U+503C"
+        ],
+        [
+          "U+50F2",
+          "U+50F3"
+        ],
+        [
+          "U+512A",
+          "U+512B"
+        ],
+        [
+          "U+517A",
+          "U+517B"
+        ],
+        [
+          "U+5269",
+          "U+526A"
+        ],
+        [
+          "U+5275",
+          "U+5276"
+        ],
+        [
+          "U+2F992",
+          "U+52B4"
+        ],
+        [
+          "U+52D7",
+          "U+52D8"
+        ],
+        [
+          "U+5343",
+          "U+5344"
+        ],
+        [
+          "U+534B",
+          "U+534C"
+        ],
+        [
+          "U+537E",
+          "U+537F"
+        ],
+        [
+          "U+53A8",
+          "U+53A9"
+        ],
+        [
+          "U+53AE",
+          "U+53AF"
+        ]
+      ],
+      "blocks": {
+        "Ext-A": {
+          "range": [
+            "U+3400",
+            "U+4DBF"
+          ],
+          "scanned": 6592,
+          "compareToZhongSignDifferences": 6,
+          "differentRanges": [
+            [
+              "U+3400",
+              "U+3404"
+            ],
+            [
+              "U+4DB6",
+              "U+4DB6"
+            ]
+          ]
+        },
+        "Basic": {
+          "range": [
+            "U+4E00",
+            "U+9FFF"
+          ],
+          "scanned": 20992,
+          "compareToZhongSignDifferences": 6,
+          "differentRanges": [
+            [
+              "U+4E2C",
+              "U+4E2C"
+            ],
+            [
+              "U+4E3D",
+              "U+4E3D"
+            ],
+            [
+              "U+4E90",
+              "U+4E90"
+            ],
+            [
+              "U+5344",
+              "U+5344"
+            ],
+            [
+              "U+9FD6",
+              "U+9FD7"
+            ]
+          ]
+        },
+        "Ext-B": {
+          "range": [
+            "U+20000",
+            "U+2A6DF"
+          ],
+          "scanned": 42720,
+          "compareToZhongSignDifferences": 92,
+          "differentRanges": [
+            [
+              "U+20000",
+              "U+2001A"
+            ],
+            [
+              "U+2001C",
+              "U+2001C"
+            ],
+            [
+              "U+2001E",
+              "U+20024"
+            ],
+            [
+              "U+20026",
+              "U+20028"
+            ],
+            [
+              "U+2002A",
+              "U+2002E"
+            ],
+            [
+              "U+20030",
+              "U+20036"
+            ],
+            [
+              "U+20038",
+              "U+20038"
+            ],
+            [
+              "U+2003A",
+              "U+2003B"
+            ],
+            [
+              "U+2003D",
+              "U+20048"
+            ],
+            [
+              "U+2004A",
+              "U+2005B"
+            ],
+            [
+              "U+2005D",
+              "U+2005D"
+            ],
+            [
+              "U+2005F",
+              "U+20062"
+            ],
+            [
+              "U+20922",
+              "U+20922"
+            ],
+            [
+              "U+24CCF",
+              "U+24CCF"
+            ],
+            [
+              "U+2A6D9",
+              "U+2A6DA"
+            ]
+          ]
+        },
+        "Compatibility": {
+          "range": [
+            "U+F900",
+            "U+FAFF"
+          ],
+          "scanned": 512,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility-Supplement": {
+          "range": [
+            "U+2F800",
+            "U+2FA1F"
+          ],
+          "scanned": 544,
+          "compareToZhongSignDifferences": 1,
+          "differentRanges": [
+            [
+              "U+2F800",
+              "U+2F800"
+            ]
+          ]
+        }
+      },
+      "outputAdjacentIndexReversalsByBlock": {
+        "Basic / Basic": 327,
+        "Compatibility-Supplement / Basic": 22,
+        "Compatibility / Basic": 10,
+        "Basic / Compatibility": 1,
+        "Compatibility / Ext-A": 1,
+        "Ext-A / Ext-A": 51,
+        "Ext-A / Ext-B": 1,
+        "Ext-B / Ext-B": 525,
+        "Compatibility-Supplement / Ext-B": 2
+      },
+      "examplesByBlock": {
+        "Basic / Basic": [
+          [
+            "世",
+            "丗"
+          ],
+          [
+            "丬",
+            "中"
+          ]
+        ],
+        "Compatibility-Supplement / Basic": [
+          [
+            "劳",
+            "労"
+          ],
+          [
+            "姬",
+            "姭"
+          ]
+        ],
+        "Compatibility / Basic": [
+          [
+            "墨",
+            "墩"
+          ],
+          [
+            "廉",
+            "廊"
+          ]
+        ],
+        "Basic / Compatibility": [
+          [
+            "鿿",
+            "﨎"
+          ]
+        ],
+        "Compatibility / Ext-A": [
+          [
+            "﨩",
+            "㐀"
+          ]
+        ],
+        "Ext-A / Ext-A": [
+          [
+            "㑤",
+            "㑥"
+          ],
+          [
+            "㔮",
+            "㔯"
+          ]
+        ],
+        "Ext-A / Ext-B": [
+          [
+            "䶿",
+            "𠀀"
+          ]
+        ],
+        "Ext-B / Ext-B": [
+          [
+            "𠀛",
+            "𠀜"
+          ],
+          [
+            "𠀝",
+            "𠀞"
+          ]
+        ],
+        "Compatibility-Supplement / Ext-B": [
+          [
+            "𣎜",
+            "𣎝"
+          ],
+          [
+            "𨗒",
+            "𨗓"
+          ]
+        ]
+      }
+    },
+    {
+      "env": {
+        "LANG": "en_US.UTF-8"
+      },
+      "locale": "en-US",
+      "corpusSize": 71360,
+      "rustAdjacentPairsReversedInNode": 940,
+      "firstInversions": [
+        [
+          "U+4E16",
+          "U+4E17"
+        ],
+        [
+          "U+4E2C",
+          "U+4E2D"
+        ],
+        [
+          "U+4E3C",
+          "U+4E3D"
+        ],
+        [
+          "U+4E48",
+          "U+4E49"
+        ],
+        [
+          "U+4E61",
+          "U+4E62"
+        ],
+        [
+          "U+4E62",
+          "U+4E63"
+        ],
+        [
+          "U+4E8F",
+          "U+4E90"
+        ],
+        [
+          "U+503B",
+          "U+503C"
+        ],
+        [
+          "U+50F2",
+          "U+50F3"
+        ],
+        [
+          "U+512A",
+          "U+512B"
+        ],
+        [
+          "U+517A",
+          "U+517B"
+        ],
+        [
+          "U+5269",
+          "U+526A"
+        ],
+        [
+          "U+5275",
+          "U+5276"
+        ],
+        [
+          "U+2F992",
+          "U+52B4"
+        ],
+        [
+          "U+52D7",
+          "U+52D8"
+        ],
+        [
+          "U+5343",
+          "U+5344"
+        ],
+        [
+          "U+534B",
+          "U+534C"
+        ],
+        [
+          "U+537E",
+          "U+537F"
+        ],
+        [
+          "U+53A8",
+          "U+53A9"
+        ],
+        [
+          "U+53AE",
+          "U+53AF"
+        ]
+      ],
+      "blocks": {
+        "Ext-A": {
+          "range": [
+            "U+3400",
+            "U+4DBF"
+          ],
+          "scanned": 6592,
+          "compareToZhongSignDifferences": 6,
+          "differentRanges": [
+            [
+              "U+3400",
+              "U+3404"
+            ],
+            [
+              "U+4DB6",
+              "U+4DB6"
+            ]
+          ]
+        },
+        "Basic": {
+          "range": [
+            "U+4E00",
+            "U+9FFF"
+          ],
+          "scanned": 20992,
+          "compareToZhongSignDifferences": 6,
+          "differentRanges": [
+            [
+              "U+4E2C",
+              "U+4E2C"
+            ],
+            [
+              "U+4E3D",
+              "U+4E3D"
+            ],
+            [
+              "U+4E90",
+              "U+4E90"
+            ],
+            [
+              "U+5344",
+              "U+5344"
+            ],
+            [
+              "U+9FD6",
+              "U+9FD7"
+            ]
+          ]
+        },
+        "Ext-B": {
+          "range": [
+            "U+20000",
+            "U+2A6DF"
+          ],
+          "scanned": 42720,
+          "compareToZhongSignDifferences": 92,
+          "differentRanges": [
+            [
+              "U+20000",
+              "U+2001A"
+            ],
+            [
+              "U+2001C",
+              "U+2001C"
+            ],
+            [
+              "U+2001E",
+              "U+20024"
+            ],
+            [
+              "U+20026",
+              "U+20028"
+            ],
+            [
+              "U+2002A",
+              "U+2002E"
+            ],
+            [
+              "U+20030",
+              "U+20036"
+            ],
+            [
+              "U+20038",
+              "U+20038"
+            ],
+            [
+              "U+2003A",
+              "U+2003B"
+            ],
+            [
+              "U+2003D",
+              "U+20048"
+            ],
+            [
+              "U+2004A",
+              "U+2005B"
+            ],
+            [
+              "U+2005D",
+              "U+2005D"
+            ],
+            [
+              "U+2005F",
+              "U+20062"
+            ],
+            [
+              "U+20922",
+              "U+20922"
+            ],
+            [
+              "U+24CCF",
+              "U+24CCF"
+            ],
+            [
+              "U+2A6D9",
+              "U+2A6DA"
+            ]
+          ]
+        },
+        "Compatibility": {
+          "range": [
+            "U+F900",
+            "U+FAFF"
+          ],
+          "scanned": 512,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility-Supplement": {
+          "range": [
+            "U+2F800",
+            "U+2FA1F"
+          ],
+          "scanned": 544,
+          "compareToZhongSignDifferences": 1,
+          "differentRanges": [
+            [
+              "U+2F800",
+              "U+2F800"
+            ]
+          ]
+        }
+      },
+      "outputAdjacentIndexReversalsByBlock": {
+        "Basic / Basic": 327,
+        "Compatibility-Supplement / Basic": 22,
+        "Compatibility / Basic": 10,
+        "Basic / Compatibility": 1,
+        "Compatibility / Ext-A": 1,
+        "Ext-A / Ext-A": 51,
+        "Ext-A / Ext-B": 1,
+        "Ext-B / Ext-B": 525,
+        "Compatibility-Supplement / Ext-B": 2
+      },
+      "examplesByBlock": {
+        "Basic / Basic": [
+          [
+            "世",
+            "丗"
+          ],
+          [
+            "丬",
+            "中"
+          ]
+        ],
+        "Compatibility-Supplement / Basic": [
+          [
+            "劳",
+            "労"
+          ],
+          [
+            "姬",
+            "姭"
+          ]
+        ],
+        "Compatibility / Basic": [
+          [
+            "墨",
+            "墩"
+          ],
+          [
+            "廉",
+            "廊"
+          ]
+        ],
+        "Basic / Compatibility": [
+          [
+            "鿿",
+            "﨎"
+          ]
+        ],
+        "Compatibility / Ext-A": [
+          [
+            "﨩",
+            "㐀"
+          ]
+        ],
+        "Ext-A / Ext-A": [
+          [
+            "㑤",
+            "㑥"
+          ],
+          [
+            "㔮",
+            "㔯"
+          ]
+        ],
+        "Ext-A / Ext-B": [
+          [
+            "䶿",
+            "𠀀"
+          ]
+        ],
+        "Ext-B / Ext-B": [
+          [
+            "𠀛",
+            "𠀜"
+          ],
+          [
+            "𠀝",
+            "𠀞"
+          ]
+        ],
+        "Compatibility-Supplement / Ext-B": [
+          [
+            "𣎜",
+            "𣎝"
+          ],
+          [
+            "𨗒",
+            "𨗓"
+          ]
+        ]
+      }
+    },
+    {
+      "env": {
+        "LANG": "zh_CN.UTF-8"
+      },
+      "locale": "zh-CN",
+      "corpusSize": 71360,
+      "rustAdjacentPairsReversedInNode": 603,
+      "firstInversions": [
+        [
+          "U+7505",
+          "U+9FA6"
+        ],
+        [
+          "U+9FA6",
+          "U+9FA7"
+        ],
+        [
+          "U+9FA7",
+          "U+9FA8"
+        ],
+        [
+          "U+9FAE",
+          "U+9FAF"
+        ],
+        [
+          "U+9FAF",
+          "U+9FB0"
+        ],
+        [
+          "U+9FB0",
+          "U+9FB1"
+        ],
+        [
+          "U+9FB2",
+          "U+9FB3"
+        ],
+        [
+          "U+9FB3",
+          "U+9FB4"
+        ],
+        [
+          "U+9FB5",
+          "U+9FB6"
+        ],
+        [
+          "U+9FB7",
+          "U+9FB8"
+        ],
+        [
+          "U+9FB8",
+          "U+9FB9"
+        ],
+        [
+          "U+9FBB",
+          "U+9FBC"
+        ],
+        [
+          "U+9FC2",
+          "U+9FC3"
+        ],
+        [
+          "U+9FC3",
+          "U+9FC4"
+        ],
+        [
+          "U+9FC5",
+          "U+9FC6"
+        ],
+        [
+          "U+9FC6",
+          "U+9FC7"
+        ],
+        [
+          "U+9FCB",
+          "U+9FCC"
+        ],
+        [
+          "U+9FD0",
+          "U+9FD1"
+        ],
+        [
+          "U+9FD5",
+          "U+9FD6"
+        ],
+        [
+          "U+9FE9",
+          "U+9FEA"
+        ]
+      ],
+      "blocks": {
+        "Ext-A": {
+          "range": [
+            "U+3400",
+            "U+4DBF"
+          ],
+          "scanned": 6592,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Basic": {
+          "range": [
+            "U+4E00",
+            "U+9FFF"
+          ],
+          "scanned": 20992,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Ext-B": {
+          "range": [
+            "U+20000",
+            "U+2A6DF"
+          ],
+          "scanned": 42720,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility": {
+          "range": [
+            "U+F900",
+            "U+FAFF"
+          ],
+          "scanned": 512,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility-Supplement": {
+          "range": [
+            "U+2F800",
+            "U+2FA1F"
+          ],
+          "scanned": 544,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        }
+      },
+      "outputAdjacentIndexReversalsByBlock": {
+        "Basic / Basic": 25,
+        "Basic / Compatibility": 1,
+        "Compatibility / Ext-A": 1,
+        "Ext-A / Ext-A": 49,
+        "Ext-A / Ext-B": 1,
+        "Ext-B / Ext-B": 524,
+        "Compatibility-Supplement / Ext-B": 2
+      },
+      "examplesByBlock": {
+        "Basic / Basic": [
+          [
+            "甅",
+            "龦"
+          ],
+          [
+            "龦",
+            "龧"
+          ]
+        ],
+        "Basic / Compatibility": [
+          [
+            "鿿",
+            "﨎"
+          ]
+        ],
+        "Compatibility / Ext-A": [
+          [
+            "﨩",
+            "㐀"
+          ]
+        ],
+        "Ext-A / Ext-A": [
+          [
+            "㑤",
+            "㑥"
+          ],
+          [
+            "㔮",
+            "㔯"
+          ]
+        ],
+        "Ext-A / Ext-B": [
+          [
+            "䶿",
+            "𠀀"
+          ]
+        ],
+        "Ext-B / Ext-B": [
+          [
+            "𠀛",
+            "𠀜"
+          ],
+          [
+            "𠀝",
+            "𠀞"
+          ]
+        ],
+        "Compatibility-Supplement / Ext-B": [
+          [
+            "𣎜",
+            "𣎝"
+          ],
+          [
+            "𨗒",
+            "𨗓"
+          ]
+        ]
+      }
+    },
+    {
+      "env": {
+        "LANG": "zh_TW"
+      },
+      "locale": "zh-TW",
+      "corpusSize": 71360,
+      "rustAdjacentPairsReversedInNode": 562,
+      "firstInversions": [
+        [
+          "U+9FB5",
+          "U+9FB6"
+        ],
+        [
+          "U+9FB7",
+          "U+9FB8"
+        ],
+        [
+          "U+9FB8",
+          "U+9FB9"
+        ],
+        [
+          "U+9FBB",
+          "U+9FBC"
+        ],
+        [
+          "U+9FC2",
+          "U+9FC3"
+        ],
+        [
+          "U+9FC3",
+          "U+9FC4"
+        ],
+        [
+          "U+9FC5",
+          "U+9FC6"
+        ],
+        [
+          "U+9FC6",
+          "U+9FCC"
+        ],
+        [
+          "U+9FD0",
+          "U+9FD1"
+        ],
+        [
+          "U+9FD5",
+          "U+9FD6"
+        ],
+        [
+          "U+9FE9",
+          "U+9FEA"
+        ],
+        [
+          "U+9FEA",
+          "U+9FEB"
+        ],
+        [
+          "U+9FED",
+          "U+9FEE"
+        ],
+        [
+          "U+9FEF",
+          "U+9FF0"
+        ],
+        [
+          "U+9FF3",
+          "U+9FF4"
+        ],
+        [
+          "U+9FFC",
+          "U+9FFD"
+        ],
+        [
+          "U+9FFF",
+          "U+3402"
+        ],
+        [
+          "U+352E",
+          "U+352F"
+        ],
+        [
+          "U+361D",
+          "U+361E"
+        ],
+        [
+          "U+36DF",
+          "U+36E0"
+        ]
+      ],
+      "blocks": {
+        "Ext-A": {
+          "range": [
+            "U+3400",
+            "U+4DBF"
+          ],
+          "scanned": 6592,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Basic": {
+          "range": [
+            "U+4E00",
+            "U+9FFF"
+          ],
+          "scanned": 20992,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Ext-B": {
+          "range": [
+            "U+20000",
+            "U+2A6DF"
+          ],
+          "scanned": 42720,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility": {
+          "range": [
+            "U+F900",
+            "U+FAFF"
+          ],
+          "scanned": 512,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility-Supplement": {
+          "range": [
+            "U+2F800",
+            "U+2FA1F"
+          ],
+          "scanned": 544,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        }
+      },
+      "outputAdjacentIndexReversalsByBlock": {
+        "Basic / Basic": 16,
+        "Basic / Ext-A": 1,
+        "Ext-A / Ext-A": 36,
+        "Ext-A / Ext-B": 1,
+        "Ext-B / Ext-B": 506,
+        "Compatibility-Supplement / Ext-B": 2
+      },
+      "examplesByBlock": {
+        "Basic / Basic": [
+          [
+            "龵",
+            "龶"
+          ],
+          [
+            "龷",
+            "龸"
+          ]
+        ],
+        "Basic / Ext-A": [
+          [
+            "鿿",
+            "㐂"
+          ]
+        ],
+        "Ext-A / Ext-A": [
+          [
+            "㔮",
+            "㔯"
+          ],
+          [
+            "㘝",
+            "㘞"
+          ]
+        ],
+        "Ext-A / Ext-B": [
+          [
+            "䶿",
+            "𠀀"
+          ]
+        ],
+        "Ext-B / Ext-B": [
+          [
+            "𠀛",
+            "𠀜"
+          ],
+          [
+            "𠀝",
+            "𠀞"
+          ]
+        ],
+        "Compatibility-Supplement / Ext-B": [
+          [
+            "𣎜",
+            "𣎝"
+          ],
+          [
+            "𨗒",
+            "𨗓"
+          ]
+        ]
+      }
+    },
+    {
+      "env": {
+        "LANG": "ja_JP"
+      },
+      "locale": "ja-JP",
+      "corpusSize": 71360,
+      "rustAdjacentPairsReversedInNode": 831,
+      "firstInversions": [
+        [
+          "U+4E2C",
+          "U+4E2E"
+        ],
+        [
+          "U+4E3A",
+          "U+4E3D"
+        ],
+        [
+          "U+4E48",
+          "U+4E49"
+        ],
+        [
+          "U+4E61",
+          "U+4E63"
+        ],
+        [
+          "U+4E8F",
+          "U+4E90"
+        ],
+        [
+          "U+503B",
+          "U+503C"
+        ],
+        [
+          "U+50F2",
+          "U+50F3"
+        ],
+        [
+          "U+5129",
+          "U+512B"
+        ],
+        [
+          "U+517A",
+          "U+517B"
+        ],
+        [
+          "U+5342",
+          "U+5344"
+        ],
+        [
+          "U+534B",
+          "U+534C"
+        ],
+        [
+          "U+53AC",
+          "U+53AF"
+        ],
+        [
+          "U+5559",
+          "U+555A"
+        ],
+        [
+          "U+555F",
+          "U+5560"
+        ],
+        [
+          "U+556B",
+          "U+556C"
+        ],
+        [
+          "U+558D",
+          "U+558E"
+        ],
+        [
+          "U+5620",
+          "U+5621"
+        ],
+        [
+          "U+564F",
+          "U+5651"
+        ],
+        [
+          "U+5652",
+          "U+5653"
+        ],
+        [
+          "U+5655",
+          "U+5656"
+        ]
+      ],
+      "blocks": {
+        "Ext-A": {
+          "range": [
+            "U+3400",
+            "U+4DBF"
+          ],
+          "scanned": 6592,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Basic": {
+          "range": [
+            "U+4E00",
+            "U+9FFF"
+          ],
+          "scanned": 20992,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Ext-B": {
+          "range": [
+            "U+20000",
+            "U+2A6DF"
+          ],
+          "scanned": 42720,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility": {
+          "range": [
+            "U+F900",
+            "U+FAFF"
+          ],
+          "scanned": 512,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        },
+        "Compatibility-Supplement": {
+          "range": [
+            "U+2F800",
+            "U+2FA1F"
+          ],
+          "scanned": 544,
+          "compareToZhongSignDifferences": 0,
+          "differentRanges": []
+        }
+      },
+      "outputAdjacentIndexReversalsByBlock": {
+        "Basic / Basic": 232,
+        "Compatibility-Supplement / Basic": 15,
+        "Compatibility / Basic": 3,
+        "Basic / Compatibility": 1,
+        "Compatibility / Ext-A": 1,
+        "Ext-A / Ext-A": 51,
+        "Ext-A / Ext-B": 1,
+        "Ext-B / Ext-B": 525,
+        "Compatibility-Supplement / Ext-B": 2
+      },
+      "examplesByBlock": {
+        "Basic / Basic": [
+          [
+            "丬",
+            "丮"
+          ],
+          [
+            "为",
+            "丽"
+          ]
+        ],
+        "Compatibility-Supplement / Basic": [
+          [
+            "姬",
+            "姭"
+          ],
+          [
+            "岍",
+            "岎"
+          ]
+        ],
+        "Compatibility / Basic": [
+          [
+            "擄",
+            "擆"
+          ],
+          [
+            "蘒",
+            "蘔"
+          ]
+        ],
+        "Basic / Compatibility": [
+          [
+            "鿿",
+            "﨎"
+          ]
+        ],
+        "Compatibility / Ext-A": [
+          [
+            "﨩",
+            "㐀"
+          ]
+        ],
+        "Ext-A / Ext-A": [
+          [
+            "㑤",
+            "㑥"
+          ],
+          [
+            "㔮",
+            "㔯"
+          ]
+        ],
+        "Ext-A / Ext-B": [
+          [
+            "䶿",
+            "𠀀"
+          ]
+        ],
+        "Ext-B / Ext-B": [
+          [
+            "𠀛",
+            "𠀜"
+          ],
+          [
+            "𠀝",
+            "𠀞"
+          ]
+        ],
+        "Compatibility-Supplement / Ext-B": [
+          [
+            "𣎜",
+            "𣎝"
+          ],
+          [
+            "𨗒",
+            "𨗓"
+          ]
+        ]
+      }
+    }
+  ]
+}

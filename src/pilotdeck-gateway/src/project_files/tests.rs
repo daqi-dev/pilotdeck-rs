@@ -10,8 +10,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-struct Snapshot {
-    files: HashMap<PathBuf, Value>,
+pub(crate) struct Snapshot {
+    pub(crate) files: HashMap<PathBuf, Value>,
 }
 impl Snapshot {
     fn fact(&self, path: &Path) -> io::Result<&Value> {
@@ -98,7 +98,7 @@ fn fixture() -> (Metadata<Snapshot>, Value) {
     .unwrap();
     (snapshot_metadata(&fixture), fixture)
 }
-fn snapshot_metadata(fixture: &Value) -> Metadata<Snapshot> {
+pub(crate) fn snapshot_metadata(fixture: &Value) -> Metadata<Snapshot> {
     let files = fixture["files"]
         .as_object()
         .unwrap()
@@ -116,6 +116,25 @@ fn raw_ts_responses_match_byte_for_byte() {
     let (metadata, fixture) = fixture();
     for case in fixture["cases"].as_array().unwrap() {
         let request = case["request"].as_str().unwrap();
+        let frame = parse(request.as_bytes()).unwrap();
+        // This archived project has non-ASCII root dirents. Valid lists reach
+        // the traversal sort and must forward, even if query/page is ASCII.
+        let expected: Value = serde_json::from_str(case["response"].as_str().unwrap()).unwrap();
+        if frame
+            .get("method")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .equals_str("project_files_list")
+            && expected["ok"] == true
+            && case["tag"] != "depth-64"
+        {
+            assert!(
+                matches!(route_with_metadata(&frame, Some(&metadata)), Route::Forward),
+                "{request}"
+            );
+            continue;
+        }
         let Route::LocalResponse(actual) =
             route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
         else {
@@ -453,6 +472,17 @@ fn native_check_against_freshly_recorded_tree_when_requested() {
     };
     for case in fixture["cases"].as_array().unwrap() {
         let request = parse(case["request"].as_str().unwrap().as_bytes()).unwrap();
+        let expected: Value = serde_json::from_str(case["response"].as_str().unwrap()).unwrap();
+        if text_field(&request, "method").as_deref() == Some("project_files_list")
+            && expected["ok"] == true
+            && case["tag"] != "depth-64"
+        {
+            assert!(matches!(
+                route_with_metadata(&request, Some(&metadata)),
+                Route::Forward
+            ));
+            continue;
+        }
         let Route::LocalResponse(actual) = route_with_metadata(&request, Some(&metadata)) else {
             panic!("forwarded")
         };
@@ -757,6 +787,17 @@ fn node_round3_cursor_dispatch_preserves_surrogates_and_offset() {
             probes["root"],
             probe["cursor"].as_str().unwrap(),
         );
+        if probe["response"]["ok"] == true {
+            assert!(
+                matches!(
+                    route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata)),
+                    Route::Forward
+                ),
+                "{}",
+                probe["variant"]
+            );
+            continue;
+        }
         let Route::LocalResponse(response) =
             route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
         else {
@@ -860,5 +901,182 @@ fn node_round4_unreadable_huge_file_reports_open_error_first() {
         )
         .unwrap();
         assert_eq!(dispatch_read(&metadata, "huge", &expected["id"]), expected);
+    }
+}
+
+fn cjk_fixture() -> Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/collation/cjk-node22.json"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn ascii_lists_stay_local_and_non_ascii_traversal_names_forward() {
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    fs::write(root.join("z.txt"), "ASCII").unwrap();
+    fs::write(root.join("a.txt"), "ASCII").unwrap();
+    let request = |query: &str| {
+        parse(
+            serde_json::json!({
+                "type": "request", "id": "files", "method": "project_files_list",
+                "params": {"projectKey": root, "query": query, "limit": 1, "includeDirs": false}
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap()
+    };
+    let Route::LocalResponse(bytes) = route_with_metadata(&request(""), Some(&metadata)) else {
+        panic!("ASCII list must stay local");
+    };
+    let response: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(response["result"]["items"][0]["name"], "a.txt");
+    assert!(response["result"]["nextCursor"].is_string());
+    // Query text itself is not a sort key.
+    assert!(matches!(
+        route_with_metadata(&request("é"), Some(&metadata)),
+        Route::LocalResponse(_)
+    ));
+    for name in ["中", "é", "😀"] {
+        // Nested directory names participate in traversal sorting even when
+        // includeDirs=false and the query only matches an ASCII file.
+        let directory = root.join("nested");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join(name), "content").unwrap();
+        for query in ["", "a.txt", "absent"] {
+            assert!(
+                matches!(
+                    route_with_metadata(&request(query), Some(&metadata)),
+                    Route::Forward
+                ),
+                "{name}: {query}"
+            );
+        }
+        // Reading the same non-ASCII path never consults collation.
+        let read = parse(
+            serde_json::json!({
+                "type": "request", "id": "read", "method": "project_file_read",
+                "params": {"projectKey": root, "path": format!("nested/{name}")}
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        let Route::LocalResponse(bytes) = route_with_metadata(&read, Some(&metadata)) else {
+            panic!("read forwarded")
+        };
+        let response: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(response["result"]["content"], "content");
+        fs::remove_file(directory.join(name)).unwrap();
+        fs::remove_dir(directory).unwrap();
+        assert!(matches!(
+            route_with_metadata(&request(""), Some(&metadata)),
+            Route::LocalResponse(_)
+        ));
+    }
+    #[cfg(unix)]
+    {
+        // All visited dirents are ASCII, but an ASCII symlink resolves into an
+        // excluded directory. Its canonical relativePath enters the final sort.
+        fs::create_dir(root.join(".git")).unwrap();
+        fs::write(root.join(".git/é"), "content").unwrap();
+        std::os::unix::fs::symlink(".git/é", root.join("alias")).unwrap();
+        assert!(matches!(
+            route_with_metadata(&request("alias"), Some(&metadata)),
+            Route::Forward
+        ));
+        // The non-ASCII target does not participate in either sort when filtered.
+        assert!(matches!(
+            route_with_metadata(&request("absent"), Some(&metadata)),
+            Route::LocalResponse(_)
+        ));
+    }
+}
+
+#[test]
+fn collation_guard_includes_all_non_ascii_utf16_units() {
+    assert!(!needs_ts_collation(&[]));
+    assert!(!needs_ts_collation(&["".into(), "A/z~\u{7f}".into()]));
+    for units in [
+        vec![0x80],
+        vec![0xe9],
+        vec![0x4e2d],
+        vec![0xd83d, 0xde00],
+        vec![0xd800],
+        vec![0xdc00],
+    ] {
+        assert!(needs_ts_collation(&[
+            "ascii".into(),
+            JsString::from_utf16(units)
+        ]));
+    }
+}
+
+#[test]
+fn cjk_requests_forward_to_ts() {
+    cjk_matrix("project_files::tests::cjk_requests_forward_to_ts");
+}
+
+fn cjk_matrix(test_name: &str) {
+    const CHILD: &str = "PDRS_CJK_ROW";
+    let fixture = cjk_fixture();
+    let rows = fixture["rows"].as_array().unwrap();
+    let Ok(index) = std::env::var(CHILD) else {
+        for (index, row) in rows.iter().enumerate() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", test_name, "--nocapture"]);
+            for (key, _) in std::env::vars_os() {
+                if key.to_string_lossy().starts_with("LC_")
+                    || matches!(key.to_str(), Some("LANG" | "PILOT_HOME"))
+                {
+                    command.env_remove(key);
+                }
+            }
+            for (key, value) in row["env"].as_object().unwrap() {
+                command.env(key, value.as_str().unwrap());
+            }
+            let output = command.env(CHILD, index.to_string()).output().unwrap();
+            assert!(
+                output.status.success(),
+                "row {index}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return;
+    };
+    let index: usize = index.parse().unwrap();
+    let row = &rows[index];
+    let locale = node_locale(|key| std::env::var(key).ok());
+    assert_eq!(locale.to_string(), row["resolved"]["locale"]);
+    let env = row["env"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+        .collect();
+    let mut metadata = snapshot_metadata(row);
+    assert_eq!(row["cases"].as_array().unwrap().len(), 12);
+    for case in row["cases"].as_array().unwrap() {
+        let tag = case["tag"].as_str().unwrap();
+        let request = parse(case["request"].as_str().unwrap().as_bytes()).unwrap();
+        let route = if let Some(group) = tag.strip_prefix("catalog-") {
+            metadata
+                .files
+                .files
+                .get_mut(&metadata.home.join("pilotdeck.yaml"))
+                .unwrap()["base64"] = STANDARD
+                .encode(row["yamls"][group].as_str().unwrap())
+                .into();
+            crate::dispatch::route_catalog(&request, Some(&metadata), &env)
+        } else {
+            route_with_metadata(&request, Some(&metadata))
+        };
+        assert!(
+            matches!(route, Route::Forward),
+            "row {index}: {tag} must reach TS"
+        );
     }
 }
