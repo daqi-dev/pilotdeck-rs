@@ -106,8 +106,8 @@ def record_side(out, side, slot=None):
             'baseline_path': str(b1.BASELINE), 'apparatus_sha256': apparatus_hashes(),
             'source_sha256': source_hashes(b1.BASELINE, BINARY)}
     monitor = ClockMonitor()
-    meta['wall_start_ms'] = monitor.start()
     try:
+        meta['wall_start_ms'] = monitor.start()
         return record_monitored_side(directory, side, meta)
     finally:
         monitor.finish(meta)

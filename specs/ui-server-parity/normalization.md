@@ -386,7 +386,7 @@ chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前�
 - schema 1 记录 `interval_ns=250000000`（250 ms 定期采样）、`max_gap_ns=2000000000`（2 s 最大可接受覆盖间隔）、`status`、`samples`，失败另有 `reason`。首尾样本分别为 `start/end`，中间样本为 `periodic`。
 - 每次按 `monotonic_ns → time_ns → monotonic_ns` 取样，记录 `mono_before_ns/wall_ns/mono_after_ns`；使用 bracket 的 offset 区间 `[wall-after, wall-before]`，避免把两次读时钟的正常调用延迟直接当回拨。
 - 任一样本 wall 值小于上一样本，立即拒绝，无容差。offset 使用相邻样本 bracket：仅当 `previous.wall - previous.mono_after - (current.wall - current.mono_before) > 1000000 ns` 时拒绝；1 ms 恰好相等可通过。阈值由比较器固定，不信任归档自报值。不再使用此前 offset 下界的累计最高值，避免正常负向 slew 随采集时间积累触发拒绝。此条由第 10 轮协调者要求替代最初无容差实现。
-- monotonic 顺序错误、样本格式错误、采样 bracket/相邻覆盖间隔超过 2 s、缺首尾或 wall 起止与 metadata 不匹配，同样 REFUSED。比较器重算所有样本，不仅信任写入的 `status=PASS`；已标 REFUSED 的记录不能恢复成有效采集。
+- monotonic 顺序错误、样本格式错误、采样 bracket 超过 1 ms、相邻两 bracket 总宽度超过 1 ms、相邻覆盖间隔超过 2 s、缺首尾或 wall 起止与 metadata 不匹配，同样 REFUSED。比较器重算所有样本，不仅信任写入的 `status=PASS`；已标 REFUSED 的记录不能恢复成有效采集。
 - 有限频率的采样不能证明两个采样点之间从未发生过立即回拨又恢复的瞬态。记录的含义是“环境前提的采样监测通过”，不是源码单调保证或连续时钟证明；不对这种监测盲区作额外保证。
 
 **旧归档政策。** 默认采集/比较及 TS 池准入必须有合法监测记录（synthetic 测试也提供记录，没有生产旁路）。只有现有显式 `historical-replay` 身份绑定允许缺失：两侧报告标注 `clock_regression_check: {left: "absent", right: "absent"}`，池的每份 capture 也标注 `clock_regression_check="absent"`；`calibration_eligible=false`。已存在的坏记录在 historical-replay 也必须 REFUSED。原报告 / apparatus 哈希绑定不改，不能用 replay 缺记录例外给新装置定标。旧档的消息、日志非递减检查仍照常执行；通过只说明该批时间值满足裁定，不能补造当年的监测证据。
@@ -440,6 +440,19 @@ chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前�
 
 **实现边界。** `load_chat_clocks` 从本侧重新 capture 的真实 jsonl 建 `(sessionId, sequence) -> (createdAt, entryId)` 映射；sessionId 必须是非空字符串，sequence 必须是正整数（bool 不算）。事件键重复即 FAIL，不用文件扫描顺序决定见证。历史消息身份缺失/非法/不存在、timestamp 与定位事件不等，或已出现的 entryId 非法/不等，均产生带侧别及消息 timestamp 路径的 `normalization.field`。非递减仍允许同毫秒并列，但合法并列的消息和对应事件时间必须同时一致。普通 status 不能利用缺 entryId 绕开 sequence 见证。读取时生成的 incomplete-turn 精确形态仍只检查格式/单位/wall，stream.messages 不套用历史事件映射。
 
-**ClockMonitor 容差与残余风险。** 相邻 wall 直接倒退无容差；相邻 offset bracket 能确认的下降超过 1 ms 才 REFUSED，不与历史最高 offset 比较。协调者给定的约 500 ppm 负向调速，在 250 ms 标称采样区间累计约 125 µs，低于该阈值；即使持续 10 分钟累计下降 300 ms，也不应触发累计误判。采样 bracket、最大覆盖间隔 2 s、首尾覆盖和旧归档准入规则保持。阈值以下的阶跃回拨可能被采样忽略：小于 1 ms 的单次回拨在毫秒级 createdAt 上最多造成 1 ms 倒序；若留下这种事件/消息倒序，将落到既有非递减检查并 FAIL，不能保证监测器先将其归为环境 REFUSED。同毫秒内回拨可能没有可观察倒序，多个小步以及采样间回拨后恢复也不构成连续时钟证明。检测通过仅表示采样门通过。
+**ClockMonitor 容差与残余风险。** 相邻 wall 直接倒退无容差；相邻 offset bracket 能确认的下降超过 1 ms 才 REFUSED，不与历史最高 offset 比较。协调者给定的约 500 ppm 负向调速，在 250 ms 标称采样区间累计约 125 µs，低于该阈值；即使持续 10 分钟累计下降 300 ms，也不应触发累计误判。采样 bracket 的新上限见下文 #82；最大覆盖间隔 2 s、首尾覆盖和旧归档准入规则保持。相邻有效采样可漏检的阶跃回拨上限为 **1 ms offset 容差 + 1 ms bracket 不确定性预算 = 2 ms**（等于边界也可能通过）；若留下这种事件/消息倒序，将落到既有非递减检查并 FAIL，不能保证监测器先将其归为环境 REFUSED。同毫秒内回拨可能没有可观察倒序，多个小步以及采样间回拨后恢复也不构成连续时钟证明。检测通过仅表示采样门通过。
 
 **离线验证。** 三类原先漏报的 timestamp 注入（全改 turn_started、逐条改为 sequence−1 事件、改用另一 session 同 sequence 事件）均在真实 TS1↔TS3 + 20 池 historical-replay 上执行单侧及两侧同坏，通过实际 compare CLI 检查 FAIL / exit 1，且命中被修改侧的身份见证路径；HTTP 实体头和字节记录同步重算，排除完整性门抢先拒绝。合成 controls 另覆盖缺失/非法/不存在的定位键、entryId 不一致、合法事件时间并列与普通 status。ClockMonitor 单测模拟 500 ppm 负向 slew 持续 10 分钟可通过、单次 2 ms 阶跃 REFUSED、wall 倒退 1 ns REFUSED，以及 1 ms 阈值严格边界；不修改机器时钟。20+5+1 最终结果与复现命令见 `_tmp/RESULT.md` 第 10 轮。
+
+
+## #82：冻结前 bracket 宽度门（2026-10-14，DRAFT）
+
+单次 `monotonic_ns → time_ns → monotonic_ns` 的 bracket 上限固定为 **1,000,000 ns（1 ms）**。相邻两有效样本的 bracket 总宽度也不得超过 1 ms：旧 offset 区间判据最多会隐藏「上一读数 wall→after」和「本次 before→wall」两段延迟；如果只各自限制 1 ms，残余风险实际会到 1 ms + 2 ms，不能声称 2 ms。本实现共用 1 ms 总预算，故实际可漏检回拨上限为 **1 ms + bracket 预算 1 ms = 2 ms**。这仍不是连续时钟证明；采样间回拨后恢复、多次小步的风险保留。
+
+超出单次或相邻总预算的样本不进入 `samples` 判据，保存到诊断 `rejected_samples` 后**立即重采本次 phase**，不等待下一次 250 ms 周期。连续 **8 次**超限将该遍标为 REFUSED 并记录原因；上一个有效样本始终是 gap 检查锚点，重采不重置它，任一尝试跨过 2 s 门立刻 REFUSED。首样本多次超限、周期线程失败和尾样本多次超限均保存 `run-meta.json.clock_regression_check`，不得用之后的有效尾样本抹去周期失败。开始失败时没有有效 `wall_start_ms`，不补造覆盖时间。
+
+schema 1 新增诊断 `max_bracket_ns=1000000`、`max_bracket_attempts=8`、`rejected_samples`；判据仍由比较器固定并逐样本重算，不信任归档自报上限。已存在但超宽的旧时钟记录即使 historical-replay 也 REFUSED；仅缺失记录的显式旧归档例外保持。
+
+依据：`python3 scripts/ui-server-parity/benchmark_clock.py` 在本机 Python 3.14.3 / macOS arm64 采样 **100,000 次**，nearest-rank p99.99 **167 ns**、最大 **5,250 ns**、超过 1 ms **0 次**。1 ms 约为实测最大值的 190 倍，保留调度余量；此微基准仅测读时钟的 bracket，不启动采集或改系统时间。原始输出见 `_tmp/clock-bracket-benchmark.json`；其他机器可重跑基准，但不能按 DUT 结果自动修改上限。
+
+离线单测覆盖评审反例（2 ms bracket + 3 ms 回拨）、超宽后立即重采仍检测 3 ms 回拨、正常 bracket / 正常重采 PASS、相邻总预算、重采不能绕过 2 s gap、首尾连续 8 次超限留档和周期失败不得被尾样本恢复。

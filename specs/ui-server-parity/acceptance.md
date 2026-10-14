@@ -1,6 +1,6 @@
 # ui/server 对拍验收（DRAFT）
 
-本规约属于计划 003、Issue #47 B2 S3/S4。没有人批、没有真实 k=5、没有独立评审，因此尚未冻结；本次不创建 FROZEN.md，不改 specs/parity/ 或 specs/gateway-parity/。主入口为 `scripts/ui-server-parity/compare.py`，规则编码与精确字段位置进入 JSON `differences`；退出码 0=PASS、1=FAIL、2=REFUSED（多态池准入未满足）。PASS 只表示给定证据通过当前草稿，不能替代冻结与阶段验收。
+本规约属于计划 003、Issue #47 B2 S3/S4。没有人批、没有真实 k=5、没有独立评审，因此尚未冻结；已准备 FROZEN.md「待定标」哈希草稿，不改 specs/parity/ 或 specs/gateway-parity/。主入口为 `scripts/ui-server-parity/compare.py`，规则编码与精确字段位置进入 JSON `differences`；退出码 0=PASS、1=FAIL、2=REFUSED（多态池准入未满足）。PASS 只表示给定证据通过当前草稿，不能替代冻结与阶段验收。
 
 ## 输入与证据硬门
 
@@ -42,7 +42,7 @@ WS **先比较同一连接内全序帧序列，再比较按 type/kind 的结构�
 
 无真实五遍输入时 self_compare=null、PENDING_CALIBRATION；已自比但未评审时 PENDING_REVIEW；这些均退出 2。任一已运行门失败则 FAIL/退出 1。另可提供 --proxy 单独报告 direct/DUT 比较，不用 DUT 结果定阈值。
 
-冻结必须先有人过目，随后人批 manifest 登记四份规约（含 multimodal.md）的 SHA256，`Human-Approved-By: <人名>`。`check_frozen.py` 缺 manifest 返回 DRAFT/退出 2；缺人批、哈希/路径错误返回 FAIL；不自动写冻结文件。前端 page.route 回归门、真实 k=5、直连/DUT 比较与独立评审是协调者的后续验收，离线 controls 不代替它们。
+冻结必须先有人过目，随后人批 manifest 登记四份规约（含 multimodal.md）的 SHA256，`Human-Approved-By: <人名>`。`check_frozen.py` 校验四份规约、scripts/ui-server-parity 全部装置文件（含自身，排除 Python 缓存）及反代 Cargo.toml/Cargo.lock/src/main.rs；未登记、重复或逃逸路径、哈希不一致均 FAIL。缺 manifest 或首行含「待定标」且哈希正确时返回 DRAFT/退出 2；正式 manifest 缺人批返回 FAIL；不自动写冻结文件。负例自检为 `check_frozen.py --self-test`。前端 page.route 回归门、真实 k=5、直连/DUT 比较与独立评审是协调者的后续验收，离线 controls 不代替它们。
 
 ## 第 3 轮顺序规则补充（DRAFT）
 
