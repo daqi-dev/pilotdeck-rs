@@ -3,17 +3,19 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { baseline, root, requireUI, historicalInventory, ownedPath, origin } from './env.mjs';
-import { reportCases, checkInventory, reconcile, reconcilePair, loadReportPair, PENDING_STATUS } from './accounting.mjs';
+import { baseline, root, requireUI, historicalInventory, ownedPath, origin, realOrigin } from './env.mjs';
+import { reportCases, checkInventory, reconcile, reconcilePair, reconcileRealPair, loadReportPair, PENDING_STATUS, CASCADE_STATUS } from './accounting.mjs';
 import { executionEnv, PROFILES } from './execution-env.mjs';
 import { verifyBaseline } from './baseline.mjs';
 import { selfCheck } from './self-check.mjs';
 import { startMock, TOKEN } from './mock.mjs';
 import { startFrontend } from './serve.mjs';
+import { runReal, assertCanonicalAncestor } from './real-runner.mjs';
 const { values } = parseArgs({ options: {
   help: { type: 'boolean' }, 'self-check': { type: 'boolean' }, 'network-self-check': { type: 'boolean' },
   reconcile: { type: 'boolean' }, suite: { type: 'string', default: 'skeleton' },
   frontends: { type: 'string', default: 'old,new' }, 'old-report': { type: 'string', multiple: true }, 'new-report': { type: 'string', multiple: true },
+  'real-mode': { type: 'string', default: 'all' },
   output: { type: 'string' }, profiles: { type: 'string', default: PROFILES.join(',') }, 'rules-only': { type: 'boolean' },
 } });
 if (values.help) {
@@ -23,29 +25,43 @@ if (values.help) {
   node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old
   node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old,new
   node scripts/fe-parity/run.mjs --suite baseline --profiles staffdeck,minimal,replacement --frontends old,new
+  node scripts/fe-parity/run.mjs --suite real --real-mode all --frontends old
+  node scripts/fe-parity/run.mjs --suite real --real-mode onboarding --frontends old
+  node scripts/fe-parity/run.mjs --suite real --reconcile --frontends old,new --old-report <ready JSON> --old-report <onboarding JSON> --new-report <ready JSON> --new-report <onboarding JSON>
   node scripts/fe-parity/run.mjs --suite skeleton --frontends old,new
   node scripts/fe-parity/run.mjs --reconcile --old-report <JSON> --new-report <JSON>
 
-Baseline config is repository-owned: no webServer/global setup/real launch.
+All configs/spec selection are repository-owned. Real uses native supervisor + owned Chrome auth setup.
 Every profile produces a complete original 72-case JSON; repeated report flags merge profiles.
 Streaming and skeleton have separate denominators; they never credit the baseline 72.
 Single-side PASS means calibration only. The probe's missing chat is FAIL, never skipped.
 --rules-only omits build-artifact checks (self-check only), never used by browser preflight.
-Ports 28376/28377/28378; bind 127.0.0.1; artifacts/profiles stay in this worktree.
+Mock-UI suites: 28376/28377/28378. Real: 3010/5180/18798, onboarding 3011/5181/18799, LLM 28379.
+All bind 127.0.0.1; real requires --frontends old, checks idle ports, keeps data in worktree real-run/.
 See README.md for known incomplete mock deployment coverage and coordinator commands.`);
   process.exit(0);
 }
 const frontends = values.frontends.split(','), profiles = values.profiles.split(',');
 if (!['old', 'new', 'old,new'].includes(values.frontends)) throw new Error('frontends must be old, new or old,new');
-if (!['skeleton', 'streaming-scroll', 'baseline'].includes(values.suite)) throw new Error('Unknown suite');
+if (!['skeleton', 'streaming-scroll', 'baseline', 'real'].includes(values.suite)) throw new Error('Unknown suite');
+if (!['all', 'ready', 'onboarding'].includes(values['real-mode'])) throw new Error('Invalid real mode');
+if (values.suite === 'real') {
+  if (values['network-self-check']) throw new Error('Real does not support network-self-check');
+  if (values.reconcile ? values.frontends !== 'old,new' || values['real-mode'] !== 'all' : values.frontends !== 'old') {
+    throw new Error('Real direct execution requires old; offline pair reconcile requires old,new and all modes');
+  }
+}
 if (new Set(profiles).size !== profiles.length || profiles.some(profile => !PROFILES.includes(profile))) throw new Error('Invalid/duplicate profiles');
 if ([values['self-check'], values['network-self-check'], values.reconcile].filter(Boolean).length > 1) throw new Error('Select one run mode');
 if (values['rules-only'] && !values['self-check']) throw new Error('--rules-only requires --self-check');
 if (!values.reconcile && (values['old-report'] || values['new-report'])) throw new Error('Reports require --reconcile');
-const base = resolve(root, '_tmp/fe-parity'); await mkdir(base, { recursive: true });
+const base = resolve(root, '_tmp/fe-parity');
+if (values.suite === 'real') await assertCanonicalAncestor(base);
+await mkdir(base, { recursive: true });
 let output;
 if (values.output) {
   output = ownedPath(values.output);
+  if (values.suite === 'real') await assertCanonicalAncestor(output);
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output); // EEXIST: never overwrite a previous run or its evidence.
 } else output = await mkdtemp(resolve(base, 'run-'));
@@ -68,8 +84,10 @@ function command(args, env = {}) {
   });
 }
 function printAccount(frontend, account) {
-  console.log(`${frontend}: 分母 ${account.denominator}; 应执行数 ${account.expected} vs 实际执行数 ${account.executed}; 显式 skip ${account.explicitSkips}; 待编排 ${account.pendingOrchestration}; ${account.status}`);
-  for (const row of account.rows) if (['SKIP', 'NOT_RUN', PENDING_STATUS].includes(row.status)) console.log(`  ${row.status} ${row.file} :: ${row.title} — ${row.reason}${row.source ? ` — ${Object.values(row.source).join(', ')}` : ''}`);
+  console.log(`${frontend}: 分母 ${account.denominator}; 应执行数 ${account.expected} vs 实际执行数 ${account.executed}; 显式 skip ${account.explicitSkips}; STALE_CASCADE ${account.staleCascade ?? 0}; 待编排 ${account.pendingOrchestration}; 原始断言 ${account.status}`);
+  console.log(`${frontend}: 行为守护 ${account.behavioralCoverage.passed}/${account.behavioralCoverage.eligible}; 基线失效单列 ${account.behavioralCoverage.excludedBaselineStale}，覆盖记 0`);
+  if (account.oldGate) console.log(`${frontend}: 旧侧校准门 ${account.oldGate.status}; 失效 MATCHED_FAIL 条件满足 ${account.oldGate.matchedFailConditions}/3 (UNPAIRED); STALE_CASCADE ${account.oldGate.staleCascade}; 待编排 ${account.oldGate.pendingOrchestration}`);
+  for (const row of account.rows) if (['SKIP', 'NOT_RUN', PENDING_STATUS, CASCADE_STATUS].includes(row.status)) console.log(`  ${row.status} ${row.file} :: ${row.title} — ${row.reason}${row.source ? ` — ${Object.values(row.source).join(', ')}` : ''}`);
 }
 function table(inventory, accounts) {
   const cell = value => String(value).replaceAll('|', '\\|').replaceAll('\n', ' ');
@@ -79,6 +97,31 @@ function table(inventory, accounts) {
     for (const row of profile.rows.filter(row => row.status === PENDING_STATUS)) pending.push(`| ${frontend} / report ${index + 1} | ${cell(`${row.file} :: ${row.title}`)} | ${cell(JSON.stringify(row.rawSkipAnnotations))} | ${cell(row.baselineSkipDescription === null ? '无：基线未写 test.skip 理由（serial 级联）' : row.baselineSkipDescription)} | ${cell(Object.values(row.source).join(', '))} |`);
   }
   if (pending.length) lines.push('', `D 类 ${PENDING_STATUS}：不扣减分母/应执行数，整体仍 FAIL。逐份原件列示（含被其他 profile 执行覆盖的身份）；report 序号对应 result.json profiles 输入顺序。`, '', '| 端 / 原件 | 身份 | 原始 skip annotations | 基线 skip 原文 | 注册 / serial / 编排回源 |', '|---|---|---|---|---|', ...pending);
+  if (accounts.old?.staleCascade !== undefined) {
+    lines.push('', 'Real 三类分别计数；注册分母仍为 28。STALE_CASCADE 不计执行、不计 PASS、不计行为覆盖；只从冻结 serial 源码和已匹配失效 FAIL 推出，双侧集合必须相同。', '',
+      '| 端 | 失效 FAIL 条件满足（配对前 UNPAIRED） | STALE_CASCADE | 待编排 | 实际执行 / 应执行 | PASS | 旧侧校准门 |', '|---|---|---|---|---|---|---|');
+    for (const side of ['old', 'new']) if (accounts[side]) {
+      const a = accounts[side];
+      lines.push(`| ${side} | ${a.oldGate?.matchedFailConditions ?? accounts.baselineStale?.filter(row => row.consistency === 'MATCHED_FAIL').length ?? 0} | ${a.staleCascade} | ${a.pendingOrchestration} | ${a.executed} / ${a.expected} | ${a.rows.filter(row => row.status === 'PASS').length} | ${a.oldGate?.status ?? '不适用'} |`);
+    }
+    lines.push('', '| 端 | 级联身份 | 失效前驱 | serial 范围 / 注册位置 | 原始状态 |', '|---|---|---|---|---|');
+    for (const side of ['old', 'new']) for (const row of accounts[side]?.rows || []) if (row.status === CASCADE_STATUS) {
+      const c = row.staleCascade;
+      lines.push(`| ${side} | ${cell(`${row.file} :: ${row.title}`)} | ${cell(`${c.predecessor.file} :: ${c.predecessor.title}`)} | ${cell(`${c.serialGroup}; ${c.registration}`)} | ${row.rawStatus}; annotations=${cell(JSON.stringify(row.rawSkipAnnotations))} |`);
+    }
+  }
+  const stale = inventory.filter(row => accounts.old?.rows.find(item => item.file === row.file && item.title === row.title)?.baselineStale);
+  if (stale.length) {
+    lines.push('', '基线失效单列：照常执行、保留 FAIL；只有双侧均在清单绑定的断言及 spec 调用位置 FAIL 才一致；行为守护覆盖记 0。单侧运行不能证明一致。', '',
+      '| 身份 | 失效类型 | old / new 原始状态 | 双侧一致性 | 回源 / 离线证明 |', '|---|---|---|---|---|');
+    for (const registration of stale) {
+      const row = accounts.old.rows.find(item => item.file === registration.file && item.title === registration.title);
+      const next = accounts.new?.rows.find(item => item.file === registration.file && item.title === registration.title);
+      const comparison = Array.isArray(accounts.baselineStale) && accounts.baselineStale.find(item => item.file === registration.file && item.title === registration.title);
+      lines.push(`| ${cell(`${row.file} :: ${row.title}`)} | ${cell(row.baselineStale.defectType)} | ${row.status} / ${next?.status || 'NOT_RUN'} | ${comparison?.consistency || 'UNPAIRED'} | ${cell(row.baselineStale.evidence.map(item => `${item.file}:${item.line}`).join(', '))}; ${row.baselineStale.proofScript} |`);
+    }
+    for (const side of ['old', 'new']) if (accounts[side]) lines.push('', `${side} 行为守护：${accounts[side].behavioralCoverage.passed}/${accounts[side].behavioralCoverage.eligible}；失效覆盖 0；级联不计执行/通过/覆盖；注册分母不变。`);
+  }
   return lines.join('\n');
 }
 function account(inventory, reports, testDir, sides) {
@@ -128,6 +171,34 @@ try {
     result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN', reason: 'self-check only' };
     console.log(`基线应执行数 ${inventory.length} vs 实际执行数 0; NOT_RUN (self-check only)`);
     result.status = 'PASS_SELF_CHECK_ONLY';
+  } else if (values.suite === 'real' && values.reconcile) {
+    result.offline = await selfCheck({ assets: false, frontends });
+    if (result.offline.status !== 'PASS') throw new Error('Real pair offline preflight failed; see result.json');
+    result.reportInputs = { old: values['old-report'] || [], new: values['new-report'] || [] };
+    const reports = await loadReportPair({ old: values['old-report'], new: values['new-report'] });
+    const d = inventory.filter(row => row.file.startsWith('real/'));
+    const origins = { ready: realOrigin('ready'), onboarding: realOrigin('onboarding') };
+    result.accounting = reconcileRealPair(d, reports, resolve(baseline, 'e2e'), { old: origins, new: origins });
+    for (const side of ['old', 'new']) printAccount(side, result.accounting[side]);
+    for (const error of result.accounting.errors) console.error(error);
+    await writeFile(resolve(output, 'real-parity.md'), table(d, result.accounting) + '\n');
+    result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN', reason: 'Offline comparison of supplied D original reports; no browser execution' };
+    result.status = result.accounting.status === 'PASS' ? 'PASS_REAL_PARITY_ONLY' : 'FAIL';
+  } else if (values.suite === 'real') {
+    result.offline = await selfCheck({ assets: false, frontends });
+    if (result.offline.status !== 'PASS') throw new Error('Real preflight failed; see result.json');
+    const modes = values['real-mode'] === 'all' ? ['ready', 'onboarding'] : [values['real-mode']];
+    const real = await runReal({ output, inventory, modes, command, children, isInterrupted: () => interrupted });
+    result.real = real;
+    const gate = modes.length === 2 ? real.accounting.oldGate : real.accounting;
+    result.accounting = { old: real.accounting, status: gate.status, errors: gate.errors };
+    printAccount('old', real.accounting);
+    for (const error of gate.errors) console.error(error);
+    await writeFile(resolve(output, 'real-parity.md'), table(real.accounting.rows, result.accounting) + '\n');
+    result.baselineExecution = { expected: inventory.length, actual: real.accounting.executed,
+      status: 'PARTIAL_D_SUITE_ONLY', reason: `Only requested D modes (${modes.join(',')}) were executed; all other identities NOT_RUN` };
+    result.status = gate.status === 'PASS'
+      ? (modes.length === 2 ? 'PASS_SINGLE_FRONTEND_ONLY' : 'PASS_PARTIAL_REAL_MODE_ONLY') : 'FAIL';
   } else {
     const reports = {};
     if (!values.reconcile) {

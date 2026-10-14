@@ -24,3 +24,12 @@ export function ownedPath(path) {
   if (!absolute.startsWith(resolve(root, '_tmp/fe-parity') + sep)) throw new Error('Output must be under this worktree _tmp/fe-parity/');
   return absolute;
 }
+// Public fixed test credential. Never a real provider secret.
+export const REAL_TEST_KEY = 'fe-parity-mock-key';
+export const realPorts = Object.freeze({
+  ready: Object.freeze({ server: 3010, vite: 5180, gateway: 18798 }),
+  onboarding: Object.freeze({ server: 3011, vite: 5181, gateway: 18799 }),
+  mock: 28379,
+});
+export const realOrigin = mode => `http://127.0.0.1:${realPorts[mode].vite}`;
+export const realRunRoot = resolve(root, '_tmp/fe-parity/real-run');
