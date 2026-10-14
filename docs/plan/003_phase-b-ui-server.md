@@ -77,10 +77,12 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 
 ### Issue B2 · 对拍装置（B1 合并后）
 
-**S1 录制反代 + 运行时枚举**：在浏览器与被测入口之间放录制层（可与 B1 反代同一 bin）：落 (method, path, query, 去 token 值的 header, body) 与 (status, header, body / 流分块 + 每块 byte offset 与到达时刻；分块仅诊断) 到 jsonl；WS 按连接落全帧（含录放层单调 `seq`）。录制层读响应头 `X-PilotDeck-Handler`（`rust|ts`）标记处理侧，比对时剥离；分母来自 B1 的 `enumerate_routes.mjs`。**S2 场景集与覆盖矩阵**：从 `ui/e2e` 里不 mock 后端的支线 + exp008 场景提炼，先 6 个基础场景（鉴权、项目/会话只读、一轮对话（mock 模型）、断线重连 watch、配置写+广播、上传+SSE）；**同时为每条由 Rust 接管的路由登记 ≥1 条直接 HTTP 用例或显式豁免**（`{route, reason, approver}`），形成「路由 × 用例」矩阵，遗漏即 FAIL；续传、PTY 哨兵/退出/重连、双注册/遮蔽探针各入场景。**S3 比对器**：HTTP 结构化 diff（ID 一致映射、时间/随机字段归一化，剥离 `X-PilotDeck-Handler`）；WS **先比同一连接内全序帧序列（`seq` 保留断言），再比按 `type` 的结构 + 确定字段**；SSE **完整事件序列（不丢/不并/不乱序）+ 事件到达延迟上界**（`read()` 分块元数据仅诊断，不作硬门）；落盘目录快照 diff；**处理侧覆盖检查**（读 `X-PilotDeck-Handler` 与矩阵，缺用例即 FAIL）。**S4 规约与对照**：`specs/ui-server-parity/{acceptance,normalization,accepted-diffs}.md` 草稿（**不动** `specs/parity/`）——`acceptance.md` 写「路由 × 用例覆盖矩阵」硬门，`normalization.md` 写 WS `seq` 全序与 SSE 完整事件 / 到达延迟口径；`controls/` 阳性对照（注入 HTTP 头差异 / **交换同一连接两帧顺序** / 删一帧 WS / **对 SSE 丢一个事件 / 并两个事件 / 把整条流攒到结束才发** / 截断 SSE / 改一处落盘 → 必 FAIL）；四项对照（自比 k 遍 / 逐规则负向 / 两侧同坏 / 双谱系评审）照计划 001 S3 结构做，`check_ruler.py` 输出 JSON 全 true。
+> Issue #47 分两次交付：本次 PR 只做 **S1 + S2**（录制、枚举、六场景与覆盖门），实验记录用 `docs/experiments/exp010-ui-server-parity-device/`；exp007 已被前端实验占用。**S3 比较器 + S4 规约/冻结/对照留给下一 PR**，下面的整条 Issue 验收项仍待完成。S1 请求/响应头必须保留同名多值与原始字节；Connection 提名头按字节解析，非法请求回 400；活动基准必须另建直连 TS 的带外观察连接，保留每个用户/会话的真实 snapshot 与 activity revision，不经被测入口取基准。
+
+**S1 录制反代 + 运行时枚举**：在浏览器与被测入口之间放录制层（可与 B1 反代同一 bin）：落 (method, path, query, 去 token 值的 header, body) 与 (status, header, body / 流分块 + 每块 byte offset 与到达时刻；分块仅诊断) 到 jsonl；WS 按连接落全帧（含录放层单调 `seq`）。录制层读响应头 `X-PilotDeck-Handler`（`rust|ts`）标记处理侧，比对时剥离；分母来自 `scripts/ui-server-parity/enumerate_routes.mjs`（复用 B1 的 `enumerate_hook.mjs` stack dump）。**S2 场景集与覆盖矩阵**：从 `ui/e2e` 里不 mock 后端的支线 + exp008 场景提炼，先 6 个基础场景（鉴权、项目/会话只读、一轮对话（mock 模型）、断线重连 watch、配置写+广播、上传+SSE）；**同时为每条运行时枚举路由登记 ≥1 条直接 HTTP 用例或显式豁免**（`{route, reason, approver}`），形成「路由 × 用例」矩阵，遗漏即 FAIL；续传、PTY 哨兵/退出/重连、双注册/遮蔽探针各入场景。**S3 比对器**：HTTP 结构化 diff（ID 一致映射、时间/随机字段归一化，剥离 `X-PilotDeck-Handler`）；WS **先比同一连接内全序帧序列（`seq` 保留断言），再比按 `type` 的结构 + 确定字段**；SSE **完整事件序列（不丢/不并/不乱序）+ 事件到达延迟上界**（`read()` 分块元数据仅诊断，不作硬门）；落盘目录快照 diff；**处理侧覆盖检查**（读 `X-PilotDeck-Handler` 与矩阵，缺用例即 FAIL）。**S4 规约与对照**：`specs/ui-server-parity/{acceptance,normalization,accepted-diffs}.md` 草稿（**不动** `specs/parity/`）——`acceptance.md` 写「路由 × 用例覆盖矩阵」硬门，`normalization.md` 写 WS `seq` 全序与 SSE 完整事件 / 到达延迟口径；`controls/` 阳性对照（注入 HTTP 头差异 / **交换同一连接两帧顺序** / 删一帧 WS / **对 SSE 丢一个事件 / 并两个事件 / 把整条流攒到结束才发** / 截断 SSE / 改一处落盘 → 必 FAIL）；四项对照（自比 k 遍 / 逐规则负向 / 两侧同坏 / 双谱系评审）照计划 001 S3 结构做，`check_ruler.py` 输出 JSON 全 true。
 
 **怎么算做完**
-- [ ] `python3 scripts/ui-server-parity/check_ruler.py` 四项全 true，结果进 `docs/experiments/exp007-ui-server-parity-device/`
+- [ ] `python3 scripts/ui-server-parity/check_ruler.py` 四项全 true，结果进 `docs/experiments/exp010-ui-server-parity-device/`
 - [ ] `enumerate_routes.mjs` 产出 JSON 与 `006/route-inventory.md` 对账，差异逐条有原因并回填（分母以枚举为准）
 - [ ] `python3 scripts/ui-server-parity/check_coverage.py` 通过：枚举出的每条 Rust 路由都有直接 HTTP 用例或显式豁免，且用例日志里处理侧为 `rust`
 - [ ] 阳性对照含「换序」「SSE 丢事件/延迟聚合」两项，注入后必 FAIL
@@ -123,11 +125,11 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 ## 验收（端到端怎么测）
 
 ```bash
-# 分母与覆盖（B2 之后）
-node scripts/ui-server-parity/enumerate_routes.mjs --out /tmp/pdrs-routes.json   # 运行时枚举
-python3 scripts/ui-server-parity/reconcile_routes.py /tmp/pdrs-routes.json docs/research/006_phase-b-ui-server/route-inventory.md
-python3 scripts/ui-server-parity/check_coverage.py --routes /tmp/pdrs-routes.json --manifest specs/ui-server-parity/coverage.json --handler-log <run>/handler-side.jsonl
-# 装置自检（B2 之后）
+# 分母与覆盖（B2 S1/S2；协调者在允许 loopback listen 的环境跑）
+python3 scripts/ui-server-parity/run.py --out _tmp/exp010-run
+# run.py 在隔离 env 下 --import enumerate_routes.mjs 加载真实 ui/server；复用 B1 stack dump 与对账
+python3 scripts/ui-server-parity/check_coverage.py --enumeration _tmp/exp010-run/enumeration/router-enumeration.json --evidence _tmp/exp010-run/cases.jsonl
+# 装置自检（B2 S3/S4，下一 PR 实现；本 PR 不提供下面这些脚本）
 python3 scripts/ui-server-parity/controls/run_all.py        # 阳性对照：注入差异（含换序、SSE 丢事件/延迟聚合）必须 FAIL
 python3 scripts/ui-server-parity/check_ruler.py             # 四项对照 JSON 全 true
 python3 scripts/ui-server-parity/check_frozen.py            # 冻结文件哈希

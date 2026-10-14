@@ -1,0 +1,254 @@
+{
+  "schema": 1,
+  "scenarios": [
+    {
+      "id": "auth",
+      "description": "鉴权：setup/register/login/Bearer"
+    },
+    {
+      "id": "readonly",
+      "description": "项目/会话只读 + 双注册/遮蔽探针"
+    },
+    {
+      "id": "chat",
+      "description": "mock 模型两会话并发一轮对话 + 带外 activity"
+    },
+    {
+      "id": "watch",
+      "description": "断线重连 watch + activity snapshot；PTY 哨兵、断线复用、resize、exit"
+    },
+    {
+      "id": "config",
+      "description": "配置写入 + WS 广播"
+    },
+    {
+      "id": "upload",
+      "description": "上传 + SSE + 续传输入；preview 显式选择 agent，global job 按 jobId 不带 scope"
+    }
+  ],
+  "http_cases": [
+    {
+      "id": "auth.status",
+      "scenario": "auth",
+      "transport": "http",
+      "route": "GET /api/auth/status",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "auth.register",
+      "scenario": "auth",
+      "transport": "http",
+      "route": "POST /api/auth/register",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "auth.login",
+      "scenario": "auth",
+      "transport": "http",
+      "route": "POST /api/auth/login",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "auth.user",
+      "scenario": "auth",
+      "transport": "http",
+      "route": "GET /api/auth/user",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "readonly.projects",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/projects",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "readonly.sessions",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/projects/:projectName/sessions",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "readonly.messages",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/sessions/:sessionId/messages",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "readonly.config",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/config",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "readonly.models",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/models",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "shadow.files",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/projects/files",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "shadow.model",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/sessions/model",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "shadow.mcp",
+      "scenario": "readonly",
+      "transport": "http",
+      "route": "GET /api/mcp/config/:scope",
+      "expected_statuses": [
+        400
+      ]
+    },
+    {
+      "id": "config.read",
+      "scenario": "config",
+      "transport": "http",
+      "route": "GET /api/config",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "config.write",
+      "scenario": "config",
+      "transport": "http",
+      "route": "PUT /api/config",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "upload.limits",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "GET /api/uploads/limits",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "upload.create",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "POST /api/uploads",
+      "expected_statuses": [
+        201
+      ]
+    },
+    {
+      "id": "upload.content",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "POST /api/uploads/:uploadId/content",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "upload.events",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "GET /api/uploads/:uploadId/events",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "upload.read",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "GET /api/uploads/:uploadId",
+      "expected_statuses": [
+        200
+      ]
+    },
+    {
+      "id": "resume.header",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "GET /api/modules/staffdeck-sdk/events",
+      "expected_statuses": [
+        501
+      ],
+      "request_query": { "operation": "job_events", "jobId": "exp010-job" },
+      "request_headers": { "Last-Event-ID": "2" },
+      "scope": "global job_events 按 jobId 不带 agent/team scope；未配置真实 StaffDeck host，仅录制 501 分支与续传输入，不证明续传语义"
+    },
+    {
+      "id": "resume.query",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "GET /api/modules/staffdeck-sdk/events",
+      "expected_statuses": [
+        501
+      ],
+      "request_query": { "operation": "preview_job_events", "jobId": "exp010-preview-job", "scope": "agent", "agentId": "exp010-agent", "afterSeq": "2" },
+      "scope": "按前端 gatewayEvents 显式选择隔离夹具 agent（scope=agent&agentId=exp010-agent）；未配置真实 StaffDeck host，仅录制 501 分支与续传输入，不证明续传语义或 agent/host 已存在"
+    },
+    {
+      "id": "auth.user.unauthorized",
+      "scenario": "auth",
+      "transport": "http",
+      "route": "GET /api/auth/user",
+      "expected_statuses": [
+        401
+      ]
+    },
+    {
+      "id": "auth.login.invalid",
+      "scenario": "auth",
+      "transport": "http",
+      "route": "POST /api/auth/login",
+      "expected_statuses": [
+        401
+      ]
+    },
+    {
+      "id": "resume.last-event-query",
+      "scenario": "upload",
+      "transport": "http",
+      "route": "GET /api/modules/staffdeck-sdk/events",
+      "expected_statuses": [
+        501
+      ],
+      "request_query": { "operation": "job_events", "jobId": "exp010-job", "lastEventId": "2" },
+      "scope": "global job_events 按 jobId 不带 agent/team scope；lastEventId 是服务端支持的 query 续传入口，前端通常用 Last-Event-ID 头；未配置真实 StaffDeck host，仅录制 501 分支与续传输入，不证明续传语义"
+    }
+  ]
+}
