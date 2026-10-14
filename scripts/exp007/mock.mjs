@@ -35,6 +35,14 @@ export async function startMock() {
       },1000/hz);intervals.add(timer);return json({hz,count,started});
     }
     if(url.pathname==='/__probe/stats') return json(stats);
+    if(url.pathname==='/__probe/sse') {
+      res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache'});
+      res.write('data: first\n\n');
+      const timer=setTimeout(()=>{intervals.delete(timer);res.end('data: second\n\n');},200);
+      intervals.add(timer);
+      res.once('close',()=>{clearTimeout(timer);intervals.delete(timer);});
+      return;
+    }
     const prefix = url.pathname.match(/^\/probe\/(leptos|dioxus)(?:\/|$)/);
     let path;
     if(prefix) {
@@ -58,11 +66,12 @@ export async function startMock() {
   wss.on('error',error=>stats.errors.push(error.message)); // HTTP listen errors also reject startMock().
   wss.on('connection',(socket,req)=>{
     const url=new URL(req.url,origin);socket.path=url.pathname;sockets.add(socket);
-    stats.connections.push({path:url.pathname,token:url.searchParams.get('token'),t:performance.now()});
+    stats.connections.push({path:url.pathname,token:url.searchParams.get('token'),authorization:req.headers.authorization||null,t:performance.now()});
     socket.on('close',()=>sockets.delete(socket));
     socket.on('message',data=>{
       const msg=JSON.parse(data.toString());stats.outbound.push({...msg,path:socket.path,t:performance.now()});
       if(socket.path==='/shell' && msg.type==='input') socket.send(JSON.stringify({type:'output',data:msg.input}));
+      if(socket.path.startsWith('/plugin-ws/')) socket.send(JSON.stringify({type:'output',data:msg.input}));
     });
   });
   function broadcast(frame) { for(const socket of sockets)if(socket.path==='/ws' && socket.readyState===1)socket.send(JSON.stringify(frame)); }

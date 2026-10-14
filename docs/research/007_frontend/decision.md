@@ -110,7 +110,9 @@
 
 F1 worker sandbox 当时无法启动系统 Chrome；协调者 r3 已正式复跑 PASS，两候选各4/4通过，覆盖合成 composition 守卫、登录/storage/列表、xterm 生命周期与真实流式/帧序号/滚动机器检查。浏览器跨壳状态与正式黑盒双跑尚未验证，**F1 不标完成，不凭暂选放行 F3 生产页面迁移**。两候选没有被证明全败；无需按“两败”条款重拍混合方向，r3 的正式 Chrome 证据已补齐；余下缺口仍是浏览器跨壳状态与正式黑盒双跑。
 
-b 的探针结论：Caddy 2.10.2 前置反代 B 已用真实旧 Vite 入口 + 两 Rust 静态入口与 HTTP/WS 做实验，导航原语与 history traversal 拦截在 DOM 级覆盖。A 未搭真实 `ui/server` patch 环境；生产共存方式暂不定稿。D1–D5 以 [accepted-diffs 的 F1 追加表](accepted-diffs.md#f1-exp007-对账与修订2026-10-14追加当前有效口径) 为当前口径，均未以完整跨壳浏览器实测转正。
+b 的首轮历史探针结论：Caddy 2.10.2 前置反代 B 已用真实旧 Vite 入口 + 两 Rust 静态入口与 HTTP/WS 做实验，导航原语与 history traversal 拦截在 DOM 级覆盖。A 未搭真实 `ui/server` patch 环境；生产共存方式暂不定稿。D1–D5 以 [accepted-diffs 的 F1 追加表](accepted-diffs.md#f1-exp007-对账与修订2026-10-14追加当前有效口径) 为当前口径，均未以完整跨壳浏览器实测转正。
+
+Issue #43（2026-10-15）已按人定 4B 删除 Caddy 安装器/配置，当前 B 改为独立 exp007 Rust 前缀路由器 + 原样冻结 exp008 子进程；本地 HTTP/三类 WS/SSE 通过。当前证据、A/B 改动面与运维面、浏览器补跑范围以 [exp007 S5](../../experiments/exp007-frontend-probe/readme.md) 为准；生产共存方式仍留 F3 定夺，D1–D5 的接受口径未变。
 
 ## a′ 定选（2026-10-14 上午，人亲测后）
 

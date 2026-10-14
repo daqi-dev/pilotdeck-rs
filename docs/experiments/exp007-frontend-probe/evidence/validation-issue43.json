@@ -1,0 +1,320 @@
+{
+  "status": "PASS",
+  "checks": [
+    {
+      "name": "prefix-fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "scripts/exp007/prefix-router/Cargo.toml",
+        "--check"
+      ],
+      "exitCode": 0,
+      "seconds": 0.051
+    },
+    {
+      "name": "prefix-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--offline",
+        "--all-targets",
+        "--manifest-path",
+        "scripts/exp007/prefix-router/Cargo.toml",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0,
+      "seconds": 0.218
+    },
+    {
+      "name": "prefix-test",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--manifest-path",
+        "scripts/exp007/prefix-router/Cargo.toml"
+      ],
+      "exitCode": 0,
+      "seconds": 0.683
+    },
+    {
+      "name": "exp008-test",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--manifest-path",
+        "scripts/exp008/proxy/Cargo.toml"
+      ],
+      "exitCode": 0,
+      "seconds": 1.185
+    },
+    {
+      "name": "support-test",
+      "command": [
+        "node",
+        "--test",
+        "scripts/exp007/coexist-support.test.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.11
+    },
+    {
+      "name": "shell-syntax",
+      "command": [
+        "bash",
+        "-n",
+        "scripts/exp007/build-coexist.sh",
+        "scripts/exp007/install-tools.sh"
+      ],
+      "exitCode": 0,
+      "seconds": 0.003
+    },
+    {
+      "name": "frozen-parity",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/parity/check_frozen.py"
+      ],
+      "exitCode": 0,
+      "seconds": 0.024
+    },
+    {
+      "name": "frozen-gateway",
+      "command": [
+        "python3",
+        "scripts/gateway-parity/check_frozen.py"
+      ],
+      "exitCode": 0,
+      "seconds": 0.029
+    },
+    {
+      "name": "frozen-b2",
+      "command": [
+        "python3",
+        "-I",
+        "scripts/ui-server-parity/check_frozen.py"
+      ],
+      "exitCode": 0,
+      "seconds": 0.143
+    },
+    {
+      "name": "diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exitCode": 0,
+      "seconds": 0.126
+    },
+    {
+      "name": "node-check-baseline-dom",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/baseline-dom.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.035
+    },
+    {
+      "name": "node-check-baseline",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/baseline.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "node-check-browser",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/browser.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.035
+    },
+    {
+      "name": "node-check-coexist-support",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/coexist-support.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.035
+    },
+    {
+      "name": "node-check-coexist-support.test",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/coexist-support.test.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.035
+    },
+    {
+      "name": "node-check-coexist",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/coexist.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "node-check-dom-env",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/dom-env.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.035
+    },
+    {
+      "name": "node-check-env",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/env.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.033
+    },
+    {
+      "name": "node-check-gates",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/gates.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "node-check-history-refresh",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/history-refresh.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "node-check-list-tests.config",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/list-tests.config.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "node-check-mock",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/mock.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "node-check-navigation",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/navigation.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.033
+    },
+    {
+      "name": "node-check-restore",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/restore.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "node-check-storage",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/storage.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.035
+    },
+    {
+      "name": "node-check-stream-gap",
+      "command": [
+        "node",
+        "--check",
+        "scripts/exp007/stream-gap.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.034
+    },
+    {
+      "name": "shell-syntax-install-tools",
+      "command": [
+        "bash",
+        "-n",
+        "scripts/exp007/install-tools.sh"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "navigation": {
+    "status": "PASS_DOM_ONLY",
+    "checks": 8,
+    "archivedBytesEqual": true,
+    "sha256": "2a3f18d42bdb212fe61ce3af38b4aabc32401b733ec62654c65796f62c0b625d",
+    "artifact": "navigation.json",
+    "commands": [
+      [
+        "node",
+        "scripts/exp007/baseline.mjs"
+      ],
+      [
+        "node",
+        "scripts/exp007/navigation.mjs"
+      ]
+    ]
+  },
+  "coexist": {
+    "command": [
+      "node",
+      "scripts/exp007/coexist.mjs"
+    ],
+    "status": "PASS_HTTP_WS_SSE_ONLY",
+    "checks": 12,
+    "artifact": "coexist.json",
+    "browser": "NOT_RUN"
+  },
+  "b2BasisRestoration": {
+    "method": "ignored _tmp symlinks to unchanged main-worktree calibration report and two reviews",
+    "frozenFilesChanged": false
+  }
+}

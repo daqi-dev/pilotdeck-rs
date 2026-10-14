@@ -1,73 +1,146 @@
 {
-  "status": "PASS_HTTP_WS_ONLY",
-  "variant": "B Caddy front proxy",
+  "status": "PASS_HTTP_WS_SSE_BROWSER",
+  "variant": "B repository Rust prefix router + frozen exp008 proxy",
   "checks": [
     {
       "path": "/",
       "status": "PASS",
       "bundle": "actual baseline Vite index",
-      "statusCode": 200
+      "statusCode": 200,
+      "exp008Handler": "ts"
     },
     {
       "path": "/settings",
       "status": "PASS",
       "bundle": "actual baseline Vite index",
-      "statusCode": 200
+      "statusCode": 200,
+      "exp008Handler": "ts"
     },
     {
       "path": "/probex",
       "status": "PASS",
       "bundle": "actual baseline Vite index",
-      "statusCode": 200
+      "statusCode": 200,
+      "exp008Handler": "ts"
     },
     {
       "path": "/probe/leptos/",
       "status": "PASS",
       "bundle": "actual compiled wasm static entry",
-      "wasmBytes": 449336
+      "wasmBytes": 470683
     },
     {
       "path": "/probe/dioxus/",
       "status": "PASS",
       "bundle": "actual compiled wasm static entry",
-      "wasmBytes": 718068
+      "wasmBytes": 720168
+    },
+    {
+      "path": "/shared/island.js",
+      "status": "PASS",
+      "bundle": "new entry dependency"
+    },
+    {
+      "path": "/vendor/xterm.js",
+      "status": "PASS",
+      "bundle": "new entry dependency"
     },
     {
       "path": "/api/auth/login",
       "status": "PASS",
-      "backend": "mock same-origin"
+      "backend": "mock same-origin",
+      "exp008Handler": "ts"
     },
     {
       "path": "/ws",
       "status": "PASS",
       "webSocketUpgrade": true,
-      "tokenRetained": true
+      "tokenRetained": true,
+      "authorizationRetained": true,
+      "subprotocol": "coexist",
+      "syntheticDate": false,
+      "pongRetained": true,
+      "closeCode": 1000,
+      "closeReason": "coexist done"
     },
     {
       "path": "/shell",
       "status": "PASS",
       "webSocketUpgrade": true,
-      "tokenRetained": true
+      "tokenRetained": true,
+      "authorizationRetained": true,
+      "subprotocol": "coexist",
+      "syntheticDate": false,
+      "pongRetained": true,
+      "closeCode": 1000,
+      "closeReason": "coexist done"
+    },
+    {
+      "path": "/plugin-ws/echo",
+      "status": "PASS",
+      "webSocketUpgrade": true,
+      "tokenRetained": true,
+      "authorizationRetained": true,
+      "subprotocol": "coexist",
+      "syntheticDate": false,
+      "pongRetained": true,
+      "closeCode": 1000,
+      "closeReason": "coexist done"
+    },
+    {
+      "path": "/__probe/sse",
+      "status": "PASS",
+      "streaming": true,
+      "chunks": 2,
+      "gapMs": 201.51208299999962
     }
   ],
   "processes": {
-    "runner": 43207,
-    "caddy": 43212,
+    "runner": 66518,
     "vite": "in-process",
-    "mock": "in-process"
+    "mock": "in-process",
+    "exp008": 66522,
+    "prefixRouter": 66523
   },
   "bind": "127.0.0.1",
   "ports": [
     28370,
+    28373,
     28374,
     28375
   ],
   "admin": false,
   "baselineFilesChanged": 0,
-  "limitation": "HTTP entries and WS upgrade measured; native browser reload/storage/BFCache behavior not measured",
+  "isolation": "/Users/da/ws/pilotdeck-rs/_build/wt-f43/_tmp/exp007/coexist-ZjrWN2",
+  "browser": {
+    "status": "PASS_BROWSER_MACHINE_CHECKS",
+    "channel": "chrome",
+    "profile": "/Users/da/ws/pilotdeck-rs/_build/wt-f43/_tmp/exp007/chrome-coexist-nXB8Ac",
+    "checks": [
+      "both history boundaries reload documents",
+      "auth/draft/sessionStorage retained",
+      "back/forward reach correct entry"
+    ],
+    "limitation": "History primitives exercised; actual React navigate/Link/NavLink interception is covered separately by navigation.mjs. BFCache hit/scroll/focus and OS IME are not asserted."
+  },
+  "limitation": "Mock backend; real ui/server prefix patch, production PTY and plugin backend not measured. Browser reload/storage require --browser; BFCache hit/scroll/focus, OS IME and HMR are outside this experiment.",
+  "components": {
+    "prefixRouter": {
+      "source": "scripts/exp007/prefix-router/src/main.rs",
+      "binarySHA256": "61f3740b5e65d34b73a51f766174f0efe7af7185fff812070d1d9d9366991bed",
+      "sourceSHA256": "03b56e4abc4582b4e3f07d75e40e68359f55c1f2b764e5fbca827bb7dcb04f0b"
+    },
+    "exp008": {
+      "source": "scripts/exp008/proxy/src/main.rs",
+      "binarySHA256": "cb64ddd08b5873cb378076d8c8f4a664da5d7ff8b57576a4870ce58d206fdb49",
+      "sourceSHA256": "abde68d203a8c76330668554b3606a10a94c1e4a145effcb3cbfc856556aadce"
+    }
+  },
   "cleanup": {
-    "caddyStopped": true,
+    "prefixRouterStopped": true,
+    "exp008Stopped": true,
     "closeCallsCompleted": true,
-    "deadlineMs": 5000
+    "deadlineMs": 5000,
+    "portsReleased": true
   }
 }
