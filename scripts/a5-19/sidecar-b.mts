@@ -1,0 +1,158 @@
+/** Real baseline stdio sidecar, host model barrier, real cancellation/unknown ledger. */
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { resolve, relative } from 'node:path';
+import { Apparatus, OUTPUT, ROOT, BASELINE, TIME, deferred, clone, upstream, sha, verifySources } from './runtime-b.mts';
+import { isDeepStrictEqual } from 'node:util';
+import { REPEATS, SIDECAR_CASE } from './preregistration-b.mjs';
+import { checkStatus, requireRule } from './rules-b.mjs';
+const { createAgentSession } = await upstream('agent/session/createAgentSession');
+const { createAgentLoopSidecarRuntimeFactory } = await upstream('agent/modules/transport/agentLoopSidecarClient');
+const { createStdioAgentLoopSidecarConnectionFactory } = await upstream('agent/modules/transport/stdioAgentLoopSidecarConnection');
+const { createDefaultPermissionContext } = await upstream('permission/index');
+const { AsyncQueue } = await upstream('gateway/util/AsyncQueue');
+const TIMEOUT_MS = 123456;
+const observations: any[] = [];
+fs.mkdirSync(OUTPUT, { recursive: true });
+for (let repetition = 1; repetition <= REPEATS; repetition++) {
+  const a = new Apparatus(resolve(OUTPUT, String(repetition)));
+  const heldModel = deferred(), modelStarted = deferred();
+  const childConnections: any[] = [];
+  const oldEnqueue = AsyncQueue.prototype.enqueue, oldClose = AsyncQueue.prototype.close;
+  const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
+  let timer: any;
+  globalThis.setTimeout = ((callback: any, ms: number, ...args: any[]) => {
+    if (ms !== TIMEOUT_MS) return realSetTimeout(callback, ms, ...args);
+    timer = { callback: () => callback(...args), cancelled: false }; a.j.add('timer.arm'); return timer;
+  }) as any;
+  globalThis.clearTimeout = ((handle: any) => {
+    if (handle === timer) { timer.cancelled = true; a.j.add('timer.clear'); }
+    else realClearTimeout(handle);
+  }) as any;
+  AsyncQueue.prototype.enqueue = function(event: any) { a.j.add('queue.enqueue', { event, closed: this.closed }); return oldEnqueue.call(this, event); };
+  AsyncQueue.prototype.close = function() { a.j.add('queue.close', { closed: this.closed }); return oldClose.call(this); };
+  const watchdog = realSetTimeout(() => {
+    fs.writeFileSync(resolve(a.dir, 'watchdog.json'), JSON.stringify(a.j.rows, null, 2));
+    heldModel.resolve();
+    for (const connection of childConnections) connection.child.kill('SIGTERM');
+    process.exit(2);
+  }, 20000);
+  a.gateway.options.runRegistry = undefined;
+  const originalCreate = a.createSession.bind(a);
+  a.createSession = (session: string) => {
+    originalCreate(session); const s = a.sessions.get(session);
+    const sidecarPath = resolve(BASELINE, 'dist/src/cli/pilotdeck-agent-loop-sidecar.js');
+    const connect = createStdioAgentLoopSidecarConnectionFactory({ command: process.execPath,
+      args: ['--import', resolve(ROOT, 'scripts/a5-19/no-listen-child.mjs'), sidecarPath], cwd: a.dir,
+      env: { ...process.env, PILOT_HOME: process.env.PILOT_HOME, A52B_CHILD_LOADLOG: resolve(a.dir, 'child-loaded.ndjson') }, killTimeoutMs: 1000 });
+    let uid = 0;
+    const factory = createAgentLoopSidecarRuntimeFactory({
+      connect: (input: any) => {
+        const connection = connect(input); childConnections.push(connection);
+        a.j.add('sidecar.spawn', { pid: connection.child.pid, command: process.execPath, entry: sidecarPath, sha256: sha(fs.readFileSync(sidecarPath)) });
+        const send = connection.send.bind(connection);
+        let stdout = '';
+        connection.child.stdout.on('data', (chunk: any) => {
+          stdout += String(chunk);
+          while (stdout.includes('\n')) {
+            const index = stdout.indexOf('\n'), text = stdout.slice(0, index); stdout = stdout.slice(index + 1);
+            if (text.trim()) a.j.add('sidecar.stdout', { text, message: JSON.parse(text) });
+          }
+        });
+        connection.send = (message: any) => { a.j.add('sidecar.send', { message }); return send(message); };
+        const receive = connection.receive.bind(connection);
+        connection.receive = async function*() { for await (const message of receive()) { a.j.add('sidecar.receive', { message }); yield message; } };
+        connection.child.on('exit', (code: any, signal: any) => a.j.add('sidecar.exit', { pid: connection.child.pid, code, signal }));
+        return connection;
+      }, uuid: () => `sidecar-${++uid}`,
+      transportObserver: { observe: (observation: any) => a.j.add('sidecar.observation', { observation }) },
+    });
+    const model = {
+      async prepare({ request }: any) { return { request, provider: request.provider, model: request.model }; },
+      async *stream() {
+        a.j.barrier('module:model-held'); modelStarted.resolve();
+        await heldModel.promise;
+        yield { type: 'message_start', role: 'assistant' };
+        yield { type: 'text_delta', text: 'late host model' };
+        yield { type: 'message_end', finishReason: 'stop' };
+      },
+    };
+    const agent = createAgentSession({ sessionId: session, transcript: s.writer, collectFileArtifacts: false,
+      config: { provider: 'host-fixture', model: 'controlled', cwd: a.dir, permissionMode: 'default',
+        permissionContext: createDefaultPermissionContext({ cwd: a.dir, canPrompt: false }) },
+      dependencies: { router: {}, now: () => new Date(TIME), ports: { model, tools: { list: () => [], executeAll: async () => [] } },
+        tools: { registry: { list: () => [] }, scheduler: { executeAll: async () => [] } } },
+      agentLoopFactory: factory,
+    });
+    s.agent = agent;
+    const submit = agent.submit.bind(agent);
+    agent.submit = async function*(...args: any[]) { try { yield* submit(...args); } finally { a.j.add('session.submit.exit'); } };
+    return agent;
+  };
+  const frames: any[] = [];
+  try {
+    const iterator = a.gateway.submitTurn({ sessionKey: 'session', channelKey: 'fixture', runId: 'run', message: 'hold real sidecar model', timeoutMs: TIMEOUT_MS })[Symbol.asyncIterator]();
+    while (true) { const next = await iterator.next(); assert.equal(next.done, false); frames.push(clone(next.value)); if (next.value.type === 'model_request_started') break; }
+    await modelStarted.promise; a.j.barrier('consumer:paused');
+    assert.ok(timer && !timer.cancelled); a.j.add('timer.fire'); timer.callback();
+    await a.j.wait(r => r.kind === 'queue.close'); a.j.barrier('timeout:queue-closed');
+    // Real cancel travels over Module Protocol; provider returns only after it.
+    const cancel = await a.j.wait(r => r.kind === 'sidecar.send' && r.message.method === 'cancel');
+    // The production client awaits the in-flight model callback before reading
+    // its next protocol message. Observe raw stdout ACK passively instead of
+    // demanding consumer progress behind that same barrier (would deadlock).
+    await a.j.wait(r => r.kind === 'sidecar.stdout' && r.message.inReplyTo === cancel.message.messageId && r.message.kind === 'response');
+    heldModel.resolve(); a.j.barrier('module:model-released');
+    await a.j.wait(r => r.kind === 'session.submit.exit');
+    while (true) { const next = await iterator.next(); if (next.done) break; frames.push(clone(next.value)); }
+    const observation = await a.observe(SIDECAR_CASE.id, repetition, [], ['module:model-held', 'consumer:paused', 'timeout:queue-closed', 'module:model-released']);
+    observation.realtimeFrames = frames;
+    observation.registry = { applicable: false, reason: 'runRegistry deliberately not configured for no-registry cell' };
+    checkStatus(observation);
+    const j = a.j.rows;
+    const unknown = observation.durable.flatMap(d => d.entries).filter(e => e.type === 'agent_loop_operation_terminal' && e.outcome === 'result_unknown');
+    const proof = j.some(r => r.kind === 'sidecar.observation' && r.observation.type === 'handshake_completed')
+      && j.some(r => r.kind === 'sidecar.observation' && r.observation.type === 'module_call_received' && r.observation.module === 'model');
+    requireRule(proof && j.some(r => r.kind === 'sidecar.spawn') && unknown.length > 0, 'SIDECAR_IDENTITY');
+    const rawPublications = j.filter(r => r.kind === 'queue.enqueue' && !r.closed).map(r => r.event);
+    requireRule(isDeepStrictEqual(frames, rawPublications), 'FRAME_RAW');
+    const childLoaded = fs.readFileSync(resolve(a.dir, 'child-loaded.ndjson'), 'utf8').trim().split('\n').map(JSON.parse);
+    for (const loaded of childLoaded) assert.equal(sha(fs.readFileSync(loaded.path)), loaded.sha256, `child source changed: ${loaded.path}`);
+    observation.childLoaded = childLoaded;
+    observation.sidecarProof = { handshakeAndRealModule: proof, unknownEntries: unknown, ownsOnlySpawnedChildren: true };
+    fs.writeFileSync(resolve(a.dir, 'observation.json'), JSON.stringify(observation, null, 2)); observations.push(observation);
+  } finally {
+    heldModel.resolve();
+    for (const connection of childConnections) await connection.close('fixture_cleanup');
+    await a.close(); realClearTimeout(watchdog);
+    globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
+    AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
+  }
+}
+function signature(o: any) {
+  const identities = new Map<string, Map<string, string>>();
+  const normalize = (value: any): any => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+      if (!['moduleInstanceId', 'connectionGeneration', 'streamId'].includes(key)) return [key, normalize(item)];
+      let names = identities.get(key); if (!names) { names = new Map(); identities.set(key, names); }
+      const original = String(item); if (!names.has(original)) names.set(original, `${key}-${names.size}`);
+      return [key, names.get(original)];
+    }));
+  };
+  return normalize({ realtimeFrames: o.realtimeFrames, durableEntries: o.durable[0].entries, registry: o.registry,
+    droppedEnqueues: o.timeline.filter(r => r.kind === 'queue.enqueue' && r.closed).map(r => r.event) });
+}
+const distinct = new Set(observations.map(o => JSON.stringify(signature(o)))).size;
+const manifest = { caseId: SIDECAR_CASE.id, repeats: REPEATS, measurements: observations.length, importedSources: verifySources(),
+  preregistrationSha256: sha(fs.readFileSync(resolve(ROOT, 'scripts/a5-19/preregistration-b.mjs'))),
+  preregistrationCommit: JSON.parse(process.env.A52B_PREREGISTRATION_STATUS!),
+  fixtureFiles: ['sidecar-b.mts', 'no-listen-child.mjs', 'runtime-b.mts', 'rules-b.mjs', 'run-b.py'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: sha(fs.readFileSync(resolve(ROOT, 'scripts/a5-19', name))) })),
+  stable: distinct === 1, distinct,
+  observations: observations.map(o => ({ repetition: o.repetition, realtimeFrames: o.realtimeFrames,
+    statuses: o.durable[0].entries.filter(e => e.type === 'agent_status_message'),
+    unknownEntries: o.sidecarProof.unknownEntries, sidecarEvents: o.timeline.filter(r => r.kind === 'sidecar.observation'),
+    evidence: relative(ROOT, resolve(OUTPUT, String(o.repetition), 'observation.json')) })) };
+fs.writeFileSync(resolve(OUTPUT, 'manifest.json'), JSON.stringify(manifest, null, 2));
+console.log(`DONE real sidecar cross-check ${observations.length}`);
