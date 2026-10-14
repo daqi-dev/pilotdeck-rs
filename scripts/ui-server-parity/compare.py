@@ -14,6 +14,7 @@ import hmac
 import subprocess
 import sqlite3
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -21,7 +22,7 @@ import sys
 from check_coverage import check as check_matrix, matches
 from policy import (HEADER_OMIT, SSE_ABSOLUTE_NS, SSE_DELAY_NS, field_key, fields, pattern,
                     UUID_VALUE, BLOCK_VALUE, MESSAGE_VALUE, CHAT_FIXTURE_SESSIONS,
-                    SESSION_CLOCK_NAMES)
+                    CLOCK_FORMATS, CLOCK_PAIRS, CLOCK_RESPONSE_ORDER, ISO_MS, SQL_S, EPOCH_MS, MTIME_MS)
 from snapshot import capture
 from common import apparatus_hashes
 
@@ -124,20 +125,100 @@ class Normalizer:
             mapping[key] = len(mapping) + 1
         return f'<{category}:{type(value).__name__}:{mapping[key]}>'
 
-    def time(self, value, location):
+    def clock_instant(self, value, representation, location, *, wall=True):
+        """Validate the producer's exact representation before interpreting it."""
+        try:
+            if representation in (ISO_MS, SQL_S):
+                regex = (r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z'
+                         if representation == ISO_MS else
+                         r'[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}')
+                if not isinstance(value, str) or not re.fullmatch(regex, value):
+                    raise ValueError('representation must be ' + representation)
+                dt = datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ' if representation == ISO_MS
+                                       else '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                delta = dt - datetime(1970, 1, 1, tzinfo=timezone.utc)
+                instant = (delta.days * 86400 + delta.seconds) * 1000 + delta.microseconds // 1000
+            elif representation in (EPOCH_MS, MTIME_MS):
+                if (type(value) not in (int, float) or not math.isfinite(value)
+                        or not 0 < value < 2**53
+                        or representation == EPOCH_MS and value != int(value)):
+                    raise ValueError('representation must be ' + representation)
+                instant = value
+            else:
+                raise ValueError('unregistered clock representation')
+            if wall:
+                start, end = self.wall_bounds
+                # CURRENT_TIMESTAMP truncates to whole UTC seconds. Compare
+                # in that source precision, not an invented timezone/tolerance.
+                if representation == SQL_S:
+                    start = start // 1000 * 1000
+                if not start <= instant <= end + 1000:
+                    raise ValueError('outside capture wall interval (unit: ms)')
+            return instant
+        except (ValueError, OverflowError, AttributeError) as error:
+            issue(self.out, 'normalization.field', location, 'invalid clock field: ' + str(error),
+                  side=self.side, representation=representation)
+            return None
+
+    def time(self, value, location, representation):
         if value is None:
             return None
-        valid = type(value) in (int, float) and 0 < value < 2**53
-        if isinstance(value, str):
-            try:
-                datetime.fromisoformat(value.replace('Z', '+00:00'))
-                valid = True
-            except ValueError:
-                valid = False
-        if not valid:
-            issue(self.out, 'normalization.field', location, 'invalid clock field', side=self.side)
+        if self.clock_instant(value, representation, location) is None:
             return value
         return f'<TIME:{type(value).__name__}>'
+
+    def ordered_clocks(self, raw, result, channel, context, path, location):
+        """Preserve ranks without sorting arrays or changing the field set."""
+        pair_rules = CLOCK_PAIRS.get((channel, context), {}).get(pattern(path), ())
+        whole_response = not path and (channel, context) in CLOCK_RESPONSE_ORDER
+        if not pair_rules and not whole_response:
+            return result
+        clocks = []
+        def collect(value, current, relative=()):
+            representation = CLOCK_FORMATS.get((channel, context), {}).get(pattern(current))
+            if representation and value is not None:
+                # The leaf dispatcher already emitted validation errors.
+                mark = result
+                for part in relative:
+                    mark = mark[part]
+                if isinstance(mark, str) and mark.startswith('<TIME:'):
+                    instant = self.clock_instant(value, representation, location + '.' + pattern(relative))
+                    if instant is not None:
+                        clocks.append((relative, instant))
+            elif isinstance(value, dict):
+                for key, item in sorted(value.items()):
+                    collect(item, current + (key,), relative + (key,))
+            elif isinstance(value, list):
+                for i, item in enumerate(value):
+                    collect(item, current + (i,), relative + (i,))
+        # Whole-response ranking is performed only once, at the root. Pair
+        # validation still runs on each exact object on the way up.
+        if whole_response:
+            collect(raw, path)
+        elif isinstance(raw, dict):
+            for name in sorted({n for pair in pair_rules for n in pair}):
+                if name in raw:
+                    collect(raw[name], path + (name,), (name,))
+        values = dict(clocks)
+        for earlier, later in pair_rules:
+            a, b = values.get((earlier,)), values.get((later,))
+            if a is not None and b is not None and a > b:
+                issue(self.out, 'normalization.field', location + '.' + later,
+                      'clock order invalid: ' + earlier + ' follows ' + later, side=self.side)
+        # Independent SQLite CURRENT_TIMESTAMP calls quantize to seconds:
+        # equality can change across captures. Enforce <= above, but do not
+        # treat quantization ties as source-level alias equality.
+        sql_pair = bool(pair_rules) and all(
+            CLOCK_FORMATS[channel, context][pattern(path + (name,))] == SQL_S
+            for pair in pair_rules for name in pair)
+        if whole_response or ((channel, context) not in CLOCK_RESPONSE_ORDER and not sql_pair):
+            ranks = {v: i for i, v in enumerate(sorted({v for _, v in clocks}))}
+            for relative, instant in clocks:
+                target = result
+                for part in relative[:-1]:
+                    target = target[part]
+                target[relative[-1]] = {'clock': target[relative[-1]], 'order': ranks[instant]}
+        return result
 
     def upload_url(self, value, location):
         found = re.fullmatch(r'/api/uploads/([^/]+)/(content|events)', value) if isinstance(value, str) else None
@@ -178,6 +259,8 @@ class Normalizer:
         if not path and isinstance(value, dict) and 'expiresAt' in clocks:
             upload_id = value.get('uploadId')
         if field == 'expiresAt' and field in clocks:
+            if self.clock_instant(value, CLOCK_FORMATS[channel, context][field], location, wall=False) is None:
+                return value
             trusted = self.expiries.get(upload_id)
             if not trusted or type(value) is not type(trusted['raw']) or value != trusted['raw']:
                 issue(self.out, 'normalization.field', location, 'expiry differs from persisted backend upload witness', side=self.side)
@@ -211,14 +294,16 @@ class Normalizer:
         if field in ids:
             return self.upload_url(value, location) if ids[field] == 'upload-url' else self.ref(ids[field], value, location)
         if field in clocks:
-            return self.time(value, location)
+            return self.time(value, location, CLOCK_FORMATS[channel, context][field])
         if isinstance(value, dict):
             # Sorted object keys do not depend on serialization key order.
-            return {key: self.value(item, channel, context, path + (key,), f'{location}.{field_key(key)}', upload_id=upload_id)
-                    for key, item in sorted(value.items())}
+            result = {key: self.value(item, channel, context, path + (key,), f'{location}.{field_key(key)}', upload_id=upload_id)
+                      for key, item in sorted(value.items())}
+            return self.ordered_clocks(value, result, channel, context, path, location)
         if isinstance(value, list):
-            return [self.value(item, channel, context, path + (index,), f'{location}[{index}]', upload_id=upload_id)
-                    for index, item in enumerate(value)]
+            result = [self.value(item, channel, context, path + (index,), f'{location}[{index}]', upload_id=upload_id)
+                      for index, item in enumerate(value)]
+            return self.ordered_clocks(value, result, channel, context, path, location)
         return value
 
     def activity(self, item, location):
@@ -239,54 +324,6 @@ class Normalizer:
             return body
         context = body.get('type', body.get('kind', ''))
         result = self.value(body, 'ws', context, location=location)
-        if context == 'projects_updated':
-            # Replace only registered leaves; never inject/overwrite a body key.
-            # Ranks preserve <, =, > across all explicitly registered clocks in
-            # this broadcast, including the session ordering used by the UI.
-            clocks = []
-
-            def collect(value, path=()):
-                if pattern(path) in fields('ws', context)[1] and value is not None:
-                    try:
-                        if type(value) in (int, float) and 0 < value < 2**53:
-                            instant = value
-                        elif isinstance(value, str):
-                            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
-                            if dt.tzinfo is None:
-                                raise ValueError('watcher clock requires timezone')
-                            delta = dt - datetime(1970, 1, 1, tzinfo=timezone.utc)
-                            instant = (delta.days * 86400 + delta.seconds) * 1000 + delta.microseconds / 1000
-                        else:
-                            raise ValueError('invalid watcher clock')
-                        clocks.append((path, instant))
-                    except ValueError:
-                        issue(self.out, 'normalization.field', location + '.' + pattern(path),
-                              'invalid ordered watcher clock', side=self.side)
-                elif isinstance(value, dict):
-                    for key, item in sorted(value.items()):
-                        collect(item, path + (key,))
-                elif isinstance(value, list):
-                    for index, item in enumerate(value):
-                        collect(item, path + (index,))
-
-            collect(body)
-            ranks = {value: i for i, value in enumerate(sorted({v for _, v in clocks}))}
-            # Keep ranks at their original full paths, alongside the type token.
-            for path, instant in clocks:
-                target = result
-                for part in path[:-1]:
-                    target = target[part]
-                target[path[-1]] = {'clock': target[path[-1]], 'order': ranks[instant]}
-            clock_values = dict(clocks)
-            for pi, project in enumerate(body.get('projects', [])):
-                for si, session in enumerate(project.get('sessions', [])):
-                    present = {name: clock_values.get(('projects', pi, 'sessions', si, name))
-                               for name in SESSION_CLOCK_NAMES}
-                    for created in ('createdAt', 'created_at'):
-                        for updated in ('lastActivity', 'updated_at'):
-                            if present[created] is not None and present[updated] is not None and present[created] > present[updated]:
-                                issue(self.out, 'normalization.field', f'{location}.projects[{pi}].sessions[{si}].{updated}',
-                                      'session creation follows activity', side=self.side)
         if context == 'session-activity':
             result['activity'] = self.activity(body.get('activity'), f'{location}.activity')
         if context == 'session-activity-snapshot':
@@ -692,14 +729,6 @@ class Side:
                 self.norm.revisions[(session, revision)] = ordinal
 
     def load_upload_expiries(self):
-        def millis(value):
-            if type(value) in (int, float) and 0 < value < 2**53:
-                return round(value)
-            if isinstance(value, str):
-                moment = datetime.fromisoformat(value.replace('Z', '+00:00'))
-                if moment.tzinfo is not None:
-                    return round(moment.timestamp() * 1000)
-            raise ValueError('invalid upload lifetime timestamp')
         for entry in self.actual_snapshot['entries']:
             match = re.fullmatch(r'home/\.tmp/chat-uploads/([^/]+)/metadata\.json', entry['path'])
             if not match:
@@ -707,7 +736,10 @@ class Side:
             data = entry.get('data')
             if not isinstance(data, dict) or data.get('uploadId') != match[1]:
                 raise ValueError('upload metadata ID does not match directory')
-            created, expiry = millis(data.get('createdAt')), millis(data.get('expiresAt'))
+            created = self.norm.clock_instant(data.get('createdAt'), ISO_MS, 'disk.upload.createdAt')
+            expiry = self.norm.clock_instant(data.get('expiresAt'), ISO_MS, 'disk.upload.expiresAt', wall=False)
+            if created is None or expiry is None:
+                continue
             if not self.norm.wall_bounds[0] <= created <= self.norm.wall_bounds[1] or expiry <= created:
                 raise ValueError('upload creation/lifetime outside real fixture bounds')
             self.norm.expiries[match[1]] = {'raw': data['expiresAt'], 'ttl_ms': expiry - created}

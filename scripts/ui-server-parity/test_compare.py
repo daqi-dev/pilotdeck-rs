@@ -4,6 +4,7 @@ import base64
 import copy
 import importlib.util
 import json
+import re
 from pathlib import Path
 import shutil
 import sqlite3
@@ -15,7 +16,8 @@ import unittest
 from check_frozen import check as frozen
 from check_ruler import check as ruler
 from compare import Normalizer, compare_sides, diff, read_jsonl, sse_events
-from policy import CHAT_FIXTURE_SESSIONS
+from policy import (CHAT_FIXTURE_SESSIONS, CLOCK_FORMATS, CLOCK_PAIRS,
+                    ISO_MS, SQL_S, EPOCH_MS, MTIME_MS)
 from snapshot import capture
 
 HERE = Path(__file__).resolve().parent
@@ -167,17 +169,17 @@ class ComparatorBoundaries(unittest.TestCase):
 
     def test_expiry_shift_is_not_erased_as_a_clock(self):
         def mutate(rows):
-            controls.response_body(rows, 3, lambda raw: raw.replace(b'2000000', b'2000001'))
+            controls.response_body(rows, 3, lambda raw: raw.replace(b'2023-11-15T22:13:20.000Z', b'2023-11-15T22:13:20.001Z'))
         self.mutate_log(mutate)
         self.assertTrue(any(d['rule'] == 'normalization.field' and d['location'].endswith('.expiresAt') for d in self.compare()['differences']))
 
     def test_backend_and_wire_expiry_shift_preserves_ttl_difference(self):
         path = self.right / 'home/.tmp/chat-uploads/upload-1/metadata.json'
         metadata = json.loads(path.read_text())
-        metadata['expiresAt'] += 1
+        metadata['expiresAt'] = '2023-11-15T22:13:20.001Z'
         controls.write_json(path, metadata)
         controls.write_json(self.right / 'snapshot.json', capture(self.right))
-        self.mutate_log(lambda rows: controls.response_body(rows, 3, lambda raw: raw.replace(b'2000000', b'2000001')))
+        self.mutate_log(lambda rows: controls.response_body(rows, 3, lambda raw: raw.replace(b'2023-11-15T22:13:20.000Z', b'2023-11-15T22:13:20.001Z')))
         report = self.compare()
         self.assertIn('disk.snapshot', report['rules'])
         self.assertIn('sse.sequence', report['rules'])
@@ -202,7 +204,7 @@ class ComparatorBoundaries(unittest.TestCase):
                 if header['name'] == 'x-pdrs-parity-case':
                     header['value_b64'] = controls.b64('custom.sse')
             if side == self.right:
-                controls.response_body(rows, 3, lambda raw: raw.replace(b'2000000', b'2000001'))
+                controls.response_body(rows, 3, lambda raw: raw.replace(b'2023-11-15T22:13:20.000Z', b'2023-11-15T22:13:20.001Z'))
             controls.write_log(path, rows)
             path = side / 'cases.jsonl'
             cases = read_jsonl(path)
@@ -359,6 +361,91 @@ class ComparatorBoundaries(unittest.TestCase):
         self.assertEqual(frozen(folder)['verdict'], 'DRAFT')
         (folder / 'FROZEN.md').write_text('AI 代批\n')
         self.assertEqual(frozen(folder)['verdict'], 'FAIL')
+
+
+class ClockTests(unittest.TestCase):
+    """Producer formats, wall bounds and semantic pairs must fail closed."""
+
+    def norm(self):
+        errors = []
+        n = Normalizer('test', errors)
+        n.wall_bounds = (1791959793119, 1791959806355)
+        return n, errors
+
+    def test_every_registered_representation_rejects_bad_format_unit_and_wall(self):
+        for (channel, context), paths in CLOCK_FORMATS.items():
+            for path, representation in paths.items():
+                with self.subTest(channel=channel, context=context, path=path):
+                    n, errors = self.norm()
+                    good = {ISO_MS: '2026-10-14T06:36:37.003Z', SQL_S: '2026-10-14 06:36:37',
+                            EPOCH_MS: 1791959797003, MTIME_MS: 1791959797003.125}[representation]
+                    self.assertIsNotNone(n.clock_instant(good, representation, path))
+                    self.assertFalse(errors)
+                    bad = ['2026-10-14 06:36:37.003', '2026-10-14T06:36:37.003+00:00',
+                           '2026-10-14T06:36:37Z', '2026-02-30T06:36:37.003Z',
+                           True, float('inf'), float('nan'), 1791959797,
+                           '2026-10-14T06:35:37.003Z', '2026-10-14 06:35:37', 1791959737003]
+                    for value in bad:
+                        self.assertIsNone(n.clock_instant(value, representation, path))
+                        self.assertEqual(errors[-1]['rule'], 'normalization.field')
+
+    def test_wall_boundaries_and_sql_source_precision(self):
+        n, errors = self.norm()
+        for value in (n.wall_bounds[0], n.wall_bounds[1] + 1000):
+            self.assertIsNotNone(n.clock_instant(value, EPOCH_MS, 'clock'))
+        for value in (n.wall_bounds[0] - 1, n.wall_bounds[1] + 1001):
+            self.assertIsNone(n.clock_instant(value, EPOCH_MS, 'clock'))
+        self.assertIsNotNone(n.clock_instant('2026-10-14 06:36:33', SQL_S, 'sql'))
+        self.assertIsNone(n.clock_instant('2026-10-14 06:36:32', SQL_S, 'sql'))
+        self.assertIsNone(n.clock_instant('2026-10-14T06:36:33.000Z', ISO_MS, 'iso'))
+
+    def test_sql_pair_quantization_is_not_alias_equality(self):
+        n, errors = self.norm()
+        def value(login):
+            return n.value({'tables': {'users': {'rows': [{
+                'created_at': '2026-10-14 06:36:36', 'last_login': login}]}}},
+                'disk', 'home/auth.db')
+        self.assertEqual(value('2026-10-14 06:36:36'), value('2026-10-14 06:36:37'))
+        self.assertFalse(errors)
+        value('2026-10-14 06:36:35')
+        self.assertTrue(any('clock order invalid' in e['message'] for e in errors))
+
+    def test_all_registered_pairs_reject_same_bad_order(self):
+        # Build only exact registered paths; no schema-wide name inference.
+        for (channel, context), objects in CLOCK_PAIRS.items():
+            for obj, pairs in objects.items():
+                for earlier, later in pairs:
+                    with self.subTest(context=context, obj=obj, pair=(earlier, later)):
+                        parts = [json_key[1:-1] if json_key.startswith('"') else json_key
+                                 for json_key in re.findall(r'"[^"]+"|[^.]+', obj)] if obj else []
+                        raw = {earlier: '2026-10-14T06:36:38.000Z', later: '2026-10-14T06:36:37.000Z'}
+                        if context == 'home/auth.db':
+                            raw = {earlier: '2026-10-14 06:36:38', later: '2026-10-14 06:36:37'}
+                        for part in reversed(parts):
+                            raw = [raw] if part == '*' else {part: raw}
+                        n, errors = self.norm()
+                        n.value(raw, channel, context)
+                        self.assertTrue(any('clock order invalid' in e['message'] for e in errors), errors)
+
+    def test_http_cross_entity_ranks_aliases_and_unknown_paths(self):
+        s = {'createdAt': '2026-10-14T06:36:36.000Z', 'created_at': '2026-10-14T06:36:36.000Z',
+             'lastActivity': '2026-10-14T06:36:37.000Z', 'updated_at': '2026-10-14T06:36:37.000Z'}
+        other = {k: v.replace('36.', '38.').replace('37.', '39.') for k, v in s.items()}
+        for context in ('readonly.projects', 'readonly.sessions'):
+            a = [{'sessions': [s, other], 'lastActivity': 1791959799000}] if context.endswith('projects') else {'sessions': [s, other]}
+            b = copy.deepcopy(a)
+            sessions = b[0]['sessions'] if isinstance(b, list) else b['sessions']
+            sessions.reverse()
+            n, errors = self.norm()
+            left = n.value(a, 'http', context)
+            right = n.value(b, 'http', context)
+            self.assertFalse(errors)
+            diff(left, right, errors, 'http.body', 'body')
+            self.assertTrue(errors)
+        n, errors = self.norm()
+        self.assertEqual(n.value({'createdAt': s['createdAt']}, 'http', 'unknown'), {'createdAt': s['createdAt']})
+        self.assertEqual(n.value({'sessions': [{'createdAt': None}]}, 'http', 'readonly.sessions'), {'sessions': [{'createdAt': None}]})
+        self.assertFalse(errors)
 
 
 if __name__ == '__main__':
