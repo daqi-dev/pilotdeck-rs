@@ -219,3 +219,9 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 - **#68 → A**：批准 A4 文件读取 TOCTOU 安全修正。已登记 `specs/gateway-parity/accepted-diffs.md` 的 A4-FILE-TOCTOU-001（类「原版缺陷 · 安全」），gateway FROZEN 重登记（两家评审），合并后关闭 #68。
 - **归档 native_archive_manifest / entries / artifact → B**：留在 (a) 类，分母保持 10，按默认装配实现（不授权 + 默认 PILOT_HOME 存储 + 无保留期）。依据：基线 apps / packages / src / ui/server 中没有调用方传 nativeArchiveAuthorizer / nativeArchiveRetentionMs / nativeSessionStorage（协调者 grep 复核）；默认装配下 `createLocalGateway.ts:998-1019` 授权器为 undefined，`InProcessGateway.ts:2589-2600` 无授权器即放行。嵌入方扩展点（自定义授权 / 保留期 / 外部存储）留到 A6 再登记。
 - **#94 → A**：维持现状。路由豁免审批人用字符串白名单，靠评审拦截 AI 冒名；人已知并接受「AI 可直接写白名单名字」的残余风险，不上签名、不外置审批。#94 另两条 P2（白名单注释行、PyYAML 依赖）照常跟进。
+
+### 人的回复（2026-10-15，规则三项 + P2 折中方案）
+- **大步骤收尾自查**：写入 CLAUDE.md §五。每个 issue 关闭前、每个阶段 / 里程碑收尾时，协调者逐条对照「怎么算做完」列产物与文件行号，grep 占位模式，结论贴 issue 或 board；答不全不得关 issue、不得标完成。
+- **CLI 是一等公民**：① 建「产品入口总账」——枚举 TS 产品全部入口（两个 bin 的全部子命令、ui/server 路由 / WS / SSE、gateway 101 method + HTTP 面、apps/desktop 进程编排与本地能力），每项写归属阶段 / issue；校验器要求「基线枚举集合 = 账本集合」，无归属即 FAIL。② 新增计划「阶段 D · CLI 客户端子命令」（新计划文件 + issue）：依赖 Rust gateway 独立运行的子命令排在 A8 之后，可与 B 并行；顺序建议 run / resume / sessions / settings → chat / cron / skills → setup / update → tui（tui 需 PTY 对拍装置，单独立项；update / setup 碰外部服务须 mock）；对拍口径：同参数同输入比 stdout / stderr / 退出码 / 落盘。③ intent 作品区补「pilotdeck 命令行全部子命令由 Rust 承担」。背景：Rust 的 `src/pilotdeck-cli/src/main.rs` 目前只打印版本号。
+- **磁盘上限**：`_build` + `_tmp` ≤ 30 GB 改为 ≤ 46 GB；worktree ≤ 5 **不变**。
+- **P2 折中方案**（替换「P2 及以下不挡」）：P0/P1 照旧挡；P2 三分——本 PR 内便宜的当轮修 / 影响对拍结论的按 P1 / 其余开 `P2-跟进` 并写「前置于 <节点>」；到点必还（与自查联动）；开着超过 10 个或每到里程碑派 1 个 worker 集中清理；P3 维持课程口径。立即执行：核实 #53 #80 #88 是否已由 #93 修复，属实即关闭；盘点开着的 `P2-跟进` 逐个补「前置于」、影响对拍结论的升 P1、过时的关闭，并派 worker 清账。
