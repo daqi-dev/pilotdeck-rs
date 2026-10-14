@@ -18,24 +18,30 @@ export function lsofExitOutput(error) {
   if (error?.code === 1 && !error.stderr && !error.killed && !error.signal) return error.stdout ?? '';
   return undefined;
 }
-async function capture(file, args) {
+async function capture(file, args, { timeout = 5000, killSignal = 'SIGTERM' } = {}) {
   try {
-    const result = await exec(file, args, { encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+    const result = await exec(file, args, { encoding: 'utf8', timeout, killSignal, maxBuffer: 8 * 1024 * 1024 });
     if (result.stderr.trim()) throw new Error(result.stderr.trim());
     return result.stdout;
   }
   catch (error) {
-    const output = file === 'lsof' ? lsofExitOutput(error) : undefined;
+    // Targeted ps exits 1 with no output/stderr when the selected PID is gone.
+    // A timeout, signal, diagnostic or partial output never proves an exit.
+    const output = file === 'lsof' ? lsofExitOutput(error)
+      : file === 'ps' && args.includes('-p') && !error.stdout ? lsofExitOutput(error) : undefined;
     if (output !== undefined) return output;
     throw new Error(`TCP audit ${file} failed: ${error.message}`);
   }
 }
-export function processTree(ps, rootPid, groupRoots = []) {
-  const rows = ps.trim().split('\n').filter(Boolean).map(line => {
+function processRows(ps) {
+  return ps.trim().split('\n').filter(Boolean).map(line => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line);
     if (!match) throw new Error('Unrecognized ps process record');
     return { pid: Number(match[1]), ppid: Number(match[2]), pgid: Number(match[3]), command: match[4] };
   });
+}
+export function processTree(ps, rootPid, groupRoots = []) {
+  const rows = processRows(ps);
   const owned = new Set([rootPid]);
   // Include reparented descendants that remain in groups we actually spawned.
   for (const row of rows) if (groupRoots.includes(row.pgid)) owned.add(row.pid);
@@ -46,6 +52,49 @@ export function processTree(ps, rootPid, groupRoots = []) {
   } while (changed);
   if (!rows.some(row => row.pid === rootPid)) throw new Error('Runner absent from ps snapshot');
   return rows.filter(row => owned.has(row.pid));
+}
+const unreadableCommand = command => /^\(.+\)$/.test(command);
+const defunctCommand = command => /(?:^|\s)<defunct>(?:\s|$)/.test(command);
+// args=(comm) is not evidence of an executable. Re-probe each sample, binding
+// comm/stat to the current PID/PPID/PGID; never reuse a previous path approval.
+export async function resolveUnreadableProcesses(processes, { run = capture, executableRealpath = realpathSync } = {}) {
+  const resolved = [];
+  for (const row of processes) {
+    if (!unreadableCommand(row.command) && !defunctCommand(row.command)) { resolved.push(row); continue; }
+    const observation = { source: 'ps -ww -p; pid/ppid/pgid/stat/comm', status: 'unavailable' };
+    const probe = async () => {
+      const raw = (await run('ps', ['-ww', '-p', String(row.pid), '-o', 'pid=,ppid=,pgid=,stat=,comm='])).trim();
+      if (!raw) { observation.status = 'exited'; delete observation.stat; return; }
+      const match = /^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)(?:\s+(.+))?$/.exec(raw);
+      if (!match || Number(match[1]) !== row.pid || Number(match[2]) !== row.ppid || Number(match[3]) !== row.pgid)
+        throw new Error('executable probe process identity changed or malformed');
+      observation.stat = match[4];
+      if (match[4].startsWith('Z') || defunctCommand(match[5] ?? '')) { observation.status = 'zombie'; return; }
+      const path = match[5];
+      if (path?.startsWith('/') && resolve(path) === path) observation.path = path;
+    };
+    try {
+      if (defunctCommand(row.command)) { observation.status = 'zombie'; observation.source = '<defunct> in current ps args snapshot'; }
+      else {
+        await probe();
+        if (observation.path) {
+          try {
+            observation.realpath = executableRealpath(observation.path);
+            if (!observation.realpath.startsWith('/') || resolve(observation.realpath) !== observation.realpath)
+              throw new Error('noncanonical executable realpath');
+            observation.status = 'resolved';
+          } catch (error) {
+            // The executable can disappear after comm. Only a fresh exit/zombie
+            // observation allows that race; a still-live unknown path fails.
+            observation.error = error.message;
+            await probe();
+          }
+        }
+      }
+    } catch (error) { observation.status = 'unavailable'; observation.error = error.message; }
+    resolved.push({ ...row, executableObservation: observation });
+  }
+  return resolved;
 }
 export function tcpRecords(lsof) {
   const records = []; let pid, fd, type;
@@ -73,17 +122,22 @@ export function forbiddenTCP(records) {
 const chromeExecutable = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const chromeHelper = /^\/Applications\/Google Chrome\.app\/Contents\/Frameworks\/Google Chrome Framework\.framework\/Versions\/[^/]+\/(?:Helpers\/Google Chrome Helper(?: \([^)]+\))?\.app\/Contents\/MacOS\/Google Chrome Helper(?: \([^)]+\))?|chrome_crashpad_handler)(?:\s|$)/;
 const soffice = /(?:^|[\s/])soffice(?:\.bin)?(?:\s|$)/;
+const sofficeExecutable = '/Applications/LibreOffice.app/Contents/MacOS/soffice';
 const updater = /(?:^|[\s/])GoogleUpdater(?:\s|$|\/)/;
 const serverCommand = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
 const licenseArgv = ['/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild', '-license', 'check'];
 const developerTool = /(?:^|\s|[;&|])(?:[^\s;|]*\/)?(?:xcodebuild|xcrun)(?=\s|$|[;&|])/;
 const gitOrXcrun = /^(?:git|xcrun|\/[^\s]+\/(?:git|xcrun))(?:\s|$)/;
-const optionalEnvironment = row => updater.test(row.command) || soffice.test(row.command);
-const nodeProcess = row => row.command.startsWith(process.execPath + ' ');
+const executablePaths = row => [row.executableObservation?.path, row.executableObservation?.realpath].filter(Boolean);
+// ps stat E = exiting, Z = zombie: the executable can no longer be resolved.
+const inactiveProcess = row => defunctCommand(row.command) || ['exited', 'zombie'].includes(row.executableObservation?.status)
+  || /[EZ]/.test(row.executableObservation?.stat ?? '');
+const optionalEnvironment = row => [row.command, ...executablePaths(row)].some(value => updater.test(value) || soffice.test(value));
+const nodeProcess = row => row.command.startsWith(process.execPath + ' ') || executablePaths(row).includes(process.execPath);
 export function environmentTargets(processes, { nodeRoots = [] } = {}) {
   const hasLicenseCheck = processes.some(row => row.command === licenseArgv.join(' '));
-  return processes.filter(row => optionalEnvironment(row) || nodeProcess(row) || nodeRoots.some(root => root.pid === row.pid)
-    || hasLicenseCheck && gitOrXcrun.test(row.command) || row.command === licenseArgv.join(' '));
+  return processes.filter(row => !inactiveProcess(row) && (optionalEnvironment(row) || nodeProcess(row) || nodeRoots.some(root => root.pid === row.pid)
+    || hasLicenseCheck && gitOrXcrun.test(row.command) || row.command === licenseArgv.join(' ')));
 }
 // macOS ps -E appends the environment to args (support a prepended environment
 // too). Remove the already captured argv before extracting HOME; do not persist
@@ -91,12 +145,13 @@ export function environmentTargets(processes, { nodeRoots = [] } = {}) {
 // by PID/PPID/PGID and exact argv, and fail closed on missing/ambiguous HOME.
 export function processHomes(raw, processes, { unreadable } = {}) {
   let rows;
-  try { rows = processTree(raw, processes[0].pid, processes.map(row => row.pgid)); }
+  try { rows = processRows(raw); }
   catch (error) { throw new Error(`FAIL: environment snapshot invalid: ${error.message}`); }
   const homes = new Map();
   for (const expected of processes) {
     const matching = rows.filter(item => item.pid === expected.pid);
     const row = matching.length === 1 ? matching[0] : undefined;
+    if (!matching.length) throw Object.assign(new Error(`FAIL: environment process absent for PID ${expected.pid}`), { code: 'ENVIRONMENT_RACE' });
     if (!row || row.ppid !== expected.ppid || row.pgid !== expected.pgid) throw new Error(`FAIL: environment process identity changed for PID ${expected.pid}`);
     // Only an identical argv with no environment is a hardened-process fallback.
     // Missing rows, changed argv and exposed but malformed HOME never qualify.
@@ -106,18 +161,77 @@ export function processHomes(raw, processes, { unreadable } = {}) {
     let environment;
     if (row.command.startsWith(expected.command + ' ')) environment = row.command.slice(expected.command.length + 1);
     else if (row.command.endsWith(' ' + expected.command)) environment = row.command.slice(0, -expected.command.length - 1);
-    else throw new Error(`FAIL: ps -E did not expose environment with unchanged argv for PID ${expected.pid}`);
+    else throw Object.assign(new Error(`FAIL: ps -E did not expose environment with unchanged argv for PID ${expected.pid}`), { code: 'ENVIRONMENT_RACE' });
     const matches = [...environment.matchAll(/(?:^|\s)HOME=(.*?)(?=\s[A-Za-z_][A-Za-z0-9_]*=|$)/g)];
     if (matches.length !== 1 || !matches[0][1]) throw new Error(`FAIL: ps -E HOME missing or ambiguous for PID ${expected.pid}`);
     homes.set(row.pid, matches[0][1]);
   }
   return homes;
 }
+// Only Node argv/absent-row races qualify. Command failures, identity changes
+// and exposed malformed HOME remain fatal. Never reuse a HOME from a prior pair.
+export async function retryNodeHomes(raw, targets, { run = capture, unreadable = new Set(), nodeTargets = [],
+  processes = targets, observations = [], now = () => performance.now(),
+  delay = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms)) } = {}) {
+  const homes = new Map(), exited = new Set();
+  for (const original of targets) {
+    let current = original, error, retries = 0;
+    const read = value => {
+      try {
+        const home = processHomes(value, [current], { unreadable }).get(original.pid);
+        if (home !== undefined) homes.set(original.pid, home);
+        return true;
+      }
+      catch (failure) { if (failure.code !== 'ENVIRONMENT_RACE' || !nodeTargets.includes(original)) throw failure; error = failure; return false; }
+    };
+    const recordExit = source => {
+      exited.add(original.pid);
+      observations.push({ pid: original.pid, ppid: original.ppid, pgid: original.pgid,
+        environment: 'exited-before-environment', retries, source });
+      const index = processes.findIndex(row => row.pid === original.pid);
+      processes[index] = { ...current, executableObservation: { status: 'exited', source } };
+    };
+    if (read(raw)) continue;
+    const deadline = now() + 500;
+    const probe = async args => {
+      const remaining = Math.floor(deadline - now());
+      if (remaining <= 0) throw error;
+      const value = await run('ps', args, { timeout: remaining, killSignal: 'SIGKILL' });
+      if (now() >= deadline) throw error;
+      return value;
+    };
+    for (; retries < 3; ) {
+      await delay(Math.min(50, Math.max(0, deadline - now())));
+      retries++;
+      const rows = processRows(await probe(['-ww', '-p', String(original.pid), '-o', 'pid=,ppid=,pgid=,args=']));
+      if (!rows.length) {
+        recordExit('empty targeted ps args snapshot');
+        break;
+      }
+      if (rows.length !== 1 || rows[0].pid !== original.pid || rows[0].ppid !== original.ppid || rows[0].pgid !== original.pgid)
+        throw new Error(`FAIL: environment process identity changed for PID ${original.pid}`);
+      current = { ...original, command: rows[0].command };
+      processes[processes.findIndex(row => row.pid === original.pid)] = current;
+      const environment = await probe(['-ww', '-E', '-p', String(original.pid), '-o', 'pid=,ppid=,pgid=,args=']);
+      // The PID can exit after fresh args, including on the last retry. capture
+      // accepts empty targeted ps only on success or clean exit 1, never timeout.
+      if (!environment.trim()) { recordExit('empty targeted ps -E snapshot'); break; }
+      if (read(environment)) {
+        observations.push({ pid: original.pid, ppid: original.ppid, pgid: original.pgid, retries,
+          argvRebound: current.command !== original.command, source: 'fresh ps args + ps -E; PID/PPID/PGID and latest argv matched' });
+        break;
+      }
+    }
+    if (!homes.has(original.pid) && !exited.has(original.pid)) throw error;
+  }
+  return { homes, exited };
+}
 // Chrome identity is rebuilt from the current snapshot; helper titles may change.
 // No cached browser approval or Chrome HOME is evidence for a current chain.
 export function forbiddenProcesses(processes, { playwrightRoots = [], browserTmpRoots = [], browserEvidence = [],
   runtimeRoots = [], processHOME = new Map(), operatorHome = userInfo().homedir, deferEnvironment = false,
-  unreadable = new Set(), alternativeEvidence = [], readOnlySystemChecks = [], updaterRealpath = realpathSync } = {}) {
+  unreadable = new Set(), alternativeEvidence = [], readOnlySystemChecks = [], updaterRealpath = realpathSync,
+  sofficeRealpath = realpathSync } = {}) {
   const byPid = new Map(processes.map(row => [row.pid, row]));
   function ancestor(row, ids) {
     const seen = new Set();
@@ -195,20 +309,32 @@ export function forbiddenProcesses(processes, { playwrightRoots = [], browserTmp
       if (!candidate || allowedUpdaters.has(row.pid)) continue;
       // Chrome detaches its wake-all updater, which launchd then adopts (ppid 1);
       // it only reaches this tree through a process group we spawned.
-      const adoptedWakeAll = row.ppid === 1 && candidate.mode === '--wake-all';
-      if (!currentMainChrome.has(row.ppid) && !adoptedWakeAll
-        && !(parent?.mode === '--wake-all' && parent.executable === candidate.executable)) continue;
+      // R14: the operator's own installed updater, at its canonical path with an
+      // exact --wake / --wake-all argv, is Chrome's routine wake regardless of who
+      // started it (live browser, a browser that is exiting, or launchd adoption).
+      // Any other updater argv still FAILs.
       const proof = { ...candidate, chromeAncestorPid: currentMainChrome.has(row.ppid) ? row.ppid
-        : adoptedWakeAll ? null : parent.chromeAncestorPid };
+        : parent?.chromeAncestorPid ?? null };
       allowedUpdaters.set(row.pid, proof); changed = true;
-      evidence(row, { alternative: 'canonical installed user updater; exact wake argv and current verified direct parent chain',
+      evidence(row, { alternative: 'canonical installed user updater; exact wake argv (R14: parent not required)',
         executable: proof.executable, realpath: proof.executable, argv: [proof.executable, proof.mode],
         parentPid: row.ppid, chromeAncestorPid: proof.chromeAncestorPid });
     }
   } while (changed);
   return processes.filter(row => {
-    if (/(?:^|\s|[;&|])(?:[^\s;|]*\/)?(?:open|xdg-open|osascript)(?=\s|$|[;&|])/.test(row.command)) return true;
-    if (developerTool.test(row.command)) {
+    const observation = row.executableObservation, paths = executablePaths(row);
+    if (inactiveProcess(row)) return false;
+    if (unreadableCommand(row.command) && (observation?.status !== 'resolved' || !paths.length)) return true;
+    const names = paths.map(path => basename(path));
+    if (unreadableCommand(row.command)) names.push(row.command.slice(1, -1));
+    if (/(?:^|\s|[;&|])(?:[^\s;|]*\/)?(?:open|xdg-open|osascript)(?=\s|$|[;&|])/.test(row.command)
+      || names.some(name => ['open', 'xdg-open', 'osascript'].includes(name))) return true;
+    // A hidden child cannot inherit a browser exemption by ancestry alone.
+    const chromeAncestorPid = ancestor(row, currentMainChrome);
+    const hiddenChromeHelper = unreadableCommand(row.command) && chromeAncestorPid
+      && paths.length === 2 && paths.every(path => path.startsWith('/Applications/Google Chrome.app/Contents/'));
+    if (unreadableCommand(row.command) && chromeAncestorPid && !hiddenChromeHelper && !allowedUpdaters.has(row.pid)) return true;
+    if (developerTool.test(row.command) || names.some(name => ['xcodebuild', 'xcrun'].includes(name))) {
       // ps supplies flattened args: demand the exact three-element spelling,
       // no shell wrapper, extra switches, alternate bundle, or cached ancestry.
       const source = ancestor(row, servers) ?? ancestor(row, gitAncestors);
@@ -218,17 +344,29 @@ export function forbiddenProcesses(processes, { playwrightRoots = [], browserTmp
         HOME: processHOME.get(row.pid), reason: 'read-only Xcode license check; exact argv and current owned service ancestry' });
       return false;
     }
-    if (updater.test(row.command)) {
+    if ([row.command, ...paths].some(value => updater.test(value))) {
       return !allowedUpdaters.has(row.pid);
     }
-    if (soffice.test(row.command)) {
+    if ([row.command, ...paths].some(value => soffice.test(value))) {
+      const executable = unreadableCommand(row.command) ? observation.path
+        : row.command === sofficeExecutable || row.command.startsWith(sofficeExecutable + ' ') ? sofficeExecutable : undefined;
+      try { if (executable !== sofficeExecutable || sofficeRealpath(executable) !== sofficeExecutable) return true; }
+      catch { return true; }
       const server = ancestor(row, servers);
       const allowed = server && homeMatches(row, servers.get(server));
       if (allowed) evidence(row, { alternative: 'current tested server ancestor with verified isolated HOME; officePreview execFile inherits env',
-        serverAncestorPid: server, inheritedHOME: servers.get(server), source: 'ui/server/services/officePreview.js:235-240,411-415' });
+        executable, realpath: sofficeExecutable, serverAncestorPid: server, inheritedHOME: servers.get(server),
+        source: 'ui/server/services/officePreview.js:235-240,411-415' });
       return !allowed;
     }
-    if (!row.command.includes('/Applications/')) return false;
+    if (hiddenChromeHelper) {
+      if (!deferEnvironment) browserEvidence.push({ pid: row.pid, environment: 'not-checked',
+        source: 'current Chrome ancestor and resolved canonical bundle executable; argv unreadable',
+        executable: observation.path, realpath: observation.realpath, chromeAncestorPid,
+        userDataDir: profilesByPid.get(chromeAncestorPid) });
+      return false;
+    }
+    if (![row.command, ...paths].some(value => value.includes('/Applications/'))) return false;
     if (currentMainChrome.has(row.pid) || checkedHelpers.has(row.pid)) return false;
     return true;
   });
@@ -236,7 +374,7 @@ export function forbiddenProcesses(processes, { playwrightRoots = [], browserTmp
 export async function startTCPAudit({ logFile, rootPid = process.pid, groupRoots = () => [], onFatal,
   playwrightRoots = () => [], browserTmpRoots = () => [], runtimeRoots = () => [],
   nodeRoots = () => [],
-  updaterRealpath = realpathSync,
+  updaterRealpath = realpathSync, sofficeRealpath = realpathSync, executableRealpath = realpathSync,
   run = capture, record = entry => appendFile(logFile, JSON.stringify(entry) + '\n'), intervalMs = 250 } = {}) {
   let timer, pending = Promise.resolve(), stopped = false, failure;
   const knownGroups = new Set();
@@ -249,24 +387,29 @@ export async function startTCPAudit({ logFile, rootPid = process.pid, groupRoots
   async function sample(phase) {
     try {
       for (const pid of groupRoots()) if (Number.isInteger(pid)) knownGroups.add(pid);
-      const processes = processTree(await run('ps', ['-ww', '-axo', 'pid=,ppid=,pgid=,args=']), rootPid, [...knownGroups]);
+      const processes = await resolveUnreadableProcesses(
+        processTree(await run('ps', ['-ww', '-axo', 'pid=,ppid=,pgid=,args=']), rootPid, [...knownGroups]), { run, executableRealpath });
       for (const row of processes) if (row.pid !== rootPid && row.pid === row.pgid) knownGroups.add(row.pgid);
-      const options = { playwrightRoots: playwrightRoots(), browserTmpRoots: browserTmpRoots(), runtimeRoots: runtimeRoots(), nodeRoots: nodeRoots(), updaterRealpath };
-      // Structural violations terminate before a second ps call or lsof. The
+      const options = { playwrightRoots: playwrightRoots(), browserTmpRoots: browserTmpRoots(), runtimeRoots: runtimeRoots(), nodeRoots: nodeRoots(), updaterRealpath, sofficeRealpath };
+      // Structural violations terminate before environment ps or TCP lsof. The
       // preliminary pass and final pass both require current browser ancestry.
       let forbiddenApps = forbiddenProcesses(processes, { ...options, deferEnvironment: true });
       let homes = new Map();
       const unreadable = new Set(), alternativeEvidence = [];
       const readOnlySystemChecks = [];
-      const browserEvidence = [];
+      const browserEvidence = [], environmentObservations = [];
       if (!forbiddenApps.length) {
         const targets = environmentTargets(processes, options).filter(row => row.pid !== rootPid);
-        if (targets.length) homes = processHomes(await run('ps', ['-ww', '-E', '-p', targets.map(row => row.pid).join(','), '-o', 'pid=,ppid=,pgid=,args=']), targets, { unreadable });
+        const nodeTargets = targets.filter(row => nodeProcess(row) || options.nodeRoots.some(root => root.pid === row.pid));
+        let exited = new Set();
+        if (targets.length) ({ homes, exited } = await retryNodeHomes(
+          await run('ps', ['-ww', '-E', '-p', targets.map(row => row.pid).join(','), '-o', 'pid=,ppid=,pgid=,args=']),
+          targets, { run, unreadable, nodeTargets, processes, observations: environmentObservations }));
         // Directly spawned Node roots and all observed Node descendants must
         // expose HOME and match their own mode/mock root, never the operator.
         const roots = new Map([...options.runtimeRoots, ...options.nodeRoots].map(row => [row.pid, row.home]));
         const byPid = new Map(processes.map(row => [row.pid, row]));
-        for (const row of targets.filter(row => nodeProcess(row) || roots.has(row.pid))) {
+        for (const row of nodeTargets.filter(row => !exited.has(row.pid))) {
           const seen = new Set(); let parent = row.pid;
           while (!roots.has(parent) && byPid.has(parent) && !seen.has(parent)) { seen.add(parent); parent = byPid.get(parent).ppid; }
           const home = roots.get(parent);
@@ -275,6 +418,10 @@ export async function startTCPAudit({ logFile, rootPid = process.pid, groupRoots
         forbiddenApps = forbiddenProcesses(processes, { ...options, processHOME: homes, unreadable, alternativeEvidence, readOnlySystemChecks, browserEvidence });
       }
       const environmentEvidence = [...homes].map(([pid, HOME]) => ({ pid, HOME, environment: 'readable', source: 'ps -ww -E; identity and argv matched' }));
+      for (const observation of environmentObservations) {
+        const proof = environmentEvidence.find(row => row.pid === observation.pid);
+        if (proof) Object.assign(proof, observation); else environmentEvidence.push(observation);
+      }
       for (const pid of unreadable) environmentEvidence.push(alternativeEvidence.find(row => row.pid === pid)
         ?? { pid, environment: 'unreadable', alternative: 'none; structural authorization failed' });
       // Fail before lsof and evidence I/O, even if either subsequently hangs.
@@ -283,7 +430,7 @@ export async function startTCPAudit({ logFile, rootPid = process.pid, groupRoots
         await record({ timestamp: new Date().toISOString(), phase, runnerPid: rootPid, processes, environmentEvidence, browserEvidence, readOnlySystemChecks, status: 'FAIL', forbiddenProcesses: forbiddenApps });
         return;
       }
-      const raw = await run('lsof', ['-nP', '-a', '-p', processes.map(row => row.pid).join(','), '-iTCP', '-F', 'pftnT']);
+      const raw = await run('lsof', ['-nP', '-a', '-p', processes.filter(row => !inactiveProcess(row)).map(row => row.pid).join(','), '-iTCP', '-F', 'pftnT']);
       const connections = tcpRecords(raw), forbidden = forbiddenTCP(connections);
       if (connections.some(row => !processes.some(proc => proc.pid === row.pid))) throw new Error('lsof returned a process outside the runner tree');
       // Signal first; evidence I/O must never postpone stopping a forbidden target.
