@@ -40,6 +40,7 @@
 
 - 目录：`src/`（Cargo workspace；`pilotdeck-cli` 是 CLI 入口，sidecar 能力由 `pilotdeck-agent`、`pilotdeck-transport`、`pilotdeck-protocol`、`pilotdeck-tokenizer` 四个 crate 承载）
 - 系统实际产出什么：阶段 C 是一个 agent 循环 sidecar 二进制，TS gateway 经环境变量拉起它；阶段 A 起是 `pilotdeck` 二进制，`pilotdeck server` 起在 18789 后，原版 `ui/server` 连过去就能用
+- **终点含命令行（2026-10-15 人定：CLI 是一等公民）**：`pilotdeck` 命令行的全部子命令（server、run / resume / sessions / settings / help、tui、chat、cron、skills、update、gateway setup 各渠道）最终都由 Rust 承担，与 TS 原版同参数同输入时 stdout / stderr / 退出码 / 落盘一致；不以 Web 为中心而漏掉 CLI。归属见「产品入口总账」与计划「阶段 D · CLI 子命令」
 - **怎么算合格（验证闭环）**：CI 三条（fmt / clippy / test）全绿 ＋ 对拍一致的场景数不降 ＋ 人工用原版 UI 实测一遍（TS gateway 配上 Rust sidecar）
 
 ---
