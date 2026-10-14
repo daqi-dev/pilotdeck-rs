@@ -1,0 +1,999 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "platform": "darwin",
+  "uid": 502,
+  "sourceSha256": "56d52eeb93660b6d442150459067297e49478066b4857e0c3ef370b892b4ce2c",
+  "root": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project",
+  "largeFile": {
+    "size": 2147483648,
+    "blocks": 0,
+    "response": {
+      "type": "response",
+      "id": "files-61",
+      "ok": false,
+      "error": {
+        "code": "ERR_FS_FILE_TOO_LARGE",
+        "message": "File size (2147483648) is greater than 2 GiB"
+      }
+    }
+  },
+  "fsErrors": [
+    {
+      "operation": "open",
+      "path": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/unreadable",
+      "nodeError": {
+        "code": "EACCES",
+        "message": "EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/unreadable'"
+      },
+      "response": {
+        "type": "response",
+        "id": "files-65",
+        "ok": false,
+        "error": {
+          "code": "EACCES",
+          "message": "EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/unreadable'"
+        }
+      }
+    },
+    {
+      "operation": "open",
+      "path": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing",
+      "nodeError": {
+        "code": "ENOENT",
+        "message": "ENOENT: no such file or directory, open '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing'"
+      },
+      "response": {
+        "type": "response",
+        "id": "files-66",
+        "ok": false,
+        "error": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, open '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing'"
+        }
+      }
+    },
+    {
+      "operation": "open",
+      "path": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/bom.txt/child",
+      "nodeError": {
+        "code": "ENOTDIR",
+        "message": "ENOTDIR: not a directory, open '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/bom.txt/child'"
+      },
+      "response": {
+        "type": "response",
+        "id": "files-67",
+        "ok": false,
+        "error": {
+          "code": "ENOTDIR",
+          "message": "ENOTDIR: not a directory, open '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/bom.txt/child'"
+        }
+      }
+    },
+    {
+      "operation": "realpath",
+      "path": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing",
+      "nodeError": {
+        "code": "ENOENT",
+        "message": "ENOENT: no such file or directory, realpath '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing'"
+      },
+      "response": {
+        "type": "response",
+        "id": "files-68",
+        "ok": false,
+        "error": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, realpath '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing'"
+        }
+      }
+    },
+    {
+      "operation": "stat",
+      "path": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing",
+      "nodeError": {
+        "code": "ENOENT",
+        "message": "ENOENT: no such file or directory, stat '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing'"
+      },
+      "response": {
+        "type": "response",
+        "id": "files-69",
+        "ok": false,
+        "error": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, stat '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/missing'"
+        }
+      }
+    },
+    {
+      "operation": "scandir",
+      "path": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/unreadable",
+      "nodeError": {
+        "code": "ENOTDIR",
+        "message": "ENOTDIR: not a directory, scandir '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/unreadable'"
+      },
+      "response": {
+        "type": "response",
+        "id": "files-70",
+        "ok": false,
+        "error": {
+          "code": "ENOTDIR",
+          "message": "ENOTDIR: not a directory, scandir '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/unreadable'"
+        }
+      }
+    }
+  ],
+  "readErrors": [
+    {
+      "path": "unreadable",
+      "response": {
+        "type": "response",
+        "id": "files-62",
+        "ok": false,
+        "error": {
+          "code": "EACCES",
+          "message": "EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project/unreadable'"
+        }
+      }
+    },
+    {
+      "path": "missing",
+      "response": {
+        "type": "response",
+        "id": "files-63",
+        "ok": false,
+        "error": {
+          "code": "PATH_NOT_ALLOWED",
+          "message": "File path resolves outside the project workspace."
+        }
+      }
+    },
+    {
+      "path": "bom.txt/child",
+      "response": {
+        "type": "response",
+        "id": "files-64",
+        "ok": false,
+        "error": {
+          "code": "PATH_NOT_ALLOWED",
+          "message": "File path resolves outside the project workspace."
+        }
+      }
+    }
+  ],
+  "localeProbe": [
+    {
+      "env": {
+        "LANG": "tr_TR.UTF-8"
+      },
+      "locale": "tr-TR",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "fıle😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ıiıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "lt_LT.UTF-8"
+      },
+      "locale": "lt-LT",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "i̇̀😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "tr_TR.UTF-8",
+        "LC_ALL": ""
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "tr_TR.UTF-8",
+        "LC_MESSAGES": ""
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": ""
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "sv_SE.UTF-8",
+        "LC_ALL": "",
+        "LC_MESSAGES": "tr_TR.UTF-8"
+      },
+      "locale": "und",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "en-US-u-co-xxx"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "sv-SE-u-co-xxx"
+      },
+      "locale": "sv-SE",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "z",
+        "Z",
+        "ä",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "tr-TR-u-co-xxx"
+      },
+      "locale": "tr-TR",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "fıle😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ıiıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "en-US-u-co-search"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "de-DE-u-co-phonebk"
+      },
+      "locale": "de-DE-u-co-phonebk",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "lt-LT-u-co-xxx"
+      },
+      "locale": "lt-LT",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "i̇̀😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "vi-VN-u-co-xxx"
+      },
+      "locale": "vi-VN",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "ee-u-co-xxx"
+      },
+      "locale": "ee",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "vi-VN-u-co-phonebk"
+      },
+      "locale": "vi-VN",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    },
+    {
+      "env": {
+        "LANG": "ee-u-co-phonebk"
+      },
+      "locale": "ee",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        {
+          "input": "FILE.txt",
+          "output": "file.txt"
+        },
+        {
+          "input": "FILE😀",
+          "output": "file😀"
+        },
+        {
+          "input": "Ì",
+          "output": "ì"
+        },
+        {
+          "input": "Ì😀",
+          "output": "ì😀"
+        },
+        {
+          "input": "I",
+          "output": "i"
+        },
+        {
+          "input": "Iİıi",
+          "output": "ii̇ıi"
+        }
+      ]
+    }
+  ],
+  "base64Probe": [
+    {
+      "input": "\"QUJD\"",
+      "hex": "414243"
+    },
+    {
+      "input": "\"őUJD\"",
+      "hex": "414243"
+    },
+    {
+      "input": "\"\\ud800\"",
+      "hex": ""
+    },
+    {
+      "input": "\"QUJD\\ud800\"",
+      "hex": "414243"
+    },
+    {
+      "input": "\"ĽQUJD\"",
+      "hex": ""
+    },
+    {
+      "input": "\"\\ud851UJD\"",
+      "hex": "414243"
+    },
+    {
+      "input": "\"Q😀UJD\"",
+      "hex": ""
+    }
+  ],
+  "cursorProbe": [
+    {
+      "variant": "lone-surrogate",
+      "cursor": "\"\\ud800\"",
+      "decoded": "",
+      "response": {
+        "type": "response",
+        "id": "files-72",
+        "ok": false,
+        "error": {
+          "code": "INVALID_CURSOR",
+          "message": "cursor is invalid or does not match the query."
+        }
+      }
+    },
+    {
+      "variant": "suffix-surrogate",
+      "cursor": "\"eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjIsInNpZ25hdHVyZSI6IjhBc1Y0b1Z0cHE5cTlrTWZEZW5Qa3VvQ21HTk9QTEJ3dlR6b1E5R2wwc00ifQ\\ud800\"",
+      "decoded": "{\"version\":1,\"offset\":2,\"signature\":\"8AsV4oVtpq9q9kMfDenPkuoCmGNOPLBwvTzoQ9Gl0sM\"}",
+      "response": {
+        "type": "response",
+        "id": "files-73",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "sha256:cc19a5ab36035234903b2a3e9dc53c433d58b3da3d1495aa7561072909c7aab1",
+              "name": ".gitignore",
+              "relativePath": ".gitignore",
+              "kind": "file",
+              "size": 12,
+              "mtimeMs": 1700000000123.456
+            },
+            {
+              "id": "sha256:6d589e641c6777658c77a2e5852ccba5b716e06b25185421255c604588b6b1f2",
+              "name": ".hidden",
+              "relativePath": ".hidden",
+              "kind": "file",
+              "size": 6,
+              "mtimeMs": 1700000000123.456
+            }
+          ],
+          "projectKey": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project",
+          "nextCursor": "eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjQsInNpZ25hdHVyZSI6IjhBc1Y0b1Z0cHE5cTlrTWZEZW5Qa3VvQ21HTk9QTEJ3dlR6b1E5R2wwc00ifQ"
+        }
+      }
+    },
+    {
+      "variant": "wide-low-byte",
+      "cursor": "\"ťyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjIsInNpZ25hdHVyZSI6IjhBc1Y0b1Z0cHE5cTlrTWZEZW5Qa3VvQ21HTk9QTEJ3dlR6b1E5R2wwc00ifQ\"",
+      "decoded": "{\"version\":1,\"offset\":2,\"signature\":\"8AsV4oVtpq9q9kMfDenPkuoCmGNOPLBwvTzoQ9Gl0sM\"}",
+      "response": {
+        "type": "response",
+        "id": "files-74",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "sha256:cc19a5ab36035234903b2a3e9dc53c433d58b3da3d1495aa7561072909c7aab1",
+              "name": ".gitignore",
+              "relativePath": ".gitignore",
+              "kind": "file",
+              "size": 12,
+              "mtimeMs": 1700000000123.456
+            },
+            {
+              "id": "sha256:6d589e641c6777658c77a2e5852ccba5b716e06b25185421255c604588b6b1f2",
+              "name": ".hidden",
+              "relativePath": ".hidden",
+              "kind": "file",
+              "size": 6,
+              "mtimeMs": 1700000000123.456
+            }
+          ],
+          "projectKey": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project",
+          "nextCursor": "eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjQsInNpZ25hdHVyZSI6IjhBc1Y0b1Z0cHE5cTlrTWZEZW5Qa3VvQ21HTk9QTEJ3dlR6b1E5R2wwc00ifQ"
+        }
+      }
+    },
+    {
+      "variant": "surrogate-low-byte",
+      "cursor": "\"\\ud865yJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjIsInNpZ25hdHVyZSI6IjhBc1Y0b1Z0cHE5cTlrTWZEZW5Qa3VvQ21HTk9QTEJ3dlR6b1E5R2wwc00ifQ\"",
+      "decoded": "{\"version\":1,\"offset\":2,\"signature\":\"8AsV4oVtpq9q9kMfDenPkuoCmGNOPLBwvTzoQ9Gl0sM\"}",
+      "response": {
+        "type": "response",
+        "id": "files-75",
+        "ok": true,
+        "result": {
+          "items": [
+            {
+              "id": "sha256:cc19a5ab36035234903b2a3e9dc53c433d58b3da3d1495aa7561072909c7aab1",
+              "name": ".gitignore",
+              "relativePath": ".gitignore",
+              "kind": "file",
+              "size": 12,
+              "mtimeMs": 1700000000123.456
+            },
+            {
+              "id": "sha256:6d589e641c6777658c77a2e5852ccba5b716e06b25185421255c604588b6b1f2",
+              "name": ".hidden",
+              "relativePath": ".hidden",
+              "kind": "file",
+              "size": 6,
+              "mtimeMs": 1700000000123.456
+            }
+          ],
+          "projectKey": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files-round3/files-Qv00dx/project",
+          "nextCursor": "eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjQsInNpZ25hdHVyZSI6IjhBc1Y0b1Z0cHE5cTlrTWZEZW5Qa3VvQ21HTk9QTEJ3dlR6b1E5R2wwc00ifQ"
+        }
+      }
+    }
+  ]
+}
