@@ -638,6 +638,7 @@ fn utf16_paths_use_normalized_containment_and_preserve_response_string() {
 #[test]
 fn unmeasured_io_diagnostics_are_not_fabricated_locally() {
     let error = fs_error(
+        "project_file_read",
         io::Error::other("unknown platform error"),
         "open",
         Path::new("file"),
@@ -645,7 +646,8 @@ fn unmeasured_io_diagnostics_are_not_fabricated_locally() {
     assert!(local_result(Err(error)).is_none());
     assert!(local_result(Err(denied(ESCAPE))).is_some());
     let raced_link = fs_error(
-        io::Error::from_raw_os_error(libc::ELOOP),
+        "project_file_read",
+        checked_open_error(io::Error::from_raw_os_error(libc::ELOOP)),
         "open",
         Path::new("link"),
     );
@@ -663,6 +665,7 @@ fn node_round3_fs_error_codes_and_messages() {
             other => panic!("unhandled recorded errno: {other}"),
         };
         let (code, message) = fs_error(
+            "project_file_read",
             io::Error::from_raw_os_error(errno),
             probe["operation"].as_str().unwrap(),
             Path::new(probe["path"].as_str().unwrap()),
@@ -1080,5 +1083,125 @@ fn cjk_matrix(test_name: &str) {
             matches!(route, Route::Forward),
             "row {index}: {tag} must reach TS"
         );
+    }
+}
+
+pub(crate) fn round6() -> Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/io-errors-round6.json"
+    ))
+    .unwrap()
+}
+pub(crate) struct BoundaryFiles {
+    inner: Snapshot,
+    operation: String,
+    target: PathBuf,
+    errno: Option<i32>,
+    pub(crate) hits: AtomicUsize,
+}
+impl BoundaryFiles {
+    fn check(&self, operation: &str, path: &Path) -> io::Result<()> {
+        if operation == self.operation && path == self.target {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            Err(self.errno.map_or_else(
+                || io::Error::other("unmeasured error"),
+                io::Error::from_raw_os_error,
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+impl Files for BoundaryFiles {
+    fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        self.inner.entries(path)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+    fn stat(&self, path: &Path) -> io::Result<Stat> {
+        self.inner.stat(path)
+    }
+    fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
+        self.check("realpath", path)?;
+        self.inner.canonical(path)
+    }
+    fn project_stat(&self, root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
+        self.check("stat", path)?;
+        self.inner.project_stat(root, path)
+    }
+    fn project_entries(&self, root: &Path, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        self.check("scandir", path)?;
+        self.inner.project_entries(root, path)
+    }
+    fn project_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+        self.check("open", path)?;
+        self.inner.project_read(root, path, limit)
+    }
+}
+pub(crate) fn boundary_metadata(row: &Value, errno: Option<i32>) -> Metadata<BoundaryFiles> {
+    let m = snapshot_metadata(row);
+    Metadata {
+        home: m.home,
+        cwd: m.cwd,
+        files: BoundaryFiles {
+            inner: m.files,
+            operation: row["operation"].as_str().unwrap().into(),
+            target: row["target"].as_str().unwrap().into(),
+            errno,
+            hits: AtomicUsize::new(0),
+        },
+    }
+}
+#[test]
+fn round6_project_files_call_sites_match_real_node_errors_byte_for_byte() {
+    let f = round6();
+    assert_eq!(f["cases"].as_array().unwrap().len(), 50);
+    for row in f["cases"].as_array().unwrap() {
+        let errno = match row["observed"][0]["code"].as_str().unwrap() {
+            "ENOENT" => libc::ENOENT,
+            "EACCES" => libc::EACCES,
+            "ENOTDIR" => libc::ENOTDIR,
+            "ENAMETOOLONG" => libc::ENAMETOOLONG,
+            "ELOOP" => libc::ELOOP,
+            other => panic!("unrecorded errno {other}"),
+        };
+        let m = boundary_metadata(row, Some(errno));
+        let request = parse(row["request"].as_str().unwrap().as_bytes()).unwrap();
+        let Route::LocalResponse(actual) = route_with_metadata(&request, Some(&m)) else {
+            panic!("forwarded {row}")
+        };
+        assert_eq!(
+            actual,
+            row["response"].as_str().unwrap().as_bytes(),
+            "{} {} {}",
+            row["method"],
+            row["boundary"],
+            row["observed"][0]
+        );
+        assert_eq!(m.files.hits.load(Ordering::Relaxed), 1);
+    }
+}
+#[test]
+fn every_unmeasured_errno_forwards_entire_project_request_at_every_call_site() {
+    let f = round6();
+    // One input tree for each of the ten production fs boundaries. The errno
+    // injection is a routing control, never advertised as a Node oracle.
+    for row in f["cases"].as_array().unwrap().iter().step_by(5) {
+        let method = row["method"].as_str().unwrap();
+        let request = parse(row["request"].as_str().unwrap().as_bytes()).unwrap();
+        for errno in crate::node_io::unmeasured_errnos(method)
+            .into_iter()
+            .map(Some)
+            .chain([None])
+        {
+            let m = boundary_metadata(row, errno);
+            assert!(
+                matches!(route_with_metadata(&request, Some(&m)), Route::Forward),
+                "{method} {} errno={errno:?}",
+                row["boundary"]
+            );
+            assert_eq!(m.files.hits.load(Ordering::Relaxed), 1);
+        }
     }
 }

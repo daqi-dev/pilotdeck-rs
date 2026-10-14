@@ -23,7 +23,7 @@
 - 读取不存在路径/断链/根外目标：`PATH_NOT_ALLOWED`；目录/FIFO：null；无隐藏或二进制过滤。maxBytes 默认1000000，范围1..10000000，字节截断后转 base64 或容错 UTF-8（保留 BOM）。Rust 以8 KiB块增量读取，最多消费 maxBytes，不按 stat.size 预分配，也不读取文件余下部分。
 - 读取安全：对齐 `resolve(root, input.path)` 后检查，接受根内绝对路径和含 `..` 的路径，响应保留输入 path 原文；归一化越界仍按 TS 错误形状拒绝；根内链接保留支持。realpath 后使用描述符逐组件 NOFOLLOW（包含 canonical root 的祖先），防止检查后替换链接逃逸；目录遍历使用 search 权限（macOS O_SEARCH / Linux O_PATH）。
 
-错误 golden 覆盖 PROJECT_NOT_FOUND、INVALID_QUERY、INVALID_LIMIT、INVALID_CURSOR、PATH_NOT_ALLOWED、FILE_INDEX_LIMIT。非字符串参数及 projectKey 等未覆盖的非法参数形状沿现有策略透传 TS。字符串 path（含孤立 surrogate）走本地归一化/根内验证：文件系统访问采用 Node 的 U+FFFD 替换编码，响应保留原始 UTF-16 字符串。已验证的正常请求均本地处理；未测的平台特有底层 IO errno 也保留 TS 处理，避免伪造不同错误诊断（常见 ENOENT/EACCES/ENOTDIR 已实现）。
+错误 golden 覆盖 PROJECT_NOT_FOUND、INVALID_QUERY、INVALID_LIMIT、INVALID_CURSOR、PATH_NOT_ALLOWED、FILE_INDEX_LIMIT。非字符串参数及 projectKey 等未覆盖的非法参数形状沿现有策略透传 TS。字符串 path（含孤立 surrogate）走本地归一化/根内验证：文件系统访问采用 Node 的 U+FFFD 替换编码，响应保留原始 UTF-16 字符串。已验证的正常请求均本地处理；未测的平台特有底层 IO errno 也保留 TS 处理，避免伪造不同错误诊断（当前 method 白名单及证据见第 6 轮）。
 
 ## 复跑
 
@@ -106,4 +106,67 @@ LANG=tr_TR env -u LC_ALL -u LC_MESSAGES -u LC_COLLATE -u LC_CTYPE \
   /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
   _tmp/20261014-a4-files-round5/node-runtime-round5.json \
   _tmp/20261014-a4-files-round5/scratch
+```
+
+
+## 第 6 轮：method 本地 errno 范围由生产原件限定
+
+完整 libuv 表只负责 code/description/格式；`node_io::LOCAL_ERRNOS` 单独决定
+method 是否可在本地处理。共享表新增 errno 不会自动扩大任何 method 的本地面。
+
+| method | 本地 errno 白名单 | 独立生产原件 |
+|---|---|---|
+| project_files_list | ENOENT、EACCES、ENOTDIR、ENAMETOOLONG、ELOOP | `io-errors-round6.json` 的 30 条 list 回包 |
+| project_file_read | ENOENT、EACCES、ENOTDIR、ENAMETOOLONG、ELOOP | 同文件的 20 条 read 回包；第 3 轮原件仍保留 |
+| session_model_get | 上述五项 + EISDIR | `../session-model/io-errors.json`、`io-errors-round5.json` |
+| model_catalog_list | 上述五项 + EISDIR | 相同 global config loader 原件及既有 config/catalog 回归 |
+
+这张表是 errno 集合，不是「所有错误都会直接抛出」的承诺。第 6 轮逐点实测：
+
+| method / 调用点 | 真实 TS 结果 |
+|---|---|
+| list / 根 realpath | PROJECT_NOT_FOUND |
+| list / 根 stat | 传播原始 errno/message，syscall=stat |
+| list / 根或嵌套 readdir | 传播原始 errno/message，syscall=scandir |
+| list / 条目 realpath、stat | 跳过条目；本次 absent query 返回 items=[] |
+| read / 根 realpath | 传播原始 errno/message，syscall=realpath |
+| read / 文件 realpath | PATH_NOT_ALLOWED |
+| read / 文件 stat | result=null |
+| read / readFile | 传播原始 errno/message，syscall=open |
+
+`record_project_files_round6.mts` 在固定 `cc7c4e6`、Node v22.22.0 / ICU 78.2、
+非 root 下，执行真实 InProcessGateway 列表实现、createLocalGateway 的原始
+projectFileRead callback 和 GatewayWsConnection encoder。50 项 = 10 个调用
+边界 × 5 个 errno。hooks 只在相应实际 fs 调用之前修改自有文件树（300 字节
+symlink 目标、自环 symlink、chmod、移除、父目录换成普通文件），不注入错误。
+完整 request/response 字符串、独立输入快照、真实 fs code/syscall/message/path、
+生产源码 hash、baseline commit、隔离环境和 uid 一并保存。唯一公共映射是
+每案隔离根→`/fixture`，同样应用于 marker 文件字节；其他响应字节和字段顺序不改。
+
+必跑测试经 dispatch 比较全部 50 个完整响应。另一测试对 10 个调用点穷举完整
+共享表中不在 method 白名单的所有 errno，并测 EDQUOT、虚构 errno 123456、
+无 OS errno 错误，均要求整请求 Forward，连 TS 原本吞错的边界也不本地猜测。
+实际 pairing 对十个调用点验证已映射但无生产原件的 EIO：保留原始请求空白、
+扩展字段、mask、126/127 长度编码，完整转发，TS 回包原字节透传。
+白名单集合与原件实际观测集合相等有单独断言；session/config 11 个边界也穷举
+所有不在其六项白名单的 errno。
+
+安全例外：真实 NOFOLLOW openat 的 ELOOP 带内部标记，仍在本地拒绝/跳过，
+不会把已检测出的替换竞态送给有 TOCTOU 缺陷的 TS。普通 realpath ELOOP 则按
+本次真实原件处理；不能再仅凭数字 ELOOP 把所有调用点误判成安全竞态。
+新原件中的 open ELOOP/ENAMETOOLONG 等时序案例用必跑 snapshot 重放，
+不声称真实 Rust 二进制在无 hook 条件下击中这些精确时序。
+
+复录（输出与 scratch 选全新路径；录制器强制检查 HOME/XDG/TMPDIR 和 browser guards）：
+
+```sh
+A4_FILES_IO="$(mktemp -d /private/tmp/a4-project-files-r6.XXXXXX)"
+A4_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
+mkdir -p "$A4_FILES_IO/isolation/home" "$A4_FILES_IO/isolation/xdg" "$A4_FILES_IO/isolation/tmp"
+env HOME="$A4_FILES_IO/isolation/home" XDG_CONFIG_HOME="$A4_FILES_IO/isolation/xdg" \
+  XDG_CACHE_HOME="$A4_FILES_IO/isolation/xdg" XDG_DATA_HOME="$A4_FILES_IO/isolation/xdg" \
+  TMPDIR="$A4_FILES_IO/isolation/tmp" PILOTDECK_SKIP_BROWSER_OPEN=1 SKIP_BROWSER_OPEN=1 \
+  node --import "$A4_BASELINE/node_modules/tsx/dist/loader.mjs" \
+  src/pilotdeck-gateway/tests/record_project_files_round6.mts "$A4_BASELINE" \
+  "$A4_FILES_IO/io-errors-round6.json" "$A4_FILES_IO"
 ```

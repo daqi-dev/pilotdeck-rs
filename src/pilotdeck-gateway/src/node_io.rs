@@ -3,6 +3,54 @@
 mod generated;
 use std::io;
 
+// Method admission is separate from the complete libuv formatting table.
+// Each entry requires a source-oracle fixture for that method's fs boundaries.
+// project-files/io-errors-round6.json; session-model/io-errors{,-round5}.json.
+const PROJECT_FILES: &[&str] = &["ENOENT", "EACCES", "ENOTDIR", "ENAMETOOLONG", "ELOOP"];
+const SESSION_CONFIG: &[&str] = &[
+    "ENOENT",
+    "EACCES",
+    "ENOTDIR",
+    "EISDIR",
+    "ENAMETOOLONG",
+    "ELOOP",
+];
+pub(crate) const LOCAL_ERRNOS: &[(&str, &[&str])] = &[
+    ("project_files_list", PROJECT_FILES),
+    ("project_file_read", PROJECT_FILES),
+    ("session_model_get", SESSION_CONFIG),
+    ("model_catalog_list", SESSION_CONFIG),
+];
+pub(crate) fn lookup_for(method: &str, error: &io::Error) -> Option<(&'static str, &'static str)> {
+    let found = lookup(error)?;
+    LOCAL_ERRNOS
+        .iter()
+        .find(|(name, _)| *name == method)?
+        .1
+        .contains(&found.0)
+        .then_some(found)
+}
+// Both config consumers have the same evidence set; changing one requires
+// splitting this gate rather than silently inheriting the global format table.
+pub(crate) fn config_lookup(error: &io::Error) -> Option<(&'static str, &'static str)> {
+    let found = lookup_for("session_model_get", error)?;
+    lookup_for("model_catalog_list", error)?;
+    Some(found)
+}
+pub(crate) fn config_read_file(error: &io::Error, path: &str) -> Option<(&'static str, String)> {
+    config_lookup(error)?;
+    read_file(error, path)
+}
+#[cfg(test)]
+pub(crate) fn unmeasured_errnos(method: &str) -> Vec<i32> {
+    generated::ERRORS
+        .iter()
+        .filter(|(errno, _, _)| lookup_for(method, &io::Error::from_raw_os_error(*errno)).is_none())
+        .map(|(errno, _, _)| *errno)
+        .chain([123456, libc::EDQUOT])
+        .collect()
+}
+
 pub(crate) fn lookup(error: &io::Error) -> Option<(&'static str, &'static str)> {
     let errno = stage(error).map_or_else(|| error.raw_os_error(), |e| e.source.raw_os_error())?;
     generated::ERRORS
@@ -53,6 +101,63 @@ pub(crate) fn descriptor_error(source: io::Error, syscall: &'static str) -> io::
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn method_whitelists_equal_source_oracle_errno_sets() {
+        use std::collections::BTreeSet;
+        let project: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/project-files/io-errors-round6.json"
+        ))
+        .unwrap();
+        for method in ["project_files_list", "project_file_read"] {
+            let measured: BTreeSet<_> = project["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["method"] == method)
+                .map(|r| r["observed"][0]["code"].as_str().unwrap())
+                .collect();
+            let allowed: BTreeSet<_> = LOCAL_ERRNOS
+                .iter()
+                .find(|(m, _)| *m == method)
+                .unwrap()
+                .1
+                .iter()
+                .copied()
+                .collect();
+            assert_eq!(allowed, measured, "{method}");
+        }
+        let sources: Vec<serde_json::Value> = [
+            include_str!("../tests/fixtures/session-model/io-errors.json"),
+            include_str!("../tests/fixtures/session-model/io-errors-round5.json"),
+        ]
+        .into_iter()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+        let measured: BTreeSet<_> = sources
+            .iter()
+            .flat_map(|f| f["cases"].as_array().unwrap())
+            .flat_map(|r| r["io"]["observations"].as_array().unwrap())
+            .map(|o| o["code"].as_str().unwrap())
+            .collect();
+        for method in ["session_model_get", "model_catalog_list"] {
+            let allowed: BTreeSet<_> = LOCAL_ERRNOS
+                .iter()
+                .find(|(m, _)| *m == method)
+                .unwrap()
+                .1
+                .iter()
+                .copied()
+                .collect();
+            assert_eq!(allowed, measured, "{method}");
+        }
+        assert!(
+            lookup_for(
+                "unregistered_method",
+                &io::Error::from_raw_os_error(libc::ENOENT)
+            )
+            .is_none()
+        );
+    }
     #[test]
     fn every_generated_errno_and_format_matches_node_uv_exception() {
         let oracle: serde_json::Value =

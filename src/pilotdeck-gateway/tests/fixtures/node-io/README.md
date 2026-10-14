@@ -48,3 +48,10 @@ handling of ELOOP from NOFOLLOW, so security rejection never becomes TS fallback
 The complete suite and real filesystem goldens are described in
 `../session-model/README.md`. The current host executes macOS checks; this
 worktree does not claim a Linux binary/Node run (no Linux target installed).
+
+
+第 6 轮将格式表与 method 准入分开：`node_io::LOCAL_ERRNOS` 是显式白名单。
+project_files 两方法仅五项，session_model_get/model_catalog_list 的共同 config
+消费面仅六项，详见 `../project-files/README.md` 第 6 轮表。完整生成表继续全量
+验证格式；格式有原件本身不授权 method 本地应答。未列出的错误在包装/吞错
+边界也传播 requires_host/NODE_IO_REQUIRED，整请求交 TS。
