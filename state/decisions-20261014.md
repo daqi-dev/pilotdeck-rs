@@ -133,3 +133,17 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 - **D4 → B（两步）**：先实测 有/无 registry × writer 快/慢/失败 6 种情形（帧、durable、registry events/result 分开断言），看结果后再由人定具体差异与评分口径。
 - **D5 → A**：保留完整 UI 门；B3 闸门 = A8「gateway 退役验证完成（不含 UI 自动恢复）」；阶段 B 修客户端后以真实 UI 验收关最终门。
 - 过程记录：人第一次答复后又改为「等准确结果」——协调者撤回已写入的拍板，待卡片经三轮评审收敛、事实逐条读源码核实后再请人定。详见 `docs/research/008_phase-a-session-domain/decision.md`。
+
+## 下午 · 协调者自决·待复核（2026-10-14）
+
+| # | 事项 | 决定 | 依据 | 若你不同意 |
+|---|---|---|---|---|
+| R1 | B2 比较器：消息 / @chat 时间顺序 | 历史消息 timestamp 必须有本侧 @chat createdAt 见证，并按顺序非递减；@chat createdAt 按 sequence 非递减。前提「采集期间 wall clock 不回拨」由录制层每 250ms 监测，回拨判 REFUSED（不计分），不算 Rust 的错 | 源码只保证 sequence 串行、不保证 createdAt 单调（codex 用原版代码构造了倒退 1ms 的合法日志）；不加前提就只能不验顺序，而不验顺序会放过倒序 / 改读取时刻（协调者注入实测 PASS） | 换成「只验见证、不验顺序」：倒序注入会重新漏掉 |
+| R2 | YAML 解析 | 忠实移植 npm `yaml` 2.9.0 为 `pilotdeck-yaml`（ISC 许可），Node 差分 ≥2000 条锁定 | yaml-rust2 / saphyr-parser 的事件 API 在事件产生前就拒绝 TS 可接受的输入（孤立 surrogate 转义、连续 %TAG、重复 %YAML），且丢失 %YAML 版本（1.1 / 1.2 下 `yes` 类型不同）；基线 10 个文件用 `yaml`，阶段 A/B 都依赖 | 改用现成 crate + 把这几类差异登记为「待批」：省约 1–2 天，但违反「已证实由 Rust 引起的差异不豁免」 |
+| R3 | S2 精简（system_clock 只接 ISO） | 停止裁剪，只入仓 Node v22 实测回归（#75） | TS 用完整 `Date.parse`，合法非 ISO deadline 会生效；裁成 NaN 会让过期 deadline 消失 | — |
+
+### 下午的教训（写进派活模板「今天的教训」）
+- 派活前提要先核实：A4 路径规则、#62 排序、B2「同一事件」、#70「原版缺陷」、#73「createdAt 单调」都是写进任务的前提有错；后两次由 worker 按「前提不符就停」条款拦下。
+- 两家评审结论分歧时，协调者必须自己注入实测再判（#73：GLM 判无 P0，注入复现后 Claude 的 P0 成立）。
+- 注入实测的坑：复制采集要 `cp -Rp` 整目录，否则会误触 disk.snapshot；zsh 下多值参数不能放在未加引号的变量里，需要逐个展开。
+- gitleaks 会把 RFC 6455 示例 nonce 识别为密钥：改成运行时生成，不加 allowlist。
