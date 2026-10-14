@@ -38,6 +38,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 REPO = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO / "schema" / "gateway-protocol.schema.json"
@@ -128,6 +129,35 @@ def collect_refs(node, acc):
     elif isinstance(node, list):
         for v in node:
             collect_refs(v, acc)
+
+
+def valid_local_ref(schema, ref):
+    """Resolve the full local RFC 6901 pointer; external refs are out of contract."""
+    if not isinstance(ref, str) or not ref.startswith('#'):
+        return False
+    fragment = ref[1:]
+    if re.search(r'%(?![0-9a-fA-F]{2})', fragment):
+        return False
+    try:
+        pointer = unquote(fragment, errors='strict')
+        if pointer == '':
+            return isinstance(schema, (dict, bool))
+        if not pointer.startswith('/'):
+            return False
+        node = schema
+        for token in pointer[1:].split('/'):
+            if re.search(r'~(?![01])', token):
+                return False
+            token = token.replace('~1', '/').replace('~0', '~')
+            if isinstance(node, dict):
+                node = node[token]
+            elif isinstance(node, list) and re.fullmatch(r'0|[1-9][0-9]*', token):
+                node = node[int(token)]
+            else:
+                return False
+        return isinstance(node, (dict, bool))
+    except (KeyError, IndexError, UnicodeDecodeError):
+        return False
 
 
 def frame_type_consts(defn) -> set:
@@ -312,7 +342,7 @@ def main() -> int:
         check("A9 快照: payloadAliases 别名无重复", len(alias_names) == len(set(alias_names)))
     refs = []
     collect_refs(schema, refs)
-    dangling = sorted({r for r in refs if r.startswith("#/") and r.split("/")[-1] not in defs})
+    dangling = sorted({r for r in refs if not valid_local_ref(schema, r)})
     check("A9 schema: 全文档无悬空 $ref", not dangling, f"悬空 {dangling}")
 
     # ── 本地：基线核对（基线目录存在才跑；CI 常规 job 跳过，CI 基线 job 用 PDRS_REQUIRE_BASELINE=1 钉死）──

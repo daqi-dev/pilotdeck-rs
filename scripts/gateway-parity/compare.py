@@ -98,7 +98,15 @@ class Normalizer:
         if key == 'updatedAt':
             return cron or {'firstPrompt', 'lastPrompt'} <= parent.keys() or 'isSnapshot' in parent or registry
         if key in ('startedAt', 'completedAt'):
-            return any(marker in parent for marker in ('sessionId', 'runId', 'toolCallId'))
+            # Baseline agent/protocol/result.ts and tool/protocol/result.ts.
+            # A business object carrying only an ID is never clock metadata.
+            turn = ({'type', 'sessionId', 'turnId', 'stopReason', 'usage', 'turns',
+                     'startedAt', 'completedAt'} <= parent.keys()
+                    and parent['type'] in ('success', 'error', 'aborted', 'max_turns'))
+            tool = ({'type', 'toolCallId', 'toolName', 'content', 'startedAt',
+                     'completedAt'} <= parent.keys()
+                    and parent['type'] in ('success', 'error'))
+            return turn or tool
         if key in ('acceptedAt', 'ownerPid'):
             return registry
         if key == 'lastActivity':

@@ -6,9 +6,9 @@
 
 `run_round.py` 在同一 output/cur/home、output/cur/project、output/cur/tmp 运行，所有自有组停止后将整个 cur **rename** 成 label，再创建下一轮 cur。配置/provider URL、token 内容、端口及 cwd 一致。`run.json.runtime` 和 ports 精确比较。driver 请求到 TS 端口或代理端口的连接地址不进语义投影；HTTP 记录保存 path，原始连接地址可由 argv 追溯。
 
-每份输入先扫描实体定义，以稳定实体键配对 UUID，再用同一映射比较帧、HTTP、落盘目录名/内容。请求键为场景/connection/method；连接键为场景/hello_ok 所在 connection；transcript 键为 turnId/sequence；operation 键为启动条目的 turnId/sequence；timeline block 键为 turnId/order；pending 键为事件 type/runId/toolCallId/toolName；cron 键为 projectKey/originSessionKey/message/schedule；普通具名实体键为 type/scope/name。键本身和所有业务内容仍精确比较。重复键对应不同 UUID、同 UUID 对应不同实体键均拒绝，不能按列表位置或首现序配对。无定义锚点的 UUID 保留原文（保守拒绝无法配对的随机 ID），因此纯 UUID 列表换序不会被重新编号抹平。
+每份输入先扫描实体定义，以稳定实体键配对 UUID，再用同一映射比较帧、HTTP、落盘目录名/内容。请求键为场景/connection/method；连接键为场景/hello_ok 所在 connection；transcript 键为 turnId/sequence；operation 键为启动条目的 turnId/sequence；timeline block 键为 turnId/order；pending 键为事件 type/runId/toolCallId/toolName；cron 键为 projectKey/originSessionKey/message/schedule；普通具名实体仅在含 id/name 且 type 非 request/response/event 时建键，键为 type/scope/name；该键须唯一。缺少稳定消歧锚点的同名异 id 仍拒绝，不按首现序配对。键本身和所有业务内容仍精确比较。重复键对应不同 UUID、同 UUID 对应不同实体键均拒绝，不能按列表位置或首现序配对。无定义锚点的 UUID 保留原文（保守拒绝无法配对的随机 ID），因此纯 UUID 列表换序不会被重新编号抹平。
 
-UUID 后的 timeline 后缀、cron session 名沿用该实体映射，同值引用必须仍为同值，多个不同值不能合并。绑定 generation 按对应 connection 实体归一化，同一个 connectionId 出现不同 generation、不同 connectionId 共用 generation 时均拒绝。固定 runId/sessionKey、非 UUID ID、普通文本和文件路径原样保留。当前请求键要求同连接每个 method 至多一个随机请求实体；扩展到重复请求须先定义更细稳定键并重新校准。
+UUID 后的 timeline 后缀、cron session 名沿用该实体映射，同值引用必须仍为同值，多个不同值不能合并。绑定 generation 按对应 connection 实体归一化，同一个 connectionId 出现不同 generation、不同 connectionId 共用 generation 时均拒绝。固定 runId/sessionKey、非 UUID ID、普通文本和路径不做跨侧对齐，路径中的已锚定 UUID 片段按同一映射替换；其余字符原样保留。当前请求键要求同连接每个 method 至多一个随机请求实体；扩展到重复请求须先定义更细稳定键并重新校准。
 
 原帧 `raw` 与 parsed frame 一致、原始 WS 探针 `wireHex` 与 wire/解码一致才能比较。send/receive 两侧均逐项校验 opcode、FIN、RSV、mask 位、lengthCode、payloadLength，并将原始帧头前缀（含 126/127 扩展长度字节和存在时的四个 mask 字节）作为 wireHeaderHex 跨侧逐字节比较。合法但不同的长度编码形态也视为差异；不会先重编码再比。payload 解码后按上述 UUID/时钟规则比较，`raw`/`wireHex` 全文保留原件。标准官方客户端录完整应用消息（含 notification）；底层帧头/control 由专用原始 TCP 探针录全字节。这不声称 Native WebSocket API 暴露了每个隐式 ping/pong。
 
@@ -23,7 +23,7 @@ recorder.seq 从 1 起逐行连续，用于完整性；语义投影按 connectio
 | transcript 同时含 entryId/sequence/turnId/type；cron 同时含 taskId/schedule/message/status；pending 同时含 requestId/ownerId/kind/toolCallId | createdAt |
 | 项目摘要同时含 projectKey/name 及（path 或 fullPath），并含 lastActivity | createdAt |
 | 上述 cron；session metadata 同时含 firstPrompt/lastPrompt 或含 isSnapshot；下述 run registry | updatedAt |
-| 含 sessionId/runId/toolCallId 的运行/工具记录 | startedAt、completedAt |
+| agent turn result 同时含 type/sessionId/turnId/stopReason/usage/turns/startedAt/completedAt，type 为 success/error/aborted/max_turns；或 tool result 同时含 type/toolCallId/toolName/content/startedAt/completedAt，type 为 success/error | startedAt、completedAt |
 | run registry 同时含 runId/ownerPid/acceptedAt | ownerPid、acceptedAt、updatedAt |
 | 项目摘要同时含 projectKey/name 及（path 或 fullPath） | lastActivity |
 | 文件条目含 path/relativePath 与 kind/name/isDirectory | mtimeMs |

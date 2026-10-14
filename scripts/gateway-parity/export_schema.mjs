@@ -267,19 +267,6 @@ class ImportTypeNodeParser {
 
 const tmpTsconfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdrs-schema-tsconfig-'));
 const tmpTsconfig = path.join(tmpTsconfigDir, 'tsconfig.json');
-fs.writeFileSync(tmpTsconfig, JSON.stringify({
-  compilerOptions: {
-    target: 'ES2022',
-    module: 'NodeNext',
-    moduleResolution: 'NodeNext',
-    strict: true,
-    esModuleInterop: true,
-    forceConsistentCasingInFileNames: true,
-    skipLibCheck: true,
-    types: [],
-    noEmit: true,
-  },
-}, null, 2));
 
 const generatorConfig = {
   ...DEFAULT_CONFIG,
@@ -468,6 +455,19 @@ const schemaPath = path.join(outDir, 'gateway-protocol.schema.json');
 const snapshotPath = path.join(outDir, 'gateway-methods.snapshot.json');
 
 try {
+  fs.writeFileSync(tmpTsconfig, JSON.stringify({
+    compilerOptions: {
+      target: 'ES2022',
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      strict: true,
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      skipLibCheck: true,
+      types: [],
+      noEmit: true,
+    },
+  }, null, 2));
   const first = generate();
   const second = checkMode ? generate() : null; // 双生成自比对只在 --check 做；平时生成一次就够
   const selfStable = !checkMode || (first.schemaText === second.schemaText && first.snapshotText === second.snapshotText);
@@ -483,23 +483,24 @@ try {
     if (problems.length) {
       console.error('FAIL export_schema --check');
       for (const p of problems) console.error(`  - ${p}`);
-      process.exit(1);
+      process.exitCode = 1;
+    } else {
+      console.log(`OK export_schema --check：双生成字节一致；schema 与 snapshot 均与已提交文件一致`);
+      console.log(`  基线: ${baseline}`);
+      console.log(`  schema:   ${sha256(schemaPath)}  (${fs.statSync(schemaPath).size} B)`);
+      console.log(`  snapshot: ${sha256(snapshotPath)}  (${fs.statSync(snapshotPath).size} B)`);
     }
-    console.log(`OK export_schema --check：双生成字节一致；schema 与 snapshot 均与已提交文件一致`);
-    console.log(`  基线: ${baseline}`);
-    console.log(`  schema:   ${sha256(schemaPath)}  (${fs.statSync(schemaPath).size} B)`);
-    console.log(`  snapshot: ${sha256(snapshotPath)}  (${fs.statSync(snapshotPath).size} B)`);
-    process.exit(0);
-  }
+  } else {
 
-  fs.mkdirSync(outDir, { recursive: true });
-  writeFileAtomic(schemaPath, first.schemaText);
-  writeFileAtomic(snapshotPath, first.snapshotText);
-  console.log(`基线: ${baseline}`);
-  console.log(`方法数: ${methodList.length}（frames.ts:${methodAnchor[0]}-${methodAnchor[1]}）；协议版本 ${protocolVersion}`);
-  console.log(`按方法内联载荷别名: ${methodPayloadAliases.length} 个方法、${aliasNameSet.size} 条别名`);
-  console.log(`写出 ${path.relative(repoRoot, schemaPath)} (${first.schemaText.length} B, sha256 ${createHash('sha256').update(first.schemaText).digest('hex')})`);
-  console.log(`写出 ${path.relative(repoRoot, snapshotPath)} (${first.snapshotText.length} B)`);
+    fs.mkdirSync(outDir, { recursive: true });
+    writeFileAtomic(schemaPath, first.schemaText);
+    writeFileAtomic(snapshotPath, first.snapshotText);
+    console.log(`基线: ${baseline}`);
+    console.log(`方法数: ${methodList.length}（frames.ts:${methodAnchor[0]}-${methodAnchor[1]}）；协议版本 ${protocolVersion}`);
+    console.log(`按方法内联载荷别名: ${methodPayloadAliases.length} 个方法、${aliasNameSet.size} 条别名`);
+    console.log(`写出 ${path.relative(repoRoot, schemaPath)} (${first.schemaText.length} B, sha256 ${createHash('sha256').update(first.schemaText).digest('hex')})`);
+    console.log(`写出 ${path.relative(repoRoot, snapshotPath)} (${first.snapshotText.length} B)`);
+  }
 } finally {
   // 临时 tsconfig 用完即删（不留残目录在系统临时区）
   fs.rmSync(tmpTsconfigDir, { recursive: true, force: true });

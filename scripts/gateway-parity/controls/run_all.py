@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import DEFAULT_OUT, save
 from compare import compare
+from prerequisites import ROOT, run_prerequisites
 
 
 def rows(folder, name='auth'):
@@ -194,6 +195,12 @@ def run_controls(source, output, proxy_source=None):
         case('business-clock-' + label, 'G4.frames',
              lambda folder, value=shape, key=field: hello_fixture(folder, dict(value, **{key: 2})),
              prepare=lambda folder, value=shape: hello_fixture(folder, value))
+    for marker in ('sessionId', 'runId', 'toolCallId'):
+        for field in ('startedAt', 'completedAt'):
+            shape = {marker: 'business', field: 1}
+            case(f'business-clock-{marker}-{field}', 'G4.frames',
+                 lambda folder, shape=shape, field=field: hello_fixture(folder, dict(shape, **{field: 2})),
+                 prepare=lambda folder, shape=shape: hello_fixture(folder, shape))
     for label, change, close in [('126-to-127', 127, False), ('short-to-126', 126, True),
                                  ('short-to-127', 127, True), ('fin', 'fin', False),
                                  ('rsv', 'rsv', False), ('mask', 'mask', False)]:
@@ -226,7 +233,9 @@ def run_controls(source, output, proxy_source=None):
              reference_source=proxy_source)
         case('truncated-upstream', 'G2.observer', lambda folder: (folder / 'upstream.jsonl').write_text('{broken'),
              reference_source=proxy_source)
-    summary = {'passed': all(item['passed'] for item in results.values()), 'cases': results, 'source': str(source)}
+    prerequisites = run_prerequisites(output / 'prerequisites')
+    summary = {'passed': all(item['passed'] for item in results.values()) and prerequisites['passed'],
+               'cases': results, 'prerequisites': prerequisites, 'source': str(source)}
     save(output / 'results.json', summary)
     return summary
 
@@ -236,7 +245,10 @@ if __name__ == '__main__':
     ap.add_argument('--source', type=Path, default=DEFAULT_OUT / 'ts1')
     ap.add_argument('--output', type=Path, default=DEFAULT_OUT / 'controls')
     ap.add_argument('--proxy-source', type=Path, help='real successful proxy round for upstream observer controls')
+    ap.add_argument('--offline', action='store_true', help='only A4 prerequisites; no source round or services needed')
+    ap.add_argument('--code-root', type=Path, default=ROOT, help='saved pre-change tree for offline counterproof')
     args = ap.parse_args()
-    result = run_controls(args.source, args.output, args.proxy_source)
+    result = (run_prerequisites(args.output, args.code_root) if args.offline else
+              run_controls(args.source, args.output, args.proxy_source))
     print(json.dumps(result, ensure_ascii=False))
     raise SystemExit(0 if result['passed'] else 1)
