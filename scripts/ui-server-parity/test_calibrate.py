@@ -46,7 +46,7 @@ from unittest.mock import patch
 
 import calibrate
 from calibrate import Batch, gate_report
-from common import ClockRefused
+from common import ClockRefused, node_modules_hash, source_hashes
 from controls.run_all import clock_evidence
 
 
@@ -68,6 +68,7 @@ class CalibrationControls(unittest.TestCase):
         (root / 'attempts').mkdir()
         state = dict(head='test-head', baseline='/readonly/baseline', utc_day=calibrate.utc_day(), runs={},
                      pinned={'apparatus': {}, 'source': {'node': 'a' * 64, 'baseline': 'b' * 64,
+                                                       'node_modules': 'd' * 64,
                                                        'recorder_proxy': 'c' * 64}})
         return Batch(root, state)
 
@@ -225,6 +226,19 @@ class CalibrationControls(unittest.TestCase):
                 self.assertEqual(batch.state['build']['sha256'], hashlib.sha256(batch.binary.read_bytes()).hexdigest())
                 self.assertNotEqual(batch.state['build']['sha256'], hashlib.sha256(old_binary.read_bytes()).hexdigest())
                 self.assertEqual(batch.state['build']['target_dir'], str(batch_path / 'cargo-target'))
+                import run as runner
+                standalone = root / '_tmp/standalone'
+                standalone.mkdir()
+                with patch.object(runner, 'ROOT', root), patch.object(runner, 'BINARY', None):
+                    runner.build(standalone / 'cargo-target')
+                    self.assertEqual(subprocess.check_output([str(runner.BINARY)], text=True).strip(), 'FRESH')
+                    self.assertTrue((standalone / 'cargo-home').is_dir())
+                    self.assertIn('rustc', json.loads((standalone / 'toolchain.json').read_text()))
+                toolchain = batch.state['build']['toolchain']
+                batch.state['build']['toolchain'] = {'rustc': 'FORGED', 'cargo': 'FORGED'}
+                with self.assertRaisesRegex(ValueError, 'toolchain changed'):
+                    batch.verify_build()
+                batch.state['build']['toolchain'] = toolchain
                 with self.assertRaisesRegex(ValueError, 'target already exists'):
                     batch.build()
                 original = batch.binary.read_bytes()
@@ -257,3 +271,180 @@ class CalibrationControls(unittest.TestCase):
                 contextlib.redirect_stderr(output):
             self.assertEqual(calibrate.main(), 1)
         self.assertEqual(json.loads(output.getvalue())['verdict'], 'FAIL')
+
+    def test_node_modules_tree_binds_bytes_paths_types_and_link_targets(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = root / 'node_modules'
+            tree.mkdir()
+            file = tree / 'ws.js'
+            file.write_bytes(b'original')
+            outside = root / 'outside'
+            outside.write_bytes(b'one')
+            link = tree / 'link'
+            link.symlink_to(outside)
+            original = node_modules_hash(root)
+            outside.write_bytes(b'two')
+            self.assertEqual(node_modules_hash(root), original)  # not followed
+            for mutation in ('bytes', 'rename', 'empty-directory', 'link-target', 'file-type'):
+                with self.subTest(mutation=mutation):
+                    if mutation == 'bytes':
+                        file.write_bytes(b'forged')
+                    elif mutation == 'rename':
+                        file.rename(tree / 'renamed')
+                    elif mutation == 'empty-directory':
+                        (tree / 'empty').mkdir()
+                    elif mutation == 'link-target':
+                        link.unlink()
+                        link.symlink_to(root / 'missing')
+                    else:
+                        file.unlink()
+                        file.symlink_to(outside)
+                    self.assertNotEqual(node_modules_hash(root), original)
+                    if mutation == 'rename':
+                        (tree / 'renamed').rename(file)
+                    elif mutation == 'empty-directory':
+                        (tree / 'empty').rmdir()
+                    elif mutation == 'link-target':
+                        link.unlink()
+                        link.symlink_to(outside)
+                    else:
+                        file.unlink()
+                        file.write_bytes(b'original')
+            fifo = tree / 'pipe'
+            os.mkfifo(fifo)
+            with self.assertRaisesRegex(ValueError, 'nonregular node_modules'):
+                node_modules_hash(root)
+
+    def test_batch_pin_and_resume_reject_node_modules_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            batch = self.batch(tmp)
+            batch.state['node_modules'] = {'sha256': 'd' * 64}
+            original = batch.state['pinned']['source']
+            with patch('calibrate.apparatus_hashes', return_value={}), \
+                    patch('calibrate.source_hashes', return_value=original):
+                self.assertEqual(batch.pin(), batch.state['pinned'])
+            with patch('calibrate.git_admission'), patch.object(batch, 'verify_build'), \
+                    patch('calibrate.source_hashes', return_value={**original, 'node_modules': 'e' * 64}), \
+                    self.assertRaisesRegex(ValueError, 'node_modules changed'):
+                batch.guard()
+            del batch.state['node_modules']
+            with patch('calibrate.source_hashes', return_value=original), self.assertRaisesRegex(ValueError, 'absent batch binding'):
+                batch.pin()
+
+    def test_real_source_binding_rejects_node_modules_bytes_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            batch = self.batch(tmp)
+            baseline = Path(tmp) / 'baseline'
+            for name in ('src', 'dist', 'ui/server', 'node_modules/ws'):
+                (baseline / name).mkdir(parents=True)
+            for name in ('package.json', 'pnpm-lock.yaml', 'ui/package.json'):
+                (baseline / name).write_text('manifest')
+            dependency = baseline / 'node_modules/ws/index.js'
+            dependency.write_text('original')
+            batch.binary.parent.mkdir(parents=True)
+            batch.binary.write_bytes(b'recorder')
+            batch.state['baseline'] = str(baseline)
+            batch.state['node_modules'] = {'sha256': node_modules_hash(baseline)}
+            with patch('calibrate.apparatus_hashes', return_value={}):
+                batch.state['pinned'] = batch.pin()
+                previous = batch.state['pinned']['source']
+                dependency.write_text('forged observations')
+                changed = source_hashes(baseline, batch.binary)
+                self.assertEqual(changed['baseline'], previous['baseline'])
+                self.assertNotEqual(changed['node_modules'], previous['node_modules'])
+                with patch('calibrate.git_admission'), patch.object(batch, 'verify_build'), \
+                        self.assertRaisesRegex(ValueError, 'node_modules changed'):
+                    batch.guard()
+                dependency.unlink()
+                (baseline / 'node_modules/ws').rmdir()
+                (baseline / 'node_modules').rmdir()
+                with self.assertRaisesRegex(ValueError, 'source unavailable/changed'):
+                    batch.pin()
+
+    def test_cargo_config_injections_fail_before_any_process(self):
+        from apparatus import cargo_config_admission, cargo_process
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            cwd, home = root / 'batch', root / 'batch/cargo-home'
+            home.mkdir(parents=True)
+            paths = [root / '.cargo/config', root / '.cargo/config.toml',
+                     cwd / '.cargo/config.toml', home / '.cargo/config.toml',
+                     home / 'config', home / 'config.toml', home / 'credentials.toml']
+            for path in paths:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('[build]\nrustc-wrapper="injected"\n')
+                with self.subTest(path=path), patch('apparatus.subprocess.run') as run, \
+                        self.assertRaisesRegex(ValueError, 'forbidden'):
+                    cargo_process(['cargo', '-V'], cwd, home, cwd / 'target')
+                run.assert_not_called()
+                path.unlink()
+            # A broken link is an injection too, even though is_file() is false.
+            (root / '.cargo/config.toml').symlink_to(root / 'absent')
+            with self.assertRaisesRegex(ValueError, 'forbidden'):
+                cargo_config_admission(cwd, home)
+
+    def test_cargo_allowlist_removes_environment_and_PATH_injections(self):
+        from apparatus import cargo_environment
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            injections = {'RUSTFLAGS': '--cfg forged', 'CARGO_ENCODED_RUSTFLAGS': 'forged',
+                          'CARGO_BUILD_RUSTC_WRAPPER': '/injected', 'RUSTC_WRAPPER': '/injected',
+                          'RUSTC_WORKSPACE_WRAPPER': '/injected', 'RUSTC': '/injected',
+                          'RUSTUP_TOOLCHAIN': 'injected', 'LD_PRELOAD': '/injected',
+                          'DYLD_INSERT_LIBRARIES': '/injected', 'CC': '/injected',
+                          'CARGO_HOME': '/injected', 'PATH': '/injected'}
+            for key, value in injections.items():
+                with self.subTest(key=key), patch.dict('os.environ', {key: value}):
+                    env = cargo_environment(root, root / 'home', root / 'target')
+                    self.assertNotEqual(env.get(key), value)
+                    self.assertNotIn('/injected', env['PATH'])
+                    self.assertEqual(set(env), {'HOME', 'PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR',
+                                                'RUSTUP_HOME', 'RUSTUP_AUTO_INSTALL'})
+
+    def test_cargo_seed_copies_only_index_and_compressed_cache(self):
+        from apparatus import prepare_cargo
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            seed = root / 'seed'
+            for name in ('registry/index/entry', 'registry/cache/package.crate',
+                         'registry/src/serde_json/build.rs', 'git/checkouts/build.rs',
+                         'config.toml', 'credentials.toml'):
+                file = seed / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text('injected')
+            home = root / 'cargo-home'
+            prepare_cargo(root, home, root / 'target', seed)
+            files = {str(p.relative_to(home)) for p in home.rglob('*') if p.is_file()}
+            self.assertEqual(files, {'registry/index/entry', 'registry/cache/package.crate'})
+            with self.assertRaises(FileExistsError):
+                prepare_cargo(root, home, root / 'target2', seed)
+            (seed / 'registry/cache/link.crate').symlink_to(seed / 'config.toml')
+            with self.assertRaisesRegex(ValueError, 'nonregular Cargo cache'):
+                prepare_cargo(root, root / 'home2', root / 'target3', seed)
+
+    def test_cached_crate_checksum_injection_fails_before_Cargo(self):
+        import hashlib
+        from apparatus import cargo_process
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            manifest = root / 'Cargo.toml'
+            manifest.write_text('[package]\nname="fixture"\nversion="0.1.0"\n')
+            crate = root / 'home/registry/cache/index/serde_json-1.0.151.crate'
+            crate.parent.mkdir(parents=True)
+            original = b'locked archive bytes'
+            crate.write_bytes(original)
+            manifest.with_name('Cargo.lock').write_text(
+                'version=4\n[[package]]\nname="serde_json"\nversion="1.0.151"\n'
+                'source="registry+https://github.com/rust-lang/crates.io-index"\n'
+                'checksum="' + hashlib.sha256(original).hexdigest() + '"\n')
+            command = ['cargo', 'build', '--locked', '--offline', '--manifest-path', str(manifest)]
+            with patch('apparatus.subprocess.run') as run:
+                cargo_process(command, root, root / 'home', root / 'target')
+                run.assert_called_once()
+                run.reset_mock()
+                crate.write_bytes(original + b'FORGED')
+                with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                    cargo_process(command, root, root / 'home', root / 'target')
+                run.assert_not_called()

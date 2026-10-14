@@ -53,7 +53,7 @@ import subprocess
 import sys
 import uuid
 
-from apparatus import load_source
+from apparatus import load_source, prepare_cargo, cargo_process, cargo_identity
 from snapshot import capture
 from common import apparatus_hashes, source_hashes, ClockMonitor, ClockRefused, validate_clock_check
 
@@ -83,11 +83,12 @@ BINARY = None
 def build(target):
     """Standalone captures also use a newly created target, never _build artifacts."""
     global BINARY
-    target.mkdir(exist_ok=False)
-    env = dict(os.environ, CARGO_HOME=str(ROOT / '_build/cargo-home'),
-               CARGO_TARGET_DIR=str(target))
-    subprocess.run(['cargo', 'build', '--locked', '--offline', '--manifest-path',
-                    str(ROOT / 'scripts/exp008/proxy/Cargo.toml')], env=env, check=True)
+    cwd, home = target.parent, target.parent / 'cargo-home'
+    prepare_cargo(cwd, home, target, ROOT / '_build/cargo-home')
+    identity = cargo_identity(cwd, home, target)
+    b1.save(cwd, 'toolchain.json', identity)
+    cargo_process(['cargo', 'build', '--locked', '--offline', '--manifest-path',
+                   str(ROOT / 'scripts/exp008/proxy/Cargo.toml')], cwd, home, target)
     BINARY = target / 'debug/pdrs-exp008-proxy'
 
 

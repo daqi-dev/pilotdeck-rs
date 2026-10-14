@@ -120,7 +120,7 @@ def run_multimodal_controls():
                     case.update(side='proxy', handler='ts')
                 (directory / 'cases.jsonl').write_text(''.join(json.dumps(c) + '\n' for c in cases))
             dirs.append(directory)
-        def synthetic_identity(directory, mode, apparatus):
+        def synthetic_identity(directory, mode, apparatus, *, historical=False):
             # Never write fake real run metadata. Production identity gate is
             # separately tested below and unpatched in all CLI entry points.
             i = dirs.index(Path(directory))

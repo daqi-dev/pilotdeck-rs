@@ -10,6 +10,8 @@ import importlib.abc
 import importlib.util
 from pathlib import Path
 import re
+import shutil
+import stat
 import subprocess
 
 SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md', 'multimodal.md')
@@ -18,6 +20,7 @@ EXP008_FILES = ('compare.py', 'controls.py', 'driver.mjs', 'enumerate_hook.mjs',
                 'preload.mjs', 'proxy/Cargo.lock', 'proxy/Cargo.toml', 'proxy/src/main.rs',
                 'proxy/tests/node-ws-semantics.cjs', 'reconcile_routes.py', 'run.py', 'vite.config.mjs')
 APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008', 'specs/ui-server-parity')
+TOOLCHAIN_FILES = ('rust-toolchain', 'rust-toolchain.toml')
 
 
 class ApparatusUnsafe(ValueError):
@@ -47,17 +50,22 @@ def scan(directory):
                                               onerror=lambda error: errors.append(str(error))):
         for name in directories + names:
             path = os.path.join(parent, name)
+            if name == '.DS_Store' and not stat.S_ISREG(os.lstat(path).st_mode):
+                errors.append('nonregular .DS_Store: ' + path)
             if os.path.islink(path):
                 errors.append('apparatus symlink: ' + path)
             if name == '__pycache__' or name.endswith('.pyc'):
                 errors.append('forbidden Python cache: ' + path)
         for name in names:
             path = os.path.join(parent, name)
-            if os.path.isfile(path):
+            if name == '.DS_Store' and stat.S_ISREG(os.lstat(path).st_mode):
+                continue
+            if stat.S_ISREG(os.lstat(path).st_mode):
                 files.append(path)
             else:
                 errors.append('apparatus nonregular file: ' + path)
     registered = tracked_files(directory)
+    registered = {p for p in registered if Path(p).name != '.DS_Store'}
     errors.extend('untracked apparatus file: ' + path for path in sorted(set(files) - registered))
     errors.extend('missing tracked apparatus file: ' + path for path in sorted(registered - set(files)))
     if errors:
@@ -70,14 +78,130 @@ def git_admission(root, expected_head=None):
     root = Path(root)
     scan(root / 'scripts/ui-server-parity')
     scan(root / 'scripts/exp008')
+    toolchain_files(root)
     status = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain',
-                                     '--untracked-files=all', '--', *APPARATUS_PATHS], text=True)
+                                     '--untracked-files=all', '-z', '--', *APPARATUS_PATHS,
+                                     *TOOLCHAIN_FILES])
+    # Exact basename + regular file only; never exempt links/directories.
+    records = status.split(b'\0')
+    status = b'\0'.join(record for record in records if record and not
+                       (Path(os.fsdecode(record[3:])).name == '.DS_Store'
+                        and os.path.lexists(root / os.fsdecode(record[3:]))
+                        and stat.S_ISREG((root / os.fsdecode(record[3:])).lstat().st_mode)))
     if status:
-        raise ApparatusUnsafe('dirty apparatus git status: ' + status.strip())
+        raise ApparatusUnsafe('dirty apparatus git status: ' + os.fsdecode(status))
     head = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
     if expected_head is not None and head != expected_head:
         raise ApparatusUnsafe('batch HEAD changed; start a NEW batch')
     return head
+
+
+def toolchain_files(root):
+    """Optional root toolchain selectors must be tracked regular files."""
+    root = Path(root)
+    tracked = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-z', '--',
+                                       *TOOLCHAIN_FILES]).split(b'\0')
+    files = []
+    for name in TOOLCHAIN_FILES:
+        path = root / name
+        present = os.path.lexists(path)
+        if present != (os.fsencode(name) in tracked):
+            raise ApparatusUnsafe('untracked/missing toolchain input: ' + str(path))
+        if present:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise ApparatusUnsafe('nonregular toolchain input: ' + str(path))
+            files.append(path)
+    return files
+
+
+def cargo_config_admission(cwd, home):
+    """Cargo searches cwd ancestors plus CARGO_HOME; reject before any process."""
+    for directory in set([Path(cwd).absolute(), *Path(cwd).absolute().parents,
+                          Path(home).absolute(), *Path(home).absolute().parents]):
+        if directory.is_symlink():
+            raise ApparatusUnsafe('Cargo ancestor symlink: ' + str(directory))
+        for name in ('.cargo/config', '.cargo/config.toml'):
+            if os.path.lexists(directory / name):
+                raise ApparatusUnsafe('Cargo ancestor config forbidden: ' + str(directory / name))
+    for name in ('config', 'config.toml', 'credentials', 'credentials.toml'):
+        if os.path.lexists(Path(home) / name):
+            raise ApparatusUnsafe('Cargo home config/credentials forbidden: ' + str(Path(home) / name))
+
+
+def cargo_environment(cwd, home, target):
+    cargo_config_admission(cwd, home)
+    # Trust the installed host rustup, never a repository or inherited PATH tool.
+    import pwd
+    user_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    tools = user_home / '.cargo/bin'
+    if not (tools / 'rustup').is_file():
+        raise ApparatusUnsafe('installed rustup missing: ' + str(tools))
+    # An allowlist also removes linker/compiler, loader and shell injection vars.
+    return {'HOME': str(user_home), 'PATH': os.pathsep.join(map(str, [tools, '/usr/bin', '/bin', '/usr/sbin', '/sbin'])),
+            'CARGO_HOME': str(home), 'CARGO_TARGET_DIR': str(target),
+            'RUSTUP_HOME': str(user_home / '.rustup'), 'RUSTUP_AUTO_INSTALL': '0'}
+
+
+def prepare_cargo(cwd, home, target, seed):
+    cargo_config_admission(cwd, home)
+    target.mkdir(exist_ok=False)
+    home.mkdir(exist_ok=False)
+    for path in (Path(seed), Path(seed) / 'registry'):
+        if path.is_symlink():
+            raise ApparatusUnsafe('Cargo cache seed directory symlink: ' + str(path))
+    # Do not copy unpacked code, git checkouts, configuration or credentials.
+    for name in ('index', 'cache'):
+        source = Path(seed) / 'registry' / name
+        if not os.path.lexists(source):
+            continue
+        if not source.is_dir() or source.is_symlink():
+            raise ApparatusUnsafe('nonregular Cargo cache seed: ' + str(source))
+        for parent, dirs, names in os.walk(source, followlinks=False):
+            for path in [Path(parent), *(Path(parent) / n for n in dirs + names)]:
+                mode = path.lstat().st_mode
+                if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                    raise ApparatusUnsafe('nonregular Cargo cache seed: ' + str(path))
+        shutil.copytree(source, home / 'registry' / name)
+    return cargo_environment(cwd, home, target)
+
+
+def cargo_process(command, cwd, home, target, **kwargs):
+    env = cargo_environment(cwd, home, target)
+    if '--manifest-path' in command:
+        cargo_archive_admission(home, Path(command[command.index('--manifest-path') + 1]))
+    return subprocess.run(command, cwd=cwd, env=env, check=True, **kwargs)
+
+
+def cargo_archive_admission(home, manifest):
+    """Cargo trusts cached .crate files in some offline paths; check them ourselves."""
+    import tomllib
+    lock = tomllib.loads(manifest.with_name('Cargo.lock').read_text())
+    for package in lock.get('package', []):
+        source = package.get('source')
+        if source is None:
+            continue  # local, git-admitted manifest/source
+        if source != 'registry+https://github.com/rust-lang/crates.io-index':
+            raise ApparatusUnsafe('unsupported Cargo dependency source: ' + source)
+        name = package['name'] + '-' + package['version'] + '.crate'
+        expected = package.get('checksum')
+        candidates = list((Path(home) / 'registry/cache').glob('*/' + name))
+        if not expected or not candidates:
+            raise ApparatusUnsafe('locked Cargo archive absent/checksum missing: ' + name)
+        for archive in candidates:
+            if not stat.S_ISREG(archive.lstat().st_mode):
+                raise ApparatusUnsafe('nonregular locked Cargo archive: ' + str(archive))
+            with archive.open('rb') as data:
+                actual = hashlib.file_digest(data, 'sha256').hexdigest()
+            if actual != expected:
+                raise ApparatusUnsafe('Cargo.lock archive checksum mismatch: ' + str(archive))
+
+
+def cargo_identity(cwd, home, target):
+    versions = {}
+    for name, args in (('rustc', ['-vV']), ('cargo', ['-V'])):
+        versions[name] = cargo_process([name, *args], cwd, home, target,
+                                      capture_output=True, text=True).stdout.strip()
+    return versions
 
 
 def manifest_pins(root):
@@ -165,6 +289,7 @@ def preflight(directory):
         root = directory.parents[1]
         files = scan(directory) + scan(root / 'scripts/exp008')
         files += [root / 'specs/ui-server-parity' / name for name in SPEC_FILES]
+        files += toolchain_files(root)
         pins = manifest_pins(root)
         for file in files:
             verified_source(file, root, pins)

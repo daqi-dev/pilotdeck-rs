@@ -46,7 +46,7 @@ import re
 import tempfile
 import subprocess
 import unicodedata
-from apparatus import scan, ApparatusUnsafe, SPEC_FILES, EXP008_FILES
+from apparatus import scan, ApparatusUnsafe, SPEC_FILES, EXP008_FILES, toolchain_files
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / 'specs/ui-server-parity'
@@ -61,7 +61,8 @@ def apparatus_files(root):
 
 def required_files(root, folder):
     return ({folder / name for name in REQUIRED} | apparatus_files(root)
-            | {root / 'scripts/exp008' / name for name in EXP008_FILES})
+            | {root / 'scripts/exp008' / name for name in EXP008_FILES}
+            | set(toolchain_files(root)))
 
 
 def check(folder=SPEC, *, root=ROOT):

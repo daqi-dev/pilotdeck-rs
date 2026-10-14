@@ -56,7 +56,7 @@ class AdmissionBoundaries(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix='b2-mode-gates-')
         self.root = Path(self.tmp.name).resolve()
         self.apparatus = apparatus_hashes()
-        self.source = {k: 'a' * 64 for k in ('node', 'baseline', 'recorder_proxy')}
+        self.source = {k: 'a' * 64 for k in ('node', 'baseline', 'node_modules', 'recorder_proxy')}
         self.meta = {'mode': 'direct', 'synthetic': False, 'run_id': 'test-only-1',
                      'fixture_path': '/isolated/same/direct', 'apparatus_sha256': self.apparatus,
                      'source_sha256': self.source, 'source_sha256_end': self.source,
@@ -94,6 +94,13 @@ class AdmissionBoundaries(unittest.TestCase):
                 self.write('one', meta)
                 with self.assertRaises(ValueError):
                     capture_identity(self.first, 'direct', self.apparatus)
+
+    def test_legacy_source_binding_is_only_allowed_for_historical_replay(self):
+        source = {k: v for k, v in self.source.items() if k != 'node_modules'}
+        self.write('one', {**self.meta, 'source_sha256': source, 'source_sha256_end': source})
+        with self.assertRaisesRegex(ValueError, 'incomplete or changed'):
+            capture_identity(self.first, 'direct', self.apparatus)
+        self.assertEqual(capture_identity(self.first, 'direct', self.apparatus, historical=True)['source_sha256'], source)
 
     def test_copied_identity_cross_day_source_path_and_interval_rejected(self):
         pool = ReferencePool.__new__(ReferencePool)
