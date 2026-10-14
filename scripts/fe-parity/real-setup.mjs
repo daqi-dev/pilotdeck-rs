@@ -2,7 +2,9 @@
 import { requireUI, ownedPath } from './env.mjs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { assertRealExecutionEnv } from './execution-env.mjs';
 export default async function setup(config) {
+  assertRealExecutionEnv(process.env);
   const { chromium, expect } = requireUI('@playwright/test');
   const project = config.projects[0], storageState = ownedPath(project.use.storageState);
   const browser = await chromium.launch({ channel: 'chrome', headless: true, ...project.use.launchOptions });

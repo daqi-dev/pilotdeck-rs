@@ -1,6 +1,8 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { baseline, requireUI, ownedPath, realPorts } from './env.mjs';
+import { assertRealExecutionEnv } from './execution-env.mjs';
+assertRealExecutionEnv(process.env);
 const runDir = ownedPath(process.env.PILOTDECK_E2E_RUN_DIR);
 const mode = process.env.PILOTDECK_E2E_MODE;
 if (!['ready', 'onboarding'].includes(mode)) throw new Error('Invalid real mode');

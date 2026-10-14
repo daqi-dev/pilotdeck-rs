@@ -1,22 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { readFile, readdir, stat, mkdtemp, rm, mkdir, symlink, rename } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, readdir, stat, mkdtemp, rm, mkdir, symlink, rename, realpath, unlink, writeFile } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { userInfo } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { baseline, requireUI, REAL_TEST_KEY, realPorts, realOrigin, root } from './env.mjs';
 import { createMockLLM, planResponse, probeColor } from './mock-llm.mjs';
 import { localFetchURL, installNetworkIsolation } from './real-network.mjs';
 import { runtimeConfig, runtimeArgs, prepareRuntime } from './real-launch.mjs';
-import { realExecutionEnv } from './execution-env.mjs';
+import { realExecutionEnv, assertRealExecutionEnv, prepareRealOSDirectories, realOSPaths, realChromeEnv } from './execution-env.mjs';
 import { assertRealPortsFree, validateRealRegistration, assertCanonicalAncestor, bridgeReady, realExecutionError } from './real-runner.mjs';
-import { processTree, tcpRecords, forbiddenTCP, startTCPAudit, lsofExitOutput } from './real-tcp-audit.mjs';
+import { processTree, tcpRecords, forbiddenTCP, forbiddenProcesses, startTCPAudit, lsofExitOutput, processHomes, environmentTargets } from './real-tcp-audit.mjs';
 import { PENDING_ORCHESTRATION, reconcileReal } from './accounting.mjs';
+import { requiredChromeFlags, chromeDefaultsEvidence, realChromeLaunchOptions } from './real-browser.mjs';
+import { startIsolatedMockLLM } from './real-mock.mjs';
+import { realGitCandidates, discoverRealGit, prepareRealGitBin, assertRealGitBin } from './real-git.mjs';
 const headers = { authorization: `Bearer ${REAL_TEST_KEY}` };
 const request = body => ({ method: 'POST', path: '/v1/chat/completions', headers, body });
 const marker = 'E2E-CHAT-google-123456789';
@@ -28,10 +33,10 @@ const body = { model: 'gpt-4.1', max_tokens: 1024, messages: [{ role: 'system', 
 
 // Execute the frozen parser/probe functions to validate compatibility independently
 // of the mock's own serialization. Omit imports and top-level service side effects.
-async function frozenFunctions(path, dependencies = {}) {
+async function frozenFunctions(path, dependencies = {}, names) {
   const ts = requireUI('typescript'), source = await readFile(resolve(baseline, path), 'utf8');
   const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
-  const functions = ast.statements.filter(node => ts.isFunctionDeclaration(node));
+  const functions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && (!names || names.includes(node.name?.text)));
   const code = ts.transpileModule(functions.map(node => node.getText(ast)).join('\n'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -118,7 +123,7 @@ test('runtime env/config isolation, exact ports, no occupied-port kill, preloade
   for (const mode of ['ready', 'onboarding']) {
     const env = realExecutionEnv({ PATH: process.env.PATH, HOME: '/kept', PILOT_HOME: '/bad', WORKSPACES_ROOT: '/bad', HOST: '0.0.0.0', PILOTDECK_GATEWAY_TOKEN: 'bad', PILOTDECK_GATEWAY_TOKEN_PATH: '/bad', PILOTDECK_E2E_OPENAI_MODEL: 'wrong', OPENAI_API_KEY: 'secret', NODE_OPTIONS: '--bad', HTTP_PROXY: 'bad', npm_config_offline: 'false', TASKMASTER_SKIP_AUTO_UPDATE: '0' },
       { output: '/owned/output', runDir: '/owned/run', mode });
-    assert.equal(env.HOME, '/kept'); assert.equal(env.HOST, '127.0.0.1');
+    assert.equal(env.HOME, '/owned/run/home-os'); assert.equal(env.HOST, '127.0.0.1');
     assert.equal(env.PILOTDECK_E2E_API_KEY, REAL_TEST_KEY); assert.equal(env.PILOT_HOME, '/owned/run/home');
     assert.equal(env.PILOTDECK_E2E_OPENAI_MODEL, undefined); assert.equal(env.OPENAI_API_KEY, undefined); assert.equal(env.NODE_OPTIONS, undefined);
     assert.equal(env.PILOTDECK_GATEWAY_TOKEN, undefined);
@@ -406,4 +411,557 @@ test('real runner: exit 1 accepted only for original failed results', () => {
   assert.equal(realExecutionError({ code: 0, signal: null }, report('passed'), ''), null);
   for (const execution of [{ code: 2 }, { code: 1, signal: 'SIGTERM' }, { code: null }, { code: 0 }]) assert(realExecutionError(execution, report('failed'), ''));
   assert(realExecutionError({ code: 1 }, report('passed'), ''));
+});
+
+test('round six: OS HOME/XDG/tmp and browser opt-out are mandatory; real OS home and missing opt-out FAIL before spawn', async () => {
+  await mkdir(resolve(root, '_tmp/fe-parity/real-run'), { recursive: true });
+  const parent = await mkdtemp(resolve(root, '_tmp/fe-parity/real-run/unit-home-r6-'));
+  try {
+    for (const mode of ['ready', 'onboarding']) {
+      const env = realExecutionEnv({ ...process.env, HOME: userInfo().homedir, USERPROFILE: '/operator', XDG_CONFIG_HOME: '/operator/config', XDG_DATA_HOME: '/operator/data', XDG_CACHE_HOME: '/operator/cache', TMPDIR: '/operator/tmp', PILOTDECK_SKIP_BROWSER_OPEN: '0' },
+        { output: parent, runDir: resolve(parent, mode), mode });
+      assertRealExecutionEnv(env);
+      assert.notEqual(env.HOME, userInfo().homedir);
+      assert.notEqual(env.HOME, env.PILOT_HOME);
+      for (const [name, expected] of Object.entries(realOSPaths(env.PILOTDECK_E2E_RUN_DIR))) assert.equal(env[name], expected);
+      assert.equal(env.PILOTDECK_SKIP_BROWSER_OPEN, '1');
+      const missing = { ...env }; delete missing.PILOTDECK_SKIP_BROWSER_OPEN;
+      assert.throws(() => assertRealExecutionEnv(missing), /FAIL:.*SKIP_BROWSER_OPEN/);
+      assert.throws(() => assertRealExecutionEnv({ ...env, HOME: userInfo().homedir }), /FAIL:.*operator home/);
+      for (const name of Object.keys(realOSPaths(env.PILOTDECK_E2E_RUN_DIR))) assert.throws(() => assertRealExecutionEnv({ ...env, [name]: '/operator' }), /FAIL:/);
+      await prepareRealOSDirectories(env);
+      for (const directory of new Set(Object.values(realOSPaths(env.PILOTDECK_E2E_RUN_DIR)))) assert((await stat(directory)).isDirectory());
+      // A real Node child proves os.homedir()/tmpdir(), without importing a
+      // server, connecting a socket, or inspecting the operator's filesystem.
+      const actual = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', 'import os from "node:os"; console.log(JSON.stringify({home:os.homedir(),tmp:os.tmpdir()}))'], { env, encoding: 'utf8' }));
+      assert.deepEqual(actual, { home: env.HOME, tmp: env.TMPDIR });
+      const runtime = await prepareRuntime(mode, env.PILOTDECK_E2E_RUN_DIR);
+      assert.equal(runtime.runDir, env.PILOTDECK_E2E_RUN_DIR);
+      await assert.rejects(prepareRuntime(mode, env.PILOTDECK_E2E_RUN_DIR), /EEXIST/);
+    }
+    const escaped = realExecutionEnv({}, { output: parent, runDir: resolve(parent, 'escaped'), mode: 'ready' });
+    await mkdir(escaped.PILOTDECK_E2E_RUN_DIR);
+    await symlink('/private/tmp', escaped.HOME);
+    await assert.rejects(prepareRealOSDirectories(escaped), /FAIL:.*symlink escape/);
+  } finally { await rm(parent, { recursive: true }); }
+});
+
+test('round seven: open/xdg-open/osascript and applications FAIL immediately, owned Playwright Chrome requires current ancestry and safe flags (injected ps only)', async () => {
+  const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const base = '10 1 5 node runner\n20 10 20 node playwright\n21 20 20 node worker\n30 10 30 node runtime';
+  const launch = `${chrome} ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-abc`;
+  const options = { playwrightRoots: [20], browserTmpRoots: ['/owned/tmp'], processHOME: new Map([[22, userInfo().homedir], [23, userInfo().homedir]]) };
+  assert.deepEqual(forbiddenProcesses(processTree(`${base}\n22 21 20 ${launch}`, 10), options), []);
+  for (const command of ['open', '/usr/bin/open http://127.0.0.1:3010', 'xdg-open http://127.0.0.1:3010', '/usr/bin/osascript -e script', '/bin/sh -c open http://127.0.0.1:3010', '/Applications/LibreOffice.app/Contents/MacOS/soffice --version', '/Applications/GoogleUpdater.app/Contents/MacOS/GoogleUpdater', chrome, launch.replace('/owned/tmp/', '/operator/'), launch.replace(' --remote-debugging-pipe', ''), launch.replace('playwright_chromiumdev_profile-', 'other-')]) {
+    const rows = processTree(`${base}\n22 21 20 ${command}`, 10);
+    assert.equal(forbiddenProcesses(rows, options).length, 1, command);
+  }
+  // Even identical browser arguments from the native runtime cannot authorize it.
+  assert.equal(forbiddenProcesses(processTree(`${base}\n32 30 30 ${launch}`, 10), options).length, 1);
+  const helper = '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/142.0/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer';
+  const browserTree = processTree(`${base}\n22 21 20 ${launch}\n23 22 20 ${helper}\n24 22 20 /Applications/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`, 10);
+  assert.deepEqual(forbiddenProcesses(browserTree, options).map(row => row.pid), [24]);
+  assert.equal(forbiddenProcesses(processTree(`${base}\n23 30 30 ${helper}`, 10), options).length, 1);
+  const remembered = { ...options, approvedChrome: new Map([[22, launch], [23, helper]]) };
+  assert.equal(forbiddenProcesses(processTree(`${base}\n23 1 20 ${helper}`, 10, [20]), remembered).length, 1, 'previously attested helper loses approval when its current chain breaks');
+  assert.equal(forbiddenProcesses(processTree(`${base}\n22 21 20 ${launch.replace('/owned/tmp/', '/operator/')}`, 10), remembered).length, 1, 'changed command must lose approval');
+  assert.equal(forbiddenProcesses(processTree(`${base}\n24 21 20 /Users/example/Library/Google/GoogleUpdater/GoogleUpdater`, 10), options).length, 1);
+  let forbidden = false, killed = 0, lsofCalls = 0;
+  const records = [];
+  const audit = await startTCPAudit({ rootPid: 10, groupRoots: () => [20, 30], intervalMs: 60_000,
+    run: async file => {
+      if (file === 'ps') return base + (forbidden ? '\n32 30 32 /usr/bin/open http://127.0.0.1:3010' : '');
+      lsofCalls++; return '';
+    },
+    onFatal: (_error, groups) => { killed++; assert(groups.includes(32)); },
+    record: async row => { if (row.status === 'FAIL') assert.equal(killed, 1); records.push(row); },
+  });
+  forbidden = true;
+  await assert.rejects(audit.checkpoint('injected-open'), /FAIL:.*forbidden process/);
+  assert.equal(killed, 1); assert.equal(lsofCalls, 1, 'fail before lsof or evidence I/O');
+  assert.equal(records.at(-1).forbiddenProcesses[0].pid, 32);
+  await assert.rejects(audit.stop(), /FAIL:.*forbidden process/);
+});
+
+test('round seven: Chrome alone gets account HOME; setup and baseline Node retain isolated HOME; installed default flags appear once (no browser)', () => {
+  const env = realExecutionEnv({ HOME: '/inherited-wrong', XDG_CONFIG_HOME: '/operator-config',
+    UserInstallation: '/operator/profile', SYSUSERCONFIG: '/operator/config', SYSUSERHOME: '/operator/home', URE_BOOTSTRAP: '/operator/bootstrap' }, { output: '/owned/out', runDir: '/owned/run', mode: 'ready' });
+  const chrome = realChromeEnv(env), options = realChromeLaunchOptions(env), evidence = chromeDefaultsEvidence();
+  assertRealExecutionEnv(env);
+  assert.equal(env.HOME, '/owned/run/home-os');
+  assert.equal(chrome.HOME, userInfo().homedir); assert.equal(chrome.USERPROFILE, chrome.HOME);
+  assert.equal(chrome.TMPDIR, env.TMPDIR); assert.equal(chrome.NODE_OPTIONS, '');
+  assert(!('XDG_CONFIG_HOME' in chrome));
+  for (const name of ['UserInstallation', 'SYSUSERCONFIG', 'SYSUSERHOME', 'URE_BOOTSTRAP']) assert(!(name in env));
+  assert.throws(() => realChromeEnv({ ...env, HOME: userInfo().homedir }), /FAIL:/);
+  assert.throws(() => assertRealExecutionEnv(chrome), /FAIL:/);
+  for (const flag of requiredChromeFlags) assert.equal([...evidence.defaults, ...options.args].filter(value => value === flag).length, 1);
+  assert(!options.args.some(value => value.startsWith('--user-data-dir')), 'Playwright supplies the temporary profile');
+  assert.equal(evidence.sourceSHA256.length, 64);
+});
+
+test('round seven: five requested negative controls and strict updater/server ancestry plus environment positives (injected snapshots)', () => {
+  const operatorHome = '/Users/operator', serviceHome = '/owned/run/home-os';
+  const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-abc`;
+  const userUpdater = `${operatorHome}/Library/Application Support/Google/GoogleUpdater/142.0/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`;
+  const helperUpdater = '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/155.0/Helpers/GoogleUpdater.app/Contents/MacOS/GoogleUpdater';
+  const server = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
+  const office = '/Applications/LibreOffice.app/Contents/MacOS/soffice --version';
+  const base = `10 1 5 node runner\n20 10 20 node playwright\n21 20 20 node worker\n22 21 20 ${chrome}\n30 10 30 node supervisor\n31 30 30 ${server}`;
+  const options = { playwrightRoots: [20], browserTmpRoots: ['/owned/tmp'], runtimeRoots: [{ pid: 30, home: serviceHome }], operatorHome, updaterRealpath: path => path,
+    processHOME: new Map([[22, operatorHome], [23, operatorHome], [31, serviceHome], [32, serviceHome]]) };
+  const failures = (extra = '', overrides = {}) => forbiddenProcesses(processTree(base + extra, 10), { ...options, ...overrides }).map(row => row.pid);
+  assert.deepEqual(failures(`\n23 22 20 ${userUpdater} --wake\n32 31 30 ${office}`), []);
+  assert.deepEqual(failures('', { processHOME: new Map([[22, serviceHome], [31, serviceHome]]) }), [], 'Chrome HOME is outside the environment audit');
+  assert.deepEqual(failures(`\n23 22 20 ${helperUpdater} --enable-logging`), [23], 'bundle Helpers GoogleUpdater FAIL');
+  for (const flag of ['--install', '--install=true', '--register', '--uninstall', '--unregister', '--setup', '--system', '--self-update', '--INSTALL']) {
+    assert.deepEqual(failures(`\n23 22 20 ${userUpdater} ${flag}`), [23], `user GoogleUpdater ${flag} FAIL`);
+  }
+  assert.deepEqual(failures(`\n32 30 30 ${office}`), [32], 'soffice supervisor ancestry without server FAIL');
+  assert.deepEqual(failures(`\n32 31 30 ${office}`, { processHOME: new Map([...options.processHOME, [32, operatorHome]]) }), [32], 'soffice real HOME FAIL');
+  assert.deepEqual(failures(`\n32 31 30 ${office}`, { processHOME: new Map([[22, operatorHome], [31, serviceHome]]) }), [32], 'missing soffice HOME FAIL');
+  assert.deepEqual(failures(`\n32 31 30 ${office}`, { processHOME: new Map([...options.processHOME, [31, operatorHome]]) }), [32], 'server with real HOME cannot authorize soffice');
+  assert.deepEqual(failures(`\n23 21 20 ${userUpdater} --wake`), [23], 'Playwright worker alone cannot authorize updater');
+  assert.deepEqual(failures(`\n23 30 30 ${userUpdater} --wake`), [23]);
+  for (const command of [userUpdater.replace('/Users/operator/', '/Users/other/'), userUpdater.replace('/142.0/', '/../'), userUpdater.replace('/GoogleUpdater/142.0/', '/GoogleUpdater-extra/142.0/')]) {
+    assert.deepEqual(failures(`\n23 22 20 ${command} --wake`), [23]);
+  }
+  for (const flag of requiredChromeFlags) {
+    assert.equal(forbiddenProcesses(processTree(base.replace(' ' + flag, ''), 10), options)[0].pid, 22, `missing ${flag} FAIL`);
+    assert.equal(forbiddenProcesses(processTree(base.replace(' ' + flag, ` ${flag} ${flag}`), 10), options)[0].pid, 22, `duplicate ${flag} FAIL`);
+  }
+  assert.deepEqual(forbiddenProcesses(processTree(base.replace('31 30 30', '31 21 20') + `\n32 31 20 ${office}`, 10), options).map(row => row.pid), [32], 'server-looking argv outside owned runtime FAIL');
+});
+
+test('round seven: ps -E HOME parsing binds identities/argv, redacts credentials and audit fails closed (no ps/lsof)', async () => {
+  const row = { pid: 22, ppid: 21, pgid: 20, command: '/Applications/LibreOffice.app/Contents/MacOS/soffice --version' };
+  const raw = `22 21 20 ${row.command} HOME=/owned/run with spaces/home-os SECRET=do-not-record TMPDIR=/owned/tmp`;
+  assert.equal(processHomes(raw, [row]).get(22), '/owned/run with spaces/home-os');
+  assert.equal(processHomes(`22 21 20 HOME=/owned/home TMPDIR=/owned/tmp ${row.command}`, [row]).get(22), '/owned/home');
+  for (const value of [raw.replace('22 21', '22 99'), raw.replace('--version', '--headless'), raw.replace('HOME=', 'WRONG='), raw + ' HOME=/other', `22 21 20 ${row.command}`]) assert.throws(() => processHomes(value, [row]), /FAIL:/);
+  const fakeArg = { ...row, command: row.command + ' HOME=/fake' };
+  assert.equal(processHomes(`22 21 20 ${fakeArg.command} HOME=/owned/home TMPDIR=/owned/tmp`, [fakeArg]).get(22), '/owned/home');
+  const serviceHome = '/owned/run/home-os';
+  const server = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
+  const snapshot = `10 1 5 node runner\n30 10 30 node supervisor\n31 30 30 ${server}\n32 31 30 ${row.command}`;
+  let wrongHOME = false, fatal = 0, lsof = 0;
+  const records = [];
+  const audit = await startTCPAudit({ rootPid: 10, groupRoots: () => [30], runtimeRoots: () => [{ pid: 30, home: serviceHome }], intervalMs: 60_000,
+    run: async (file, args) => {
+      if (file === 'lsof') { lsof++; return ''; }
+      if (!args.includes('-E')) return snapshot;
+      assert.equal(args[args.indexOf('-p') + 1], '31,32');
+      return `31 30 30 ${server} HOME=${serviceHome} SECRET=do-not-record\n32 31 30 ${row.command} HOME=${wrongHOME ? userInfo().homedir : serviceHome} SECRET=do-not-record`;
+    }, onFatal: () => { fatal++; }, record: async record => records.push(record),
+  });
+  assert.equal(records[0].environmentEvidence.length, 2);
+  assert(!JSON.stringify(records).includes('do-not-record'));
+  wrongHOME = true;
+  await assert.rejects(audit.checkpoint('soffice-real-home'), /FAIL:.*forbidden process/);
+  assert.equal(fatal, 1); assert.equal(lsof, 1, 'HOME rejection precedes lsof');
+  await assert.rejects(audit.stop(), /FAIL:/);
+  await assert.rejects(startTCPAudit({ rootPid: 10, runtimeRoots: () => [{ pid: 30, home: serviceHome }],
+    run: async (_file, args) => { if (args.includes('-E')) throw new Error('ps -E unavailable'); return snapshot; }, record: async () => {},
+  }), /ps -E unavailable/);
+});
+
+test('round seven: mock uses a separate isolated Node environment and returns final stats on shutdown (spawn/IPC injected; no listen)', async () => {
+  const env = realExecutionEnv({}, { output: '/owned/out', runDir: '/owned/mock', mode: 'ready' });
+  const children = new Set(); let child;
+  const spawnImpl = (_command, args, options) => {
+    assert.equal(args[0], resolve(root, 'scripts/fe-parity/real-mock.mjs'));
+    assertRealExecutionEnv(options.env); assert.equal(options.env.HOME, '/owned/mock/home-os');
+    assert.equal(options.env.FE_REAL_RUNTIME, '1'); assert(options.env.NODE_OPTIONS.endsWith('/real-network.mjs'));
+    assert(options.detached); assert(options.stdio.includes('ipc'));
+    child = new EventEmitter(); child.connected = true;
+    child.send = message => {
+      assert.equal(message.type, 'close');
+      child.emit('message', { type: 'stats', stats: { requests: 7, rejected: 1, errors: ['rejected fixture'] } });
+      child.connected = false; child.emit('close', 0);
+    };
+    queueMicrotask(() => child.emit('message', { type: 'ready' }));
+    return child;
+  };
+  const mock = await startIsolatedMockLLM(env, children, spawnImpl);
+  assert(children.has(child)); await mock.close(); assert.equal(children.size, 0);
+  assert.equal(mock.stats.requests, 7); assert.equal(mock.stats.rejected, 1); assert.deepEqual(mock.stats.errors, ['rejected fixture']);
+  await assert.rejects(startIsolatedMockLLM({ ...env, HOME: userInfo().homedir }, children, () => { throw new Error('must not spawn'); }), /FAIL:/);
+});
+
+test('round seven: setup refuses unisolated Node before Chromium launch; mock startup/early-exit/missing-stats cannot become PASS (no spawn/listen)', async () => {
+  const { default: setup } = await import('./real-setup.mjs');
+  const previous = process.env.PILOTDECK_SKIP_BROWSER_OPEN;
+  process.env.PILOTDECK_SKIP_BROWSER_OPEN = '0';
+  try { await assert.rejects(setup({}), /FAIL:/); }
+  finally { if (previous === undefined) delete process.env.PILOTDECK_SKIP_BROWSER_OPEN; else process.env.PILOTDECK_SKIP_BROWSER_OPEN = previous; }
+  const env = realExecutionEnv({}, { output: '/owned/out', runDir: '/owned/mock', mode: 'ready' });
+  const children = new Set();
+  await assert.rejects(startIsolatedMockLLM(env, children, () => {
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit('error', new Error('injected spawn failed')));
+    return child;
+  }), /injected spawn failed/);
+  assert.equal(children.size, 0);
+  for (const early of [false, true]) {
+    let child;
+    const mock = await startIsolatedMockLLM(env, children, () => {
+      child = new EventEmitter(); child.connected = true;
+      child.send = () => { child.connected = false; child.emit('close', 0); };
+      queueMicrotask(() => child.emit('message', { type: 'ready' }));
+      return child;
+    });
+    if (early) { child.connected = false; child.emit('close', 0); }
+    await mock.close();
+    assert(mock.stats.errors.some(error => error.includes(early ? 'unexpectedly' : 'without final stats')));
+    assert.equal(children.size, 0);
+  }
+});
+
+test('round eight: ordered real Git discovery rejects system/Xcode shims before executing, no missing-candidate fallback to system Git', async () => {
+  const env = realExecutionEnv({ GIT_CONFIG_GLOBAL: '/operator/config', GIT_DIR: '/operator/repo', GIT_WORK_TREE: '/operator/work', GIT_EXEC_PATH: '/operator/bin' },
+    { output: '/owned/out', runDir: '/owned/run', mode: 'ready' });
+  for (const key of ['GIT_CONFIG_GLOBAL', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_EXEC_PATH']) assert(!(key in env));
+  const probed = [], executed = [];
+  const missing = () => Object.assign(new Error('missing'), { code: 'ENOENT' });
+  const io = { canonical: async candidate => { probed.push(candidate); if (candidate === realGitCandidates[0]) throw missing(); return '/usr/local/Cellar/git/2.51/bin/git'; },
+    executable: async () => {}, version: async target => { executed.push(target); return 'git version 2.51.0'; } };
+  const evidence = await discoverRealGit(env, io);
+  assert.deepEqual(probed, realGitCandidates.slice(0, 2)); assert.equal(evidence.candidate, realGitCandidates[1]);
+  assert.equal(evidence.realpath, executed[0]); assert.equal(evidence.version, 'git version 2.51.0');
+  probed.length = 0; executed.length = 0;
+  for (const target of ['/usr/bin/git', '/Applications/Xcode.app/Contents/Developer/usr/bin/git']) {
+    await assert.rejects(discoverRealGit(env, { ...io, canonical: async candidate => { probed.push(candidate); return target; } }), /FAIL:.*shim/);
+    assert.equal(executed.length, 0, 'never execute a known shim, even for --version');
+  }
+  await assert.rejects(discoverRealGit(env, { ...io, canonical: async () => { throw missing(); } }), /FAIL: no real git/);
+  await assert.rejects(discoverRealGit(env, { ...io, version: async () => 'wrong program' }), /FAIL:.*version/);
+  probed.length = 0;
+  await discoverRealGit(env, { ...io, canonical: async candidate => { probed.push(candidate); return '/opt/homebrew/Cellar/git/2.51/bin/git'; } });
+  assert.deepEqual(probed, [realGitCandidates[0]]);
+});
+
+test('round eight: run bin contains only node/git links, link to /usr/bin/git FAIL; drift/global CLI rejected (fake discovery, no Git execution)', async () => {
+  const parent = await mkdtemp(resolve(root, '_tmp/fe-parity/real-run/unit-git-r8-'));
+  const env = realExecutionEnv({}, { output: parent, runDir: resolve(parent, 'ready'), mode: 'ready' });
+  // Node stands in for an executable only in this injected filesystem fixture.
+  const target = await realpath(process.execPath);
+  const io = { canonical: async candidate => realGitCandidates.includes(candidate) ? target : realpath(candidate),
+    executable: async () => {}, version: async () => 'git version fixture' };
+  try {
+    await prepareRealOSDirectories(env);
+    const evidence = await prepareRealGitBin(env, io);
+    assert.equal(evidence.realpath, target); assert.equal(evidence.version, 'git version fixture');
+    assert.deepEqual((await readdir(resolve(env.PILOTDECK_E2E_RUN_DIR, 'bin'))).sort(), ['git', 'node']);
+    assert.equal(await assertRealGitBin(env, io), target);
+    await unlink(evidence.link); await symlink('/usr/bin/git', evidence.link);
+    await assert.rejects(assertRealGitBin(env, io), /FAIL:.*shim/);
+    await unlink(evidence.link); await symlink(target, evidence.link);
+    await symlink(target, resolve(env.PILOTDECK_E2E_RUN_DIR, 'bin/task-master'));
+    await assert.rejects(assertRealGitBin(env, io), /FAIL:.*drift/);
+    await assert.rejects(assertRealGitBin({ ...env, PATH: env.PATH + ':/opt/homebrew/bin' }, io), /FAIL:.*drift/);
+  } finally { await rm(parent, { recursive: true }); }
+});
+
+test('round eight: exact Xcode license check needs current owned server/git ancestry and isolated HOME; other xcodebuild/xcrun or nonservice ancestors FAIL', () => {
+  const home = '/owned/run/home-os', runtime = { pid: 30, home }, license = '/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license check';
+  const server = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
+  const base = `10 1 10 node runner\n30 10 30 node runtime\n31 30 30 ${server}\n32 31 30 git rev-parse --is-inside-work-tree`;
+  const rows = processTree(`${base}\n33 32 30 ${license}`, 10), readOnlySystemChecks = [];
+  const options = { runtimeRoots: [runtime], processHOME: new Map([[31, home], [32, home], [33, home]]), readOnlySystemChecks };
+  assert.deepEqual(forbiddenProcesses(rows, options), []);
+  assert.deepEqual(readOnlySystemChecks[0].argv, [license.split(' ')[0], '-license', 'check']);
+  assert.equal(readOnlySystemChecks[0].ancestorPid, 31);
+  assert(environmentTargets(rows).some(row => row.pid === 33));
+  assert.deepEqual(forbiddenProcesses(processTree(`${base}\n33 31 30 ${license}`, 10), options), []);
+  // Reproduce old8 gateway -> Git; the Git must still descend from this runtime.
+  const gatewayBase = '10 1 10 runner\n30 10 30 runtime\n34 30 30 gateway\n32 34 30 git rev-parse --is-inside-work-tree';
+  assert.deepEqual(forbiddenProcesses(processTree(`${gatewayBase}\n33 32 30 ${license}`, 10), options), []);
+  for (const command of [license + ' extra', license.replace('check', 'accept'), license.replace('-license check', '-version'),
+    license.replace('/Applications/Xcode.app', '/Applications/Xcode-beta.app'), '/usr/bin/xcodebuild -license check',
+    '/usr/bin/xcrun --find git', 'xcrun xcodebuild -license check', `/bin/sh -c ${license}`]) {
+    assert(forbiddenProcesses(processTree(`${base}\n33 32 30 ${command}`, 10), options).some(row => row.pid === 33), command);
+  }
+  for (const extra of [`33 10 10 ${license}`, `33 30 30 ${license}`, `33 1 30 ${license}`,
+    `32 10 10 git rev-parse HEAD\n33 32 10 ${license}`]) {
+    const noGitBase = `10 1 10 node runner\n30 10 30 node runtime\n31 30 30 ${server}`;
+    assert(forbiddenProcesses(processTree(`${noGitBase}\n${extra}`, 10, [30]), options).some(row => row.pid === 33), extra);
+  }
+  for (const pid of [31, 32, 33]) {
+    const homes = new Map(options.processHOME); homes.set(pid, userInfo().homedir);
+    const tree = pid === 31 ? processTree(`${base}\n33 31 30 ${license}`, 10) : processTree(`${gatewayBase}\n33 32 30 ${license}`, 10);
+    assert(forbiddenProcesses(tree, { ...options, processHOME: homes }).some(row => row.pid === 33));
+  }
+});
+
+test('round eight: license exception is recorded after actual-HOME snapshot; invalid argv/nonservice ancestry fatal before lsof (injected ps)', async () => {
+  const home = '/owned/run/home-os', license = '/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license check';
+  const server = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
+  const base = `10 1 10 runner\n30 10 30 runtime\n31 30 30 ${server}`;
+  let command = license, parent = 31, lsof = 0, killed = 0;
+  const records = [];
+  const audit = await startTCPAudit({ rootPid: 10, runtimeRoots: () => [{ pid: 30, home }], intervalMs: 60_000,
+    run: async (file, args) => {
+      if (file === 'lsof') { lsof++; return ''; }
+      if (args.includes('-E')) return `31 30 30 ${server} HOME=${home}\n33 ${parent} 30 ${command} HOME=${home}`;
+      return `${base}\n33 ${parent} 30 ${command}`;
+    }, record: async row => records.push(row), onFatal: () => killed++ });
+  assert.equal(records[0].status, 'PASS'); assert.equal(records[0].readOnlySystemChecks.length, 1);
+  assert.equal(records[0].environmentEvidence.length, 2);
+  command = license + ' --help';
+  await assert.rejects(audit.checkpoint('wrong-argv'), /FAIL:.*forbidden process/);
+  assert.equal(lsof, 1); assert.equal(killed, 1);
+  parent = 10; command = license;
+  await assert.rejects(audit.stop(), /FAIL:.*forbidden process/);
+  assert.equal(lsof, 1); assert.equal(records.at(-1).forbiddenProcesses[0].pid, 33);
+});
+
+test('round eight: frozen telemetry Git explicitly reads gateway cwd, HOME isolation does not relocate a source checkout (no Git/server execution)', async () => {
+  const calls = [], repo = resolve(baseline, '..');
+  const telemetry = await frozenFunctions('../src/telemetry/context.ts', {
+    process: { cwd: () => repo }, execFileSync: (command, args, options) => {
+      calls.push({ command, args, cwd: options.cwd });
+      return args.includes('--short') ? 'cc7c4e6\n' : 'true\n';
+    },
+  }, ['looksLikeSourceCheckout', 'resolveAppCommitHash']);
+  assert.equal(telemetry.looksLikeSourceCheckout(), true);
+  assert.equal(telemetry.resolveAppCommitHash({}), 'cc7c4e6');
+  assert.deepEqual(calls, [
+    { command: 'git', args: ['rev-parse', '--is-inside-work-tree'], cwd: repo },
+    { command: 'git', args: ['rev-parse', '--short', 'HEAD'], cwd: repo },
+  ]);
+});
+
+test('round nine: only unchanged optional application argv can be unreadable; Node, identity changes and malformed HOME fail closed', () => {
+  const office = { pid: 22, ppid: 21, pgid: 20, command: '/Applications/LibreOffice.app/Contents/MacOS/soffice --version' };
+  const raw = `22 21 20 ${office.command}`, unreadable = new Set();
+  assert.equal(processHomes(raw, [office], { unreadable }).size, 0);
+  assert.deepEqual([...unreadable], [22]);
+  const node = { ...office, command: `${process.execPath} /owned/service.mjs` };
+  assert.throws(() => processHomes(`22 21 20 ${node.command}`, [node], { unreadable: new Set() }), /FAIL:.*did not expose environment/);
+  for (const invalid of [raw.replace('22 21', '22 99'), raw.replace('21 20', '21 99'), raw.replace('22 21', '23 21'),
+    raw + ' --extra', raw + ' SECRET=do-not-record', raw + ' HOME=', raw + ' HOME=/one HOME=/two', raw + '\n' + raw]) {
+    assert.throws(() => processHomes(invalid, [office], { unreadable: new Set() }), /FAIL:/, invalid);
+  }
+});
+
+test('round nine/eleven: updater/soffice retain environment alternatives; Chrome uses current identity only', () => {
+  const operatorHome = userInfo().homedir, home = '/owned/run/home-os';
+  const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-abc`;
+  const helper = '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/142.0/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer';
+  const updater = `${operatorHome}/Library/Application Support/Google/GoogleUpdater/142.0/GoogleUpdater.app/Contents/MacOS/GoogleUpdater --wake`;
+  const office = '/Applications/LibreOffice.app/Contents/MacOS/soffice --version';
+  const server = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
+  const base = `10 1 10 runner\n20 10 20 playwright\n21 20 20 worker\n22 21 20 ${chrome}\n24 23 20 ${helper}\n23 22 20 ${helper}\n25 22 20 ${updater}\n30 10 30 runtime\n31 30 30 ${server}\n32 31 30 ${office}`;
+  const options = { operatorHome, playwrightRoots: [20], browserTmpRoots: ['/owned/tmp'], runtimeRoots: [{ pid: 30, home }], updaterRealpath: path => path,
+    processHOME: new Map([[31, home]]), unreadable: new Set([22, 23, 24, 25, 32]), alternativeEvidence: [] };
+  assert.deepEqual(forbiddenProcesses(processTree(base, 10), options), []);
+  assert.deepEqual(options.alternativeEvidence.map(row => row.pid).sort((a,b) => a-b), [25, 32]);
+  assert(options.alternativeEvidence.every(row => row.environment === 'unreadable' && row.alternative));
+  assert.equal(options.alternativeEvidence.find(row => row.pid === 32).serverAncestorPid, 31);
+  for (const invalid of [base.replace('32 31 30', '32 30 30'), base.replace('31 30 30', '31 21 20')]) {
+    assert(forbiddenProcesses(processTree(invalid, 10), { ...options, alternativeEvidence: [] }).some(row => row.pid === 32));
+  }
+  for (const invalid of [base.replace('22 21 20', '22 30 30'), base.replace('/owned/tmp/', '/operator/'), base.replace(' --remote-debugging-pipe', ''), base.replace('GoogleUpdater --wake', 'GoogleUpdater --install')]) {
+    assert(forbiddenProcesses(processTree(invalid, 10), { ...options, alternativeEvidence: [] }).length);
+  }
+  for (const pid of [25, 32]) {
+    const unreadable = new Set(options.unreadable); unreadable.delete(pid);
+    const processHOME = new Map(options.processHOME); processHOME.set(pid, pid === 32 ? operatorHome : home);
+    assert(forbiddenProcesses(processTree(base, 10), { ...options, unreadable, processHOME, alternativeEvidence: [] }).some(row => row.pid === pid));
+  }
+  const remembered = new Map([[23, helper]]);
+  const orphan = `10 1 10 runner\n23 1 20 ${helper}\n24 23 20 ${helper}`;
+  assert(forbiddenProcesses(processTree(orphan, 10, [20]), { ...options, approvedChrome: remembered,
+    unreadable: new Set([24]), processHOME: new Map([[23, operatorHome]]), alternativeEvidence: [] }).some(row => row.pid === 24), 'unreadable helper cannot use only a cached orphan');
+});
+
+test('round nine/eleven: audit checks every spawned Node role HOME, fails before lsof on unreadable Node, records Chrome identity without secrets', async () => {
+  const home = '/owned/ready/home-os', mockHome = '/owned/mock/home-os';
+  const server = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
+  const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-abc`;
+  const snapshot = `10 1 10 runner\n20 10 20 ${process.execPath} /owned/playwright-cli.js\n21 20 20 ${process.execPath} /owned/setup-worker.js\n22 21 20 ${chrome}\n30 10 30 ${process.execPath} /owned/real-launch.mjs\n31 30 30 ${server}\n32 30 30 ${process.execPath} --import tsx /owned/pilotdeck.ts server\n33 30 30 ${process.execPath} /owned/real-vite.mjs\n40 10 40 ${process.execPath} /owned/real-mock.mjs`;
+  const processes = processTree(snapshot, 10), roots = [{ pid: 20, home }, { pid: 30, home }, { pid: 40, home: mockHome }];
+  assert.deepEqual(environmentTargets(processes, { nodeRoots: roots }).map(row => row.pid), [20, 21, 30, 31, 32, 33, 40]);
+  for (const badPid of [20, 21, 30, 31, 32, 33, 40]) for (const failure of ['unreadable', 'wrong-home']) {
+    let lsof = 0, fatal = 0;
+    await assert.rejects(startTCPAudit({ rootPid: 10, nodeRoots: () => roots, runtimeRoots: () => [{ pid: 30, home }],
+      playwrightRoots: () => [20], browserTmpRoots: () => ['/owned/tmp'],
+      run: async (file, args) => {
+        if (file === 'lsof') { lsof++; return ''; }
+        if (!args.includes('-E')) return snapshot;
+        return processes.filter(row => row.pid !== 10).map(row => `${row.pid} ${row.ppid} ${row.pgid} ${row.command}`
+          + (row.pid === 22 || row.pid === badPid && failure === 'unreadable' ? '' : ` HOME=${row.pid === badPid ? userInfo().homedir : row.pid === 40 ? mockHome : home} SECRET=do-not-record`)).join('\n');
+      }, onFatal: () => fatal++, record: async () => {} }), /FAIL:/, `${badPid}: ${failure}`);
+    assert.equal(fatal, 1); assert.equal(lsof, 0);
+  }
+  const records = [];
+  const audit = await startTCPAudit({ rootPid: 10, nodeRoots: () => roots, runtimeRoots: () => [{ pid: 30, home }],
+    playwrightRoots: () => [20], browserTmpRoots: () => ['/owned/tmp'], intervalMs: 60_000,
+    run: async (file, args) => file === 'lsof' ? '' : !args.includes('-E') ? snapshot : processes.filter(row => row.pid !== 10)
+      .map(row => `${row.pid} ${row.ppid} ${row.pgid} ${row.command}` + (row.pid === 22 ? '' : ` HOME=${row.pid === 40 ? mockHome : home} SECRET=do-not-record`)).join('\n'),
+    record: async row => records.push(row) });
+  await audit.stop();
+  assert(records.every(row => row.status === 'PASS' && row.environmentEvidence.length === 7));
+  assert(!records[0].environmentEvidence.some(row => row.pid === 22));
+  assert.equal(records[0].browserEvidence.find(row => row.pid === 22).environment, 'not-checked');
+  assert.equal(records[0].browserEvidence.find(row => row.pid === 22).playwrightAncestorPid, 20);
+  assert(!JSON.stringify(records).includes('do-not-record'));
+});
+
+test('round eleven: Chrome/helper/crashpad skip HOME; changing helper argv passes only with a current verified main/profile', async () => {
+  const home = '/owned/ready/home-os', profile = '/owned/tmp/playwright_chromiumdev_profile-live';
+  const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=${profile}`;
+  const bundle = '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/142.0';
+  const helper = `${bundle}/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)`;
+  const crashpad = `${bundle}/chrome_crashpad_handler --monitor-self`;
+  let title = `--type=renderer --user-data-dir=${profile} --renderer-client-id=1`, environmentCalls = 0;
+  const snapshot = () => `10 1 10 runner\n24 23 20 ${crashpad}\n23 22 20 ${helper} ${title}\n22 20 20 ${chrome}\n20 10 20 ${process.execPath} /owned/playwright-cli.js`;
+  const options = { playwrightRoots: [20], browserTmpRoots: ['/owned/tmp'], nodeRoots: [{ pid: 20, home }] };
+  assert.deepEqual(environmentTargets(processTree(snapshot(), 10), options).map(row => row.pid), [20]);
+  for (const processHOME of [new Map(), new Map([[22, '/wrong'], [23, '/wrong'], [24, '/wrong']])]) {
+    assert.deepEqual(forbiddenProcesses(processTree(snapshot(), 10), { ...options, processHOME }), []);
+  }
+  const records = [];
+  const audit = await startTCPAudit({ rootPid: 10, playwrightRoots: () => options.playwrightRoots,
+    browserTmpRoots: () => options.browserTmpRoots, nodeRoots: () => options.nodeRoots, intervalMs: 60_000,
+    run: async (file, args) => {
+      if (file === 'lsof') return '';
+      if (!args.includes('-E')) return snapshot();
+      environmentCalls++;
+      assert.equal(args[args.indexOf('-p') + 1], '20', 'Chrome series must never reach ps -E');
+      // Simulate a title rewrite between ordinary ps and ps -E as in old13.
+      title = `--type=renderer --user-data-dir=${profile} --renderer-client-id=2 --field-trial-handle=changed`;
+      return `20 10 20 ${process.execPath} /owned/playwright-cli.js HOME=${home} SECRET=do-not-record`;
+    }, record: async row => records.push(row) });
+  await audit.checkpoint('changed-helper-title');
+  await audit.stop();
+  assert.equal(environmentCalls, 3);
+  assert.notEqual(records[0].processes.find(row => row.pid === 23).command, records[1].processes.find(row => row.pid === 23).command);
+  assert(records.every(row => row.status === 'PASS' && row.environmentEvidence.length === 1));
+  assert(records.every(row => row.browserEvidence.length === 3 && row.browserEvidence.every(proof =>
+    proof.environment === 'not-checked' && proof.chromeAncestorPid === 22 && proof.userDataDir === profile)));
+  assert(!JSON.stringify(records).includes('do-not-record'));
+  // Even a remembered PID/argv and readable HOME cannot replace a current chain.
+  const cached = { ...options, approvedChrome: new Map([[22, chrome], [23, `${helper} ${title}`]]),
+    processHOME: new Map([[22, userInfo().homedir], [23, userInfo().homedir]]) };
+  for (const invalid of [snapshot().replace('23 22 20', '23 1 20'), snapshot().replace('22 20 20', '22 1 20'),
+    snapshot().replace(chrome, chrome.replace(` --user-data-dir=${profile}`, '')),
+    snapshot().replace(chrome, chrome.replace(profile, '/operator/profile'))]) {
+    for (const deferEnvironment of [true, false]) {
+      assert(forbiddenProcesses(processTree(invalid, 10, [20]), { ...cached, deferEnvironment }).some(row => row.pid === 23),
+        'broken ancestry or missing/non-temporary main profile must reject helper in both audit stages');
+    }
+  }
+  for (const main of [chrome.replace(` --user-data-dir=${profile}`, ''), chrome.replace(profile, '/operator/profile')]) {
+    assert(forbiddenProcesses(processTree(snapshot().replace(chrome, main), 10), options).some(row => row.pid === 22),
+      'main Chrome without a temporary profile FAIL');
+  }
+  assert(forbiddenProcesses(processTree(snapshot().replace(`${helper} ${title}`, `${helper} ${title.replace(profile, profile + '-other')}`), 10), options)
+    .some(row => row.pid === 23), 'helper with an explicit different profile FAIL');
+});
+
+test('round ten: installed updater exact wake modes need a current main Chrome or same-path wake-all direct parent', () => {
+  const operatorHome = userInfo().homedir;
+  const executable = `${operatorHome}/Library/Application Support/Google/GoogleUpdater/157.0.8089.0/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`;
+  const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-new`;
+  const base = `10 1 10 runner\n20 10 20 playwright\n21 20 20 worker\n22 21 22 ${chrome}`;
+  const options = { playwrightRoots: [20], browserTmpRoots: ['/owned/tmp'], operatorHome, updaterRealpath: path => path,
+    processHOME: new Map([[22, operatorHome], [23, operatorHome], [24, operatorHome]]) };
+  const rejected = (extra, overrides = {}, snapshot = base) => forbiddenProcesses(processTree(snapshot + extra, 10, [20]), { ...options, ...overrides }).map(row => row.pid);
+  assert.deepEqual(rejected(`\n23 22 23 ${executable} --wake-all`), [], 'wake-all from main Chrome PASS');
+  assert.deepEqual(rejected(`\n23 22 23 ${executable} --wake`), [], 'wake from main Chrome PASS');
+  const childrenFirst = `\n24 23 24 ${executable} --wake\n23 22 23 ${executable} --wake-all`;
+  assert.deepEqual(rejected(childrenFirst), [], 'wake child precedes wake-all parent in snapshot; new groups PASS');
+  assert.deepEqual(rejected(`\n23 21 23 ${executable} --wake`), [23], 'non-Chrome parent FAIL');
+  for (const args of ['--wake-all --extra', '--install', '--register', '--uninstall', '--wake --wake-all', '--wake-all=true', '--wake --extra', '--WAKE', '', ' --wake', '--wake unknown']) {
+    assert.deepEqual(rejected(`\n23 22 23 ${executable} ${args}`), [23], args);
+  }
+  assert.deepEqual(rejected(childrenFirst.replace('--wake-all', '--wake')), [24], 'wake parent cannot authorize child');
+  assert.deepEqual(rejected(childrenFirst.replace('24 23 24 ' + executable, '24 23 24 ' + executable.replace('157.0.8089.0', '158.0'))), [24], 'different updater path FAIL');
+  assert.deepEqual(rejected(childrenFirst, { updaterRealpath: () => '/outside/GoogleUpdater' }), [24, 23], 'symlink escape FAIL');
+  assert.deepEqual(rejected(childrenFirst, { updaterRealpath: () => { throw new Error('missing'); } }), [24, 23], 'realpath failure FAIL');
+  assert.deepEqual(rejected(childrenFirst, { processHOME: new Map([[22, operatorHome], [23, '/wrong'], [24, operatorHome]]) }), [24, 23], 'wrong parent HOME FAIL');
+  assert.deepEqual(rejected(childrenFirst, { approvedChrome: new Map([[22, chrome]]) }, base.replace('22 21 22', '22 1 20')), [22, 24, 23], 'cached reparented browser and its updater chain FAIL');
+  // Chrome detaches wake-all and launchd adopts it; it stays visible only via its known group.
+  const adopted = extra => forbiddenProcesses(processTree(base + extra, 10, [20, 23]), options).map(row => row.pid);
+  assert.deepEqual(adopted(`\n23 1 23 ${executable} --wake-all\n24 23 23 ${executable} --wake`), [], 'launchd-adopted wake-all and its wake child PASS');
+  assert.deepEqual(adopted(`\n23 1 23 ${executable} --wake`), [23], 'adopted bare wake FAIL');
+  assert.deepEqual(adopted(`\n23 1 23 ${executable} --wake-all --extra`), [23], 'adopted wake-all with extra args FAIL');
+  const helper = '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/155.0/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility';
+  assert.deepEqual(rejected(`\n23 22 23 ${helper}\n24 23 24 ${executable} --wake`), [24], 'verified helper is not a main Chrome parent');
+  assert.deepEqual(rejected(`\n23 22 23 ${executable.replace('/GoogleUpdater.app/Contents/MacOS', '')} --wake`), [23], 'old short path FAIL');
+});
+
+test('round ten: fresh Chrome and updater chain pass both audit stages without cached approval; detached groups remain audited', async () => {
+  const operatorHome = userInfo().homedir, home = '/owned/run/home-os';
+  const executable = `${operatorHome}/Library/Application Support/Google/GoogleUpdater/157.0.8089.0/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`;
+  const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-new`;
+  let invalid = false, fatalGroups, lsof = 0;
+  const records = [];
+  const audit = await startTCPAudit({ rootPid: 10, intervalMs: 60_000, playwrightRoots: () => [20], browserTmpRoots: () => ['/owned/tmp'],
+    nodeRoots: () => [{ pid: 20, home }], updaterRealpath: path => path,
+    run: async (file, args) => {
+      if (file === 'lsof') { lsof++; assert(args.includes('10,24,23,22,20')); return ''; }
+      const rows = [`10 1 10 runner`, `24 23 24 ${executable} --wake`, `23 22 23 ${executable} --wake-all${invalid ? ' --extra' : ''}`,
+        `22 20 22 ${chrome}`, `20 10 20 ${process.execPath} /owned/playwright-cli.js`];
+      return (args.includes('-E') ? rows.slice(1).map(row => row.startsWith('20 ') ? row + ` HOME=${home} SECRET=do-not-record` : row) : rows).join('\n');
+    }, onFatal: (_error, groups) => { fatalGroups = groups; }, record: async row => records.push(row) });
+  assert.equal(records[0].status, 'PASS');
+  assert.deepEqual(records[0].environmentEvidence.find(row => row.pid === 24).argv, [executable, '--wake']);
+  assert.equal(records[0].environmentEvidence.find(row => row.pid === 24).chromeAncestorPid, 22);
+  assert.equal(records[0].environmentEvidence.find(row => row.pid === 24).parentPid, 23);
+  assert(!JSON.stringify(records).includes('do-not-record'));
+  invalid = true;
+  await assert.rejects(audit.checkpoint('extra-updater-argument'), /FAIL:.*forbidden process/);
+  assert.equal(lsof, 1, 'structural failure before environment/lsof');
+  assert(fatalGroups.includes(23) && fatalGroups.includes(24), 'updater groups remain in fatal cleanup');
+  assert.deepEqual(records.at(-1).forbiddenProcesses.map(row => row.pid), [24, 23]);
+  await assert.rejects(audit.stop(), /FAIL:/);
+});
+
+test('round ten: updater canonicalization checks real files and rejects a symlink outside operator installation', async () => {
+  const directory = await mkdtemp(resolve(root, '_tmp/round10-updater-fixture-'));
+  try {
+    // mkdtemp path is canonical inside this worktree, including on macOS.
+    const operatorHome = await realpath(directory);
+    const executable = resolve(operatorHome, 'Library/Application Support/Google/GoogleUpdater/157.0/GoogleUpdater.app/Contents/MacOS/GoogleUpdater');
+    await mkdir(dirname(executable), { recursive: true }); await writeFile(executable, 'fixture');
+    const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-new`;
+    const rows = processTree(`10 1 10 runner\n20 10 20 playwright\n22 20 22 ${chrome}\n23 22 23 ${executable} --wake-all`, 10);
+    const options = { operatorHome, playwrightRoots: [20], browserTmpRoots: ['/owned/tmp'], unreadable: new Set([22, 23]) };
+    assert.deepEqual(forbiddenProcesses(rows, options), []);
+    await rm(executable); await writeFile(resolve(operatorHome, 'outside'), 'fixture');
+    await symlink(resolve(operatorHome, 'outside'), executable);
+    assert.deepEqual(forbiddenProcesses(rows, options).map(row => row.pid), [23]);
+  } finally { await rm(directory, { recursive: true }); }
+});
+
+test('round nine: coordinator CLT Git candidate remains ordered and validated as a real binary', async () => {
+  assert.equal(realGitCandidates[2], '/Library/Developer/CommandLineTools/usr/bin/git');
+  const probed = [], executed = [];
+  const evidence = await discoverRealGit(realExecutionEnv({}, { output: '/owned/out', runDir: '/owned/run', mode: 'ready' }), {
+    canonical: async candidate => { probed.push(candidate); if (candidate !== realGitCandidates[2]) throw Object.assign(new Error('missing'), { code: 'ENOENT' }); return candidate; },
+    executable: async target => executed.push(target), version: async () => 'git version 2.50.1 (Apple Git-155)' });
+  assert.deepEqual(probed, realGitCandidates); assert.deepEqual(executed, [realGitCandidates[2]]);
+  assert.equal(evidence.realpath, realGitCandidates[2]);
+});
+
+test('round nine: frozen LibreOffice probe and conversion execFile options inherit the tested server environment (no soffice execution)', async () => {
+  const calls = [];
+  const probe = await frozenFunctions('server/services/officePreview.js', {
+    execFileAsync: async (command, args, options) => { calls.push({ command, args, options }); return { stdout: 'LibreOffice fixture' }; },
+  }, ['probeLibreOfficeCandidate']);
+  await probe.probeLibreOfficeCandidate('/Applications/LibreOffice.app/Contents/MacOS/soffice');
+  assert.deepEqual(calls, [{ command: '/Applications/LibreOffice.app/Contents/MacOS/soffice', args: ['--version'], options: { timeout: 5000, windowsHide: true } }]);
+  const ts = requireUI('typescript'), source = await readFile(resolve(baseline, 'server/services/officePreview.js'), 'utf8');
+  const ast = ts.createSourceFile('officePreview.js', source, ts.ScriptTarget.Latest, true), options = [];
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(ast) === 'execFileAsync') {
+      assert(ts.isObjectLiteralExpression(node.arguments[2]));
+      assert(node.arguments[2].properties.every(property => ts.isPropertyAssignment(property) && property.name.getText(ast) !== 'env'));
+      options.push(node.arguments[2].getText(ast));
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast); assert.equal(options.length, 2, 'both --version probe and conversion inherit env');
 });

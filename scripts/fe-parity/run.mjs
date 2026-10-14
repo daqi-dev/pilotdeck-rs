@@ -5,7 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { baseline, root, requireUI, historicalInventory, ownedPath, origin, realOrigin } from './env.mjs';
 import { reportCases, checkInventory, reconcile, reconcilePair, reconcileRealPair, loadReportPair, PENDING_STATUS, CASCADE_STATUS } from './accounting.mjs';
-import { executionEnv, PROFILES } from './execution-env.mjs';
+import { executionEnv, realExecutionEnv, assertRealExecutionEnv, prepareRealOSDirectories, PROFILES } from './execution-env.mjs';
+import { BASELINE_STALE } from './baseline-stale.mjs';
 import { verifyBaseline } from './baseline.mjs';
 import { selfCheck } from './self-check.mjs';
 import { startMock, TOKEN } from './mock.mjs';
@@ -71,12 +72,24 @@ let interrupted = false;
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   interrupted = true; for (const child of children) { try { process.kill(-child.pid, 'SIGTERM'); } catch { /* Child already exited. */ } }
 });
-function command(args, env = {}) {
+async function command(args, env = {}) {
+  if (values.suite === 'real') {
+    if (!env.PILOTDECK_E2E_RUN_DIR) env = realExecutionEnv(process.env, { output, runDir: resolve(output, 'preflight'), mode: 'ready' });
+    assertRealExecutionEnv(env);
+    await prepareRealOSDirectories(env);
+  }
   return new Promise((resolveResult, reject) => {
     if (interrupted) return reject(new Error('Run interrupted'));
+    // Do not merge removed operator variables (notably NODE_OPTIONS) back into
+    // the explicitly sanitized real environment at the final spawn boundary.
+    const childEnv = values.suite === 'real' ? env : { ...executionEnv(process.env), ...env };
     const child = spawn(process.execPath, [requireUI.resolve('@playwright/test/cli'), ...args], {
-      cwd: root, detached: true, env: { ...executionEnv(process.env), ...env }, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: root, detached: true, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // Only this owned CLI (never the runtime supervisor) can authorize Chrome.
+    child.fePlaywright = args.includes(resolve(root, 'scripts/fe-parity/real.config.mjs')) && !args.includes('--list');
+    child.feBrowserTmp = env.TMPDIR;
+    if (values.suite === 'real') child.feServiceHome = env.HOME;
     children.add(child); let stdout = '', stderr = '';
     child.stdout.on('data', data => { stdout += data; }); child.stderr.on('data', data => { stderr += data; });
     child.once('error', error => { children.delete(child); reject(error); });
@@ -86,7 +99,7 @@ function command(args, env = {}) {
 function printAccount(frontend, account) {
   console.log(`${frontend}: 分母 ${account.denominator}; 应执行数 ${account.expected} vs 实际执行数 ${account.executed}; 显式 skip ${account.explicitSkips}; STALE_CASCADE ${account.staleCascade ?? 0}; 待编排 ${account.pendingOrchestration}; 原始断言 ${account.status}`);
   console.log(`${frontend}: 行为守护 ${account.behavioralCoverage.passed}/${account.behavioralCoverage.eligible}; 基线失效单列 ${account.behavioralCoverage.excludedBaselineStale}，覆盖记 0`);
-  if (account.oldGate) console.log(`${frontend}: 旧侧校准门 ${account.oldGate.status}; 失效 MATCHED_FAIL 条件满足 ${account.oldGate.matchedFailConditions}/3 (UNPAIRED); STALE_CASCADE ${account.oldGate.staleCascade}; 待编排 ${account.oldGate.pendingOrchestration}`);
+  if (account.oldGate) console.log(`${frontend}: 旧侧校准门 ${account.oldGate.status}; 失效 MATCHED_FAIL 条件满足 ${account.oldGate.matchedFailConditions}/${BASELINE_STALE.tests.length} (UNPAIRED); STALE_CASCADE ${account.oldGate.staleCascade}; 待编排 ${account.oldGate.pendingOrchestration}`);
   for (const row of account.rows) if (['SKIP', 'NOT_RUN', PENDING_STATUS, CASCADE_STATUS].includes(row.status)) console.log(`  ${row.status} ${row.file} :: ${row.title} — ${row.reason}${row.source ? ` — ${Object.values(row.source).join(', ')}` : ''}`);
 }
 function table(inventory, accounts) {

@@ -1,9 +1,11 @@
 // Equivalent seed + native supervisor, without baseline launch's rm or Vite writes.
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile, realpath, symlink } from 'node:fs/promises';
+import { mkdir, writeFile, realpath } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { baseline, root, realRunRoot, realPorts, REAL_TEST_KEY, ownedPath } from './env.mjs';
+import { assertRealExecutionEnv } from './execution-env.mjs';
+import { assertRealGitBin } from './real-git.mjs';
 
 export function runtimeConfig(mode, runDir) {
   if (!['ready', 'onboarding'].includes(mode)) throw new Error('Invalid real mode');
@@ -20,12 +22,12 @@ export function runtimeConfig(mode, runDir) {
 export async function prepareRuntime(mode, runDir) {
   ownedPath(runDir);
   if (!runDir.startsWith(realRunRoot + sep) || await realpath(dirname(runDir)) !== dirname(runDir)) throw new Error('Runtime path must be a fresh directory under canonical real-run');
-  await mkdir(runDir); // never delete/reuse a previous runtime
+  // OS HOME/tmp are prepared before --list. The exclusive PILOT_HOME mkdir
+  // below remains the guard against reusing an already seeded runtime.
+  await mkdir(runDir, { recursive: true });
   const workspacePath = resolve(runDir, 'workspace'), project = resolve(workspacePath, 'e2e-project');
   await mkdir(project, { recursive: true }); await mkdir(resolve(runDir, 'home'));
   await mkdir(resolve(workspacePath, 'general'), { mode: 0o700 });
-  await mkdir(resolve(runDir, 'bin'));
-  await symlink(process.execPath, resolve(runDir, 'bin/node'));
   const configPath = resolve(runDir, 'pilotdeck.yaml');
   // JSON is valid YAML; no runtime YAML dependency, same launch schema and defaults.
   await writeFile(configPath, JSON.stringify(runtimeConfig(mode, runDir), null, 2) + '\n');
@@ -48,13 +50,16 @@ export function runtimeArgs(args) {
     ? [resolve(root, 'scripts/fe-parity/real-vite.mjs')] : args;
 }
 async function main() {
+  assertRealExecutionEnv(process.env);
   const mode = process.env.PILOTDECK_E2E_MODE, runDir = ownedPath(process.env.PILOTDECK_E2E_RUN_DIR);
   if (process.env.PILOTDECK_E2E_API_KEY !== REAL_TEST_KEY) throw new Error('Invalid test credential');
+  await assertRealGitBin(process.env);
   await prepareRuntime(mode, runDir);
   const { createRuntimeSupervisor } = await import(pathToFileURL(resolve(baseline, 'server/webRuntimeSupervisor.js')));
   const supervisor = createRuntimeSupervisor({ mode: 'dev', cwd: baseline,
     requestFile: resolve(runDir, 'restart.request'),
     spawnImpl: (command, args, options) => {
+      assertRealExecutionEnv(options.env);
       return spawn(command, runtimeArgs(args), options);
     },
   });
