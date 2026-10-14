@@ -356,9 +356,13 @@ def expand(data):
 
 
 def dumps(data):
-    """Two-space nesting, sorted object keys; scalar arrays/table rows one line."""
+    """Sorted keys, newline-delimited structures; scalar arrays/table rows one line.
+
+    No indentation: growing explicit dynamic-origin evidence must retain the
+    1.5 MB artifact budget without dropping records or shortening prose.
+    """
     def render(value, depth, path):
-        pad, child_pad = '  ' * depth, '  ' * (depth + 1)
+        pad, child_pad = '', ''
         if isinstance(value, dict):
             if not value:
                 return '{}'

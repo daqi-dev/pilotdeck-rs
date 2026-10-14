@@ -22,7 +22,7 @@ files.push(path.join(root,'ui/server/staffdeck-approval-authority.mjs'));
 const graphFiles=[...files];
 for(const dir of ['ui','skills'])walk(path.join(root,dir));
 const inventoryFiles=files.filter(p=>!graphFiles.includes(p));
-const program = ts.createProgram(graphFiles,{target:ts.ScriptTarget.Latest,module:ts.ModuleKind.NodeNext,
+const program = ts.createProgram([...graphFiles,...inventoryFiles],{target:ts.ScriptTarget.Latest,module:ts.ModuleKind.NodeNext,
   moduleResolution:ts.ModuleResolutionKind.NodeNext,allowJs:true,skipLibCheck:true,noResolve:false});
 const checker = program.getTypeChecker();
 const sources = program.getSourceFiles().filter(s=>graphFiles.includes(s.fileName));
@@ -66,7 +66,7 @@ function visit(n) {
 for(const s of sources) visit(s);
 // Whole-repository class inventory without resolving frontend call graphs.
 for(const file of inventoryFiles) {
-  const sf=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
+  const sf=program.getSourceFile(file);
   if(sf.parseDiagnostics.length)throw Error('Inventory syntax error: '+path.relative(root,file));
   function inventory(n){if(ts.isClassDeclaration(n)&&n.name)classes.set(n.name.text,n);ts.forEachChild(n,inventory);}
   inventory(sf);
@@ -209,12 +209,18 @@ for(const [nm,c] of classes)if(errorClasses[nm]?.code) {
 }
 const resolvedCalls=new Map();
 for(const [n,f] of byNode) {
-  f.code_expressions=[];f.result_expressions=[];f.invalid_code_literals=[];
+  f.code_expressions=[];f.result_expressions=[];f.invalid_code_literals=[];f.dynamic_code_expressions=[];
   function production(a){if(a)f.code_expressions.push({expression:a.getText(),start:line(a),end:line(a,a.end)});}
   function observeCode(a,kind) {
     production(a);
-    for(const observation of rules.codeObservations(ts,a)) {
-      const row={code:observation.code,line:line(observation.node),class:kind};
+    if(!a)return;
+    const resolved=rules.codeResolution(ts,a,checker);
+    if(resolved.dynamic)f.dynamic_code_expressions.push({expression:a.getText(),start:line(a),end:line(a,a.end)});
+    for(const observation of rules.codeObservations(ts,a,checker)) {
+      // The origin is the producing expression, even when its value lives in
+      // another file or at module scope outside this callable's bounds.
+      const row={code:observation.code,line:line(a),class:kind};
+      if(observation.valid)f.literals.push({value:observation.code,line:line(a)});
       if(observation.valid)f.errors.push(row);
       else f.invalid_code_literals.push(row);
     }
@@ -250,6 +256,7 @@ for(const [n,f] of byNode) {
       const parent=errorClasses[f.class]?.parent;
       if(errorClasses[parent]?.code)observeCode(a.arguments[errorClasses[parent].code_argument],parent);
     }
+    if(ts.isShorthandPropertyAssignment(a)&&a.name.text==='code')observeCode(a.name,'code');
     if((ts.isPropertyAssignment(a)||ts.isPropertyDeclaration(a))&&name(a)==='code')observeCode(a.initializer,'code');
     if(ts.isBinaryExpression(a)&&a.operatorToken.kind===ts.SyntaxKind.EqualsToken&&
       ((ts.isPropertyAccessExpression(a.left)&&a.left.name.text==='code')||
