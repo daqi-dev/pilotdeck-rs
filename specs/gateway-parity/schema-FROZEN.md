@@ -9,12 +9,12 @@
 |---|---|---|---|
 | `schema/gateway-protocol.schema.json` | `d8272f367a2b66e1…` | 2026-10-14 初冻 → 同日第 2 轮（**AI 代批，待人复核**） | 根 `$ref #/definitions/WsGatewayFrame`；draft-07；101 method 枚举；协议版本 1.2 以 `x-pilotdeck` 元数据与 hello/hello_ok 属性注解携带（注解不约束校验）。第 2 轮新增：ok:true 响应的 `result` 不再 required（线上 undefined 序列化省略键）；按方法导出的内联载荷别名（18 条，如 `GatewayAbortTurnInput`）进 definitions 与 rootTypes |
 | `schema/gateway-methods.snapshot.json` | `b7c2ef5b8ec24da3…` | 2026-10-14 初冻 → 同日第 2 轮（**AI 代批，待人复核**） | 方法清单快照（101 个、有序）+ 帧类型 + GatewayChannelKey/GatewayMode/GatewayWsClientName 字面量 + payloadAliases（按方法内联载荷别名清单）+ 基线三源文件 sha256 与锚点 frames.ts:21-122 |
-| `scripts/gateway-parity/export_schema.mjs` | `81321953b91eb9b7…` | 2026-10-14 初冻 → 同日第 2 轮（**AI 代批，待人复核**） | 导出器（可重复：键排序序列化；`--check` 双生成自比对，非 `--check` 只生成一次；写文件先临时再 rename）。内联载荷经 CompilerHost 虚拟注入 types.ts 的别名导出（不落盘、不改基线、不进 sha256）；临时 tsconfig 用完即删 |
-| `scripts/gateway-parity/check_schema.py` | `7856947fb51356e6…` | 2026-10-14 初冻 → 同日第 2 轮（**AI 代批，待人复核**） | 断言 A1–A9（CI 可跑）+ L1–L3（基线存在才跑）；`PDRS_REQUIRE_BASELINE=1` 缺基线即 FAIL。六帧=恰好六个纯 `$ref` 分支且引用有效；`WsRequestFrame.method` 恰为 `$ref → WsGatewayMethod`；A9 roots 齐备 + 全文档无悬空 `$ref`。阳性对照：注入 `{}` 第 7 分支 / method 退化 string / 挖 definition / 放开关闭枚举 → 5 项 FAIL |
-| `scripts/gateway-parity/validate_fixtures.mjs` | `1330b024536a8743…` | 2026-10-14 第 2 轮新增（**AI 代批，待人复核**） | ajv draft-07 正负例校验器：帧级 + definition 级；与 check_schema.py A9 互为镜像（rootTypes / payloadAliases 齐备） |
-| `scripts/gateway-parity/fixtures/gateway-protocol.fixtures.json` | `10087730486d959e…` | 2026-10-14 第 2 轮新增（**AI 代批，待人复核**） | 正负例数据：15 正帧（含 ok:true 省略 result——run_get 查无记录的线上语义）+ 16 负帧 + 18 条 definition 级正负例 |
-| `scripts/gateway-parity/package.json` | `0534a4e8e17edbc3…` | 2026-10-14 初冻 → 同日第 2 轮（**AI 代批，待人复核**） | 依赖钉死：ts-json-schema-generator@2.9.0 + typescript@5.9.3（与基线 TS 版本一致）+ ajv@^8.20.0（正负例校验），只装本目录 |
-| `scripts/gateway-parity/package-lock.json` | `da7e3735ceb47f50…` | 2026-10-14 初冻 → 同日第 2 轮（**AI 代批，待人复核**） | npm lockfile（node_modules 不入库；CI 的 `npm ci` 按此复现，基线 job 依赖它） |
+| `scripts/gateway-parity/export_schema.mjs` | `3048f44362cafbf7…` | 2026-10-14 初冻 → 同日第 2 轮→ 2026-10-14 第 3 轮 A4 前置 #40（**AI 代批，待人复核**） | 导出器（可重复：键排序序列化；`--check` 双生成自比对，非 `--check` 只生成一次；写文件先临时再 rename）。内联载荷经 CompilerHost 虚拟注入 types.ts 的别名导出（不落盘、不改基线、不进 sha256）；临时 tsconfig 用完即删 |
+| `scripts/gateway-parity/check_schema.py` | `87fba50b34f97b93…` | 2026-10-14 初冻 → 同日第 2 轮→ 2026-10-14 第 3 轮 A4 前置 #40（**AI 代批，待人复核**） | 断言 A1–A9（CI 可跑）+ L1–L3（基线存在才跑）；`PDRS_REQUIRE_BASELINE=1` 缺基线即 FAIL。六帧=恰好六个纯 `$ref` 分支且引用有效；`WsRequestFrame.method` 恰为 `$ref → WsGatewayMethod`；A9 roots 齐备 + 全文档无悬空 `$ref`。阳性对照：注入 `{}` 第 7 分支 / method 退化 string / 挖 definition / 放开关闭枚举 → 5 项 FAIL |
+| `scripts/gateway-parity/validate_fixtures.mjs` | `e6687586c9e48881…` | 2026-10-14 第 2 轮新增→ 2026-10-14 第 3 轮 A4 前置 #40（**AI 代批，待人复核**） | ajv draft-07 正负例校验器：帧级 + definition 级；与 check_schema.py A9 互为镜像（rootTypes / payloadAliases 齐备） |
+| `scripts/gateway-parity/fixtures/gateway-protocol.fixtures.json` | `e127f83e7b93281a…` | 2026-10-14 第 2 轮新增→ 2026-10-14 第 3 轮 A4 前置 #40（**AI 代批，待人复核**） | 正负例数据：15 正帧（含 ok:true 省略 result——run_get 查无记录的线上语义）+ 16 负帧 + 45 条 definition 级（18 个别名各有 pass/fail；合计 15 正帧 + 16 负帧 + 45 = 76 例）|
+| `scripts/gateway-parity/package.json` | `0b29fb344d5e912a…` | 2026-10-14 初冻 → 同日第 2 轮→ 2026-10-14 第 3 轮 A4 前置 #40（**AI 代批，待人复核**） | 依赖钉死：ts-json-schema-generator@2.9.0 + typescript@5.9.3（与基线 TS 版本一致）+ ajv@^8.20.0（正负例校验），只装本目录 |
+| `scripts/gateway-parity/package-lock.json` | `f0a98b90411ddcc1…` | 2026-10-14 初冻 → 同日第 2 轮→ 2026-10-14 第 3 轮 A4 前置 #40（**AI 代批，待人复核**） | npm lockfile（node_modules 不入库；CI 的 `npm ci` 按此复现，基线 job 依赖它） |
 
 校验：
 

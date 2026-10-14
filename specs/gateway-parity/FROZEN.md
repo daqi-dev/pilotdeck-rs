@@ -1,17 +1,19 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-14 重登记（A4 前置 #45，PR #50）**：时钟归一收紧到容器组合、装置哈希改 12 件显式白名单（未登记脚本即 FAIL）、具名键前置写入 normalization；两家（GLM、Claude 替补 DeepSeek）两轮均无 P0/P1；rebase 后正式重跑 `check_ruler` 机器项全 true。**AI 代批，待人复核**。
 > 2026-10-14 冻结。**AI 代批，待人复核**（依据：`check_ruler.py` 机器项全 true——TS 自比 k=5 十对、五个不同 gateway 进程、阳性对照 33 项主规则命中、两侧同坏拒绝、代理一致；双谱系评审第 3 轮 GLM、DeepSeek 均 `independent_review: true`，无 P0/P1，P2 转跟进 issue）。
 > 冻结后改任何一份都要另开 issue、两家评审同意、写明理由（`CLAUDE.md` §五「尺子不许自己改」）。A3 的 schema 产物与脚本另见 `schema-FROZEN.md`，不在本表。
 > 校验：`python3 scripts/gateway-parity/check_frozen.py`（下面每行「sha256 两空格 相对本目录的路径」）。
 
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
-291cddfd6d9eab7a44aa7e20ebd26aa3d6545ee467d1606a9003e2a4140b9a68  normalization.md
+122eb3f8f75300144f76445bb7f9576ae06c1ae7795481c13d50b0f92376fcfa  normalization.md
 13da73b398182ae3a33ea6b57557f3c7221a143248efde9c19e4280e38ea6046  accepted-diffs.md
 cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/gateway-parity/check_frozen.py
-149b6ab067e532121e75573924e5e877750f46c3806bcde3b6e87a7a5d60855f  ../../scripts/gateway-parity/check_ruler.py
-2240d21bd9851341848bf96e6459891bc72b4df7a2ee03aad80ebcb027918c6e  ../../scripts/gateway-parity/common.py
-93016c464a329186d73694fb79290da57e899c60203c5318061ab1838182bfe0  ../../scripts/gateway-parity/compare.py
-b2131718ef79d55f369db642c347405aabd453bf3aff3c8c2a674197a6a21602  ../../scripts/gateway-parity/controls/run_all.py
+3517f52c318da237f17d8634ee4bf3da64f0d8c063feecd38cd664c33ea12d89  ../../scripts/gateway-parity/check_ruler.py
+62798f75d13cca08a377d71b72746c39f1a054494b5e73565671785a18dea2dc  ../../scripts/gateway-parity/common.py
+4ae7570b725bfb79fdef01b0860d67f0a36864582a667da5a1e53eba1ecb8436  ../../scripts/gateway-parity/compare.py
+0bf89d5277e04fea0da89da8d24a2c05680d1d77a6c20390a8a27a2cd28b0da5  ../../scripts/gateway-parity/controls/prerequisites.py
+13e1f91b3fe5c81140dd8fcbf9d6ac24695ec8f1098b330c6ab0bc4ef2c382ea  ../../scripts/gateway-parity/controls/run_all.py
 2cb39a091ba02f745a1d1ade35b77562ed96d6ba61a9979cf0ac6cffa61deb17  ../../scripts/gateway-parity/driver.mts
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 3a758aa57cbb5d8129c2e9b73c0baa04028a87aa7bae5dba6d8519f713869692  ../../scripts/gateway-parity/observer.py
