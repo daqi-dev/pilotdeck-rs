@@ -54,13 +54,16 @@ export function processTree(ps, rootPid, groupRoots = []) {
   return rows.filter(row => owned.has(row.pid));
 }
 const unreadableCommand = command => /^\(.+\)$/.test(command);
-const defunctCommand = command => /(?:^|\s)<defunct>(?:\s|$)/.test(command);
+// A <defunct> marker in the args snapshot is only a reason to probe; the probe's
+// stat (Z) or a vanished PID decides. An argv merely containing it is not a zombie.
+const defunctCommand = command => command.trim() === '<defunct>';
+const mentionsDefunct = command => /(?:^|\s)<defunct>(?:\s|$)/.test(command);
 // args=(comm) is not evidence of an executable. Re-probe each sample, binding
 // comm/stat to the current PID/PPID/PGID; never reuse a previous path approval.
 export async function resolveUnreadableProcesses(processes, { run = capture, executableRealpath = realpathSync } = {}) {
   const resolved = [];
   for (const row of processes) {
-    if (!unreadableCommand(row.command) && !defunctCommand(row.command)) { resolved.push(row); continue; }
+    if (!unreadableCommand(row.command) && !mentionsDefunct(row.command)) { resolved.push(row); continue; }
     const observation = { source: 'ps -ww -p; pid/ppid/pgid/stat/comm', status: 'unavailable' };
     const probe = async () => {
       const raw = (await run('ps', ['-ww', '-p', String(row.pid), '-o', 'pid=,ppid=,pgid=,stat=,comm='])).trim();
@@ -74,8 +77,7 @@ export async function resolveUnreadableProcesses(processes, { run = capture, exe
       if (path?.startsWith('/') && resolve(path) === path) observation.path = path;
     };
     try {
-      if (defunctCommand(row.command)) { observation.status = 'zombie'; observation.source = '<defunct> in current ps args snapshot'; }
-      else {
+      {
         await probe();
         if (observation.path) {
           try {
@@ -130,19 +132,27 @@ const developerTool = /(?:^|\s|[;&|])(?:[^\s;|]*\/)?(?:xcodebuild|xcrun)(?=\s|$|
 const gitOrXcrun = /^(?:git|xcrun|\/[^\s]+\/(?:git|xcrun))(?:\s|$)/;
 const executablePaths = row => [row.executableObservation?.path, row.executableObservation?.realpath].filter(Boolean);
 // ps stat E = exiting, Z = zombie: the executable can no longer be resolved.
-const inactiveProcess = row => defunctCommand(row.command) || ['exited', 'zombie'].includes(row.executableObservation?.status)
+const inactiveProcess = row => ['exited', 'zombie'].includes(row.executableObservation?.status)
   || /[EZ]/.test(row.executableObservation?.stat ?? '');
 const optionalEnvironment = row => [row.command, ...executablePaths(row)].some(value => updater.test(value) || soffice.test(value));
 const nodeProcess = row => row.command.startsWith(process.execPath + ' ') || executablePaths(row).includes(process.execPath);
 export function environmentTargets(processes, { nodeRoots = [] } = {}) {
   const hasLicenseCheck = processes.some(row => row.command === licenseArgv.join(' '));
-  return processes.filter(row => !inactiveProcess(row) && (optionalEnvironment(row) || nodeProcess(row) || nodeRoots.some(root => root.pid === row.pid)
+  // R14: the operator's own updater is judged by identity only (it runs with the
+  // operator's real HOME by design and rewrites its argv), so it is not an
+  // environment target; soffice launched by a tested server still is.
+  const isUpdater = row => [row.command, ...executablePaths(row)].some(value => updater.test(value));
+  return processes.filter(row => !inactiveProcess(row) && (optionalEnvironment(row) && !isUpdater(row) || nodeProcess(row) || nodeRoots.some(root => root.pid === row.pid)
     || hasLicenseCheck && gitOrXcrun.test(row.command) || row.command === licenseArgv.join(' ')));
 }
 // macOS ps -E appends the environment to args (support a prepended environment
 // too). Remove the already captured argv before extracting HOME; do not persist
 // raw environment text, which can contain credentials. Bind the two snapshots
 // by PID/PPID/PGID and exact argv, and fail closed on missing/ambiguous HOME.
+// A parent exiting between snapshots makes launchd adopt the child (ppid -> 1);
+// same PID and process group is the same process, not an identity change.
+const sameProcess = (expected, row) => row.pid === expected.pid && row.pgid === expected.pgid
+  && (row.ppid === expected.ppid || row.ppid === 1);
 export function processHomes(raw, processes, { unreadable } = {}) {
   let rows;
   try { rows = processRows(raw); }
@@ -152,7 +162,7 @@ export function processHomes(raw, processes, { unreadable } = {}) {
     const matching = rows.filter(item => item.pid === expected.pid);
     const row = matching.length === 1 ? matching[0] : undefined;
     if (!matching.length) throw Object.assign(new Error(`FAIL: environment process absent for PID ${expected.pid}`), { code: 'ENVIRONMENT_RACE' });
-    if (!row || row.ppid !== expected.ppid || row.pgid !== expected.pgid) throw new Error(`FAIL: environment process identity changed for PID ${expected.pid}`);
+    if (!row || !sameProcess(expected, row)) throw new Error(`FAIL: environment process identity changed for PID ${expected.pid}`);
     // Only an identical argv with no environment is a hardened-process fallback.
     // Missing rows, changed argv and exposed but malformed HOME never qualify.
     if (row.command === expected.command && unreadable && optionalEnvironment(expected)) {
@@ -208,7 +218,7 @@ export async function retryNodeHomes(raw, targets, { run = capture, unreadable =
         recordExit('empty targeted ps args snapshot');
         break;
       }
-      if (rows.length !== 1 || rows[0].pid !== original.pid || rows[0].ppid !== original.ppid || rows[0].pgid !== original.pgid)
+      if (rows.length !== 1 || !sameProcess(original, rows[0]))
         throw new Error(`FAIL: environment process identity changed for PID ${original.pid}`);
       current = { ...original, command: rows[0].command };
       processes[processes.findIndex(row => row.pid === original.pid)] = current;
@@ -293,7 +303,7 @@ export function forbiddenProcesses(processes, { playwrightRoots = [], browserTmp
     if (!match) continue;
     const executable = match[1], relative = executable.startsWith(updaterRoot) ? executable.slice(updaterRoot.length) : '';
     if (!/^[^/\s]+\/GoogleUpdater\.app\/Contents\/MacOS\/GoogleUpdater$/.test(relative)
-      || resolve(executable) !== executable || !homeMatches(row, operatorHome)) continue;
+      || resolve(executable) !== executable) continue;
     try { if (updaterRealpath(executable) !== executable) continue; }
     catch { continue; } // Missing/unobservable/noncanonical installed executable fails closed.
     wakeCandidates.set(row.pid, { executable, mode: match[2] });

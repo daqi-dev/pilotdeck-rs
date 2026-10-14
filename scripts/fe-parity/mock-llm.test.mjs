@@ -744,7 +744,7 @@ test('round nine: only unchanged optional application argv can be unreadable; No
   }
 });
 
-test('round nine/eleven: updater/soffice retain environment alternatives; Chrome uses current identity only', () => {
+test('round nine/eleven: updater/Chrome use current identity only; soffice retains environment alternatives', () => {
   const operatorHome = userInfo().homedir, home = '/owned/run/home-os';
   const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-abc`;
   const helper = '/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/142.0/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer';
@@ -753,9 +753,11 @@ test('round nine/eleven: updater/soffice retain environment alternatives; Chrome
   const server = `${process.execPath} --import tsx ${resolve(baseline, 'server/index.js')}`;
   const base = `10 1 10 runner\n20 10 20 playwright\n21 20 20 worker\n22 21 20 ${chrome}\n24 23 20 ${helper}\n23 22 20 ${helper}\n25 22 20 ${updater}\n30 10 30 runtime\n31 30 30 ${server}\n32 31 30 ${office}`;
   const options = { operatorHome, playwrightRoots: [20], browserTmpRoots: ['/owned/tmp'], runtimeRoots: [{ pid: 30, home }], updaterRealpath: path => path, sofficeRealpath: path => path,
-    processHOME: new Map([[31, home]]), unreadable: new Set([22, 23, 24, 25, 32]), alternativeEvidence: [] };
-  assert.deepEqual(forbiddenProcesses(processTree(base, 10), options), []);
-  assert.deepEqual(options.alternativeEvidence.map(row => row.pid).sort((a,b) => a-b), [25, 32]);
+    processHOME: new Map([[31, home]]), unreadable: new Set([22, 23, 24, 32]), alternativeEvidence: [] };
+  const rows = processTree(base, 10);
+  assert.deepEqual(environmentTargets(rows).map(row => row.pid), [31, 32], 'only server Node and soffice require environment snapshots');
+  assert.deepEqual(forbiddenProcesses(rows, options), []);
+  assert.deepEqual(options.alternativeEvidence.map(row => row.pid), [32]);
   assert(options.alternativeEvidence.every(row => row.environment === 'unreadable' && row.alternative));
   assert.equal(options.alternativeEvidence.find(row => row.pid === 32).serverAncestorPid, 31);
   for (const invalid of [base.replace('32 31 30', '32 30 30'), base.replace('31 30 30', '31 21 20')]) {
@@ -764,10 +766,22 @@ test('round nine/eleven: updater/soffice retain environment alternatives; Chrome
   for (const invalid of [base.replace('22 21 20', '22 30 30'), base.replace('/owned/tmp/', '/operator/'), base.replace(' --remote-debugging-pipe', ''), base.replace('GoogleUpdater --wake', 'GoogleUpdater --install')]) {
     assert(forbiddenProcesses(processTree(invalid, 10), { ...options, alternativeEvidence: [] }).length);
   }
-  for (const pid of [25, 32]) {
-    const unreadable = new Set(options.unreadable); unreadable.delete(pid);
-    const processHOME = new Map(options.processHOME); processHOME.set(pid, pid === 32 ? operatorHome : home);
-    assert(forbiddenProcesses(processTree(base, 10), { ...options, unreadable, processHOME, alternativeEvidence: [] }).some(row => row.pid === pid));
+  for (const updaterHOME of [undefined, home, '/wrong', operatorHome]) {
+    const processHOME = new Map(options.processHOME);
+    if (updaterHOME !== undefined) processHOME.set(25, updaterHOME);
+    for (const unreadableUpdater of [false, true]) {
+      const unreadable = new Set(options.unreadable);
+      if (unreadableUpdater) unreadable.add(25);
+      assert.deepEqual(forbiddenProcesses(rows, { ...options, unreadable, processHOME, alternativeEvidence: [] }), [],
+        'updater missing/wrong HOME or unreadable environment does not affect identity approval');
+    }
+  }
+  for (const officeHOME of [undefined, operatorHome, '/wrong']) {
+    const unreadable = new Set(options.unreadable); unreadable.delete(32);
+    const processHOME = new Map(options.processHOME);
+    if (officeHOME !== undefined) processHOME.set(32, officeHOME);
+    assert.deepEqual(forbiddenProcesses(rows, { ...options, unreadable, processHOME, alternativeEvidence: [] }).map(row => row.pid), [32],
+      'soffice without the isolated server HOME or an unreadable-environment alternative FAIL');
   }
   const remembered = new Map([[23, helper]]);
   const orphan = `10 1 10 runner\n23 1 20 ${helper}\n24 23 20 ${helper}`;
@@ -878,7 +892,7 @@ test('round ten: R14 installed updater exact wake modes require canonical identi
     assert.deepEqual(rejected(`\n23 21 23 ${executable} ${mode}`, { playwrightRoots: [], deferEnvironment }, withoutChrome), [],
       `R14: ${mode} without Chrome or Playwright ancestry PASS in both audit stages`);
   }
-  for (const args of ['--wake-all --extra', '--install', '--register', '--uninstall', '--wake --wake-all', '--wake-all=true', '--wake --extra', '--WAKE', '', ' --wake', '--wake unknown']) {
+  for (const args of ['--wake-all --extra', '--install', '--register', '--uninstall', '--wake --wake-all', '--wake-all=true', '--wake --extra', '--WAKE', '', ' --wake', '--wake unknown', '\t--wake', '--wake-all --wake-all', '--wake\t--extra']) {
     for (const deferEnvironment of [true, false]) {
       assert.deepEqual(rejected(`\n23 21 23 ${executable} ${args}`, { playwrightRoots: [], deferEnvironment }, withoutChrome), [23], args);
     }
@@ -886,21 +900,28 @@ test('round ten: R14 installed updater exact wake modes require canonical identi
   assert.deepEqual(rejected(childrenFirst.replace('--wake-all', '--install')), [23], 'install parent FAIL; independently valid wake child PASS');
   assert.deepEqual(rejected(childrenFirst.replace('--wake-all', '--wake')), [], 'R14: wake parent and wake child independently PASS');
   const otherVersion = executable.replace('157.0.8089.0', '158.0');
-  assert.deepEqual(rejected(childrenFirst.replace('24 23 24 ' + executable, '24 23 24 ' + otherVersion),
-    { updaterRealpath: path => path === otherVersion ? executable : path }), [24], 'argv and realpath version directories differ: FAIL');
+  for (const deferEnvironment of [true, false]) {
+    assert.deepEqual(rejected(childrenFirst.replace('24 23 24 ' + executable, '24 23 24 ' + otherVersion),
+      { deferEnvironment, updaterRealpath: path => path === otherVersion ? executable : path }), [24], 'argv and realpath version directories differ: FAIL in both stages');
+    assert.deepEqual(rejected(childrenFirst, { deferEnvironment, updaterRealpath: () => '/outside/GoogleUpdater' }), [24, 23], 'symlink escape FAIL in both stages');
+    assert.deepEqual(rejected(childrenFirst, { deferEnvironment, updaterRealpath: () => { throw new Error('missing'); } }), [24, 23], 'realpath failure FAIL in both stages');
+    for (const processHOME of [new Map(), new Map([[23, '/wrong'], [24, '/wrong']]), new Map([[23, '/wrong'], [24, operatorHome]]), new Map([[23, operatorHome], [24, '/wrong']])]) {
+      for (const unreadable of [new Set(), new Set([23, 24])]) {
+        assert.deepEqual(rejected(childrenFirst, { deferEnvironment, processHOME, unreadable }), [],
+          'updater/child missing or wrong HOME and unreadable environment PASS in both stages');
+      }
+    }
+  }
   for (const path of [executable.replace('/157.0.8089.0/', '/../'), executable.replace('/157.0.8089.0/', '/157.0.8089.0/../157.0.8089.0/'),
     executable.replace('/157.0.8089.0/', '//157.0.8089.0/'), executable.replace(operatorHome + '/', '/Users/other/'),
-    executable.replace('/GoogleUpdater/157.0.8089.0/', '/GoogleUpdater-extra/157.0.8089.0/')]) {
+    executable.replace('/GoogleUpdater/157.0.8089.0/', '/GoogleUpdater-extra/157.0.8089.0/'),
+    executable.replace('/157.0.8089.0/', '/'), executable.replace('/157.0.8089.0/', '/157.0.8089.0/nested/'),
+    executable.replace('/157.0.8089.0/', '/157.0 8089.0/'), executable.replace('/GoogleUpdater.app/', '/GoogleUpdater-other.app/')]) {
     for (const deferEnvironment of [true, false]) for (const mode of ['--wake', '--wake-all']) {
       assert.deepEqual(rejected(`\n23 21 23 ${path} ${mode}`, { playwrightRoots: [], deferEnvironment }, withoutChrome), [23],
         `noncanonical/nonoperator updater path FAIL: ${path} ${mode}`);
     }
   }
-  assert.deepEqual(rejected(childrenFirst, { updaterRealpath: () => '/outside/GoogleUpdater' }), [24, 23], 'symlink escape FAIL');
-  assert.deepEqual(rejected(childrenFirst, { updaterRealpath: () => { throw new Error('missing'); } }), [24, 23], 'realpath failure FAIL');
-  assert.deepEqual(rejected(childrenFirst, { processHOME: new Map([[22, operatorHome], [23, '/wrong'], [24, operatorHome]]) }), [23],
-    'wrong updater HOME FAIL; its independently valid child PASS');
-  assert.deepEqual(rejected(childrenFirst, { processHOME: new Map([[22, operatorHome], [23, operatorHome], [24, '/wrong']]) }), [24], 'wrong child HOME FAIL');
   assert.deepEqual(rejected(childrenFirst, { approvedChrome: new Map([[22, chrome]]) }, base.replace('22 21 22', '22 1 20')), [22],
     'cached reparented Chrome still FAIL; R14 updater identity independently PASS');
   // Chrome detaches wake-all and launchd adopts it; it stays visible only via its known group.
@@ -918,28 +939,35 @@ test('round ten: fresh Chrome and R14 independent updater identities pass both a
   const executable = `${operatorHome}/Library/Application Support/Google/GoogleUpdater/157.0.8089.0/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`;
   const chrome = `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome ${requiredChromeFlags.join(' ')} --remote-debugging-pipe --user-data-dir=/owned/tmp/playwright_chromiumdev_profile-new`;
   let invalid = false, parent = 'chrome', fatalGroups, lsof = 0, environmentCalls = 0;
+  let childMode = '--wake', parentMode = '--wake-all';
   const records = [];
   const audit = await startTCPAudit({ rootPid: 10, intervalMs: 60_000, playwrightRoots: () => [20], browserTmpRoots: () => ['/owned/tmp'],
     nodeRoots: () => [{ pid: 20, home }], updaterRealpath: path => path,
     run: async (file, args) => {
       if (file === 'lsof') { lsof++; assert(args.includes('10,24,23,22,20')); return ''; }
       const parentPid = parent === 'chrome' ? 22 : parent === 'worker' ? 20 : 1;
-      const rows = [`10 1 10 runner`, `24 23 24 ${executable} --wake`, `23 ${parentPid} 23 ${executable} --wake-all${invalid ? ' --extra' : ''}`,
+      const rows = [`10 1 10 runner`, `24 23 24 ${executable} ${childMode}`, `23 ${parentPid} 23 ${executable} ${parentMode}${invalid ? ' --extra' : ''}`,
         `22 20 22 ${chrome}`, `20 10 20 ${process.execPath} /owned/playwright-cli.js`];
-      if (args.includes('-E')) environmentCalls++;
-      return (args.includes('-E') ? rows.slice(1).map(row => row.startsWith('20 ') ? row + ` HOME=${home} SECRET=do-not-record` : row) : rows).join('\n');
+      if (args.includes('-E')) {
+        environmentCalls++;
+        assert.equal(args[args.indexOf('-p') + 1], '20', 'ps -E targets only Node; updater/Chrome must not be queried');
+        return rows.at(-1) + ` HOME=${home} SECRET=do-not-record`;
+      }
+      return rows.join('\n');
     }, onFatal: (_error, groups) => { fatalGroups = groups; }, record: async row => records.push(row) });
   try {
     assert.equal(records[0].status, 'PASS');
-    assert.deepEqual(records[0].environmentEvidence.find(row => row.pid === 24).argv, [executable, '--wake']);
-    assert.equal(records[0].environmentEvidence.find(row => row.pid === 24).chromeAncestorPid, null,
-      'R14: children-first updater approval does not require or claim a Chrome ancestor');
-    assert.equal(records[0].environmentEvidence.find(row => row.pid === 23).chromeAncestorPid, 22);
-    assert.equal(records[0].environmentEvidence.find(row => row.pid === 24).parentPid, 23);
+    assert.deepEqual(records[0].environmentEvidence.map(row => row.pid), [20], 'updater has no environment evidence');
+    assert.deepEqual(records[0].processes.filter(row => [23, 24].includes(row.pid)).map(row => [row.pid, row.ppid, row.command]),
+      [[24, 23, `${executable} --wake`], [23, 22, `${executable} --wake-all`]], 'current updater identity is retained in process evidence');
     for (parent of ['worker', 'launchd']) {
+      [childMode, parentMode] = [parentMode, childMode];
       await audit.checkpoint(`R14-${parent}-parent`);
       assert.equal(records.at(-1).status, 'PASS');
-      assert.equal(records.at(-1).environmentEvidence.find(row => row.pid === 23).chromeAncestorPid, null);
+      assert.deepEqual(records.at(-1).environmentEvidence.map(row => row.pid), [20], 'adoption and changed wake argv do not create updater environment targets');
+      assert.deepEqual(records.at(-1).processes.filter(row => [23, 24].includes(row.pid)).map(row => [row.pid, row.ppid, row.command]),
+        [[24, 23, `${executable} ${childMode}`], [23, parent === 'worker' ? 20 : 1, `${executable} ${parentMode}`]],
+        'each audit uses current updater argv and parent identity, including detached groups');
     }
     assert(!JSON.stringify(records).includes('do-not-record'));
     invalid = true;
@@ -1057,9 +1085,12 @@ test('round twelve: exited/defunct/zombie pass with evidence; live unknown, iden
     assert.equal(rows[1].executableObservation.status, status, raw);
     assert.equal(forbiddenProcesses(rows).length > 0, denied, raw);
   }
-  const defunct = await resolveUnreadableProcesses(processTree(base.replace('(hidden)', '(open) <defunct>'), 10), { run: async () => assert.fail('defunct needs no probe') });
+  // A <defunct> marker only triggers a probe: stat Z passes, a live process does not.
+  const defunct = await resolveUnreadableProcesses(processTree(base.replace('(hidden)', '(open) <defunct>'), 10), { run: async () => '20 10 20 Z', executableRealpath: path => path });
   assert.deepEqual(forbiddenProcesses(defunct), []);
   assert.equal(defunct[1].executableObservation.status, 'zombie');
+  const liveDefunct = await resolveUnreadableProcesses(processTree(base.replace('(hidden)', '(open) <defunct>'), 10), { run: async () => '20 10 20 S /usr/bin/open', executableRealpath: path => path });
+  assert.equal(forbiddenProcesses(liveDefunct)[0]?.pid, 20, 'live process with <defunct> in argv FAIL');
   const failed = await resolveUnreadableProcesses(processTree(base, 10), { run: async () => { throw new Error('timeout'); } });
   assert.equal(forbiddenProcesses(failed)[0].pid, 20);
   for (const live of [false, true]) {
@@ -1232,4 +1263,21 @@ test('coordinator: exiting process (ps stat E) with unavailable executable is in
   const ids = rows => forbiddenProcesses(rows, options).map(r => r.pid).filter(pid => pid >= 30);
   assert.deepEqual(ids([...base, row(30, 21, 21, '(Google Chrome He)', { status: 'unavailable', stat: '?E' })]), [], 'exiting PASS');
   assert.deepEqual(ids([...base, row(30, 21, 21, '(Google Chrome He)', { status: 'unavailable', stat: 'S' })]), [30], 'live unresolved FAIL');
+});
+
+test('coordinator: only a bare "<defunct>" command is a zombie; argv containing it still passes the forbidden rules', () => {
+  const row = (pid, ppid, pgid, command) => ({ pid, ppid, pgid, command });
+  const base = [row(10, 1, 10, 'runner'), row(20, 10, 20, 'playwright')];
+  const ids = rows => forbiddenProcesses(rows, { playwrightRoots: [20], deferEnvironment: true }).map(r => r.pid).filter(pid => pid >= 30);
+  assert.deepEqual(ids([...base, { ...row(30, 20, 20, '<defunct>'), executableObservation: { status: 'zombie', stat: 'Z' } }]), [], 'probed zombie PASS');
+  assert.deepEqual(ids([...base, row(30, 20, 20, 'open http://127.0.0.1:3010 <defunct>')]), [30], 'open with defunct-looking arg FAIL');
+});
+
+test('coordinator: launchd adoption between environment snapshots is the same process; other identity changes FAIL', () => {
+  const home = '/owned/run/ready/home-os';
+  const procs = [{ pid: 10, ppid: 1, pgid: 10, command: 'runner' }, { pid: 30, ppid: 20, pgid: 30, command: 'node server.js' }];
+  const env = (ppid, pgid) => `10 1 10 runner HOME=${home}\n30 ${ppid} ${pgid} node server.js HOME=${home}`;
+  assert.equal(processHomes(env(1, 30), procs).get(30), home, 'adopted (ppid 1, same pgid) PASS');
+  assert.throws(() => processHomes(env(21, 30), procs), /identity changed/, 'different non-launchd parent FAIL');
+  assert.throws(() => processHomes(env(1, 31), procs), /identity changed/, 'pgid changed FAIL');
 });
