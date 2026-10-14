@@ -14,11 +14,10 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import time
 import uuid
 
 from snapshot import capture
-from common import apparatus_hashes, source_hashes
+from common import apparatus_hashes, source_hashes, ClockMonitor, ClockRefused, validate_clock_check
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -105,8 +104,18 @@ def record_side(out, side, slot=None):
     meta = {'schema': 1, 'mode': side, 'fixture_path': str(directory.resolve()),
             'run_id': str(uuid.uuid4()), 'observer_port': 13102, 'synthetic': False,
             'baseline_path': str(b1.BASELINE), 'apparatus_sha256': apparatus_hashes(),
-            'source_sha256': source_hashes(b1.BASELINE, BINARY),
-            'wall_start_ms': time.time_ns() // 1_000_000}
+            'source_sha256': source_hashes(b1.BASELINE, BINARY)}
+    monitor = ClockMonitor()
+    meta['wall_start_ms'] = monitor.start()
+    try:
+        return record_monitored_side(directory, side, meta)
+    finally:
+        monitor.finish(meta)
+        b1.save(directory, 'run-meta.json', meta)
+        validate_clock_check(meta)
+
+
+def record_monitored_side(directory, side, meta):
     home, project = b1.make_home(directory)
     env = b1.build_env(directory, side, {'VITE_IS_PLATFORM': 'false', 'EXP008_POLL_WATCH': '0'})
     # Inherit no external record/DUT configuration.
@@ -143,7 +152,6 @@ def record_side(out, side, slot=None):
         results = json.loads((directory / 'scenarios.json').read_text())
     finally:
         cleanup(directory, first)
-        meta['wall_end_ms'] = time.time_ns() // 1_000_000
         meta['source_sha256_end'] = source_hashes(b1.BASELINE, BINARY)
         b1.save(directory, 'run-meta.json', meta)
     if meta['source_sha256_end'] != meta['source_sha256']:
@@ -244,6 +252,9 @@ def main():
             # Independent fresh services and homes; one failed side cannot suppress the other.
             try:
                 report['sides'][side] = record_side(out, side, args.slot if args.side else None)
+            except ClockRefused as error:
+                report['status'] = 'REFUSED'
+                report['sides'][side] = {'device': {'status': 'REFUSED', 'error': str(error)}}
             except Exception as error:
                 report['sides'][side] = {'device': {'status': 'FAIL', 'error': str(error)}}
             b1.save(out, 'result.json', report)
@@ -267,7 +278,7 @@ def main():
     finally:
         b1.save(out, 'result.json', report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if report['status'] == 'PASS' else 1
+    return 2 if report['status'] == 'REFUSED' else 0 if report['status'] == 'PASS' else 1
 
 
 if __name__ == '__main__':

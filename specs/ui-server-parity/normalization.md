@@ -374,3 +374,59 @@ chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前�
 
 
 **SQL 源精度复核。** `users.created_at`（init.sql:9）与 `last_login`（db.js:207）来自两次独立的 `CURRENT_TIMESTAMP`，不是同一时钟的兼容别名。live3 ref1/ref2 分别出现跨秒/同秒；将这些量化结果的“等于/小于”当成跨采集必须相等的排名会误报。该精确 SQL 对只执行严格秒格式、按秒量化的 wall 门和 `created_at ≤ last_login`，不把量化相等当成别名等值硬门。反转仍独立 FAIL，两侧同坏同样 FAIL。HTTP/WS 的 ISO 毫秒字段、别名与跨实体排名不受此条影响。此边界回源于两个 SQL 生成位置，未放宽任何表示/单位/区间检查，未新增允许格式。
+
+## 第 9 轮：消息、日志与 projection 时间见证（2026-10-14，DRAFT）
+
+**协调者裁定：自决·待复核。** 第 8 轮反例仍成立：`SessionRuntime.ts:41,57–65,172–179` 使用 wall clock，先取时间再串行 enqueue；`JsonlSessionPersistence.ts:20–35` 保证追加顺序，`SessionEventLogValidation.ts:27–77,97–133` 不保证 wall 时间单调。本节明确增加环境前提 **“采集期间 wall clock 不回拨”**，不把它改写为源码无条件承诺。适用域是本尺子的完成态固定场景；DRAFT、独立评审待完成、未冻结状态不变。
+
+### 环境准入：回拨是 REFUSED，不计分
+
+最小改动放在 B2 `run.py:record_side`，共用实现位于 `common.py:ClockMonitor/validate_clock_check`。监测从创建 fixture 之前开始，覆盖服务、driver、退出清理、磁盘快照与采集后源码哈希检查；退出时将完整记录写入该侧 `run-meta.json.clock_regression_check`。无论采集成功或抛错均结束监测、保存元数据；若时钟检查不满足，整个采集标为 **REFUSED / exit 2**，不把环境故障作为 DUT FAIL。
+
+- schema 1 记录 `interval_ns=250000000`（250 ms 定期采样）、`max_gap_ns=2000000000`（2 s 最大可接受覆盖间隔）、`status`、`samples`，失败另有 `reason`。首尾样本分别为 `start/end`，中间样本为 `periodic`。
+- 每次按 `monotonic_ns → time_ns → monotonic_ns` 取样，记录 `mono_before_ns/wall_ns/mono_after_ns`；使用 bracket 的 offset 区间 `[wall-after, wall-before]`，避免把两次读时钟的正常调用延迟直接当回拨。
+- 任一样本 wall 值小于上一样本，或本样本 offset 上界小于此前 offset 下界的最高值，均拒绝；后者能捕获“wall 仍向前，但比 monotonic 少走一截”的回拨。无额外时间容差，采样 bracket 重叠仍可通过。此门采取保守策略：持续负向时钟校正也可能被拒绝，不给 DUT 计错。
+- monotonic 顺序错误、样本格式错误、采样 bracket/相邻覆盖间隔超过 2 s、缺首尾或 wall 起止与 metadata 不匹配，同样 REFUSED。比较器重算所有样本，不仅信任写入的 `status=PASS`；已标 REFUSED 的记录不能恢复成有效采集。
+- 有限频率的采样不能证明两个采样点之间从未发生过立即回拨又恢复的瞬态。记录的含义是“环境前提的采样监测通过”，不是源码单调保证或连续时钟证明；不对这种监测盲区作额外保证。
+
+**旧归档政策。** 默认采集/比较及 TS 池准入必须有合法监测记录（synthetic 测试也提供记录，没有生产旁路）。只有现有显式 `historical-replay` 身份绑定允许缺失：两侧报告标注 `clock_regression_check: {left: "absent", right: "absent"}`，池的每份 capture 也标注 `clock_regression_check="absent"`；`calibration_eligible=false`。已存在的坏记录在 historical-replay 也必须 REFUSED。原报告 / apparatus 哈希绑定不改，不能用 replay 缺记录例外给新装置定标。旧档的消息、日志非递减检查仍照常执行；通过只说明该批时间值满足裁定，不能补造当年的监测证据。
+
+### 本侧独立校验（两侧同坏亦 FAIL）
+
+所有见证来自 `capture()` 重新读取的**本侧真实磁盘**，不是 `snapshot.json` 缓存，也不是对侧值。既有归档快照一致性检查保留。以下规则先于时钟叶子的 `<TIME:type>` 替换执行，失败为 `normalization.field`，诊断包含侧别、路径和具体契约。
+
+| 路径 | 额外约束 | 回源依据（路径相对 baseline） |
+|---|---|---|
+| `http / readonly.messages / messages.*.timestamp` | 每个历史消息时间必须原值等于本侧 `@chat` 某事件 `createdAt`；响应消息顺序非递减，允许相等 | `src/web/server/readSessionMessages.ts:96–115,529,866–887` 从持久化 entry 取时间并 flatten；`ui/server/routes/messages.js:197` 原样映射 |
+| `disk / @chat / *.createdAt` | 每个 jsonl 独立按 sequence 非递减；sequence 为正整数且在文件内严格递增，不重排文件内容 | `SessionRuntime.ts:57–65,172–179` / `JsonlSessionPersistence.ts:20–35`，加上上述显式环境前提 |
+| `disk / @projection / anchor.createdAt` | 在对应 jsonl 中，按 `asOfSequence` 与 anchor 的 sequence、entryId、parentEntryId、turnId、type 找到唯一事件，并严格相等 | `src/session/projection/checkpoint/SessionProjectionCheckpointStore.ts:110–127` |
+| `disk / @projection / projections."agent-transcript.conversation".state.entries.*.entry.createdAt` | 按 sequence、entryId、parentEntryId、turnId、type、sessionId 找到对应日志唯一事件，严格相等；不能晚于该 projection 的 asOfSequence 或顶层 checkpoint | `src/session/projection/AgentTranscriptProjections.ts:94–103` 保留原 entry |
+| `disk / @projection / projections."web-history.agent-statuses".state.*.createdAt` | 同上按事件身份见证，不能拿任意另一个合法日志时间替代 | `src/session/projection/WebHistoryProjections.ts:124–126` 保留原 entry |
+| `disk / @projection / projections."agent-transcript.metadata".state.updatedAt` | 等于截至该 projection 的 asOfSequence，日志 `session_metadata.metadata.updatedAt` 最后一次对应赋值；不是仅做集合成员判断 | `src/session/projection/AgentTranscriptProjections.ts:322,577–584` 按 sequence merge metadata；accepted_input 分支只合入 modelSelection |
+
+消息与日志均**不新增跨采集固定排名**；同毫秒并列可以随采集变化。messages 见证按本侧事件时间集合，不升级为未裁定的每消息身份映射。projection 见证按对应文件和事件身份，拒绝无对应日志文件的 projection。
+
+**incomplete-turn 的明确读取时钟分支。** `readSessionMessages.ts:137–138,391–410` 在读取时创建特殊 status，`:396` 取 `now()`；`routes/messages.js:185–205,301–308` 将它映射到历史消息数组。比较器仅在以下源码生成形态同时匹配时，把具体 `http[readonly.messages#N].body.messages[i].timestamp` 登记到报告 `reading_clock_paths`：`kind="status"`、`provider="pilotdeck"`、非空 sessionId、id 以该 sessionId 加 `-incomplete-turn-status-` 开头且后缀非空、text 严格等于源码固定中文提示，且没有 entryId/sequence/turnId/runId。这一精确路径只验 ISO 毫秒格式、单位和 wall 区间，排除出历史事件见证及历史顺序序列；其余消息（包括普通 status）仍执行历史规则。原消息保留在响应比较中，未删除或替换其内容；如果它只在一侧出现，结构差异仍 FAIL。对照覆盖该分支和带 entryId 的伪装 status，不能靠“本批恰巧没出现”取得豁免。
+
+### 维持格式、单位、wall 区间的逐路径依据
+
+这些路径继续使用第 7 轮严格格式及单位定义，不新增跨采集相等/不等排名，也不把读取时刻误作持久化事件时间。本节只裁定下列路径，未知路径仍 literal。
+
+| 通道 / 上下文 | 完整路径 | 为何维持这些校验 |
+|---|---|---|
+| `http / readonly.messages` | `stream.messages.*.timestamp` | `routes/messages.js:74–75 → pilotdeck-bridge.js:1267–1279 → pilotdeck-message.js:32` 在 toFrames 创建帧时独立 `new Date().toISOString()`，不是日志别名；live3 ref9 的读取帧确有跨毫秒分布，固定并列排名无源契约 |
+| `ws / complete` | `timestamp` | `pilotdeck-message.js:32` / bridge 的 createNormalizedMessage 默认生成发帧时间；无持久化时间副本关系，毫秒量化并列取决于调度 |
+| `ws / status` | `timestamp` | 同一 createNormalizedMessage 发帧时独立生成，非事件 createdAt 别名 |
+| `ws / stream_delta` | `timestamp` | 同一 createNormalizedMessage 发帧时独立生成，非事件 createdAt 别名 |
+| `ws / text` | `timestamp` | 同一 createNormalizedMessage 发帧时独立生成，非事件 createdAt 别名 |
+| `ws / config:reloaded` | `timestamp` | `ui/server/services/pilotdeckConfigWatcher.js:58,67,78,91,99` 与 `ui/server/routes/config.js:527,756,995,1038` 在通知产生时取时钟，没有持久化原值见证 |
+| `disk / home/auth.db` | `tables.app_config.rows.*.created_at` | `ui/server/database/db.js:68` 独立 CURRENT_TIMESTAMP，单一创建时间，无该对象生命周期另一端或跨通道副本；跨初始化对象的秒级等值不是稳定别名 |
+| `disk / home/auth.db` | `tables.vapid_keys.rows.*.created_at` | `ui/server/database/init.sql:67` 独立 CURRENT_TIMESTAMP，同上，无配对更新时间 / 时间副本 |
+| `http / shadow.files` | `items.*.mtimeMs` | `src/gateway/dialog/projectFiles.ts:99` 来自 stat.mtimeMs；遍历顺序不代表修改顺序，逻辑快照不保存原 stat 时间见证 |
+| `disk / @chat` | `*.metadata.updatedAt` | `src/session/metadata/SessionMetadataStore.ts:23,37,46,51,58,62,92` 在构造 metadata 时独立生成，早于事件 enqueue，不是 event.createdAt 别名。该原值作为 projection 的来源，但它自身没有另一份更原始时钟可见证；不凭字段名字虚构生命周期对 |
+
+`ws / projects_updated / timestamp` 的来源为 `ui/server/index.js:337` 独立广播生成；第 7 轮已对整个 projects_updated 的已登记时钟保留排名，本轮**继续保留该既有规则**以及其格式 / wall 门，不归入上述仅格式路径。其他既有 CLOCK_PAIRS、CLOCK_RESPONSE_ORDER、expiresAt 见证保持不变。
+
+### 验收方式
+
+沿用原 20 ref + 5 TS + 1 proxy 的显式 historical-replay，不启动服务或重采。controls 增加消息倒序、消息全改读取时刻、日志 createdAt 倒序、anchor 改值的单侧与两侧同坏；projection conversation/status/metadata 另有按身份或最新值的反例；允许合法同毫秒并列，明确测试 incomplete-turn 路径；注入 clock 回拨必须 REFUSED。真实归档副本也执行四组单侧/双侧变异与时钟 REFUSED，重算 HTTP ETag/Content-Length/body bytes/offset 或磁盘快照，避免完整性门替代目标规则命中。最终结果记入 `_tmp/RESULT.md` 第 9 轮。

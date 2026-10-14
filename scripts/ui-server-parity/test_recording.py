@@ -5,6 +5,11 @@ import base64
 from pathlib import Path
 import tempfile
 import unittest
+import contextlib
+import io
+from unittest.mock import patch
+from common import ClockMonitor, ClockRefused, validate_clock_check
+from controls.run_all import clock_evidence
 from run import HERE, validate_recording
 
 
@@ -134,6 +139,87 @@ class RecordingControls(unittest.TestCase):
         records.append({'kind': 'recorder_error', 'seq': len(records) + 1})
         with self.assertRaisesRegex(RuntimeError, 'error present'):
             self.validate(records)
+
+
+class CaptureClockControls(unittest.TestCase):
+    def meta(self):
+        return dict(wall_start_ms=1700000000000, wall_end_ms=1700000003000,
+                    clock_regression_check=clock_evidence(1700000000000, 1700000003000))
+
+    def test_missing_only_allowed_for_explicit_historical_replay(self):
+        with self.assertRaises(ClockRefused):
+            validate_clock_check({})
+        self.assertEqual(validate_clock_check({}, historical=True), 'absent')
+        self.assertEqual(validate_clock_check(self.meta()), 'present')
+
+    def test_regression_recomputed_even_with_pass_status_and_historical_mode(self):
+        for backwards in (False, True):
+            meta = self.meta()
+            # Both a sampled wall reversal and a step hidden by positive elapsed
+            # wall time must be rejected. Never modify the machine clock.
+            meta['clock_regression_check']['samples'][1]['wall_ns'] -= (2_000_000_000 if backwards else 100_000_000)
+            for historical in (False, True):
+                with self.assertRaisesRegex(ClockRefused, 'regression'):
+                    validate_clock_check(meta, historical=historical)
+
+    def test_gaps_missing_end_and_bounds_cannot_claim_checked(self):
+        for mutation in ('gap', 'phase', 'bounds', 'status', 'empty'):
+            meta = self.meta()
+            samples = meta['clock_regression_check']['samples']
+            if mutation == 'gap':
+                del samples[1:3]
+            elif mutation == 'phase':
+                samples[-1]['phase'] = 'periodic'
+            elif mutation == 'bounds':
+                meta['wall_end_ms'] += 1
+            elif mutation == 'status':
+                meta['clock_regression_check']['status'] = 'REFUSED'
+            else:
+                samples.clear()
+            with self.subTest(mutation=mutation), self.assertRaises(ClockRefused):
+                validate_clock_check(meta)
+
+    def test_monitor_records_start_periodic_end_and_refusal(self):
+        for regression in (False, True):
+            wall = iter([1700000000000000000, 1700000001000000000 - (100000000 if regression else 0),
+                         1700000002000000000])
+            mono = iter([1000000, 1000100, 1001000000, 1001000100, 2001000000, 2001000100])
+            monitor = ClockMonitor(wall=lambda: next(wall), monotonic=lambda: next(mono))
+            with patch('common.threading.Thread'):
+                meta = {'wall_start_ms': monitor.start()}
+                monitor.sample('periodic')
+                check = monitor.finish(meta)
+            self.assertEqual([s['phase'] for s in check['samples']], ['start', 'periodic', 'end'])
+            self.assertEqual(check['status'], 'REFUSED' if regression else 'PASS')
+
+    def test_capture_wrapper_persists_refused_evidence_without_services(self):
+        import run
+        wall = iter([1700000000000000000, 1700000000900000000])
+        mono = iter([1000000, 1000100, 1001000000, 1001000100])
+        monitor = ClockMonitor(wall=lambda: next(wall), monotonic=lambda: next(mono))
+        with tempfile.TemporaryDirectory() as tmp, patch('common.threading.Thread'), \
+                patch.object(run, 'ClockMonitor', return_value=monitor), \
+                patch.object(run, 'source_hashes', return_value={}), \
+                patch.object(run, 'record_monitored_side', return_value={}):
+            with self.assertRaises(ClockRefused):
+                run.record_side(Path(tmp), 'direct')
+            meta = json.loads((Path(tmp) / 'direct/run-meta.json').read_text())
+            self.assertEqual(meta['clock_regression_check']['status'], 'REFUSED')
+
+    def test_recording_entrypoint_returns_exit_two_for_clock_refusal(self):
+        import run
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'new-capture'
+            with patch('sys.argv', ['run.py', '--out', str(out), '--side', 'direct']), \
+                    patch.object(run, 'build'), patch.object(run, 'enumerate_routes'), \
+                    patch.object(run.b1, 'make_home'), patch.object(run.subprocess, 'run'), \
+                    patch.object(run, 'record_side', side_effect=ClockRefused('wall clock regression')), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = run.main()
+            report = json.loads((out / 'result.json').read_text())
+            self.assertEqual(code, 2)
+            self.assertEqual(report['status'], 'REFUSED')
+            self.assertEqual(report['sides']['direct']['device']['status'], 'REFUSED')
 
 
 if __name__ == '__main__':

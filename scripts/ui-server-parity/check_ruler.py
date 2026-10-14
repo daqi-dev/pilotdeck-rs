@@ -151,6 +151,8 @@ def check(rounds, enumeration, proxy=None, matrix=None, scenarios=None, replay_o
                 result['verdict'] = 'FAIL'
     if result['errors'] or not result['per_rule_negative'] or not result['same_bad_rejected']:
         result['verdict'] = 'FAIL'
+    if any(p['verdict'] == 'REFUSED' for p in result['pairs']) or result.get('proxy_compare', {}).get('verdict') == 'REFUSED':
+        result.update(verdict='REFUSED', calibration_eligible=False)
     return result
 
 
