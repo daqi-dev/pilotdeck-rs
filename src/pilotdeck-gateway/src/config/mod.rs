@@ -149,6 +149,7 @@ pub(crate) fn load_project<F: Files>(
         e.name = "RangeError";
         return Err(e);
     }
+    let merged_graph = graph::merged_sources(&source_graphs)?;
     if let Some(v) = env.get("PILOT_AGENT_MODEL").filter(|v| !v.is_empty()) {
         merge(
             &mut raw,
@@ -244,10 +245,7 @@ pub(crate) fn load_project<F: Files>(
     sections::run_policy(field(&raw, "runPolicy"), &mut d);
     sections::proxy(&raw, &mut d);
     d.check()?;
-    if source_graphs
-        .iter()
-        .any(|g| graph::retained_cycle(g, &providers, &raw))
-    {
+    if graph::retained_cycle(&merged_graph, &providers, &raw) {
         let mut error = Error::new("gateway_request_failed", "Maximum call stack size exceeded");
         error.name = "RangeError";
         return Err(error);

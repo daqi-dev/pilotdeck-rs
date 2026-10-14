@@ -15,6 +15,11 @@ lock=subprocess.Popen(['/bin/sh','-c','echo ready; read owned_input; exit 0'],st
 assert lock.stdout.readline()=='ready\n'
 fixture_path=root/'src/pilotdeck-gateway/tests/fixtures/session-model/cases.json'
 fixture_bytes=fixture_path.read_bytes();fixture=json.loads(fixture_bytes)
+def native_case(row):
+ # Forwarding and injected errno are mandatory unit controls. A NUL-bearing
+ # env object is also a loader-only control: OS process environments cannot
+ # contain NUL, so it cannot be supplied to a real Rust proxy process.
+ return not row['forward'] and not row['process']['eperm'] and not any('\0' in v for v in row['env'].values())
 rows=[];observations=[];errors=[];processes=[]
 listener=socket.socket();listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);listener.bind(('127.0.0.1',28860));listener.listen();listener.settimeout(.2)
 stop=threading.Event()
@@ -68,7 +73,7 @@ def serve():
 thread=threading.Thread(target=serve);thread.start()
 try:
  for row in fixture['cases']:
-  if row['forward'] or row['process']['eperm']:continue # D6 + injected errno covered by mandatory unit controls.
+  if not native_case(row):continue
   if not row['process']['alive'] and lock.poll() is None:lock.stdin.close();lock.wait(timeout=5)
   case=out/('case-'+str(len(rows)));case.mkdir();replace=lambda s:s.replace('/fixture',str(case))
   for path,fact in row['files'].items():
@@ -109,8 +114,16 @@ try:
    send_frame(sock,b'{"type":"request","id":"observer-fence","method":"describe_server"}',True);_,fence=frame(sock)
    assert json.loads(fence)['id']=='observer-fence'
    visible=observations[before:];assert len(visible)==1 and json.loads(visible[0]['raw'])['id']=='observer-fence',visible
-   normalized=actual.decode().replace(str(case),'/fixture')
-   result={'id':row['id'],'request':request.decode(),'actual':actual.decode(),'expected':replace(row['response']),'byteEqual':normalized==row['response'],'upstreamObserved':visible}
+   normalized=actual.decode().replace(str(case),'/fixture');expected=replace(row['response'])
+   if 'invalidPath' in row:
+    # Node's ERR_INVALID_ARG_VALUE truncates inspected paths at 128 UTF-16
+    # units. Replacing roots after truncation is not a valid normalization.
+    # Get the real Node fs error at this run's path; NUL fails before a syscall.
+    source="const fs=require('node:fs');if(process.versions.node.split('.')[0]!=='22')throw Error('Node 22 required');const v=JSON.parse(fs.readFileSync(0,'utf8'));if(!v.path.includes('\\0'))throw Error('NUL required');try{fs.statSync(v.path);throw Error('NUL accepted');}catch(e){if(e.code!=='ERR_INVALID_ARG_VALUE')throw e;v.frame.error={code:e.code,message:e.message};process.stdout.write(JSON.stringify(v.frame));}"
+    expected=subprocess.check_output(['node','-e',source],input=json.dumps({'path':replace(row['invalidPath']),'frame':json.loads(expected)}).encode(),env=runenv).decode()
+    byte_equal=actual.decode()==expected
+   else:byte_equal=normalized==row['response']
+   result={'id':row['id'],'request':request.decode(),'actual':actual.decode(),'expected':expected,'byteEqual':byte_equal,'upstreamObserved':visible}
    rows.append(result)
    assert result['byteEqual'],result
   finally:
@@ -122,5 +135,5 @@ except Exception as e:
 finally:
  if lock.poll() is None:lock.stdin.close();lock.wait(timeout=5)
  stop.set();thread.join(timeout=2);listener.close()
- (out/'observations.json').write_text(json.dumps({'passed':not errors and len(rows)==sum(not r['forward'] and not r['process']['eperm'] for r in fixture['cases']) and all(r['byteEqual'] for r in rows),'fixtureSha256':hashlib.sha256(fixture_bytes).hexdigest(),'cases':rows,'errors':errors,'processes':processes,'ownedLockHolder':{'pid':lock.pid,'exitCode':lock.returncode}},indent=2)+'\n')
+ (out/'observations.json').write_text(json.dumps({'passed':not errors and len(rows)==sum(native_case(r) for r in fixture['cases']) and all(r['byteEqual'] for r in rows),'fixtureSha256':hashlib.sha256(fixture_bytes).hexdigest(),'cases':rows,'excluded':[r['id'] for r in fixture['cases'] if not native_case(r)],'errors':errors,'processes':processes,'ownedLockHolder':{'pid':lock.pid,'exitCode':lock.returncode}},indent=2)+'\n')
  assert not errors,errors

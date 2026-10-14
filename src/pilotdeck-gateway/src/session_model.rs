@@ -1,5 +1,6 @@
 //! Durable session selection, with the same project/config and replay boundaries
 //! as the default native TS provider. No active session or Router state is read.
+mod path_error;
 mod replay;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -138,9 +139,16 @@ fn execute<F: Files>(
         ));
     };
     let path_session = sanitize_session(session_string);
-    let path = metadata
-        .chat_dir(&project)
-        .join(format!("{path_session}.jsonl"));
+    let chat_dir = metadata.chat_dir(&project);
+    if session_string.units().contains(&0) || chat_dir.to_string_lossy().contains('\0') {
+        // path.join accepts NUL; the first fs.stat validates the entire path.
+        // Preserve UTF-16 in its error, including lone surrogates in sessionKey.
+        let mut path: Vec<_> = format!("{}/", chat_dir.display()).encode_utf16().collect();
+        path.extend(sanitize_session_units(session_string));
+        path.extend(".jsonl".encode_utf16());
+        return Err(path_error::nul(&JsString::from_utf16(path)));
+    }
+    let path = chat_dir.join(format!("{path_session}.jsonl"));
     let mut entries = vec![];
     match metadata.files.stat(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -282,13 +290,15 @@ fn restore<F: Files>(metadata: &Metadata<F>, saved: JsValue, env: &Env) -> Resul
     Ok(restored)
 }
 fn sanitize_session(s: &JsString) -> String {
-    let s = String::from_utf16_lossy(s.units());
-    let mut out = String::new();
+    String::from_utf16_lossy(&sanitize_session_units(s))
+}
+fn sanitize_session_units(s: &JsString) -> Vec<u16> {
+    let mut out = vec![];
     let mut separator = false;
-    for c in s.chars() {
-        if c == '/' || c == '\\' {
+    for &c in s.units() {
+        if c == 47 || c == 92 {
             if !separator {
-                out.push('-');
+                out.push(45);
             }
             separator = true;
         } else {
@@ -296,11 +306,13 @@ fn sanitize_session(s: &JsString) -> String {
             separator = false;
         }
     }
-    let trimmed = out.trim_matches('-');
+    let first = out.iter().position(|c| *c != 45).unwrap_or(out.len());
+    let last = out.iter().rposition(|c| *c != 45).map_or(first, |i| i + 1);
+    let trimmed = &out[first..last];
     if trimmed.is_empty() {
-        "session".into()
+        "session".encode_utf16().collect()
     } else {
-        trimmed.into()
+        trimmed.to_vec()
     }
 }
 fn path_argument(v: &JsValue) -> Error {

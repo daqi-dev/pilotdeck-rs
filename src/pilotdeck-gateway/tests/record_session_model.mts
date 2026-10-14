@@ -1,7 +1,7 @@
 // Default native provider + real WS encoder oracle. No listener, HTTP, or model.
 // node --import <B>/node_modules/tsx/dist/loader.mjs <this> <B> <output> <scratch>
 import {mkdir,writeFile,readFile,stat,readdir} from 'node:fs/promises';
-import {resolve,join} from 'node:path';
+import {resolve,join,relative} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
@@ -88,11 +88,40 @@ const child=spawn(process.execPath,['-e','process.stdin.resume();console.log("re
 const pid=child.pid!;
 const lockContents=['', ' \n\t ', '0','-0','-1','1.5','Infinity','+Infinity','-Infinity','NaN','invalid','12oops','0x','0o','0b','0xGG','+0x1','0o8','0b2','1e999','9007199254740992','2147483648','4294967296',String(4294967296+pid),String(pid),' \n\t'+pid+'\uFEFF\n','0x'+pid.toString(16),'0o'+pid.toString(8),'0b'+pid.toString(2),pid+'e0',pid+'.000','+'+pid,'00'+pid,String(pid-0.1),'missing','directory','bytes','eperm'];
 for(const [i,lock] of lockContents.entries())add('lock-number-'+i,{env:{...staff,STAFFDECK_SOP_RUNTIME_ORIGIN:'bad'},binding:{status:'binding',runtimeReady:true},lock,sops:{sops:[{id:'sop'}]}});
+// Regression #108: retained cycles are inspected after source merging.
+const toolsModule='enabled: true, implementationId: fixture.tools, contract: pilotdeck.tools/v1, transport: module-http-v2, endpoint: https://tools.invalid';
+for(const [path,global,overrides] of [
+ ['provider',base.replace('      models:', '      extraBody: &b {self: *b}\n      models:'),[
+  ['covered','model: {providers: {parity: {extraBody: 0}}}'],
+  ['retained','agent: {model: parity/alternate}'],
+  ['partial-retained','model: {providers: {parity: {extraBody: {other: 0}}}}'],
+  ['partial-covered','model: {providers: {parity: {extraBody: {self: 0}}}}'],
+ ]],
+ ['adapter',base+'adapters: {telegram: {extra: &b {self: *b}}}\n',[
+  ['covered','adapters: {telegram: {extra: 0}}'],
+  ['retained','agent: {model: parity/alternate}'],
+  ['partial-retained','adapters: {telegram: {extra: {other: 0}}}'],
+  ['partial-covered','adapters: {telegram: {extra: {self: 0}}}'],
+ ]],
+ ['catalog',base+`modules: {tools: {${toolsModule}, catalog: [{name: fixture, description: fixture, inputSchema: &b {self: *b}}]}}\n`,[
+  ['covered','modules: {tools: {catalog: [{name: fixture, description: fixture, inputSchema: {type: object}}]}}'],
+  ['retained','agent: {model: parity/alternate}'],
+  ['partial-retained','modules: {tools: {endpoint: https://alternate.invalid}}'],
+ ]],
+] as any[])for(const [kind,projectYaml] of overrides)add(`cycle-merge-${path}-${kind}`,{yaml:global,projectYaml});
+add('cycle-merge-both-recursive',{yaml:base.replace('      models:', '      extraBody: &b {self: *b}\n      models:'),projectYaml:'model: {providers: {parity: {extraBody: &c {self: *c}}}}'});
+add('cycle-merge-unused',{yaml:base+'unused: &b {self: *b}\n',projectYaml:'agent: {model: parity/alternate}'});
+add('cycle-merge-prototype-host',{yaml:base+'unused: &b {self: *b}\n',projectYaml:'__proto__: {unused: 0}',forward:true,loadForward:true});
+add('session-nul-general',{general:true,sessionValue:'web:\0',generalMarker:true});
+add('session-nul-registered',{sessionValue:'web:\0'});
+add('project-nul',{projectNul:true});
+add('config-path-nul',{env:{PILOTDECK_CONFIG_PATH:'bad\0.yaml'}});
+add('binding-nul-path',{env:staff,binding:{status:'bound',bindingId:'b\0'},sops:{sops:[{id:'sop'}]}});
 cases.sort((a,b)=>Number(a.lock==='dead')-Number(b.lock==='dead'));
 const results:any[]=[];let routerCalls=0;let dead=false;
 try{
  for(const test of cases){
-  const root=join(scratch,'cases',test.id.replaceAll(/[^a-zA-Z0-9._-]/g,'_'));const home=join(root,'home'),project=join(root,'project');await mkdir(home,{recursive:true});await mkdir(project,{recursive:true});await mkdir(join(home,'projects','registered','chats'),{recursive:true});await writeFile(join(home,'projects','registered','.cwd'),project+'\n');
+  const root=join(scratch,'cases',String(results.length));const home=join(root,'home'),project=join(root,'project');await mkdir(home,{recursive:true});await mkdir(project,{recursive:true});await mkdir(join(home,'projects','registered','chats'),{recursive:true});await writeFile(join(home,'projects','registered','.cwd'),(test.generalMarker?home:project)+'\n');
   const env={PILOT_HOME:home,...test.env};await writeFile(join(home,'pilotdeck.yaml'),test.yaml??base);
   if(test.projectYaml!==undefined){await mkdir(join(project,'.pilotdeck'),{recursive:true});await writeFile(join(project,'.pilotdeck','pilotdeck.yaml'),test.projectYaml);}
   if(test.binding||'bindingStore' in test){await mkdir(join(home,'staffdeck'),{recursive:true});const store='bindingStore' in test?test.bindingStore:{version:1,installationId:'i',projects:[{projectRoot:project,bindingId:'b',agentId:'a',origin:'https://staffdeck.invalid',tenantId:'tenant',...test.binding}]};await writeFile(join(home,'staffdeck','project-bindings.json'),typeof store==='string'?store:JSON.stringify(store));}
@@ -104,10 +133,10 @@ try{
    const path=join(home,'staffdeck','project-bindings.json.lock');
    if(test.lock==='directory')await mkdir(path);else await writeFile(path,test.lock==='alive'||test.lock==='dead'||test.lock==='eperm'?String(pid):test.lock==='bytes'?Buffer.from([255,128]):test.lock);
   }
-  const projectKey=test.general?home:test.unknown?join(root,'unknown'):'projectValue'in test?test.projectValue:test.relative?project.slice(process.cwd().length+1):project;
+  const projectKey=test.general?home:test.projectNul?project+'\0':test.unknown?join(root,'unknown'):'projectValue'in test?test.projectValue:test.relative?relative(process.cwd(),project):project;
   const sessionKey='sessionValue'in test?test.sessionValue:'web:fixture';
   const params='params'in test?test.params:{projectKey,...(test.omitSession?{}:{sessionKey})};
-  const transcript=join(getPilotProjectChatDir(test.general?home:project,home),sanitizeSessionIdForPath(typeof sessionKey==='string'?sessionKey:'web:fixture')+'.jsonl');await mkdir(resolve(transcript,'..'),{recursive:true});
+  const transcript=join(getPilotProjectChatDir(test.general?home:project,home),sanitizeSessionIdForPath(typeof sessionKey==='string'?sessionKey:'web:fixture')+'.jsonl');if(!transcript.includes('\0'))await mkdir(resolve(transcript,'..'),{recursive:true});
   if(test.transcriptDirectory)await mkdir(transcript);else if(test.tooLarge)await writeFile(transcript,Buffer.alloc(50*1024*1024+1,120));
   else if(test.entries||test.transcript||test.transcriptBytes){let bytes=test.transcriptBytes?Buffer.from(test.transcriptBytes,'base64'):Buffer.from(test.transcript??test.entries.map((e:any)=>JSON.stringify(e)).join('\n')+'\n');if(test.replaceBytes)bytes=Buffer.concat([bytes.subarray(0,bytes.indexOf('BYTES')),Buffer.from([255,254,128]),bytes.subarray(bytes.indexOf('BYTES')+5)]);await writeFile(transcript,bytes);}
   const plane=createProjectSessionDataPlane();const dialog=new GatewayDialogBundle({pilotHome:home,sessionCatalog:plane.catalog});
@@ -116,14 +145,24 @@ try{
   new GatewayWsConnection(ws as any,{gateway:{describeServer:async()=>({}),sessionModelGet:(p:any)=>bundle.sessionModelGet(p),modelCatalogList:(p:any)=>listModelCatalog(p,env)} as any,token:'offline',serverVersion:'offline'});
   receive(JSON.stringify({type:'hello',protocolVersion:'1.2',clientName:'web',clientVersion:'fixture',token:'offline'}));await new Promise(r=>setImmediate(r));
   const request=JSON.stringify({type:'request',id:test.id,method:test.method??'session_model_get',...(test.omitParams?{}:{params})});
-  const syscall=(process as any)._kill;if(test.lock==='eperm')(process as any)._kill=()=>-1;
+  const syscall=(process as any)._kill;const killCalls:number[]=[];
+  (process as any)._kill=(pid:number,signal:number)=>{killCalls.push(pid);return test.lock==='eperm'?-1:syscall(pid,signal);};
   let load:any;try{load={ok:true,diagnostics:loadPilotConfig({projectRoot:typeof projectKey==='string'?projectKey:undefined,env}).diagnostics};}catch(e:any){load={ok:false,code:e.code??'gateway_request_failed',message:e.message,diagnostics:e.diagnostics??[]};}
+  const loadKillCalls=killCalls.splice(0);
   let response:string;try{response=await new Promise<string>((done,reject)=>{const timer=setTimeout(()=>reject(Error('No response '+test.id)),5000);finish=(s:string)=>{clearTimeout(timer);done(s);};receive(request);});}finally{(process as any)._kill=syscall;}
   const files:any={};const collect=async(path:string)=>{const s=await stat(path);const fact:any={directory:s.isDirectory(),size:s.size};files[path]=fact;if(s.isDirectory()){fact.entries=await Promise.all((await readdir(path,{withFileTypes:true})).map(async e=>[e.name,e.isDirectory()]));for(const [name]of fact.entries)await collect(join(path,name));}else if(s.size<=50*1024*1024)fact.bytes=(await readFile(path)).toString('base64');};await collect(root);
   const replace=(s:string)=>s.replaceAll(root,'/fixture');
   for(const fact of Object.values(files) as any[]){if(fact.bytes){const b=Buffer.from(fact.bytes,'base64');const needle=Buffer.from(root),replacement=Buffer.from('/fixture');let parts:Buffer[]=[],start=0,at=0;while((at=b.indexOf(needle,start))>=0){parts.push(b.subarray(start,at),replacement);start=at+needle.length;}parts.push(b.subarray(start));fact.bytes=Buffer.concat(parts).toString('base64');}}
   const normalizedRequest=JSON.parse(replace(request));if(test.relative)normalizedRequest.params.projectKey='project';
-  results.push(JSON.parse(replace(JSON.stringify({id:test.id,home,cwd:'/fixture',env,request:JSON.stringify(normalizedRequest),response,load,files,process:{pid,alive:!dead,eperm:test.lock==='eperm'},forward:test.forward??false}))));
+  const invalidPath=transcript.includes('\0')?replace(transcript):undefined;
+  if(invalidPath){
+   // inspect truncates at 128 UTF-16 units. Path replacement and truncation do
+   // not commute: retain the original WS frame, then ask real Node fs for the
+   // error at the mapped path (validation rejects NUL before any syscall).
+   await writeFile(join(root,'nul-wire-original.json'),JSON.stringify({request,response,path:transcript})+'\n');
+   try{await stat(invalidPath);throw Error('NUL accepted');}catch(e:any){if(e.code!=='ERR_INVALID_ARG_VALUE')throw e;const frame=JSON.parse(response);frame.error={code:e.code,message:e.message};response=JSON.stringify(frame);}
+  }
+  results.push(JSON.parse(replace(JSON.stringify({id:test.id,home,cwd:'/fixture',env,request:JSON.stringify(normalizedRequest),response,load,files,invalidPath,process:{pid,alive:!dead,eperm:test.lock==='eperm',killCalls,loadKillCalls},forward:test.forward??false,loadForward:test.loadForward??false}))));
   console.log(test.id,JSON.parse(response).ok?'OK':JSON.parse(response).error.code);
  }
 }finally{if(child.exitCode===null){const e=once(child,'exit');child.stdin!.end();await e;}}

@@ -249,7 +249,7 @@ fn at<'a>(g: &'a ValueGraph, keys: &[&str]) -> Option<&'a Value> {
     Some(v)
 }
 fn object(g: &ValueGraph, v: &Value) -> bool {
-    matches!(v,Value::Ref(id) if matches!(g.nodes[*id],Container::Object(_)))
+    matches!(v,Value::Ref(id) if !matches!(g.nodes[*id],Container::Array(_)))
 }
 fn cycle(g: &ValueGraph, v: &Value, skip_temperature: bool) -> bool {
     // Iterative DFS: raw schemas may be deeply nested even though validators do
@@ -297,6 +297,123 @@ fn cycle(g: &ValueGraph, v: &Value, skip_temperature: bool) -> bool {
         }
     }
     false
+}
+/// Match deepMerge's shallow copy followed by recursive object/object merges.
+/// References in untouched branches keep their identity; arrays are replaced.
+/// A repeated pair means deepMerge itself recurses forever, before validation.
+pub(super) fn merged_sources(sources: &[ValueGraph]) -> Result<ValueGraph, super::Error> {
+    let mut merged = ValueGraph {
+        root: Value::Ref(0),
+        nodes: vec![Container::Object(vec![])],
+    };
+    // Prototype setters/inherited lookups require the JS host. In particular,
+    // do not guess how two cyclic sources interact through __proto__.
+    if sources.len() > 1
+        && sources.iter().any(|g| cycle(g, &g.root, false))
+        && sources.iter().any(|g| {
+            g.nodes.iter().any(|n| {
+                matches!(n, Container::Object(a) if a.iter().any(|(k, _)| k.equals_str("__proto__")))
+            })
+        })
+    {
+        let mut e = super::Error::new("JS_HOST_REQUIRED", "Cyclic configuration uses prototype merging.");
+        e.requires_host = true;
+        return Err(e);
+    }
+    fn relocate(v: &mut Value, offset: usize) {
+        if let Value::Ref(id) = v {
+            *id += offset;
+        }
+    }
+    fn merge(g: &mut ValueGraph, left: usize, right: usize) -> Result<usize, super::Error> {
+        use pilotdeck_protocol::JsString;
+        struct Frame {
+            pair: (usize, usize),
+            output: Vec<(JsString, Value)>,
+            overrides: std::vec::IntoIter<(JsString, Value)>,
+            awaiting: Option<usize>,
+        }
+        fn entries(g: &ValueGraph, id: usize) -> Vec<(JsString, Value)> {
+            match &g.nodes[id] {
+                Container::Object(a) => a.clone(),
+                // isRecord includes Map/Set; Object.entries sees no own keys.
+                Container::Map(_) | Container::Set(_) => vec![],
+                Container::Array(_) => unreachable!(),
+            }
+        }
+        let frame = |g: &ValueGraph, l, r| Frame {
+            pair: (l, r),
+            output: entries(g, l),
+            overrides: entries(g, r).into_iter(),
+            awaiting: None,
+        };
+        let mut active = std::collections::HashSet::from([(left, right)]);
+        let mut stack = vec![frame(g, left, right)];
+        while let Some(top) = stack.last_mut() {
+            if let Some((key, value)) = top.overrides.next() {
+                if let Some(index) = top.output.iter().position(|(k, _)| *k == key) {
+                    if let (Value::Ref(l), Value::Ref(r)) = (&top.output[index].1, &value)
+                        && object(g, &Value::Ref(*l))
+                        && object(g, &Value::Ref(*r))
+                    {
+                        if !active.insert((*l, *r)) {
+                            let mut e = super::Error::new(
+                                "gateway_request_failed",
+                                "Maximum call stack size exceeded",
+                            );
+                            e.name = "RangeError";
+                            return Err(e);
+                        }
+                        let pair = (*l, *r);
+                        top.awaiting = Some(index);
+                        stack.push(frame(g, pair.0, pair.1));
+                    } else {
+                        top.output[index].1 = value;
+                    }
+                } else {
+                    top.output.push((key, value));
+                }
+            } else {
+                let done = stack.pop().unwrap();
+                active.remove(&done.pair);
+                let id = g.nodes.len();
+                g.nodes.push(Container::Object(done.output));
+                if let Some(parent) = stack.last_mut() {
+                    parent.output[parent.awaiting.take().unwrap()].1 = Value::Ref(id);
+                } else {
+                    return Ok(id);
+                }
+            }
+        }
+        unreachable!()
+    }
+    for source in sources {
+        if !object(source, &source.root) {
+            continue;
+        }
+        let offset = merged.nodes.len();
+        for mut node in source.nodes.clone() {
+            match &mut node {
+                Container::Object(a) => a.iter_mut().for_each(|(_, v)| relocate(v, offset)),
+                Container::Array(a) | Container::Set(a) => {
+                    a.iter_mut().for_each(|v| relocate(v, offset))
+                }
+                Container::Map(a) => a.iter_mut().for_each(|(k, v)| {
+                    relocate(k, offset);
+                    relocate(v, offset);
+                }),
+            }
+            merged.nodes.push(node);
+        }
+        let Value::Ref(left) = merged.root else {
+            unreachable!()
+        };
+        let Value::Ref(right) = source.root else {
+            unreachable!()
+        };
+        merged.root = Value::Ref(merge(&mut merged, left, right + offset)?);
+    }
+    Ok(merged)
 }
 pub(super) fn retained_cycle(
     g: &ValueGraph,
