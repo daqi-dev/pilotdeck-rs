@@ -53,3 +53,24 @@ PDRS_FILES_NATIVE_CHECK=1 CARGO_HOME="$PWD/_build/cargo-home" \
 Rust 对应测试 `checked_path_replacements_cannot_read_outside_or_fall_back_to_ts` 走 dispatch + 原生 Files：在 realpath 后替换时本地返回 null（stat 不再是普通文件或无法访问）；在 stat 后替换时 openat/NOFOLLOW 本地报错（叶子通常 PATH_NOT_ALLOWED/resolves outside，父目录按系统 ELOOP/ENOTDIR 诊断），均不返回根外内容、不透传 TS。普通根内链接先 canonical 后正常读取。
 
 仅此已证实的竞态属于安全差异登记候选；4 条普通路径对照全部匹配 TS。`specs/gateway-parity/accepted-diffs.md` 已冻结，协调者按独立审批/登记流程处理，本 PR 不编辑它、不修改比较器、不添加正常响应豁免。
+
+## 第 4 轮：V8 切片表示与读取错误优先级
+
+新增 `node-runtime-round4.json`，独立录制器为 `../../record_project_files_round4.mts`；前三轮 fixture 原件不变。录制器使用真实 `InProcessGateway.projectFilesList`、生产读取 callback 与 `GatewayWsConnection`，离线运行，不启动服务。证据记录 Node **v22.22.0** / V8 **12.4.254.21-node.33** / ICU **78.2**、`LANG=tr_TR`（resolved locale `tr-TR`）、非 root uid、源码 SHA256 和文件输入快照。
+
+- 26 条列表 request/response 原始字符串：`FILEFILEFILEFILE` 有无 trim、12/13/14 字符的顶层与嵌套名称、仅前端 BOM / 仅后端 tab / 双端空格 trim、dotless `ı` 查询；另覆盖分页与 trim 前后 cursor 签名。嵌套 symlink 指向顶层项，确认切片判断依据 canonical relativePath，而非遍历深度。Rust 在独立 locale 子进程中逐字节比较全部响应，不修改测试主进程环境。
+- Node 结果：`" FILEFILEFILEFILE "` 对 `nested/FILEFILEFILEFILE.txt` 返回空数组；无空格则命中 name 和 relativePath。未 trim 的 `I` 重复查询对顶层 12 字符项命中两字段，13/14 字符项只命中 name；嵌套项仍命中两字段。trim 后长度 12 沿用 root 小写，长度 13/14 改为土耳其语小写，仅命中顶层 relativePath。对应 cursor 在 12 字符时可复用于无空格查询，13/14 字符时返回 INVALID_CURSOR。
+- 同一个 `size=2147483648, blocks=0` 稀疏文件：chmod 000 返回 `EACCES / permission denied, open ...`；恢复 0600 后返回 `ERR_FS_FILE_TOO_LARGE / File size (2147483648) is greater than 2 GiB`。Rust 原生 dispatch 测试对照完整响应，仅替换测试临时根路径；root CI 可跳过无法触发的 EACCES，本轮非 root 两种状态均实际执行。Rust 在报大小错误前经 NOFOLLOW 安全打开并请求零字节前缀，不读取大文件内容。
+
+**已知风险：此行为依赖 V8 内部字符串表示，不是 ECMAScript/Unicode 的稳定保证；引擎升级可能改变。** 当前按基线实际构造方式推断：trim 确实移除字符，或 canonical relativePath 位于顶层，且剩余 UTF-16 长度 ≥13 时为切片；Latin-1 非切片才走 root 小写。name 与经 join 重建的嵌套路径保持非切片规则。此 fixture 证明上述 Node v22 实测样本，不保证其他引擎版本或其他字符串构造方式等价。
+
+复跑（输出到临时目录，审阅后仅复制新的 round4 fixture）：
+
+```sh
+LANG=tr_TR env -u LC_ALL -u LC_MESSAGES -u LC_COLLATE -u LC_CTYPE \
+  node --import /Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/tsx/dist/loader.mjs \
+  src/pilotdeck-gateway/tests/record_project_files_round4.mts \
+  /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
+  _tmp/20261014-a4-files-round4/node-runtime-round4.json \
+  _tmp/20261014-a4-files-round4/scratch
+```

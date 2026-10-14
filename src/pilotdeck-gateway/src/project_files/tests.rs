@@ -86,20 +86,20 @@ fn fixture() -> (Metadata<Snapshot>, Value) {
         "../../tests/fixtures/project-files/cases.json"
     ))
     .unwrap();
+    (snapshot_metadata(&fixture), fixture)
+}
+fn snapshot_metadata(fixture: &Value) -> Metadata<Snapshot> {
     let files = fixture["files"]
         .as_object()
         .unwrap()
         .iter()
         .map(|(k, v)| (PathBuf::from(k), v.clone()))
         .collect();
-    (
-        Metadata {
-            home: fixture["home"].as_str().unwrap().into(),
-            cwd: fixture["cwd"].as_str().unwrap().into(),
-            files: Snapshot { files },
-        },
-        fixture,
-    )
+    Metadata {
+        home: fixture["home"].as_str().unwrap().into(),
+        cwd: fixture["cwd"].as_str().unwrap().into(),
+        files: Snapshot { files },
+    }
 }
 #[test]
 fn raw_ts_responses_match_byte_for_byte() {
@@ -470,7 +470,7 @@ fn node_locale_precedence_collation_and_case_mapping() {
         assert_eq!(serde_json::to_value(names).unwrap(), case["order"]);
         let lower: Vec<_> = ["Iİıi", "ΟΣ", "İ", "ẞ"]
             .into_iter()
-            .map(|s| lowercase(s, &locale.id))
+            .map(|s| lowercase(s, &locale.id, false))
             .collect();
         assert_eq!(serde_json::to_value(lower).unwrap(), case["lower"]);
     }
@@ -684,7 +684,7 @@ fn node_round3_locale_fallback_and_latin1_case_mapping() {
         );
         for lower in probe["lower"].as_array().unwrap() {
             assert_eq!(
-                lowercase(lower["input"].as_str().unwrap(), &locale.id),
+                lowercase(lower["input"].as_str().unwrap(), &locale.id, false),
                 lower["output"].as_str().unwrap(),
                 "{locale}: {lower}"
             );
@@ -754,5 +754,88 @@ fn node_round3_cursor_dispatch_preserves_surrogates_and_offset() {
         };
         let actual: Value = serde_json::from_slice(&response).unwrap();
         assert_eq!(actual, probe["response"], "{}", probe["variant"]);
+    }
+}
+
+fn round4() -> Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/node-runtime-round4.json"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn node_round4_sliced_latin1_list_responses() {
+    // A separate process sets the locale without racing other tests' env reads.
+    const CHILD: &str = "PDRS_ROUND4_LOCALE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("LC_") || key == "LANG" {
+                command.env_remove(key);
+            }
+        }
+        let output = command
+            .args([
+                "--exact",
+                "project_files::tests::node_round4_sliced_latin1_list_responses",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("LANG", round4()["env"]["LANG"].as_str().unwrap())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let fixture = round4();
+    let metadata = snapshot_metadata(&fixture);
+    for case in fixture["cases"].as_array().unwrap() {
+        let request = case["request"].as_str().unwrap();
+        let Route::LocalResponse(response) =
+            route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
+        else {
+            panic!("forwarded: {request}")
+        };
+        assert_eq!(
+            String::from_utf8(response).unwrap(),
+            case["response"].as_str().unwrap(),
+            "{}: {request}",
+            case["tag"]
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn node_round4_unreadable_huge_file_reports_open_error_first() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = round4();
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    let path = root.join("huge");
+    File::create(&path)
+        .unwrap()
+        .set_len(fixture["largeFile"]["size"].as_u64().unwrap())
+        .unwrap();
+    for (mode, key) in [(0o0, "denied"), (0o600, "readable")] {
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        // Root cannot reproduce EACCES. Non-root runs exercise both responses.
+        if mode == 0 && File::open(&path).is_ok() {
+            continue;
+        }
+        let expected: Value = serde_json::from_str(
+            &fixture["largeFile"][key]
+                .to_string()
+                .replace(fixture["root"].as_str().unwrap(), root.to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(dispatch_read(&metadata, "huge", &expected["id"]), expected);
     }
 }
