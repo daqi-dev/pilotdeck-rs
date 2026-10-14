@@ -9,7 +9,9 @@ pub(crate) fn resolve(ctx: &mut Context, id: NodeId, tag: &Token) {
         ctx.token_error(tag, "TAG_RESOLVE_FAILED", "Expected a mapping for this tag");
         return;
     };
-    if pairs.iter().all(|p| {
+    // npm composes this tag with YAMLSet as its nodeClass. A resolve error
+    // reports invalid values but leaves that Set node intact for toJSON().
+    let valid = pairs.iter().all(|p| {
         p.value.is_none_or(|v| {
             let n = &ctx.nodes[v];
             matches!(n.kind, NodeKind::Scalar(ScalarValue::Null))
@@ -17,9 +19,9 @@ pub(crate) fn resolve(ctx: &mut Context, id: NodeId, tag: &Token) {
                 && n.comment_before.is_empty()
                 && n.tag.is_none()
         })
-    }) {
-        ctx.nodes[id].kind = NodeKind::Set(pairs);
-    } else {
+    });
+    ctx.nodes[id].kind = NodeKind::Set(pairs);
+    if !valid {
         ctx.token_error(
             tag,
             "TAG_RESOLVE_FAILED",

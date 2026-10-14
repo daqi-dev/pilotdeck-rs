@@ -1,0 +1,2792 @@
+[
+  {
+    "id": "set-merge-1.1-0",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: {a: null}, b: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {a: null}, b: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            },
+            {
+              "type": "string",
+              "json": "\"b\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-1",
+    "yaml": "%YAML 1.1\n---\n[&a {x: 1}, !!set {<<: *a, z: null}]\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          26,
+          31
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 13:\n\n[&a {x: 1}, !!set {<<: *a, z: null}]\n            ^^^^^\n",
+        "pos": [
+          26,
+          31
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 13
+          },
+          {
+            "line": 3,
+            "col": 18
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"x\"",
+              {
+                "type": "number",
+                "value": "1"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-2",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: [{x: 1}, {x: 2, z: 3}], z: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: [{x: 1}, {x: 2, z: 3}], z: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-3",
+    "yaml": "%YAML 1.1\n---\n!!set {z: null, <<: {x: 1, z: 2}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {z: null, <<: {x: 1, z: 2}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"z\""
+            },
+            {
+              "type": "string",
+              "json": "\"x\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-4",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: {x: 1}, <<: {z: 2}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {x: 1}, <<: {z: 2}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-5",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: {<<: {x: 1}, z: 2}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {<<: {x: 1}, z: 2}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-6",
+    "yaml": "%YAML 1.1\n---\n[&a !!set {x: null}, !!set {<<: *a, z: null}]\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          35,
+          40
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 22:\n\n[&a !!set {x: null}, !!set {<<: *a, z: null}]\n                     ^^^^^\n",
+        "pos": [
+          35,
+          40
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 22
+          },
+          {
+            "line": 3,
+            "col": 27
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            }
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-7",
+    "yaml": "%YAML 1.1\n---\n[&a !!set {<<: {x: 1}}, !!set {<<: *a}]\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          18,
+          23
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          38,
+          43
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 5:\n\n[&a !!set {<<: {x: 1}}, !!set {<<: *a}]\n    ^^^^^\n",
+        "pos": [
+          18,
+          23
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 5
+          },
+          {
+            "line": 3,
+            "col": 10
+          }
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 25:\n\n[&a !!set {<<: {x: 1}}, !!set {<<: *a}]\n                        ^^^^^\n",
+        "pos": [
+          38,
+          43
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 25
+          },
+          {
+            "line": 3,
+            "col": 30
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            }
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-8",
+    "yaml": "%YAML 1.1\n---\n!!set {!!merge <<: {x: 1}, z: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {!!merge <<: {x: 1}, z: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-9",
+    "yaml": "%YAML 1.1\n---\n!!set {\"<<\": {x: 1}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {\"<<\": {x: 1}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-10",
+    "yaml": "%YAML 1.1\n---\n!!set {!!str <<: {x: 1}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {!!str <<: {x: 1}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-11",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: null}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "error": {
+      "name": "Error",
+      "message": "Merge sources must be maps or map aliases"
+    }
+  },
+  {
+    "id": "set-merge-1.1-12",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: 7}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: 7}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "error": {
+      "name": "Error",
+      "message": "Merge sources must be maps or map aliases"
+    }
+  },
+  {
+    "id": "set-merge-1.1-13",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: [7]}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: [7]}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "error": {
+      "name": "Error",
+      "message": "Merge sources must be maps or map aliases"
+    }
+  },
+  {
+    "id": "set-merge-1.1-14",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: *missing}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: *missing}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "error": {
+      "name": "Error",
+      "message": "Merge sources must be maps or map aliases"
+    }
+  },
+  {
+    "id": "set-merge-1.1-15",
+    "yaml": "%YAML 1.1\n---\n!!set {a: 1}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {a: 1}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-16",
+    "yaml": "%YAML 1.1\n---\n!!set {a: !!null null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {a: !!null null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-17",
+    "yaml": "%YAML 1.1\n---\n!!set {a: null # comment\n}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {a: null # comment\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-18",
+    "yaml": "%YAML 1.1\n---\n!!set {? [x, z]: 1}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {? [x, z]: 1}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "ref": 1
+            }
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-19",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: {.nan: 1, -0: 2, 0: 3}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "DUPLICATE_KEY",
+        "message": "Map keys must be unique",
+        "pos": [
+          42,
+          43
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "DUPLICATE_KEY",
+        "message": "Map keys must be unique at line 3, column 29:\n\n!!set {<<: {.nan: 1, -0: 2, 0: 3}}\n                            ^\n",
+        "pos": [
+          42,
+          43
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 29
+          },
+          {
+            "line": 3,
+            "col": 30
+          }
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {.nan: 1, -0: 2, 0: 3}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "number",
+              "value": "NaN"
+            },
+            {
+              "type": "number",
+              "value": "0"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-20",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: {? [x, z]: 1}, ? [x, z]: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {? [x, z]: 1}, ? [x, z]: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "ref": 1
+            },
+            {
+              "ref": 2
+            }
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-21",
+    "yaml": "%YAML 1.1\n---\n!!set [x, z]\n",
+    "errors": [],
+    "warnings": [
+      {
+        "name": "YAMLWarning",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Unresolved tag: tag:yaml.org,2002:set",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "prettyErrors": [],
+    "prettyWarnings": [
+      {
+        "name": "YAMLWarning",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Unresolved tag: tag:yaml.org,2002:set at line 3, column 1:\n\n---\n!!set [x, z]\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-0",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: {a: null}, b: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {a: null}, b: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            },
+            {
+              "type": "string",
+              "json": "\"b\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-1",
+    "yaml": "%YAML 1.2\n---\n[&a {x: 1}, !!set {<<: *a, z: null}]\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          26,
+          31
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 13:\n\n[&a {x: 1}, !!set {<<: *a, z: null}]\n            ^^^^^\n",
+        "pos": [
+          26,
+          31
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 13
+          },
+          {
+            "line": 3,
+            "col": 18
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"x\"",
+              {
+                "type": "number",
+                "value": "1"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-2",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: [{x: 1}, {x: 2, z: 3}], z: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: [{x: 1}, {x: 2, z: 3}], z: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-3",
+    "yaml": "%YAML 1.2\n---\n!!set {z: null, <<: {x: 1, z: 2}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {z: null, <<: {x: 1, z: 2}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"z\""
+            },
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-4",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: {x: 1}, <<: {z: 2}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "DUPLICATE_KEY",
+        "message": "Map keys must be unique",
+        "pos": [
+          33,
+          34
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "DUPLICATE_KEY",
+        "message": "Map keys must be unique at line 3, column 20:\n\n!!set {<<: {x: 1}, <<: {z: 2}}\n                   ^\n",
+        "pos": [
+          33,
+          34
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 20
+          },
+          {
+            "line": 3,
+            "col": 21
+          }
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {x: 1}, <<: {z: 2}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-5",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: {<<: {x: 1}, z: 2}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {<<: {x: 1}, z: 2}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-6",
+    "yaml": "%YAML 1.2\n---\n[&a !!set {x: null}, !!set {<<: *a, z: null}]\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          35,
+          40
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 22:\n\n[&a !!set {x: null}, !!set {<<: *a, z: null}]\n                     ^^^^^\n",
+        "pos": [
+          35,
+          40
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 22
+          },
+          {
+            "line": 3,
+            "col": 27
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            }
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-7",
+    "yaml": "%YAML 1.2\n---\n[&a !!set {<<: {x: 1}}, !!set {<<: *a}]\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          18,
+          23
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          38,
+          43
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 5:\n\n[&a !!set {<<: {x: 1}}, !!set {<<: *a}]\n    ^^^^^\n",
+        "pos": [
+          18,
+          23
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 5
+          },
+          {
+            "line": 3,
+            "col": 10
+          }
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 25:\n\n[&a !!set {<<: {x: 1}}, !!set {<<: *a}]\n                        ^^^^^\n",
+        "pos": [
+          38,
+          43
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 25
+          },
+          {
+            "line": 3,
+            "col": 30
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-8",
+    "yaml": "%YAML 1.2\n---\n!!set {!!merge <<: {x: 1}, z: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {!!merge <<: {x: 1}, z: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"x\""
+            },
+            {
+              "type": "string",
+              "json": "\"z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-9",
+    "yaml": "%YAML 1.2\n---\n!!set {\"<<\": {x: 1}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {\"<<\": {x: 1}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-10",
+    "yaml": "%YAML 1.2\n---\n!!set {!!str <<: {x: 1}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {!!str <<: {x: 1}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-11",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: null}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-12",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: 7}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: 7}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-13",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: [7]}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: [7]}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-14",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: *missing}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: *missing}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-15",
+    "yaml": "%YAML 1.2\n---\n!!set {a: 1}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {a: 1}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-16",
+    "yaml": "%YAML 1.2\n---\n!!set {a: !!null null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {a: !!null null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-17",
+    "yaml": "%YAML 1.2\n---\n!!set {a: null # comment\n}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {a: null # comment\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-18",
+    "yaml": "%YAML 1.2\n---\n!!set {? [x, z]: 1}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {? [x, z]: 1}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "ref": 1
+            }
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-19",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: {.nan: 1, -0: 2, 0: 3}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "DUPLICATE_KEY",
+        "message": "Map keys must be unique",
+        "pos": [
+          42,
+          43
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "DUPLICATE_KEY",
+        "message": "Map keys must be unique at line 3, column 29:\n\n!!set {<<: {.nan: 1, -0: 2, 0: 3}}\n                            ^\n",
+        "pos": [
+          42,
+          43
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 29
+          },
+          {
+            "line": 3,
+            "col": 30
+          }
+        ]
+      },
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {.nan: 1, -0: 2, 0: 3}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-20",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: {? [x, z]: 1}, ? [x, z]: null}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: {? [x, z]: 1}, ? [x, z]: null}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            },
+            {
+              "ref": 1
+            }
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-21",
+    "yaml": "%YAML 1.2\n---\n!!set [x, z]\n",
+    "errors": [],
+    "warnings": [
+      {
+        "name": "YAMLWarning",
+        "code": "BAD_COLLECTION_TYPE",
+        "message": "tag:yaml.org,2002:set used for seq collection, but expects map",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "prettyErrors": [],
+    "prettyWarnings": [
+      {
+        "name": "YAMLWarning",
+        "code": "BAD_COLLECTION_TYPE",
+        "message": "tag:yaml.org,2002:set used for seq collection, but expects map at line 3, column 1:\n\n---\n!!set [x, z]\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  }
+]

@@ -29,9 +29,9 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 FAMILIES = ['documents', 'comments', 'plain', 'quoted', 'flow_seq', 'block_map',
-            'mixed_500', 'anchors_aliases', 'block_scalar', 'complex_keys', 'tags_directives']
+            'mixed_500', 'anchors_aliases', 'block_scalar', 'complex_keys', 'tags_directives', 'anchors_merges']
 SEEDS = dict(zip(FAMILIES, [50000, 100000, 2000000, 200000, 100000, 3000,
-                           100, 10000, 100000, 1, 40000]))
+                           100, 10000, 100000, 1, 40000, 20]))
 
 
 def source(family, n):
@@ -62,6 +62,13 @@ def source(family, n):
     if family == 'tags_directives':
         return (''.join(f'%TAG !t{i}! tag:x{i}:\n' for i in range(n)) + '---\n'
                 + ''.join(f'- !t{i}!value a\n' for i in range(n)))
+    if family == 'anchors_merges':
+        # Review reproduction: 20 anchors with 2,000 keys, each merged 90
+        # times. Scale anchor count only; key width and repeats stay fixed.
+        entries = ', '.join(f'k{i}: x' for i in range(2000))
+        anchors = ''.join(f'- &a{i} {{{entries}}}\n' for i in range(n))
+        merges = ''.join(f'- {{<<: *a{i}}}\n' for i in range(n) for _ in range(90))
+        return '%YAML 1.1\n---\n' + anchors + merges
     raise ValueError(family)
 
 

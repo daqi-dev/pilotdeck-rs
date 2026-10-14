@@ -62,7 +62,7 @@ pub(crate) struct Context<'a> {
     pub(crate) anchors: HashMap<NodeId, Anchor>,
     pub(crate) alias_sources: HashMap<NodeId, NodeId>,
     pub(crate) anchor_names: std::collections::HashSet<JsString>,
-    pub(crate) key_indices: HashMap<usize, HashMap<super::key::Key, usize>>,
+    pub(crate) key_indices: HashMap<usize, super::add_pair_to_js_map::KeyIndex>,
     pub(crate) merge_stack: Vec<NodeId>,
     pub(crate) depth: usize,
 }
@@ -184,6 +184,7 @@ impl Context<'_> {
                         self.add_pair(index, pair)?;
                     }
                 }
+                self.key_indices.remove(&index);
                 value
             }
             NodeKind::Pairs(pairs) => {
@@ -197,6 +198,7 @@ impl Context<'_> {
                     let obj = self.allocate(Container::Object(Vec::new()));
                     let Value::Ref(i) = obj else { unreachable!() };
                     self.add_pair(i, pair)?;
+                    self.key_indices.remove(&i);
                     out.push(obj);
                 }
                 self.nodes[index] = Container::Array(out);

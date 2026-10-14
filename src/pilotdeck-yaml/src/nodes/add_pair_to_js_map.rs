@@ -10,6 +10,77 @@ use crate::{
     value::{Container, ConversionError, Value},
 };
 use pilotdeck_protocol::JsString;
+use std::collections::{HashMap, hash_map::RandomState};
+use std::hash::BuildHasher;
+
+/// Construction-only index. Keys stay in the ordered container; hash collisions
+/// are resolved against those original keys, never treated as equal by hash alone.
+#[derive(Default)]
+pub(crate) struct KeyIndex {
+    hashes: RandomState,
+    slots: HashMap<u64, usize>,
+    collisions: HashMap<u64, Vec<usize>>,
+}
+impl KeyIndex {
+    fn new(container: &Container) -> Self {
+        let mut index = Self::default();
+        match container {
+            Container::Object(entries) => {
+                for (slot, (key, _)) in entries.iter().enumerate() {
+                    index.add_hash(index.hashes.hash_one(key), slot);
+                }
+            }
+            Container::Map(entries) => {
+                for (slot, (key, _)) in entries.iter().enumerate() {
+                    index.add_hash(index.hashes.hash_one(Key::from(key)), slot);
+                }
+            }
+            Container::Set(entries) => {
+                for (slot, key) in entries.iter().enumerate() {
+                    index.add_hash(index.hashes.hash_one(Key::from(key)), slot);
+                }
+            }
+            _ => unreachable!(),
+        }
+        index
+    }
+    fn hash(&self, container: &Container, key: &Value) -> u64 {
+        if let Container::Object(_) = container {
+            let Value::String(key) = key else {
+                unreachable!()
+            };
+            self.hashes.hash_one(key.as_ref())
+        } else {
+            self.hashes.hash_one(Key::from(key))
+        }
+    }
+    fn add_hash(&mut self, hash: u64, slot: usize) {
+        match self.slots.entry(hash) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(slot);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                self.collisions.entry(hash).or_default().push(slot);
+            }
+        }
+    }
+    fn find_hash(&self, hash: u64, container: &Container, key: &Value) -> Option<usize> {
+        let first = *self.slots.get(&hash)?;
+        std::iter::once(first)
+            .chain(self.collisions.get(&hash).into_iter().flatten().copied())
+            .find(|&slot| match container {
+                Container::Object(entries) => {
+                    matches!(key, Value::String(key) if entries[slot].0 == **key)
+                }
+                Container::Map(entries) => same_value_zero(&entries[slot].0, key),
+                Container::Set(entries) => same_value_zero(&entries[slot], key),
+                _ => unreachable!(),
+            })
+    }
+    fn find(&self, container: &Container, key: &Value) -> Option<usize> {
+        self.find_hash(self.hash(container, key), container, key)
+    }
+}
 impl Context<'_> {
     pub(crate) fn add_pair(&mut self, index: usize, pair: &Pair) -> Result<(), ConversionError> {
         let key_node = &self.doc.nodes[pair.key];
@@ -36,7 +107,7 @@ impl Context<'_> {
     }
     pub(crate) fn has_key(&self, index: usize, key: &Value) -> bool {
         if let Some(keys) = self.key_indices.get(&index) {
-            return keys.contains_key(&Key::from(key));
+            return keys.find(&self.nodes[index], key).is_some();
         }
         match &self.nodes[index] {
             Container::Map(e) => e.iter().any(|(k, _)| same_value_zero(k, key)),
@@ -63,29 +134,16 @@ impl Context<'_> {
             _ => unreachable!(),
         };
         if len >= 16 && !self.key_indices.contains_key(&index) {
-            let keys = match &self.nodes[index] {
-                Container::Object(e) => e
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (k, _))| (Key::String(std::sync::Arc::new(k.clone())), i))
-                    .collect(),
-                Container::Map(e) => e
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (k, _))| (Key::from(k), i))
-                    .collect(),
-                Container::Set(e) => e
-                    .iter()
-                    .enumerate()
-                    .map(|(i, k)| (Key::from(k), i))
-                    .collect(),
-                _ => unreachable!(),
-            };
-            self.key_indices.insert(index, keys);
+            self.key_indices
+                .insert(index, KeyIndex::new(&self.nodes[index]));
         }
         let indexed = self.key_indices.get_mut(&index).map(|keys| {
-            let slot = *keys.entry(Key::from(&key)).or_insert(len);
-            (slot < len).then_some(slot)
+            let hash = keys.hash(&self.nodes[index], &key);
+            let slot = keys.find_hash(hash, &self.nodes[index], &key);
+            if slot.is_none() {
+                keys.add_hash(hash, len);
+            }
+            slot
         });
         match &mut self.nodes[index] {
             Container::Object(entries) => {
@@ -203,6 +261,77 @@ impl Context<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hash_collisions_compare_original_keys_in_all_container_types() {
+        let a = Value::String(std::sync::Arc::new("a".into()));
+        let b = Value::String(std::sync::Arc::new("b".into()));
+        let missing = Value::String(std::sync::Arc::new("missing".into()));
+        for container in [
+            Container::Object(vec![("a".into(), Value::Null), ("b".into(), Value::Null)]),
+            Container::Map(vec![(a.clone(), Value::Null), (b.clone(), Value::Null)]),
+            Container::Set(vec![a.clone(), b.clone()]),
+        ] {
+            let mut index = KeyIndex::default();
+            index.add_hash(7, 0);
+            index.add_hash(7, 1);
+            assert_eq!(index.find_hash(7, &container, &a), Some(0));
+            assert_eq!(index.find_hash(7, &container, &b), Some(1));
+            assert_eq!(index.find_hash(7, &container, &missing), None);
+        }
+    }
+
+    #[test]
+    fn indices_are_released_after_merge_and_collection_construction() {
+        let entries = (0..40)
+            .map(|i| format!("k{i}: {i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let doc = crate::parse_document(
+            &format!(
+                "%YAML 1.1\n---\n[a: &a {{{entries}}}, {{<<: *a}}, !!set {{{}}}, !!omap [{}]]",
+                (0..40)
+                    .map(|i| format!("s{i}: null"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                (0..40)
+                    .map(|i| format!("{{m{i}: {i}}}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into(),
+            Default::default(),
+        );
+        assert!(doc.errors.is_empty(), "{:?}", doc.errors);
+        let mut ctx = Context {
+            doc: &doc,
+            nodes: vec![],
+            anchors: Default::default(),
+            alias_sources: Default::default(),
+            anchor_names: Default::default(),
+            key_indices: Default::default(),
+            merge_stack: vec![],
+            depth: 0,
+        };
+        ctx.visit_order(doc.contents.unwrap()).unwrap();
+        ctx.convert(doc.contents).unwrap();
+        assert!(
+            ctx.key_indices.is_empty(),
+            "completed tables retain no index"
+        );
+        assert!(ctx.merge_stack.is_empty());
+        assert_eq!(
+            ctx.nodes
+                .iter()
+                .map(|node| match node {
+                    Container::Map(entries) => entries.len(),
+                    _ => 0,
+                })
+                .sum::<usize>(),
+            40,
+            "only the real omap retains Map entries"
+        );
+    }
 
     #[test]
     fn ordered_indices_preserve_same_value_zero_identity_and_merge_precedence() {
