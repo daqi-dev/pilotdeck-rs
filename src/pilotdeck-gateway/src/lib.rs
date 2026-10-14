@@ -5,6 +5,7 @@ mod frame;
 pub mod http_proxy;
 mod metadata;
 mod pairing;
+mod project_files;
 mod upstream;
 
 use bytes::Bytes;

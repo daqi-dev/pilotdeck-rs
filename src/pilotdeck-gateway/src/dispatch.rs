@@ -2,7 +2,13 @@
 use crate::metadata::{Files, Metadata, object, string, text_field};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 
-const LOCAL_METHODS: &[&str] = &["supported_agents", "list_projects", "describe_project"];
+const LOCAL_METHODS: &[&str] = &[
+    "supported_agents",
+    "list_projects",
+    "describe_project",
+    "project_files_list",
+    "project_file_read",
+];
 
 pub(crate) enum Route {
     Forward,
@@ -32,13 +38,15 @@ pub(crate) fn is_local(request: &JsValue) -> bool {
 }
 
 pub(crate) fn needs_files(request: &JsValue) -> bool {
-    text_field(request, "method").as_deref() == Some("list_projects")
-        || (text_field(request, "method").as_deref() == Some("describe_project")
-            && request
-                .get("params")
-                .and_then(|params| params.get("projectKey"))
-                .and_then(JsValue::as_string)
-                .is_some())
+    matches!(
+        text_field(request, "method").as_deref(),
+        Some("list_projects" | "project_files_list" | "project_file_read")
+    ) || (text_field(request, "method").as_deref() == Some("describe_project")
+        && request
+            .get("params")
+            .and_then(|params| params.get("projectKey"))
+            .and_then(JsValue::as_string)
+            .is_some())
 }
 
 pub(crate) fn route_with_metadata<F: Files>(
@@ -127,6 +135,19 @@ pub(crate) fn route_with_metadata<F: Files>(
                     }
                 }
             }
+        }
+        "project_files_list" | "project_file_read" => {
+            let Some(metadata) = metadata else {
+                return Route::Forward;
+            };
+            let Some(result) = crate::project_files::execute(
+                metadata,
+                &method,
+                request.get("params").unwrap_or(&JsValue::Undefined),
+            ) else {
+                return Route::Forward;
+            };
+            result
         }
         _ => unreachable!("checked whitelist"),
     };

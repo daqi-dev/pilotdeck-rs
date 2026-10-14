@@ -1,0 +1,410 @@
+{
+  "maxBytesCoercion": [
+    {
+      "value": "0x3",
+      "bytes": 3
+    },
+    {
+      "value": "0b10",
+      "bytes": 2
+    },
+    {
+      "value": "0o3",
+      "bytes": 3
+    },
+    {
+      "value": "inf",
+      "bytes": 0
+    },
+    {
+      "value": "Infinity",
+      "bytes": 10
+    },
+    {
+      "value": [],
+      "bytes": 1
+    },
+    {
+      "value": [
+        true
+      ],
+      "bytes": 0
+    },
+    {
+      "value": [
+        2
+      ],
+      "bytes": 2
+    },
+    {
+      "value": [
+        null
+      ],
+      "bytes": 1
+    },
+    {
+      "value": [
+        [
+          2
+        ]
+      ],
+      "bytes": 2
+    },
+    {
+      "value": {},
+      "bytes": 0
+    }
+  ],
+  "localeProbe": [
+    {
+      "env": {
+        "LANG": "C.UTF-8"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        "ii̇ıi",
+        "ος",
+        "i̇",
+        "ß"
+      ]
+    },
+    {
+      "env": {
+        "LANG": "tr_TR.UTF-8"
+      },
+      "locale": "tr-TR",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        "ıiıi",
+        "ος",
+        "i",
+        "ß"
+      ]
+    },
+    {
+      "env": {
+        "LANG": "sv_SE.UTF-8"
+      },
+      "locale": "sv-SE",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "z",
+        "Z",
+        "ä",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        "ii̇ıi",
+        "ος",
+        "i̇",
+        "ß"
+      ]
+    },
+    {
+      "env": {
+        "LANG": "zh_CN.UTF-8"
+      },
+      "locale": "zh-CN",
+      "order": [
+        "_x",
+        "😀",
+        "你好",
+        "文件",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z"
+      ],
+      "lower": [
+        "ii̇ıi",
+        "ος",
+        "i̇",
+        "ß"
+      ]
+    },
+    {
+      "env": {
+        "LANG": "tr_TR.UTF-8",
+        "LC_ALL": "en_US.UTF-8"
+      },
+      "locale": "en-US",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        "ii̇ıi",
+        "ος",
+        "i̇",
+        "ß"
+      ]
+    },
+    {
+      "env": {
+        "LANG": "tr_TR.UTF-8",
+        "LC_MESSAGES": "sv_SE.UTF-8"
+      },
+      "locale": "sv-SE",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "z",
+        "Z",
+        "ä",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        "ii̇ıi",
+        "ος",
+        "i̇",
+        "ß"
+      ]
+    },
+    {
+      "env": {
+        "LANG": "tr_TR.UTF-8",
+        "LC_COLLATE": "sv_SE.UTF-8"
+      },
+      "locale": "tr-TR",
+      "order": [
+        "_x",
+        "😀",
+        "a",
+        "A",
+        "ä",
+        "z",
+        "Z",
+        "你好",
+        "文件"
+      ],
+      "lower": [
+        "ıiıi",
+        "ος",
+        "i",
+        "ß"
+      ]
+    }
+  ],
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "locale": {
+    "locale": "en-US",
+    "usage": "sort",
+    "sensitivity": "variant",
+    "ignorePunctuation": false,
+    "collation": "default",
+    "numeric": false,
+    "caseFirst": "false"
+  },
+  "readdir": [
+    "..secret",
+    ".git",
+    ".gitignore",
+    ".hidden",
+    ".pilotdeck",
+    ".tmp",
+    "10",
+    "2",
+    "A.txt",
+    "_x",
+    "alias-dir",
+    "alias-file",
+    "binary",
+    "bom.txt",
+    "broken",
+    "build",
+    "coverage",
+    "cycle",
+    "dist",
+    "escape",
+    "ignored.txt",
+    "nested",
+    "node_modules",
+    "xonly",
+    "z.txt",
+    "ä.txt",
+    "你好.txt",
+    "😀AA.txt"
+  ],
+  "localeOrder": [
+    "_x",
+    "..secret",
+    ".git",
+    ".gitignore",
+    ".hidden",
+    ".pilotdeck",
+    ".tmp",
+    "😀AA.txt",
+    "10",
+    "2",
+    "A.txt",
+    "ä.txt",
+    "alias-dir",
+    "alias-file",
+    "binary",
+    "bom.txt",
+    "broken",
+    "build",
+    "coverage",
+    "cycle",
+    "dist",
+    "escape",
+    "ignored.txt",
+    "nested",
+    "node_modules",
+    "xonly",
+    "z.txt",
+    "你好.txt"
+  ],
+  "stat": {
+    "directory": false,
+    "size": 7,
+    "birth_ms": 1700000000123.456,
+    "ctime_ms": 1791958178966.4954,
+    "mtime_ms": 1700000000123.456,
+    "base64": "77u/aGkNCg=="
+  },
+  "bom": "﻿hi\r\n",
+  "binary": [
+    {
+      "n": 0,
+      "utf8": "",
+      "base64": ""
+    },
+    {
+      "n": 1,
+      "utf8": "\u0000",
+      "base64": "AA=="
+    },
+    {
+      "n": 2,
+      "utf8": "\u0000�",
+      "base64": "AP8="
+    },
+    {
+      "n": 3,
+      "utf8": "\u0000��",
+      "base64": "AP/A"
+    },
+    {
+      "n": 4,
+      "utf8": "\u0000���",
+      "base64": "AP/Arw=="
+    },
+    {
+      "n": 5,
+      "utf8": "\u0000����",
+      "base64": "AP/Ar+I="
+    },
+    {
+      "n": 6,
+      "utf8": "\u0000����",
+      "base64": "AP/Ar+KC"
+    },
+    {
+      "n": 7,
+      "utf8": "\u0000���€",
+      "base64": "AP/Ar+KCrA=="
+    },
+    {
+      "n": 8,
+      "utf8": "\u0000���€�",
+      "base64": "AP/Ar+KCrO0="
+    },
+    {
+      "n": 9,
+      "utf8": "\u0000���€��",
+      "base64": "AP/Ar+KCrO2g"
+    },
+    {
+      "n": 10,
+      "utf8": "\u0000���€���",
+      "base64": "AP/Ar+KCrO2ggA=="
+    }
+  ],
+  "paths": [
+    {
+      "input": "",
+      "resolved": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project"
+    },
+    {
+      "input": "./",
+      "resolved": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project"
+    },
+    {
+      "input": "nested//./note.txt",
+      "resolved": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/nested/note.txt"
+    },
+    {
+      "input": "nested/../bom.txt",
+      "resolved": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/bom.txt"
+    },
+    {
+      "input": "/absolute",
+      "resolved": "/absolute"
+    }
+  ],
+  "links": [
+    {
+      "path": "alias-dir",
+      "real": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/nested",
+      "directory": true,
+      "direntDirectory": false
+    },
+    {
+      "path": "alias-file",
+      "real": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/nested/note.txt",
+      "directory": false,
+      "direntDirectory": false
+    },
+    {
+      "path": "escape",
+      "real": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/outside",
+      "directory": false,
+      "direntDirectory": false
+    },
+    {
+      "path": "cycle",
+      "real": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project",
+      "directory": true,
+      "direntDirectory": false
+    }
+  ],
+  "sourceSha256": "56d52eeb93660b6d442150459067297e49478066b4857e0c3ef370b892b4ce2c"
+}

@@ -1,0 +1,2573 @@
+{
+  "cwd": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP",
+  "home": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home",
+  "root": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project",
+  "files": {
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP": {
+      "directory": true,
+      "size": 224,
+      "birth_ms": 1791958178376.8643,
+      "ctime_ms": 1791958179019.4343,
+      "mtime_ms": 1791958179019.4343,
+      "entries": [
+        [
+          "deep64",
+          true
+        ],
+        [
+          "deep65",
+          true
+        ],
+        [
+          "home",
+          true
+        ],
+        [
+          "outside",
+          false
+        ],
+        [
+          "project",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179003.6504,
+      "ctime_ms": 1791958179003.9268,
+      "mtime_ms": 1791958179003.9268,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179003.924,
+      "ctime_ms": 1791958179003.979,
+      "mtime_ms": 1791958179003.979,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179003.9773,
+      "ctime_ms": 1791958179004.0273,
+      "mtime_ms": 1791958179004.0273,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.026,
+      "ctime_ms": 1791958179004.0789,
+      "mtime_ms": 1791958179004.0789,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.0771,
+      "ctime_ms": 1791958179004.124,
+      "mtime_ms": 1791958179004.124,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.123,
+      "ctime_ms": 1791958179004.1907,
+      "mtime_ms": 1791958179004.1907,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.1882,
+      "ctime_ms": 1791958179004.2441,
+      "mtime_ms": 1791958179004.2441,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.2422,
+      "ctime_ms": 1791958179004.3042,
+      "mtime_ms": 1791958179004.3042,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.3025,
+      "ctime_ms": 1791958179004.359,
+      "mtime_ms": 1791958179004.359,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.3547,
+      "ctime_ms": 1791958179004.409,
+      "mtime_ms": 1791958179004.409,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.4077,
+      "ctime_ms": 1791958179004.4612,
+      "mtime_ms": 1791958179004.4612,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.4595,
+      "ctime_ms": 1791958179004.515,
+      "mtime_ms": 1791958179004.515,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.5134,
+      "ctime_ms": 1791958179004.561,
+      "mtime_ms": 1791958179004.561,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.5598,
+      "ctime_ms": 1791958179004.6162,
+      "mtime_ms": 1791958179004.6162,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.6152,
+      "ctime_ms": 1791958179004.6577,
+      "mtime_ms": 1791958179004.6577,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.6567,
+      "ctime_ms": 1791958179004.6995,
+      "mtime_ms": 1791958179004.6995,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.6982,
+      "ctime_ms": 1791958179004.7512,
+      "mtime_ms": 1791958179004.7512,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.7502,
+      "ctime_ms": 1791958179004.7993,
+      "mtime_ms": 1791958179004.7993,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.798,
+      "ctime_ms": 1791958179004.847,
+      "mtime_ms": 1791958179004.847,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.846,
+      "ctime_ms": 1791958179004.903,
+      "mtime_ms": 1791958179004.903,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.9019,
+      "ctime_ms": 1791958179004.9473,
+      "mtime_ms": 1791958179004.9473,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.9465,
+      "ctime_ms": 1791958179004.9927,
+      "mtime_ms": 1791958179004.9927,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179004.9915,
+      "ctime_ms": 1791958179005.0386,
+      "mtime_ms": 1791958179005.0386,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.0374,
+      "ctime_ms": 1791958179005.094,
+      "mtime_ms": 1791958179005.094,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.0928,
+      "ctime_ms": 1791958179005.137,
+      "mtime_ms": 1791958179005.137,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.1355,
+      "ctime_ms": 1791958179005.1895,
+      "mtime_ms": 1791958179005.1895,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.188,
+      "ctime_ms": 1791958179005.2517,
+      "mtime_ms": 1791958179005.2517,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.2495,
+      "ctime_ms": 1791958179005.3113,
+      "mtime_ms": 1791958179005.3113,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.3103,
+      "ctime_ms": 1791958179005.3699,
+      "mtime_ms": 1791958179005.3699,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.3687,
+      "ctime_ms": 1791958179005.4216,
+      "mtime_ms": 1791958179005.4216,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.4202,
+      "ctime_ms": 1791958179005.4749,
+      "mtime_ms": 1791958179005.4749,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.4739,
+      "ctime_ms": 1791958179005.5251,
+      "mtime_ms": 1791958179005.5251,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.524,
+      "ctime_ms": 1791958179005.5728,
+      "mtime_ms": 1791958179005.5728,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.5703,
+      "ctime_ms": 1791958179005.6167,
+      "mtime_ms": 1791958179005.6167,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.6157,
+      "ctime_ms": 1791958179005.6704,
+      "mtime_ms": 1791958179005.6704,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.6685,
+      "ctime_ms": 1791958179005.731,
+      "mtime_ms": 1791958179005.731,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.7295,
+      "ctime_ms": 1791958179005.788,
+      "mtime_ms": 1791958179005.788,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.7869,
+      "ctime_ms": 1791958179005.8396,
+      "mtime_ms": 1791958179005.8396,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.8384,
+      "ctime_ms": 1791958179005.8853,
+      "mtime_ms": 1791958179005.8853,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.884,
+      "ctime_ms": 1791958179005.9395,
+      "mtime_ms": 1791958179005.9395,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.9382,
+      "ctime_ms": 1791958179005.9915,
+      "mtime_ms": 1791958179005.9915,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179005.9902,
+      "ctime_ms": 1791958179006.0532,
+      "mtime_ms": 1791958179006.0532,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.052,
+      "ctime_ms": 1791958179006.1133,
+      "mtime_ms": 1791958179006.1133,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.1123,
+      "ctime_ms": 1791958179006.172,
+      "mtime_ms": 1791958179006.172,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.1707,
+      "ctime_ms": 1791958179006.2266,
+      "mtime_ms": 1791958179006.2266,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.2253,
+      "ctime_ms": 1791958179006.2834,
+      "mtime_ms": 1791958179006.2834,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.282,
+      "ctime_ms": 1791958179006.34,
+      "mtime_ms": 1791958179006.34,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.3389,
+      "ctime_ms": 1791958179006.3943,
+      "mtime_ms": 1791958179006.3943,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.393,
+      "ctime_ms": 1791958179006.4495,
+      "mtime_ms": 1791958179006.4495,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.448,
+      "ctime_ms": 1791958179006.499,
+      "mtime_ms": 1791958179006.499,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.4976,
+      "ctime_ms": 1791958179006.5457,
+      "mtime_ms": 1791958179006.5457,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.5447,
+      "ctime_ms": 1791958179006.5957,
+      "mtime_ms": 1791958179006.5957,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.5942,
+      "ctime_ms": 1791958179006.6453,
+      "mtime_ms": 1791958179006.6453,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.644,
+      "ctime_ms": 1791958179006.7012,
+      "mtime_ms": 1791958179006.7012,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.7,
+      "ctime_ms": 1791958179006.7585,
+      "mtime_ms": 1791958179006.7585,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.7573,
+      "ctime_ms": 1791958179006.813,
+      "mtime_ms": 1791958179006.813,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.8118,
+      "ctime_ms": 1791958179006.8813,
+      "mtime_ms": 1791958179006.8813,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.8784,
+      "ctime_ms": 1791958179006.9377,
+      "mtime_ms": 1791958179006.9377,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.9363,
+      "ctime_ms": 1791958179006.9944,
+      "mtime_ms": 1791958179006.9944,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179006.9932,
+      "ctime_ms": 1791958179007.0435,
+      "mtime_ms": 1791958179007.0435,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179007.0422,
+      "ctime_ms": 1791958179007.1035,
+      "mtime_ms": 1791958179007.1035,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179007.1025,
+      "ctime_ms": 1791958179007.151,
+      "mtime_ms": 1791958179007.151,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179007.1494,
+      "ctime_ms": 1791958179007.2056,
+      "mtime_ms": 1791958179007.2056,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179007.204,
+      "ctime_ms": 1791958179007.2622,
+      "mtime_ms": 1791958179007.2622,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 64,
+      "birth_ms": 1791958179007.261,
+      "ctime_ms": 1791958179007.261,
+      "mtime_ms": 1791958179007.261,
+      "entries": []
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.4263,
+      "ctime_ms": 1791958179019.6973,
+      "mtime_ms": 1791958179019.6973,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.6948,
+      "ctime_ms": 1791958179019.7485,
+      "mtime_ms": 1791958179019.7485,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.7473,
+      "ctime_ms": 1791958179019.7908,
+      "mtime_ms": 1791958179019.7908,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.7898,
+      "ctime_ms": 1791958179019.8347,
+      "mtime_ms": 1791958179019.8347,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.8328,
+      "ctime_ms": 1791958179019.8901,
+      "mtime_ms": 1791958179019.8901,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.8884,
+      "ctime_ms": 1791958179019.9424,
+      "mtime_ms": 1791958179019.9424,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.941,
+      "ctime_ms": 1791958179019.9932,
+      "mtime_ms": 1791958179019.9932,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.9917,
+      "ctime_ms": 1791958179020.053,
+      "mtime_ms": 1791958179020.053,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.0486,
+      "ctime_ms": 1791958179020.118,
+      "mtime_ms": 1791958179020.118,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.1165,
+      "ctime_ms": 1791958179020.1729,
+      "mtime_ms": 1791958179020.1729,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.1714,
+      "ctime_ms": 1791958179020.2317,
+      "mtime_ms": 1791958179020.2317,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.23,
+      "ctime_ms": 1791958179020.2878,
+      "mtime_ms": 1791958179020.2878,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.2842,
+      "ctime_ms": 1791958179020.3357,
+      "mtime_ms": 1791958179020.3357,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.3345,
+      "ctime_ms": 1791958179020.3855,
+      "mtime_ms": 1791958179020.3855,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.3845,
+      "ctime_ms": 1791958179020.4375,
+      "mtime_ms": 1791958179020.4375,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.436,
+      "ctime_ms": 1791958179020.485,
+      "mtime_ms": 1791958179020.485,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.4836,
+      "ctime_ms": 1791958179020.5374,
+      "mtime_ms": 1791958179020.5374,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.5361,
+      "ctime_ms": 1791958179020.5793,
+      "mtime_ms": 1791958179020.5793,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.5784,
+      "ctime_ms": 1791958179020.6223,
+      "mtime_ms": 1791958179020.6223,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.6213,
+      "ctime_ms": 1791958179020.6821,
+      "mtime_ms": 1791958179020.6821,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.681,
+      "ctime_ms": 1791958179020.7942,
+      "mtime_ms": 1791958179020.7942,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.7922,
+      "ctime_ms": 1791958179020.8533,
+      "mtime_ms": 1791958179020.8533,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.852,
+      "ctime_ms": 1791958179020.8994,
+      "mtime_ms": 1791958179020.8994,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.8982,
+      "ctime_ms": 1791958179020.9587,
+      "mtime_ms": 1791958179020.9587,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179020.957,
+      "ctime_ms": 1791958179021.0215,
+      "mtime_ms": 1791958179021.0215,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.0203,
+      "ctime_ms": 1791958179021.0708,
+      "mtime_ms": 1791958179021.0708,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.0698,
+      "ctime_ms": 1791958179021.1282,
+      "mtime_ms": 1791958179021.1282,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.1267,
+      "ctime_ms": 1791958179021.1995,
+      "mtime_ms": 1791958179021.1995,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.1982,
+      "ctime_ms": 1791958179021.2551,
+      "mtime_ms": 1791958179021.2551,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.254,
+      "ctime_ms": 1791958179021.3098,
+      "mtime_ms": 1791958179021.3098,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.3071,
+      "ctime_ms": 1791958179021.362,
+      "mtime_ms": 1791958179021.362,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.3606,
+      "ctime_ms": 1791958179021.4111,
+      "mtime_ms": 1791958179021.4111,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.4102,
+      "ctime_ms": 1791958179021.4688,
+      "mtime_ms": 1791958179021.4688,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.4675,
+      "ctime_ms": 1791958179021.518,
+      "mtime_ms": 1791958179021.518,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.5168,
+      "ctime_ms": 1791958179021.5688,
+      "mtime_ms": 1791958179021.5688,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.5676,
+      "ctime_ms": 1791958179021.617,
+      "mtime_ms": 1791958179021.617,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.614,
+      "ctime_ms": 1791958179021.681,
+      "mtime_ms": 1791958179021.681,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.6797,
+      "ctime_ms": 1791958179021.7375,
+      "mtime_ms": 1791958179021.7375,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.7302,
+      "ctime_ms": 1791958179021.7983,
+      "mtime_ms": 1791958179021.7983,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.797,
+      "ctime_ms": 1791958179021.8542,
+      "mtime_ms": 1791958179021.8542,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.8528,
+      "ctime_ms": 1791958179021.912,
+      "mtime_ms": 1791958179021.912,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.911,
+      "ctime_ms": 1791958179021.9702,
+      "mtime_ms": 1791958179021.9702,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179021.9656,
+      "ctime_ms": 1791958179022.0413,
+      "mtime_ms": 1791958179022.0413,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.0383,
+      "ctime_ms": 1791958179022.1028,
+      "mtime_ms": 1791958179022.1028,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.101,
+      "ctime_ms": 1791958179022.1643,
+      "mtime_ms": 1791958179022.1643,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.1626,
+      "ctime_ms": 1791958179022.2285,
+      "mtime_ms": 1791958179022.2285,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.2273,
+      "ctime_ms": 1791958179022.2898,
+      "mtime_ms": 1791958179022.2898,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.2886,
+      "ctime_ms": 1791958179022.348,
+      "mtime_ms": 1791958179022.348,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.347,
+      "ctime_ms": 1791958179022.398,
+      "mtime_ms": 1791958179022.398,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.3967,
+      "ctime_ms": 1791958179022.4475,
+      "mtime_ms": 1791958179022.4475,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.446,
+      "ctime_ms": 1791958179022.503,
+      "mtime_ms": 1791958179022.503,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.502,
+      "ctime_ms": 1791958179022.559,
+      "mtime_ms": 1791958179022.559,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.5579,
+      "ctime_ms": 1791958179022.6013,
+      "mtime_ms": 1791958179022.6013,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.6003,
+      "ctime_ms": 1791958179022.6453,
+      "mtime_ms": 1791958179022.6453,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.644,
+      "ctime_ms": 1791958179022.6924,
+      "mtime_ms": 1791958179022.6924,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.6914,
+      "ctime_ms": 1791958179022.7434,
+      "mtime_ms": 1791958179022.7434,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.7422,
+      "ctime_ms": 1791958179022.7947,
+      "mtime_ms": 1791958179022.7947,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.7932,
+      "ctime_ms": 1791958179022.8484,
+      "mtime_ms": 1791958179022.8484,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.847,
+      "ctime_ms": 1791958179022.9038,
+      "mtime_ms": 1791958179022.9038,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.9028,
+      "ctime_ms": 1791958179022.957,
+      "mtime_ms": 1791958179022.957,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179022.9539,
+      "ctime_ms": 1791958179023.0093,
+      "mtime_ms": 1791958179023.0093,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179023.0078,
+      "ctime_ms": 1791958179023.0564,
+      "mtime_ms": 1791958179023.0564,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179023.0552,
+      "ctime_ms": 1791958179023.1072,
+      "mtime_ms": 1791958179023.1072,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179023.1062,
+      "ctime_ms": 1791958179023.159,
+      "mtime_ms": 1791958179023.159,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179023.1575,
+      "ctime_ms": 1791958179023.2178,
+      "mtime_ms": 1791958179023.2178,
+      "entries": [
+        [
+          "d",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d": {
+      "directory": true,
+      "size": 64,
+      "birth_ms": 1791958179023.2163,
+      "ctime_ms": 1791958179023.2163,
+      "mtime_ms": 1791958179023.2163,
+      "entries": []
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958178376.9568,
+      "ctime_ms": 1791958178936.3054,
+      "mtime_ms": 1791958178936.3054,
+      "entries": [
+        [
+          "projects",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home/projects": {
+      "directory": true,
+      "size": 160,
+      "birth_ms": 1791958178936.298,
+      "ctime_ms": 1791958179019.49,
+      "mtime_ms": 1791958179019.49,
+      "entries": [
+        [
+          "deep64",
+          true
+        ],
+        [
+          "deep65",
+          true
+        ],
+        [
+          "fixture",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home/projects/deep64": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179003.7085,
+      "ctime_ms": 1791958179003.7793,
+      "mtime_ms": 1791958179003.7793,
+      "entries": [
+        [
+          ".cwd",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home/projects/deep64/.cwd": {
+      "directory": false,
+      "size": 76,
+      "birth_ms": 1791958179003.7776,
+      "ctime_ms": 1791958179003.8455,
+      "mtime_ms": 1791958179003.8455,
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtYTRtMi9fdG1wL25vZGUtZmlsZXMvZmlsZXMtS2ROVXFQL2RlZXA2NA=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home/projects/deep65": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958179019.4875,
+      "ctime_ms": 1791958179019.552,
+      "mtime_ms": 1791958179019.552,
+      "entries": [
+        [
+          ".cwd",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home/projects/deep65/.cwd": {
+      "directory": false,
+      "size": 76,
+      "birth_ms": 1791958179019.5505,
+      "ctime_ms": 1791958179019.6084,
+      "mtime_ms": 1791958179019.6084,
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtYTRtMi9fdG1wL25vZGUtZmlsZXMvZmlsZXMtS2ROVXFQL2RlZXA2NQ=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home/projects/fixture": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1791958178936.3516,
+      "ctime_ms": 1791958178936.4827,
+      "mtime_ms": 1791958178936.4827,
+      "entries": [
+        [
+          ".cwd",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home/projects/fixture/.cwd": {
+      "directory": false,
+      "size": 77,
+      "birth_ms": 1791958178936.4802,
+      "ctime_ms": 1791958178936.638,
+      "mtime_ms": 1791958178936.638,
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtYTRtMi9fdG1wL25vZGUtZmlsZXMvZmlsZXMtS2ROVXFQL3Byb2plY3Q="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/outside": {
+      "directory": false,
+      "size": 7,
+      "birth_ms": 1791958178965.284,
+      "ctime_ms": 1791958178965.3154,
+      "mtime_ms": 1791958178965.3154,
+      "base64": "b3V0c2lkZQ=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project": {
+      "directory": true,
+      "size": 960,
+      "birth_ms": 1791958178377.0037,
+      "ctime_ms": 1791958178965.654,
+      "mtime_ms": 1791958178965.654,
+      "entries": [
+        [
+          "..secret",
+          false
+        ],
+        [
+          ".git",
+          true
+        ],
+        [
+          ".gitignore",
+          false
+        ],
+        [
+          ".hidden",
+          false
+        ],
+        [
+          ".pilotdeck",
+          true
+        ],
+        [
+          ".tmp",
+          true
+        ],
+        [
+          "10",
+          false
+        ],
+        [
+          "2",
+          false
+        ],
+        [
+          "A.txt",
+          false
+        ],
+        [
+          "_x",
+          false
+        ],
+        [
+          "alias-dir",
+          false
+        ],
+        [
+          "alias-file",
+          false
+        ],
+        [
+          "binary",
+          false
+        ],
+        [
+          "bom.txt",
+          false
+        ],
+        [
+          "broken",
+          false
+        ],
+        [
+          "build",
+          true
+        ],
+        [
+          "coverage",
+          true
+        ],
+        [
+          "cycle",
+          false
+        ],
+        [
+          "dist",
+          true
+        ],
+        [
+          "escape",
+          false
+        ],
+        [
+          "ignored.txt",
+          false
+        ],
+        [
+          "nested",
+          true
+        ],
+        [
+          "node_modules",
+          true
+        ],
+        [
+          "xonly",
+          true
+        ],
+        [
+          "z.txt",
+          false
+        ],
+        [
+          "ä.txt",
+          false
+        ],
+        [
+          "你好.txt",
+          false
+        ],
+        [
+          "😀AA.txt",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/..secret": {
+      "directory": false,
+      "size": 10,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178965.9456,
+      "mtime_ms": 1700000000123.456,
+      "base64": "b2RkIHByZWZpeA=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.git": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.048,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "excluded",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.git/excluded": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.026,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZXhjbHVkZWQ="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.gitignore": {
+      "directory": false,
+      "size": 12,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.07,
+      "mtime_ms": 1700000000123.456,
+      "base64": "aWdub3JlZC50eHQK"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.hidden": {
+      "directory": false,
+      "size": 6,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.0925,
+      "mtime_ms": 1700000000123.456,
+      "base64": "aGlkZGVu"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.pilotdeck": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.2039,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "excluded",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.pilotdeck/excluded": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.1785,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZXhjbHVkZWQ="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.tmp": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.339,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "excluded",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/.tmp/excluded": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.3135,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZXhjbHVkZWQ="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/10": {
+      "directory": false,
+      "size": 3,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.3853,
+      "mtime_ms": 1700000000123.456,
+      "base64": "dGVu"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/2": {
+      "directory": false,
+      "size": 3,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.4216,
+      "mtime_ms": 1700000000123.456,
+      "base64": "dHdv"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/A.txt": {
+      "directory": false,
+      "size": 1,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.443,
+      "mtime_ms": 1700000000123.456,
+      "base64": "YQ=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/_x": {
+      "directory": false,
+      "size": 10,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.4617,
+      "mtime_ms": 1700000000123.456,
+      "base64": "dW5kZXJzY29yZQ=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/alias-dir": {
+      "link": "nested"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/alias-file": {
+      "link": "nested/note.txt"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/binary": {
+      "directory": false,
+      "size": 10,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.4814,
+      "mtime_ms": 1700000000123.456,
+      "base64": "AP/Ar+KCrO2ggA=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/bom.txt": {
+      "directory": false,
+      "size": 7,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.4954,
+      "mtime_ms": 1700000000123.456,
+      "base64": "77u/aGkNCg=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/broken": {
+      "link": "missing"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/build": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.588,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "excluded",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/build/excluded": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.5676,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZXhjbHVkZWQ="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/coverage": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.679,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "excluded",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/coverage/excluded": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.6611,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZXhjbHVkZWQ="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/cycle": {
+      "link": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/dist": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.771,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "excluded",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/dist/excluded": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.7502,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZXhjbHVkZWQ="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/escape": {
+      "link": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/outside"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/ignored.txt": {
+      "directory": false,
+      "size": 12,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.7937,
+      "mtime_ms": 1700000000123.456,
+      "base64": "c3RpbGwgbGlzdGVk"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/nested": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.879,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "note.txt",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/nested/note.txt": {
+      "directory": false,
+      "size": 4,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.8643,
+      "mtime_ms": 1700000000123.456,
+      "base64": "bm90ZQ=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/node_modules": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178967.014,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "excluded",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/node_modules/excluded": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178966.9998,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZXhjbHVkZWQ="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/xonly": {
+      "directory": true,
+      "size": 96,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178992.1365,
+      "mtime_ms": 1700000000123.456,
+      "entries": [
+        [
+          "readable",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/xonly/readable": {
+      "directory": false,
+      "size": 8,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178967.083,
+      "mtime_ms": 1700000000123.456,
+      "base64": "cmVhZGFibGU="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/z.txt": {
+      "directory": false,
+      "size": 1,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178967.114,
+      "mtime_ms": 1700000000123.456,
+      "base64": "eg=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/ä.txt": {
+      "directory": false,
+      "size": 6,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178967.154,
+      "mtime_ms": 1700000000123.456,
+      "base64": "YWNjZW50"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/你好.txt": {
+      "directory": false,
+      "size": 6,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178967.1738,
+      "mtime_ms": 1700000000123.456,
+      "base64": "5Lit5paH"
+    },
+    "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/😀AA.txt": {
+      "directory": false,
+      "size": 5,
+      "birth_ms": 1700000000123.456,
+      "ctime_ms": 1791958178967.1897,
+      "mtime_ms": 1700000000123.456,
+      "base64": "ZW1vamk="
+    }
+  },
+  "cases": [
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-1\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-1\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1f3f6a156400c5aa276ed53c9baef4139295e1b78f856241b402bf3e9cf70437\",\"name\":\"_x\",\"relativePath\":\"_x\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:e14d65236fc2177461ab50f371e4e29559ae101b71dab997a01515b82cd116ed\",\"name\":\"..secret\",\"relativePath\":\"..secret\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:d990c18da8a9983cff98d40f8752236a3ced06d3f5c4ccf5214394b5d09fcf87\",\"name\":\".gitignore\",\"relativePath\":\".gitignore\",\"kind\":\"file\",\"size\":12,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:9d61db66841d34376b815cf1501f05d9d2945fe8297160f7d01528782c909f2d\",\"name\":\".hidden\",\"relativePath\":\".hidden\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:1a603fba492594419f17531a2026e5484138324e0e1e8c4caf426221ff78b060\",\"name\":\"😀AA.txt\",\"relativePath\":\"😀AA.txt\",\"kind\":\"file\",\"size\":5,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:d505f80316b6fee991ca68a646c85a496865b05e3adcc8360280e88b82729d10\",\"name\":\"10\",\"relativePath\":\"10\",\"kind\":\"file\",\"size\":3,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:90318129835f7b597ee4e4dab042e87bcb6c52502daec829633460a31727822e\",\"name\":\"2\",\"relativePath\":\"2\",\"kind\":\"file\",\"size\":3,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:179480bf12424349710cfe249bf7a8d15b6009c53641846462613bc30ec88f18\",\"name\":\"A.txt\",\"relativePath\":\"A.txt\",\"kind\":\"file\",\"size\":1,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:b3e2bce31b44a213d7bf4a22d24792769372e646c8053a2676e5166cf745aa24\",\"name\":\"ä.txt\",\"relativePath\":\"ä.txt\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:961ad5efbfd8a0cb40e4364fec10d14146cb439fba3e5672426375231879684f\",\"name\":\"binary\",\"relativePath\":\"binary\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:1198c88e8b727df8aac17bf97f6542a095a9b265dcf288516265f5f0ed28495e\",\"name\":\"bom.txt\",\"relativePath\":\"bom.txt\",\"kind\":\"file\",\"size\":7,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:d4f9393de98dae46aa5c2cc99fc76485143eab606c225cdb494b71164f5a44e7\",\"name\":\"ignored.txt\",\"relativePath\":\"ignored.txt\",\"kind\":\"file\",\"size\":12,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:7a84880b76e1261c05e26586abcc138907efbe6962c8110c8ff773faaaa9dac8\",\"name\":\"nested\",\"relativePath\":\"nested\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:7a84880b76e1261c05e26586abcc138907efbe6962c8110c8ff773faaaa9dac8\",\"name\":\"nested\",\"relativePath\":\"nested\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:88062dc39b49e349eaee08adf7cced3d9cf256936cb7fa6d1a31c42c88e3295f\",\"name\":\"note.txt\",\"relativePath\":\"nested/note.txt\",\"kind\":\"file\",\"size\":4,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:88062dc39b49e349eaee08adf7cced3d9cf256936cb7fa6d1a31c42c88e3295f\",\"name\":\"note.txt\",\"relativePath\":\"nested/note.txt\",\"kind\":\"file\",\"size\":4,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:17f2021f50bcaf902a2534c83d9c20a843ff1e67e624ae6e6826a16019001aa3\",\"name\":\"xonly\",\"relativePath\":\"xonly\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:8bf817f4072b996133a42e8d69f7b4ebaafabec65c2dbe7daa15eb40ab8ec6bf\",\"name\":\"readable\",\"relativePath\":\"xonly/readable\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:2984869f6094d28b074000533087f4a95fdf89b91197f7184f7a0470cefb2166\",\"name\":\"z.txt\",\"relativePath\":\"z.txt\",\"kind\":\"file\",\"size\":1,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:630bf4e52cb411962405b59919b0077cb9c20e196b231f0fe53bf872f707c478\",\"name\":\"你好.txt\",\"relativePath\":\"你好.txt\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-2\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"project//./\",\"includeDirs\":false}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-2\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1f3f6a156400c5aa276ed53c9baef4139295e1b78f856241b402bf3e9cf70437\",\"name\":\"_x\",\"relativePath\":\"_x\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:e14d65236fc2177461ab50f371e4e29559ae101b71dab997a01515b82cd116ed\",\"name\":\"..secret\",\"relativePath\":\"..secret\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:d990c18da8a9983cff98d40f8752236a3ced06d3f5c4ccf5214394b5d09fcf87\",\"name\":\".gitignore\",\"relativePath\":\".gitignore\",\"kind\":\"file\",\"size\":12,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:9d61db66841d34376b815cf1501f05d9d2945fe8297160f7d01528782c909f2d\",\"name\":\".hidden\",\"relativePath\":\".hidden\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:1a603fba492594419f17531a2026e5484138324e0e1e8c4caf426221ff78b060\",\"name\":\"😀AA.txt\",\"relativePath\":\"😀AA.txt\",\"kind\":\"file\",\"size\":5,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:d505f80316b6fee991ca68a646c85a496865b05e3adcc8360280e88b82729d10\",\"name\":\"10\",\"relativePath\":\"10\",\"kind\":\"file\",\"size\":3,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:90318129835f7b597ee4e4dab042e87bcb6c52502daec829633460a31727822e\",\"name\":\"2\",\"relativePath\":\"2\",\"kind\":\"file\",\"size\":3,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:179480bf12424349710cfe249bf7a8d15b6009c53641846462613bc30ec88f18\",\"name\":\"A.txt\",\"relativePath\":\"A.txt\",\"kind\":\"file\",\"size\":1,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:b3e2bce31b44a213d7bf4a22d24792769372e646c8053a2676e5166cf745aa24\",\"name\":\"ä.txt\",\"relativePath\":\"ä.txt\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:961ad5efbfd8a0cb40e4364fec10d14146cb439fba3e5672426375231879684f\",\"name\":\"binary\",\"relativePath\":\"binary\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:1198c88e8b727df8aac17bf97f6542a095a9b265dcf288516265f5f0ed28495e\",\"name\":\"bom.txt\",\"relativePath\":\"bom.txt\",\"kind\":\"file\",\"size\":7,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:d4f9393de98dae46aa5c2cc99fc76485143eab606c225cdb494b71164f5a44e7\",\"name\":\"ignored.txt\",\"relativePath\":\"ignored.txt\",\"kind\":\"file\",\"size\":12,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:88062dc39b49e349eaee08adf7cced3d9cf256936cb7fa6d1a31c42c88e3295f\",\"name\":\"note.txt\",\"relativePath\":\"nested/note.txt\",\"kind\":\"file\",\"size\":4,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:88062dc39b49e349eaee08adf7cced3d9cf256936cb7fa6d1a31c42c88e3295f\",\"name\":\"note.txt\",\"relativePath\":\"nested/note.txt\",\"kind\":\"file\",\"size\":4,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:8bf817f4072b996133a42e8d69f7b4ebaafabec65c2dbe7daa15eb40ab8ec6bf\",\"name\":\"readable\",\"relativePath\":\"xonly/readable\",\"kind\":\"file\",\"size\":8,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:2984869f6094d28b074000533087f4a95fdf89b91197f7184f7a0470cefb2166\",\"name\":\"z.txt\",\"relativePath\":\"z.txt\",\"kind\":\"file\",\"size\":1,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:630bf4e52cb411962405b59919b0077cb9c20e196b231f0fe53bf872f707c478\",\"name\":\"你好.txt\",\"relativePath\":\"你好.txt\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-3\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\" NOTE \"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-3\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:88062dc39b49e349eaee08adf7cced3d9cf256936cb7fa6d1a31c42c88e3295f\",\"name\":\"note.txt\",\"relativePath\":\"nested/note.txt\",\"kind\":\"file\",\"size\":4,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":4},{\"field\":\"relativePath\",\"start\":7,\"end\":11}]},{\"id\":\"sha256:88062dc39b49e349eaee08adf7cced3d9cf256936cb7fa6d1a31c42c88e3295f\",\"name\":\"note.txt\",\"relativePath\":\"nested/note.txt\",\"kind\":\"file\",\"size\":4,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"relativePath\",\"start\":7,\"end\":11}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-4\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\"aa\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-4\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1a603fba492594419f17531a2026e5484138324e0e1e8c4caf426221ff78b060\",\"name\":\"😀AA.txt\",\"relativePath\":\"😀AA.txt\",\"kind\":\"file\",\"size\":5,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"name\",\"start\":2,\"end\":4},{\"field\":\"relativePath\",\"start\":2,\"end\":4}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-5\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\"ALIAS\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-5\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:7a84880b76e1261c05e26586abcc138907efbe6962c8110c8ff773faaaa9dac8\",\"name\":\"nested\",\"relativePath\":\"nested\",\"kind\":\"directory\",\"size\":0,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":5}]},{\"id\":\"sha256:88062dc39b49e349eaee08adf7cced3d9cf256936cb7fa6d1a31c42c88e3295f\",\"name\":\"note.txt\",\"relativePath\":\"nested/note.txt\",\"kind\":\"file\",\"size\":4,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":5}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-6\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\"ignored\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-6\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:d4f9393de98dae46aa5c2cc99fc76485143eab606c225cdb494b71164f5a44e7\",\"name\":\"ignored.txt\",\"relativePath\":\"ignored.txt\",\"kind\":\"file\",\"size\":12,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":7},{\"field\":\"relativePath\",\"start\":0,\"end\":7}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-7\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\"﻿ä \"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-7\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:b3e2bce31b44a213d7bf4a22d24792769372e646c8053a2676e5166cf745aa24\",\"name\":\"ä.txt\",\"relativePath\":\"ä.txt\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":1},{\"field\":\"relativePath\",\"start\":0,\"end\":1}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-8\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\"😀\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-8\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1a603fba492594419f17531a2026e5484138324e0e1e8c4caf426221ff78b060\",\"name\":\"😀AA.txt\",\"relativePath\":\"😀AA.txt\",\"kind\":\"file\",\"size\":5,\"mtimeMs\":1700000000123.456,\"matches\":[{\"field\":\"name\",\"start\":0,\"end\":2},{\"field\":\"relativePath\",\"start\":0,\"end\":2}]}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-9\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-9\",\"ok\":false,\"error\":{\"code\":\"INVALID_QUERY\",\"message\":\"query must not exceed 256 characters.\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-10\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"limit\":2}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-10\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:1f3f6a156400c5aa276ed53c9baef4139295e1b78f856241b402bf3e9cf70437\",\"name\":\"_x\",\"relativePath\":\"_x\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:e14d65236fc2177461ab50f371e4e29559ae101b71dab997a01515b82cd116ed\",\"name\":\"..secret\",\"relativePath\":\"..secret\",\"kind\":\"file\",\"size\":10,\"mtimeMs\":1700000000123.456}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"nextCursor\":\"eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjIsInNpZ25hdHVyZSI6ImJnTTFHb1lxTzlDaEtLcERrSWZvWUIzNDEycTNqRFpUTktxd19zN2ZDSFkifQ\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-11\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"limit\":3,\"cursor\":\"eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjIsInNpZ25hdHVyZSI6ImJnTTFHb1lxTzlDaEtLcERrSWZvWUIzNDEycTNqRFpUTktxd19zN2ZDSFkifQ\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-11\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"sha256:d990c18da8a9983cff98d40f8752236a3ced06d3f5c4ccf5214394b5d09fcf87\",\"name\":\".gitignore\",\"relativePath\":\".gitignore\",\"kind\":\"file\",\"size\":12,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:9d61db66841d34376b815cf1501f05d9d2945fe8297160f7d01528782c909f2d\",\"name\":\".hidden\",\"relativePath\":\".hidden\",\"kind\":\"file\",\"size\":6,\"mtimeMs\":1700000000123.456},{\"id\":\"sha256:1a603fba492594419f17531a2026e5484138324e0e1e8c4caf426221ff78b060\",\"name\":\"😀AA.txt\",\"relativePath\":\"😀AA.txt\",\"kind\":\"file\",\"size\":5,\"mtimeMs\":1700000000123.456}],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"nextCursor\":\"eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjUsInNpZ25hdHVyZSI6ImJnTTFHb1lxTzlDaEtLcERrSWZvWUIzNDEycTNqRFpUTktxd19zN2ZDSFkifQ\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-12\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"limit\":0}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-12\",\"ok\":false,\"error\":{\"code\":\"INVALID_LIMIT\",\"message\":\"limit must be an integer between 1 and 500.\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-13\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"limit\":1.5}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-13\",\"ok\":false,\"error\":{\"code\":\"INVALID_LIMIT\",\"message\":\"limit must be an integer between 1 and 500.\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-14\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"limit\":null}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-14\",\"ok\":false,\"error\":{\"code\":\"INVALID_LIMIT\",\"message\":\"limit must be an integer between 1 and 500.\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-15\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"cursor\":\"bad\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-15\",\"ok\":false,\"error\":{\"code\":\"INVALID_CURSOR\",\"message\":\"cursor is invalid or does not match the query.\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-16\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"query\":\"different\",\"cursor\":\"eyJ2ZXJzaW9uIjoxLCJvZmZzZXQiOjIsInNpZ25hdHVyZSI6ImJnTTFHb1lxTzlDaEtLcERrSWZvWUIzNDEycTNqRFpUTktxd19zN2ZDSFkifQ\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-16\",\"ok\":false,\"error\":{\"code\":\"INVALID_CURSOR\",\"message\":\"cursor is invalid or does not match the query.\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-17\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-17\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Unknown projectKey: /Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home\"}}"
+    },
+    {
+      "tag": "project_files_list",
+      "request": "{\"type\":\"request\",\"id\":\"files-18\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/unknown\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-18\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Unknown projectKey: /Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/unknown\"}}"
+    },
+    {
+      "tag": "execute-only-parent",
+      "request": "{\"type\":\"request\",\"id\":\"files-19\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"xonly/readable\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-19\",\"ok\":true,\"result\":{\"path\":\"xonly/readable\",\"content\":\"readable\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-20\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"bom.txt\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-20\",\"ok\":true,\"result\":{\"path\":\"bom.txt\",\"content\":\"﻿hi\\r\\n\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-21\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-21\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000���€���\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-22\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"nested\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-22\",\"ok\":true,\"result\":null}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-23\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"missing\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-23\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-24\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"escape\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-24\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-25\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"broken\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-25\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-26\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"alias-file\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-26\",\"ok\":true,\"result\":{\"path\":\"alias-file\",\"content\":\"note\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-27\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"nested//./note.txt\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-27\",\"ok\":true,\"result\":{\"path\":\"nested//./note.txt\",\"content\":\"note\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-28\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"..secret\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-28\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path is outside the project workspace.\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-29\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":1}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-29\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-30\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":2}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-30\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000�\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-31\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":3}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-31\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000��\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-32\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":4}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-32\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000���\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-33\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":0}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-33\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-34\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":-1}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-34\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-35\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":2.9}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-35\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000�\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-36\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":null}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-36\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000���€���\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-37\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":\"2\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-37\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000�\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-38\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":\"bad\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-38\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-39\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":true}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-39\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-40\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":false}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-40\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-41\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":\"0x3\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-41\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000��\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-42\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":\"0b10\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-42\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000�\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-43\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":\"0o3\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-43\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000��\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-44\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":\"inf\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-44\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-45\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":\"Infinity\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-45\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000���€���\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-46\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":[]}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-46\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-47\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":[true]}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-47\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-48\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":[2]}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-48\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000�\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-49\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":[null]}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-49\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-50\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":[[2]]}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-50\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\\u0000�\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-51\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"maxBytes\":{}}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-51\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-52\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"binary\",\"encoding\":\"base64\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-52\",\"ok\":true,\"result\":{\"path\":\"binary\",\"content\":\"AP/Ar+KCrO2ggA==\",\"encoding\":\"base64\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-53\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/home\",\"path\":\"projects/fixture/.cwd\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-53\",\"ok\":true,\"result\":{\"path\":\"projects/fixture/.cwd\",\"content\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "project_file_read",
+      "request": "{\"type\":\"request\",\"id\":\"files-54\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/unknown\",\"path\":\"x\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-54\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Unknown projectKey: /Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/unknown\"}}"
+    },
+    {
+      "tag": "security-comparison",
+      "request": "{\"type\":\"request\",\"id\":\"files-55\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"../outside\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-55\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path is outside the project workspace.\"}}"
+    },
+    {
+      "tag": "security-comparison",
+      "request": "{\"type\":\"request\",\"id\":\"files-56\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/outside\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-56\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path is outside the project workspace.\"}}"
+    },
+    {
+      "tag": "security-comparison",
+      "request": "{\"type\":\"request\",\"id\":\"files-57\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"nested/../bom.txt\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-57\",\"ok\":true,\"result\":{\"path\":\"nested/../bom.txt\",\"content\":\"﻿hi\\r\\n\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "security-comparison",
+      "request": "{\"type\":\"request\",\"id\":\"files-58\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project\",\"path\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/bom.txt\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-58\",\"ok\":true,\"result\":{\"path\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/project/bom.txt\",\"content\":\"﻿hi\\r\\n\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "tag": "depth-64",
+      "request": "{\"type\":\"request\",\"id\":\"files-59\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-59\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep64\"}}"
+    },
+    {
+      "tag": "depth-65",
+      "request": "{\"type\":\"request\",\"id\":\"files-60\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-KdNUqP/deep65\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-60\",\"ok\":false,\"error\":{\"code\":\"FILE_INDEX_LIMIT\",\"message\":\"Project file scan exceeded its resource limit.\"}}"
+    }
+  ]
+}
