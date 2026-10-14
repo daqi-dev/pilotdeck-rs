@@ -15,7 +15,9 @@ pub(crate) struct Snapshot {
 }
 impl Snapshot {
     fn fact(&self, path: &Path) -> io::Result<&Value> {
-        self.files.get(path).ok_or(io::ErrorKind::NotFound.into())
+        self.files
+            .get(path)
+            .ok_or(io::Error::from_raw_os_error(libc::ENOENT))
     }
 }
 impl Files for Snapshot {

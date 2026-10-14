@@ -112,10 +112,15 @@ impl Files for NativeFiles {
     fn project_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
         let mut file = crate::project_files::open_beneath(root, path)?;
         // Verify again on the descriptor used for reading (avoid FIFO/device races).
-        if !file.metadata()?.is_file() {
+        if !file
+            .metadata()
+            .map_err(|e| crate::node_io::descriptor_error(e, "fstat"))?
+            .is_file()
+        {
             return Err(io::ErrorKind::InvalidInput.into());
         }
         crate::project_files::read_prefix(&mut file, limit)
+            .map_err(|e| crate::node_io::descriptor_error(e, "read"))
     }
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
         let mut entries = fs::read_dir(path)?
@@ -135,7 +140,14 @@ impl Files for NativeFiles {
         Ok(entries)
     }
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        fs::read(path)
+        let mut file = fs::File::open(path)?;
+        let stat = file
+            .metadata()
+            .map_err(|e| crate::node_io::descriptor_error(e, "fstat"))?;
+        let mut bytes = Vec::with_capacity(stat.len().min(1024 * 1024) as usize);
+        file.read_to_end(&mut bytes)
+            .map_err(|e| crate::node_io::descriptor_error(e, "read"))?;
+        Ok(bytes)
     }
     fn session_summary(&self, path: &Path, size: u64) -> Result<bool, ()> {
         let Ok(mut file) = fs::File::open(path) else {

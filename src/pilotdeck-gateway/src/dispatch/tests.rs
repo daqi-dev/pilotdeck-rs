@@ -27,7 +27,7 @@ impl Files for FixtureFiles {
     }
 }
 fn missing() -> io::Error {
-    io::ErrorKind::NotFound.into()
+    io::Error::from_raw_os_error(libc::ENOENT)
 }
 fn response(raw: &str, metadata: &Metadata<FixtureFiles>) -> Vec<u8> {
     match route_with_metadata(&parse(raw.as_bytes()).unwrap(), Some(metadata)) {

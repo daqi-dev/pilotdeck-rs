@@ -16,7 +16,7 @@ impl Files for SnapshotFiles {
         let fact = self
             .files
             .get(path.to_str().unwrap())
-            .ok_or(io::ErrorKind::NotFound)?;
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))?;
         Ok(fact["entries"]
             .as_array()
             .ok_or(io::ErrorKind::NotADirectory)?
@@ -28,7 +28,7 @@ impl Files for SnapshotFiles {
         let fact = self
             .files
             .get(path.to_str().unwrap())
-            .ok_or(io::ErrorKind::NotFound)?;
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))?;
         recorded_io_error(fact, "readError")?;
         if fact["directory"].as_bool() == Some(true) {
             return Err(io::Error::from_raw_os_error(libc::EISDIR));
@@ -41,7 +41,7 @@ impl Files for SnapshotFiles {
         let fact = self
             .files
             .get(path.to_str().unwrap())
-            .ok_or(io::ErrorKind::NotFound)?;
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))?;
         recorded_io_error(fact, "statError")?;
         Ok(Stat {
             directory: fact["directory"].as_bool().unwrap(),
@@ -65,6 +65,8 @@ fn recorded_io_error(fact: &serde_json::Value, key: &str) -> io::Result<()> {
         Some("ENOENT") => libc::ENOENT,
         Some("ENOTDIR") => libc::ENOTDIR,
         Some("EISDIR") => libc::EISDIR,
+        Some("ENAMETOOLONG") => libc::ENAMETOOLONG,
+        Some("ELOOP") => libc::ELOOP,
         None => return Ok(()),
         Some(code) => panic!("unrecorded errno {code}"),
     };
@@ -102,9 +104,14 @@ fn complete_default_provider_matches_node_wire_fixtures() {
 }
 #[test]
 fn filesystem_stages_match_real_node_failures_and_races() {
-    let fixture = serde_json::from_str(IO_FIXTURE).unwrap();
-    verify_responses(&fixture);
-    verify_diagnostics(IO_FIXTURE);
+    for source in [
+        IO_FIXTURE,
+        include_str!("../../tests/fixtures/session-model/io-errors-round5.json"),
+    ] {
+        let fixture = serde_json::from_str(source).unwrap();
+        verify_responses(&fixture);
+        verify_diagnostics(source);
+    }
 }
 fn verify_responses(fixture: &serde_json::Value) {
     assert_eq!(fixture["routerCalls"], 0);
@@ -233,4 +240,89 @@ fn verify_diagnostics(source: &str) {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+struct UnknownFiles {
+    inner: SnapshotFiles,
+    target: PathBuf,
+    stat: bool,
+    errno: Option<i32>,
+}
+impl UnknownFiles {
+    fn error(&self) -> io::Error {
+        self.errno.map_or_else(
+            || io::Error::other("unclassified read failure"),
+            io::Error::from_raw_os_error,
+        )
+    }
+}
+impl Files for UnknownFiles {
+    fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        self.inner.entries(path)
+    }
+    fn stat(&self, path: &Path) -> io::Result<Stat> {
+        if self.stat && path == self.target {
+            Err(self.error())
+        } else {
+            self.inner.stat(path)
+        }
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        if !self.stat && path == self.target {
+            Err(self.error())
+        } else {
+            self.inner.read(path)
+        }
+    }
+    fn process_alive(&self, _: i32) -> bool {
+        panic!("unknown IO must not reach PID probe")
+    }
+}
+#[test]
+fn unknown_errno_forwards_entire_session_and_catalog_requests_at_every_fs_boundary() {
+    let fixture: serde_json::Value = serde_json::from_str(IO_FIXTURE).unwrap();
+    for target in ["transcript", "global", "project", "store", "sops", "lock"] {
+        let row = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == format!("io-{target}-read-missing"))
+            .unwrap();
+        for stat in [false, true] {
+            if target == "lock" && stat {
+                continue;
+            }
+            for errno in [Some(123456), Some(libc::EDQUOT), None] {
+                let m = snapshot(row);
+                let m = Metadata {
+                    home: m.home,
+                    cwd: m.cwd,
+                    files: UnknownFiles {
+                        inner: m.files,
+                        target: PathBuf::from(row["io"]["target"].as_str().unwrap()),
+                        stat,
+                        errno,
+                    },
+                };
+                let request = parse_json(row["request"].as_str().unwrap()).unwrap();
+                assert!(
+                    response(&request, &m, &env(row)).is_none(),
+                    "{target} stat={stat} errno={errno:?}"
+                );
+                if target != "transcript" {
+                    assert!(
+                        config::load_project(&m, &env(row), Some(m.home.to_str().unwrap()))
+                            .err()
+                            .unwrap()
+                            .requires_host,
+                        "{target} stat={stat}"
+                    );
+                }
+                if target == "global" {
+                    let catalog = object([("id", "catalog".into()), ("params", object([]))]);
+                    assert!(crate::model_catalog::response(&catalog, &m, &env(row)).is_none());
+                }
+            }
+        }
+    }
 }

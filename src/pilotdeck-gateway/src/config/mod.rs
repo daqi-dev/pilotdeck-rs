@@ -1,6 +1,6 @@
 //! Global/project PilotConfig loading for the native read-only gateway. Every section
 //! participates in validation, even when catalog projection does not use it.
-pub(crate) mod binding;
+mod binding;
 mod graph;
 mod host;
 mod model;
@@ -131,7 +131,7 @@ pub(crate) fn load_project<F: Files>(
         &mut raw,
         &mut d,
         &mut source_graphs,
-    );
+    )?;
     if let Some(project) = project.filter(|p| !p.is_empty()) {
         let path =
             crate::metadata::resolve(&metadata.cwd, project).join(".pilotdeck/pilotdeck.yaml");
@@ -142,7 +142,7 @@ pub(crate) fn load_project<F: Files>(
             &mut raw,
             &mut d,
             &mut source_graphs,
-        );
+        )?;
     }
     if source_graphs.iter().any(graph::merge_cycle) {
         let mut e = Error::new("gateway_request_failed", "Maximum call stack size exceeded");
@@ -264,11 +264,11 @@ fn read_source<F: Files>(
     raw: &mut JsValue,
     d: &mut Diagnostics,
     source_graphs: &mut Vec<pilotdeck_yaml::value::ValueGraph>,
-) {
+) -> Result<(), Error> {
     // existsSync('') is false, whereas path.resolve('') denotes cwd.
     if !path.is_empty() {
         let absolute = crate::metadata::resolve(&metadata.cwd, path);
-        if metadata.files.stat(&absolute).is_ok() {
+        if exists(metadata, &absolute)? {
             match metadata.files.read(&absolute) {
                 Ok(bytes) => {
                     let content = JsString::from(String::from_utf8_lossy(&bytes).into_owned());
@@ -331,11 +331,12 @@ fn read_source<F: Files>(
                     "CONFIG_READ_FAILED",
                     &format!("Failed to read {kind} config."),
                     path,
-                    Some(JsString::from(read_hint(&e, path))),
+                    Some(JsString::from(read_hint(&e, path)?)),
                 ),
             }
         }
     }
+    Ok(())
 }
 fn source_error(
     kind: &str,
@@ -363,24 +364,32 @@ fn source_error(
 #[cfg(test)]
 mod tests;
 
-fn read_hint(e: &std::io::Error, path: &str) -> String {
-    io_hint(e, path, "open")
+fn host_io_error() -> Error {
+    let mut error = Error::new("NODE_IO_REQUIRED", "");
+    error.requires_host = true;
+    error
 }
-
-pub(crate) fn io_hint(e: &std::io::Error, path: &str, syscall: &str) -> String {
-    let name = match e.kind() {
-        std::io::ErrorKind::PermissionDenied => Some(("EACCES", "permission denied")),
-        std::io::ErrorKind::NotFound => Some(("ENOENT", "no such file or directory")),
-        std::io::ErrorKind::NotADirectory => Some(("ENOTDIR", "not a directory")),
-        std::io::ErrorKind::IsADirectory => {
-            return "EISDIR: illegal operation on a directory, read".into();
-        }
-        _ => None,
-    };
-    if let Some((code, msg)) = name {
-        format!("{code}: {msg}, {syscall} '{path}'")
-    } else {
-        e.to_string()
+fn exists<F: Files>(metadata: &Metadata<F>, path: &std::path::Path) -> Result<bool, Error> {
+    // Node existsSync suppresses validatePath's NUL error before any syscall.
+    // This is a measured argument rule, not an inferred OS errno.
+    if path.to_string_lossy().contains('\0') {
+        return Ok(false);
+    }
+    match metadata.files.stat(path) {
+        Ok(_) => Ok(true),
+        Err(e) if crate::node_io::lookup(&e).is_some() => Ok(false),
+        Err(_) => Err(host_io_error()),
+    }
+}
+fn read_hint(e: &std::io::Error, path: &str) -> Result<String, Error> {
+    Ok(crate::node_io::read_file(e, path)
+        .ok_or_else(host_io_error)?
+        .1)
+}
+pub(crate) fn read_error(e: &std::io::Error, path: &str) -> Error {
+    match crate::node_io::read_file(e, path) {
+        Some((code, message)) => Error::new(code, message),
+        None => host_io_error(),
     }
 }
 

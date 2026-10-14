@@ -1188,3 +1188,57 @@ async fn session_selection_requests_match_node_frames_with_an_independent_upstre
     }
     assert!(count > 50);
 }
+
+struct UnknownIo;
+impl crate::metadata::Files for UnknownIo {
+    fn entries(&self, _: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
+        Err(std::io::Error::from_raw_os_error(libc::ENOENT))
+    }
+    fn read(&self, _: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        Err(std::io::Error::from_raw_os_error(libc::ENOENT))
+    }
+    fn stat(&self, _: &std::path::Path) -> std::io::Result<crate::metadata::Stat> {
+        Err(std::io::Error::from_raw_os_error(123456))
+    }
+    fn canonical(&self, _: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        Err(std::io::Error::from_raw_os_error(123456))
+    }
+}
+#[tokio::test]
+async fn unknown_errno_forwards_original_complete_frames_and_relays_ts_on_the_same_pair() {
+    let metadata = crate::metadata::Metadata {
+        home: "/fixture".into(),
+        cwd: "/fixture".into(),
+        files: UnknownIo,
+    };
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    for (index, method) in [
+        "session_model_get",
+        "model_catalog_list",
+        "project_file_read",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let raw = format!(
+            "{{ \"type\": \"request\", \"id\": \"unknown-{index}\", \"method\": \"{method}\", \"params\": {{\"projectKey\":\"/fixture\",\"sessionKey\":\"web:unknown\",\"path\":\"file\"}}, \"extra\": [1,2] }}"
+        );
+        let request = client_frame(0x81, if index % 2 == 0 { 126 } else { 127 }, raw.as_bytes());
+        write(&mut pair.client, &request).await;
+        read(&mut pair.server, &request).await;
+        silent(&mut pair.client).await;
+        let response = server_frame(1, format!("{{\"type\":\"response\",\"id\":\"unknown-{index}\",\"ok\":false,\"error\":{{\"code\":\"TS_ORACLE\",\"message\":\"owned by TS\"}}}}").as_bytes());
+        write(&mut pair.server, &response).await;
+        read(&mut pair.client, &response).await;
+        silent(&mut pair.server).await;
+    }
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
