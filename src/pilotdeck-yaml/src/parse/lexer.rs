@@ -139,7 +139,7 @@ impl Lexer {
             || self.buffer.get(offset..offset + 3) == Some(&[46, 46, 46]))
             && is_empty(self.buffer.get(offset + 3).copied())
     }
-    fn get_line(&mut self) -> Option<Vec<u16>> {
+    fn get_line(&mut self) -> Option<std::ops::Range<usize>> {
         let end = match self.line_end_pos {
             Some(end) if end == -1 || end >= self.pos as isize => end,
             _ => {
@@ -149,14 +149,14 @@ impl Lexer {
             }
         };
         if end == -1 {
-            return self.at_end.then(|| self.buffer[self.pos..].to_vec());
+            return self.at_end.then_some(self.pos..self.buffer.len());
         }
         let end = if self.at(end - 1) == Some(13) {
             end - 1
         } else {
             end
         };
-        Some(self.buffer[self.pos..end as usize].to_vec())
+        Some(self.pos..end as usize)
     }
     fn has_chars(&self, n: usize) -> bool {
         self.pos + n <= self.buffer.len()
@@ -187,19 +187,19 @@ impl Lexer {
         let Some(mut line) = self.get_line() else {
             return self.set_next(Stream);
         };
-        if line.first() == Some(&0xfeff) {
+        if self.buffer.get(line.start) == Some(&0xfeff) {
             self.push_count(1);
-            line.remove(0);
+            line.start += 1;
         }
-        if line.first() == Some(&37) {
+        if self.buffer.get(line.start) == Some(&37) {
             let mut dir_end = line.len();
-            for (cs, ch) in line.iter().enumerate() {
-                if *ch == 35 && cs > 0 && matches!(line[cs - 1], 32 | 9) {
+            for (cs, ch) in self.buffer[line.clone()].iter().enumerate() {
+                if *ch == 35 && cs > 0 && matches!(self.buffer[line.start + cs - 1], 32 | 9) {
                     dir_end = cs - 1;
                     break;
                 }
             }
-            while dir_end > 0 && matches!(line[dir_end - 1], 32 | 9) {
+            while dir_end > 0 && matches!(self.buffer[line.start + dir_end - 1], 32 | 9) {
                 dir_end -= 1;
             }
             let n = self.push_count(dir_end) + self.push_spaces(true);
@@ -214,7 +214,7 @@ impl Lexer {
             return Some(Stream);
         }
         self.emit_control(2);
-        self.parse_line_start()
+        Some(LineStart)
     }
     fn parse_line_start(&mut self) -> Option<State> {
         let ch = self.char_at(0);
@@ -236,11 +236,20 @@ impl Lexer {
         if self.indent_next > self.indent_value && !is_empty(self.char_at(1)) {
             self.indent_next = self.indent_value;
         }
-        self.parse_block_start()
+        Some(BlockStart)
     }
     fn parse_block_start(&mut self) -> Option<State> {
         let ch0 = self.char_at(0);
-        let ch1 = self.char_at(1);
+        // JS destructures [...peek(2)] by code point, even though peek slices
+        // two UTF-16 units. A leading surrogate pair therefore has no ch1 and
+        // buffers incomplete input until the final flush (including lineStarts).
+        let ch1 = if matches!(ch0, Some(0xd800..=0xdbff))
+            && matches!(self.char_at(1), Some(0xdc00..=0xdfff))
+        {
+            None
+        } else {
+            self.char_at(1)
+        };
         if ch1.is_none() && !self.at_end {
             return self.set_next(BlockStart);
         }
@@ -258,13 +267,22 @@ impl Lexer {
             return self.set_next(Doc);
         };
         let mut n = self.push_indicators();
-        match line.get(n) {
+        match self
+            .buffer
+            .get(line.start + n)
+            .filter(|_| line.start + n < line.end)
+        {
             Some(35) | None => {
-                if line.get(n) == Some(&35) {
+                if self
+                    .buffer
+                    .get(line.start + n)
+                    .filter(|_| line.start + n < line.end)
+                    == Some(&35)
+                {
                     self.push_count(line.len() - n);
                 }
                 self.push_newline();
-                self.parse_line_start()
+                Some(LineStart)
             }
             Some(123 | 91) => {
                 self.push_count(1);
@@ -280,15 +298,15 @@ impl Lexer {
                 self.push_until(not_anchor);
                 Some(Doc)
             }
-            Some(34 | 39) => self.parse_quoted_scalar(),
+            Some(34 | 39) => Some(QuotedScalar),
             Some(124 | 62) => {
                 n += self.parse_block_scalar_header();
                 n += self.push_spaces(true);
                 self.push_count(line.len() - n);
                 self.push_newline();
-                self.parse_block_scalar()
+                Some(BlockScalar)
             }
-            _ => self.parse_plain_scalar(),
+            _ => Some(PlainScalar),
         }
     }
     fn parse_flow_collection(&mut self) -> Option<State> {
@@ -311,26 +329,36 @@ impl Lexer {
         let Some(line) = self.get_line() else {
             return self.set_next(Flow);
         };
-        if (indent.is_some_and(|i| i < self.indent_next) && line.first() != Some(&35))
+        if (indent.is_some_and(|i| i < self.indent_next)
+            && self.buffer.get(line.start) != Some(&35))
             || (indent == Some(0) && self.doc_marker(self.pos))
         {
             let at_flow_end_marker = self.indent_next.checked_sub(1) == indent
                 && self.flow_level == 1
-                && matches!(line.first(), Some(93 | 125));
+                && matches!(self.buffer.get(line.start), Some(93 | 125));
             if !at_flow_end_marker {
                 self.flow_level = 0;
                 self.emit_control(24);
-                return self.parse_line_start();
+                return Some(LineStart);
             }
         }
         let mut n = 0;
-        while line.get(n) == Some(&44) {
+        while self
+            .buffer
+            .get(line.start + n)
+            .filter(|_| line.start + n < line.end)
+            == Some(&44)
+        {
             n += self.push_count(1);
             n += self.push_spaces(true);
             self.flow_key = false;
         }
         n += self.push_indicators();
-        match line.get(n) {
+        match self
+            .buffer
+            .get(line.start + n)
+            .filter(|_| line.start + n < line.end)
+        {
             None => Some(Flow),
             Some(35) => {
                 self.push_count(line.len() - n);
@@ -354,7 +382,7 @@ impl Lexer {
             }
             Some(34 | 39) => {
                 self.flow_key = true;
-                self.parse_quoted_scalar()
+                Some(QuotedScalar)
             }
             Some(58)
                 if self.flow_key || is_empty(self.char_at(1)) || self.char_at(1) == Some(44) =>
@@ -366,7 +394,7 @@ impl Lexer {
             }
             _ => {
                 self.flow_key = false;
-                self.parse_plain_scalar()
+                Some(PlainScalar)
             }
         }
     }
@@ -510,7 +538,7 @@ impl Lexer {
         }
         self.emit_control(31);
         self.push_to_index((nl + 1) as usize, true);
-        self.parse_line_start()
+        Some(LineStart)
     }
     fn parse_plain_scalar(&mut self) -> Option<State> {
         let in_flow = self.flow_level > 0;

@@ -1,0 +1,1624 @@
+{
+  "node": "v22.22.0",
+  "yaml": "2.9.0",
+  "execArgv": [],
+  "method": "5 binary searches; fresh default-stack process per observation; depth = collection count",
+  "shapes": {
+    "flow-seq": {
+      "minimum": 664,
+      "maximum": 664,
+      "runs": [
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1327,
+              1327
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                663,
+                664,
+                664
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  662,
+                  663
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1329,
+              1329
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                662,
+                662,
+                662
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1327,
+              1327
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                663,
+                664,
+                664
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  662,
+                  663
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1329,
+              1329
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                662,
+                662,
+                662
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1327,
+              1327
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                663,
+                664,
+                664
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  662,
+                  663
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1329,
+              1329
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                662,
+                662,
+                662
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1327,
+              1327
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                663,
+                664,
+                664
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  662,
+                  663
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1329,
+              1329
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                662,
+                662,
+                662
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1327,
+              1327
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                663,
+                664,
+                664
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  662,
+                  663
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1329,
+              1329
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                662,
+                662,
+                662
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        }
+      ]
+    },
+    "flow-map": {
+      "minimum": 664,
+      "maximum": 664,
+      "runs": [
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2653,
+              2653
+            ],
+            "tail": null,
+            "replacement": {
+              "value": "k:0",
+              "range": [
+                1987,
+                1990,
+                1990
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1986,
+                  1987
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2657,
+              2657
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1986,
+                1986,
+                1986
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2653,
+              2653
+            ],
+            "tail": null,
+            "replacement": {
+              "value": "k:0",
+              "range": [
+                1987,
+                1990,
+                1990
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1986,
+                  1987
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2657,
+              2657
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1986,
+                1986,
+                1986
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2653,
+              2653
+            ],
+            "tail": null,
+            "replacement": {
+              "value": "k:0",
+              "range": [
+                1987,
+                1990,
+                1990
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1986,
+                  1987
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2657,
+              2657
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1986,
+                1986,
+                1986
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2653,
+              2653
+            ],
+            "tail": null,
+            "replacement": {
+              "value": "k:0",
+              "range": [
+                1987,
+                1990,
+                1990
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1986,
+                  1987
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2657,
+              2657
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1986,
+                1986,
+                1986
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2653,
+              2653
+            ],
+            "tail": null,
+            "replacement": {
+              "value": "k:0",
+              "range": [
+                1987,
+                1990,
+                1990
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1986,
+                  1987
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              2657,
+              2657
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1986,
+                1986,
+                1986
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 662
+            }
+          }
+        }
+      ]
+    },
+    "block-seq": {
+      "minimum": 782,
+      "maximum": 782,
+      "runs": [
+        {
+          "firstResourceExhaustion": 782,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1563,
+              1563
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1562,
+                1563,
+                1563
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1562,
+                  1563
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1562,
+              1562
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1562,
+                1562,
+                1562
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 782,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1563,
+              1563
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1562,
+                1563,
+                1563
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1562,
+                  1563
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1562,
+              1562
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1562,
+                1562,
+                1562
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 782,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1563,
+              1563
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1562,
+                1563,
+                1563
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1562,
+                  1563
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1562,
+              1562
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1562,
+                1562,
+                1562
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 782,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1563,
+              1563
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1562,
+                1563,
+                1563
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1562,
+                  1563
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1562,
+              1562
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1562,
+                1562,
+                1562
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 782,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1563,
+              1563
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1562,
+                1563,
+                1563
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1562,
+                  1563
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1562,
+              1562
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1562,
+                1562,
+                1562
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 781
+            }
+          }
+        }
+      ]
+    },
+    "block-map": {
+      "minimum": 738,
+      "maximum": 738,
+      "runs": [
+        {
+          "firstResourceExhaustion": 738,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1476,
+              1476
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1474,
+                1475,
+                1475
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1474,
+                  1475
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1474,
+              1474
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1474,
+                1474,
+                1474
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 738,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1476,
+              1476
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1474,
+                1475,
+                1475
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1474,
+                  1475
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1474,
+              1474
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1474,
+                1474,
+                1474
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 738,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1476,
+              1476
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1474,
+                1475,
+                1475
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1474,
+                  1475
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1474,
+              1474
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1474,
+                1474,
+                1474
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 738,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1476,
+              1476
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1474,
+                1475,
+                1475
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1474,
+                  1475
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1474,
+              1474
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1474,
+                1474,
+                1474
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 738,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1476,
+              1476
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1474,
+                1475,
+                1475
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1474,
+                  1475
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1474,
+              1474
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1474,
+                1474,
+                1474
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 737
+            }
+          }
+        }
+      ]
+    },
+    "mixed": {
+      "minimum": 664,
+      "maximum": 664,
+      "runs": [
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1988,
+              1988
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1325,
+                1326,
+                1326
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1325,
+                  1326
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1992,
+              1992
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1325,
+                1325,
+                1325
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1988,
+              1988
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1325,
+                1326,
+                1326
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1325,
+                  1326
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1992,
+              1992
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1325,
+                1325,
+                1325
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1988,
+              1988
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1325,
+                1326,
+                1326
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1325,
+                  1326
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1992,
+              1992
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1325,
+                1325,
+                1325
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1988,
+              1988
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1325,
+                1326,
+                1326
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1325,
+                  1326
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1992,
+              1992
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1325,
+                1325,
+                1325
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": 664,
+          "below": {
+            "errors": [],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1988,
+              1988
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                1325,
+                1326,
+                1326
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          },
+          "at": {
+            "errors": [
+              {
+                "name": "YAMLParseError",
+                "code": "RESOURCE_EXHAUSTION",
+                "message": "Maximum call stack size exceeded",
+                "pos": [
+                  1325,
+                  1326
+                ]
+              }
+            ],
+            "warnings": [],
+            "conversion": null,
+            "range": [
+              0,
+              1992,
+              1992
+            ],
+            "tail": null,
+            "replacement": {
+              "value": null,
+              "range": [
+                1325,
+                1325,
+                1325
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 663
+            }
+          }
+        }
+      ]
+    },
+    "alias-chain": {
+      "minimum": null,
+      "maximum": null,
+      "runs": [
+        {
+          "firstResourceExhaustion": null,
+          "searchedThrough": 1024,
+          "observation": {
+            "errors": [],
+            "warnings": [],
+            "conversion": {
+              "name": "ReferenceError",
+              "code": null,
+              "message": "Excessive alias count indicates a resource exhaustion attack",
+              "pos": null
+            },
+            "range": [
+              0,
+              15200,
+              15200
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                6,
+                7,
+                7
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 2
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": null,
+          "searchedThrough": 1024,
+          "observation": {
+            "errors": [],
+            "warnings": [],
+            "conversion": {
+              "name": "ReferenceError",
+              "code": null,
+              "message": "Excessive alias count indicates a resource exhaustion attack",
+              "pos": null
+            },
+            "range": [
+              0,
+              15200,
+              15200
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                6,
+                7,
+                7
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 2
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": null,
+          "searchedThrough": 1024,
+          "observation": {
+            "errors": [],
+            "warnings": [],
+            "conversion": {
+              "name": "ReferenceError",
+              "code": null,
+              "message": "Excessive alias count indicates a resource exhaustion attack",
+              "pos": null
+            },
+            "range": [
+              0,
+              15200,
+              15200
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                6,
+                7,
+                7
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 2
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": null,
+          "searchedThrough": 1024,
+          "observation": {
+            "errors": [],
+            "warnings": [],
+            "conversion": {
+              "name": "ReferenceError",
+              "code": null,
+              "message": "Excessive alias count indicates a resource exhaustion attack",
+              "pos": null
+            },
+            "range": [
+              0,
+              15200,
+              15200
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                6,
+                7,
+                7
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 2
+            }
+          }
+        },
+        {
+          "firstResourceExhaustion": null,
+          "searchedThrough": 1024,
+          "observation": {
+            "errors": [],
+            "warnings": [],
+            "conversion": {
+              "name": "ReferenceError",
+              "code": null,
+              "message": "Excessive alias count indicates a resource exhaustion attack",
+              "pos": null
+            },
+            "range": [
+              0,
+              15200,
+              15200
+            ],
+            "tail": null,
+            "replacement": {
+              "value": 0,
+              "range": [
+                6,
+                7,
+                7
+              ],
+              "anchor": null,
+              "tag": null,
+              "collections": 2
+            }
+          }
+        }
+      ]
+    }
+  }
+}

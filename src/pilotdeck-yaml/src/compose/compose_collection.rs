@@ -10,14 +10,24 @@ use crate::{
     schema::{Resolve, tags},
     string::message,
 };
-fn resolve_collection(ctx: &mut Context, token: &Token) -> NodeId {
-    match token.kind {
+fn resolve_collection(ctx: &mut Context, token: &Token) -> Result<NodeId, ()> {
+    let limit = ctx.depth_limit;
+    if ctx.depth >= limit.catch_depth
+        && token.nesting_depth_exceeds(limit.first_exhausted.saturating_sub(ctx.depth))
+    {
+        return Err(());
+    }
+    Ok(match token.kind {
         BlockMap => resolve_block_map(ctx, token),
         BlockSeq => resolve_block_seq(ctx, token),
         _ => resolve_flow_collection(ctx, token),
-    }
+    })
 }
-pub(super) fn compose_collection(ctx: &mut Context, token: &Token, props: &Props) -> NodeId {
+pub(super) fn compose_collection(
+    ctx: &mut Context,
+    token: &Token,
+    props: &Props,
+) -> Result<NodeId, ()> {
     let tag_token = props.tag.as_ref();
     let tag_name = tag_token.and_then(|t| {
         let (name, errors) = ctx.directives.tag_name(t.source.as_ref().unwrap());
@@ -61,9 +71,9 @@ pub(super) fn compose_collection(ctx: &mut Context, token: &Token, props: &Props
         .as_ref()
         .is_none_or(|s| s.equals_str("!") || s.equals_str(generic))
     {
-        let id = resolve_collection(ctx, token);
+        let id = resolve_collection(ctx, token)?;
         ctx.nodes[id].tag = tag_name.map(|_| generic.into());
-        return id;
+        return Ok(id);
     }
     let name = tag_name.as_ref().unwrap();
     let tag_token = tag_token.unwrap();
@@ -107,12 +117,12 @@ pub(super) fn compose_collection(ctx: &mut Context, token: &Token, props: &Props
                     message("Unresolved tag: ", name),
                 );
             }
-            let id = resolve_collection(ctx, token);
+            let id = resolve_collection(ctx, token)?;
             ctx.nodes[id].tag = tag_name;
-            return id;
+            return Ok(id);
         }
     }
-    let id = resolve_collection(ctx, token);
+    let id = resolve_collection(ctx, token)?;
     let tag = tag.unwrap();
     match tag.resolve {
         Resolve::Set => crate::schema::yaml_1_1::set::resolve(ctx, id, tag_token),
@@ -122,5 +132,5 @@ pub(super) fn compose_collection(ctx: &mut Context, token: &Token, props: &Props
     }
     ctx.nodes[id].tag = tag_name;
     ctx.nodes[id].format = tag.format;
-    id
+    Ok(id)
 }

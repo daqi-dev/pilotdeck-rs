@@ -1,0 +1,642 @@
+{
+  "node": "v22.22.0",
+  "yaml": "2.9.0",
+  "cases": [
+    {
+      "mode": "skip",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        }
+      ],
+      "source": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n"
+    },
+    {
+      "mode": "remove",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "source": ""
+    },
+    {
+      "mode": "index",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        }
+      ],
+      "source": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n"
+    },
+    {
+      "mode": "break",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              0
+            ]
+          ]
+        }
+      ],
+      "source": "? [A, b]\n: [c, d]\n? e\n: [f, g]\n"
+    },
+    {
+      "mode": "next",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "after-key",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "exit",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        }
+      ],
+      "source": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n"
+    },
+    {
+      "mode": "next-skip",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "after-key",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              1
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        }
+      ],
+      "source": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n"
+    },
+    {
+      "mode": "next-break",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "after-key",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        }
+      ],
+      "source": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n"
+    },
+    {
+      "mode": "next-remove",
+      "yaml": "? [a, b]\n: [c, d]\n? e\n: [f, g]\n",
+      "events": [
+        {
+          "phase": "enter",
+          "path": []
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "key",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "after-key",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              0
+            ]
+          ]
+        },
+        {
+          "phase": "enter",
+          "path": [
+            [
+              "value",
+              0
+            ],
+            [
+              "value",
+              1
+            ]
+          ]
+        },
+        {
+          "phase": "after-key",
+          "path": [
+            [
+              "value",
+              0
+            ]
+          ]
+        }
+      ],
+      "source": ""
+    }
+  ]
+}

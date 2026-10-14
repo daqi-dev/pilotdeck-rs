@@ -15,6 +15,7 @@ pub(super) fn compose_doc(ctx: Context, token: &Token) -> Document {
     })
 }
 fn compose_doc_inner(mut ctx: Context, token: &Token) -> Document {
+    ctx.depth_limit = crate::stack::compose_limit(token);
     let value = token.value.as_deref();
     let end = token.end.as_deref().unwrap_or_default();
     let props = resolve_props(

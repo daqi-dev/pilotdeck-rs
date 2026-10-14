@@ -35,15 +35,34 @@ pub(super) fn compose_node(ctx: &mut Context, token: &Token, props: &Props) -> N
             id
         }
         BlockMap | BlockSeq | FlowCollection => {
-            let id = compose_collection(ctx, token, props);
-            if let Some(a) = &props.anchor {
-                ctx.nodes[id].anchor = Some(slice(
-                    a.source.as_ref().unwrap(),
-                    1,
-                    a.source.as_ref().unwrap().len_utf16(),
-                ));
+            ctx.depth += 1;
+            // The guard runs after collection tag/props handling, so diagnostics
+            // produced before the JS catch are kept. Err stands in for V8's
+            // RangeError; Rust never deliberately exhausts the native stack.
+            let result = compose_collection(ctx, token, props);
+            ctx.depth -= 1;
+            match result {
+                Ok(id) => {
+                    if let Some(a) = &props.anchor {
+                        ctx.nodes[id].anchor = Some(slice(
+                            a.source.as_ref().unwrap(),
+                            1,
+                            a.source.as_ref().unwrap().len_utf16(),
+                        ));
+                    }
+                    id
+                }
+                Err(()) => {
+                    ctx.token_error(
+                        token,
+                        "RESOURCE_EXHAUSTION",
+                        crate::stack::EXHAUSTION_MESSAGE,
+                    );
+                    // compose-node.js leaves node undefined, then calls the
+                    // empty scalar fallback with the collection offset/props.
+                    compose_empty_node(ctx, token.offset, &[], props)
+                }
             }
-            id
         }
         _ => {
             ctx.token_error(

@@ -1,0 +1,63 @@
+{
+  "node": "v22.22.0",
+  "yaml": "2.9.0",
+  "execArgv": [],
+  "method": "32 warmup parses at depth 512 per shape, then 5 binary searches in the same default-stack process",
+  "shapes": {
+    "flow-seq": {
+      "minimum": 1536,
+      "maximum": 1717,
+      "runs": [
+        1536,
+        1717,
+        1536,
+        1717,
+        1717
+      ]
+    },
+    "flow-map": {
+      "minimum": 1527,
+      "maximum": 1527,
+      "runs": [
+        1527,
+        1527,
+        1527,
+        1527,
+        1527
+      ]
+    },
+    "block-seq": {
+      "minimum": 1280,
+      "maximum": 1718,
+      "runs": [
+        1280,
+        1718,
+        1718,
+        1718,
+        1718
+      ]
+    },
+    "block-map": {
+      "minimum": 1280,
+      "maximum": 1527,
+      "runs": [
+        1280,
+        1527,
+        1527,
+        1527,
+        1527
+      ]
+    },
+    "mixed": {
+      "minimum": 1526,
+      "maximum": 1526,
+      "runs": [
+        1526,
+        1526,
+        1526,
+        1526,
+        1526
+      ]
+    }
+  }
+}

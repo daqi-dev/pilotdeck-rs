@@ -1,0 +1,100 @@
+{
+  "node": "v22.22.0",
+  "yaml": "2.9.0",
+  "observations": [
+    {
+      "shape": "recovery",
+      "depth": 10000,
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "RESOURCE_EXHAUSTION",
+          "message": "Maximum call stack size exceeded",
+          "pos": [
+            662,
+            663
+          ]
+        }
+      ],
+      "warnings": [],
+      "conversion": null,
+      "range": [
+        0,
+        20004,
+        20004
+      ],
+      "tail": {
+        "value": 7,
+        "range": [
+          20002,
+          20003,
+          20003
+        ]
+      },
+      "replacement": {
+        "value": null,
+        "range": [
+          662,
+          662,
+          662
+        ],
+        "anchor": null,
+        "tag": null,
+        "collections": 662
+      }
+    },
+    {
+      "shape": "catch-props",
+      "depth": 10000,
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "RESOURCE_EXHAUSTION",
+          "message": "Maximum call stack size exceeded",
+          "pos": [
+            674,
+            675
+          ]
+        },
+        {
+          "name": "YAMLParseError",
+          "code": "RESOURCE_EXHAUSTION",
+          "message": "Maximum call stack size exceeded",
+          "pos": [
+            673,
+            674
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:yaml.org,2002:str",
+          "pos": [
+            667,
+            672
+          ]
+        }
+      ],
+      "conversion": null,
+      "range": [
+        0,
+        20012,
+        20012
+      ],
+      "tail": null,
+      "replacement": {
+        "value": "",
+        "range": [
+          673,
+          673,
+          673
+        ],
+        "anchor": "cut",
+        "tag": "tag:yaml.org,2002:str",
+        "collections": 662
+      }
+    }
+  ]
+}
