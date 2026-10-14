@@ -20,14 +20,95 @@ SCHEMA = ROOT / 'schema/gateway-protocol.schema.json'
 SNAPSHOT = ROOT / 'schema/gateway-methods.snapshot.json'
 DRIVER = ROOT / 'scripts/gateway-parity/driver.mts'
 REF = re.compile(r'B/([A-Za-z0-9_./-]+):([0-9]+)')
+PROSE_REF = re.compile(r'B/[A-Za-z0-9_./-]+(?::[^\s，。；、）)\]}`]+)?')
+SOURCE_MENTION = re.compile(r'(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:tsx?|mts|mjs|js)(?![A-Za-z0-9_])'
+                            r'(?::[^\s，。；、）)\]}`]+)?')
+UNCONFIGURED = {'CAPABILITY_UNAVAILABLE', 'not_configured', 'SKILL_MODULE_DISABLED', 'unsupported'}
+# Only constructors/factories whose first argument is a domain code. Plain Error,
+# TypeError and diagnostics are deliberately not interpreted as domain codes.
+ERROR_CALL = re.compile(
+    r'\b(?:new\s+(?:DialogGatewayError|SkillManagerError|ForkSessionError|'
+    r'ReplaceLastTurnError|NodeProjectSessionReplacementError|PilotLocalSettingsError|PilotSdkSessionSettingsError|'
+    r'AlwaysOnError|RouterRuntimeError)|sopStateError|controlError|transportError)'
+    r'\s*\(\s*[\"\']([A-Za-z][A-Za-z0-9_]*)[\"\']')
+CODE_PROPERTY = re.compile(r'\bcode\s*:\s*[\"\']([A-Za-z][A-Za-z0-9_]*)[\"\']')
+APPROVAL_FAILURE = re.compile(r'\b(?:failure|reject)\s*\([^,\n]+,\s*[\"\']([A-Za-z][A-Za-z0-9_]*)[\"\']')
 CATEGORIES = {'(a)': 10, '(b)': 46, '(c)': 4, '待定': 41}
 BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 REQUIRED = {
     'method', 'frozen_category', 'work_package', 'owner', 'handler', 'provider',
     'state', 'notifications', 'branches', 'a6_dependencies', 'configuration',
     'lifecycle', 'scenario_ids', 'proposed_scenarios', 'status', 'blockers',
+    'source_audit', 'guard',
 }
-EVIDENCE_FIELDS = ('handler', 'provider', 'state', 'notifications', 'lifecycle')
+EVIDENCE_FIELDS = ('handler', 'provider', 'state', 'notifications', 'lifecycle', 'guard')
+
+
+def scan_error_literals(source):
+    """Bounded lexical scan; comments excluded, source line offsets preserved.
+
+    This is not TypeScript call-graph inference. Reviewed complete function ranges
+    and indirect callees live in source_audit; dynamic codes remain manual evidence.
+    """
+    # Mask comments without treating comment markers inside strings as comments.
+    tokens = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
+                        r'`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/')
+    def mask(match):
+        value = match.group()
+        return re.sub(r'[^\n]', ' ', value) if value.startswith(('//', '/*')) else value
+    cleaned = tokens.sub(mask, source)
+    return sorted({(match.group(1), cleaned.count('\n', 0, match.start()))
+                   for pattern in (ERROR_CALL, CODE_PROPERTY, APPROVAL_FAILURE)
+                   for match in pattern.finditer(cleaned)})
+
+
+def expected_owner(package):
+    # Plan 005: A4 10; A7 C/S1-S8 + U9/U10; A8 other U groups.
+    if package == 'A4':
+        return 'A4'
+    if package in {'C', 'U9', 'U10', *(f'S{i}' for i in range(1, 9))}:
+        return 'A7'
+    if package in {f'U{i}' for i in range(1, 14)}:
+        return 'A8'
+    return None
+
+
+def primary_function_starts(baseline):
+    """Independently locate WS -> IPG and default CLI injection declarations.
+
+    Indirect interface implementations still require source review; direct provider
+    bodies cannot be silently dropped from the ledger's selected scan ranges.
+    """
+    ip_path = 'src/gateway/client/InProcessGateway.ts'
+    cli_path = 'src/cli/createLocalGateway.ts'
+    ws = (baseline / 'src/gateway/server/GatewayWsConnection.ts').read_text()
+    ip = (baseline / ip_path).read_text()
+    cli = (baseline / cli_path).read_text()
+    methods = {'submit_turn': 'submitTurn'}
+    for block in re.split(r'\n\s*case ', ws)[1:]:
+        name = re.match(r'"([a-z_]+)":', block)
+        member = re.search(r'this\.options\.gateway\.(\w+)', block)
+        if not member:
+            member = re.search(r'this\.requireCapability\("[^"]+", "(\w+)"', block)
+        if name and member:
+            methods[name[1]] = member[1]
+    begin = cli.index('const gateway = new InProcessGateway')
+    end = re.search(r'^  \}\);', cli[begin:], re.M)
+    if end is None:
+        raise ValueError('cannot locate createLocalGateway injection boundary')
+    injection = cli[begin:begin + end.end()]
+    result = {}
+    for method, name in methods.items():
+        handler = re.search(r'^  (?:async )?\*?' + re.escape(name) + r'\(', ip, re.M)
+        if handler is None:
+            raise ValueError(f'cannot locate handler for {method}')
+        required = {(ip_path, ip.count('\n', 0, handler.start()) + 1)}
+        provider = re.search(r'^    (?:async )?' + re.escape(name)
+                             + r'(?:\(|:\s*(?:async\s+)?\()', injection, re.M)
+        if provider:
+            required.add((cli_path, cli.count('\n', 0, begin + provider.start()) + 1))
+        result[method] = required
+    return result
 
 
 def digest(path):
@@ -91,6 +172,9 @@ def validate(data, baseline, inputs):
     references = []
     referenced_files = set()
     file_cache = {}
+    primary_starts = primary_function_starts(baseline)
+    audited_ranges = set()
+    method_function_count = 0
 
     def fail(code, where, detail):
         errors.append({'code': code, 'path': where, 'detail': detail})
@@ -139,13 +223,19 @@ def validate(data, baseline, inputs):
         elif isinstance(value, list):
             for i, child in enumerate(value):
                 walk(child, f'{where}[{i}]')
-        elif isinstance(value, str) and re.search(r'B/\S+', value):
-            # Also validate embedded prose anchors; malformed B/ anchors fail closed.
-            found = REF.findall(value)
-            if not found:
+        elif isinstance(value, str):
+            for mention in SOURCE_MENTION.finditer(value):
+                if not REF.fullmatch(mention.group()):
+                    fail('reference_format', where, 'source prose requires full B/path:line: ' + mention.group())
+            if 'B/' not in value:
+                return
+            # Validate EVERY occurrence: one valid anchor must not conceal a bare
+            # path, malformed line suffix or another invalid anchor in the prose.
+            found = list(PROSE_REF.finditer(value))
+            if len(found) != value.count('B/'):
                 fail('reference_format', where, 'malformed embedded baseline anchor')
-            for path, number in found:
-                check_ref(f'B/{path}:{number}', where)
+            for match in found:
+                check_ref(match.group(), where)
 
     if not isinstance(data, dict):
         return [{'code': 'document', 'path': '$', 'detail': 'expected object'}], {}
@@ -205,8 +295,10 @@ def validate(data, baseline, inputs):
         if entry.get('work_package') != inputs['groups'].get(method):
             fail('work_package', where, method)
         owner = entry.get('owner')
-        if owner not in ('A4', 'A6', 'A7', 'A8'):
-            fail('owner', where, 'owner must be A4/A6/A7/A8')
+        if owner not in ('A4', 'A7', 'A8'):
+            fail('owner', where, 'method owner must be A4/A7/A8; A6 is a dependency')
+        if owner != expected_owner(inputs['groups'].get(method)):
+            fail('owner_mapping', where, 'owner disagrees with plan 005 work-package mapping')
         for field in EVIDENCE_FIELDS:
             evidence(entry.get(field), where + '.' + field)
         state = entry.get('state', {})
@@ -226,6 +318,67 @@ def validate(data, baseline, inputs):
                 evidence(item, f'{where}.branches.{kind}[{j}]')
                 if kind != 'success' and (not isinstance(item, dict) or not isinstance(item.get('code'), str) or not item['code'].strip()):
                     fail('branches', where + '.' + kind, 'explicit error/result code or N/A required')
+        audit = entry.get('source_audit')
+        if not isinstance(audit, dict) or not isinstance(audit.get('functions'), list) or not audit['functions']:
+            fail('source_audit', where, 'reviewed handler/provider/callee function ranges required')
+        else:
+            recorded_codes = {b.get('code') for b in branches.get('error', []) if isinstance(b, dict)} if isinstance(branches, dict) else set()
+            scanned_codes = set()
+            roles = set()
+            seen_ranges = set()
+            for i, scope in enumerate(audit['functions']):
+                location = f'{where}.source_audit.functions[{i}]'
+                if not isinstance(scope, dict):
+                    fail('source_audit', location, 'expected function scope object')
+                    continue
+                refs = scope.get('refs', [])
+                if not string_list(refs, True) or len(refs) not in (1, 2) or any(not REF.fullmatch(r) for r in refs):
+                    fail('source_audit', location, 'function start/end refs required (one for single line)')
+                    continue
+                start, end = REF.fullmatch(refs[0]), REF.fullmatch(refs[-1])
+                path, first = start[1], int(start[2])
+                last = int(end[2])
+                if path != end[1] or first > last or '..' in Path(path).parts:
+                    fail('source_audit', location, 'invalid function range')
+                    continue
+                key = (path, first, last)
+                if key in seen_ranges:
+                    fail('source_audit', location, 'duplicate function range')
+                seen_ranges.add(key)
+                audited_ranges.add(key)
+                method_function_count += 1
+                role = scope.get('role')
+                roles.add(role)
+                if role not in ('handler', 'provider', 'callee') or not isinstance(scope.get('symbol'), str) or not scope['symbol']:
+                    fail('source_audit', location, 'symbol and handler/provider/callee role required')
+                file_path = (baseline / path).resolve()
+                if not file_path.is_relative_to(baseline):
+                    fail('source_audit', location, 'scope escapes baseline')
+                    continue
+                try:
+                    lines = file_path.read_text().splitlines()
+                except (OSError, UnicodeError) as exc:
+                    fail('source_audit', location, str(exc))
+                    continue
+                if not 1 <= first <= last <= len(lines):
+                    fail('source_audit', location, 'function range outside source')
+                    continue
+                source = '\n'.join(lines[first - 1:last])
+                if scope.get('sha256') != hashlib.sha256(source.encode()).hexdigest():
+                    fail('source_audit', location, 'function range/hash differs from reviewed source')
+                scanned_codes.update(code for code, _ in scan_error_literals(source))
+            if 'handler' not in roles:
+                fail('source_audit', where, 'handler scope missing')
+            actual_starts = {(path, first) for path, first, _ in seen_ranges}
+            required_starts = primary_starts.get(method, set())
+            if not required_starts or not required_starts.issubset(actual_starts):
+                fail('provider_scope', where, 'real WS handler/default CLI injection is missing from scan ranges')
+            domain = scanned_codes - UNCONFIGURED
+            if domain and recorded_codes.issubset(UNCONFIGURED | {'N/A', 'gateway_request_failed'}):
+                fail('provider_domain_errors', where, {'missing_domain_codes': sorted(domain - recorded_codes)})
+            missing_codes = scanned_codes - recorded_codes
+            if missing_codes:
+                fail('error_code_coverage', where, {'missing_scanned_codes': sorted(missing_codes)})
         deps = entry.get('a6_dependencies')
         if not string_list(deps) or not set(deps).issubset({f'A6.{i}' for i in range(1, 10)}):
             fail('dependencies', where, 'unknown/duplicate A6 dependency')
@@ -283,7 +436,9 @@ def validate(data, baseline, inputs):
             actual = file_cache.get(relative)
             if actual and (not isinstance(recorded, dict) or recorded.get('line_count') != actual[0] or recorded.get('sha256') != actual[1]):
                 fail('source_drift', relative, 'baseline file differs from the audited ledger source')
-    files = (SCHEMA, SNAPSHOT, INVENTORY, DRIVER)
+    files = (SCHEMA, SNAPSHOT, INVENTORY, DRIVER,
+             ROOT / 'docs/research/008_phase-a-session-domain/gap.md',
+             ROOT / 'docs/plan/005_phase-a-session-domain.md')
     wanted_hashes = {str(p.relative_to(ROOT)): digest(p) for p in files}
     if data.get('input_files') != wanted_hashes:
         fail('input_drift', '$.input_files', 'schema/snapshot/inventory/driver changed since audit')
@@ -294,6 +449,8 @@ def validate(data, baseline, inputs):
         'by_owner': dict(Counter(x.get('owner') for x in entries if isinstance(x, dict))),
         'baseline_files': len(referenced_files), 'unique_references': len(set(references)),
         'existing_a2_methods': sum(x.get('scenario_ids') != ['NONE'] for x in entries if isinstance(x, dict)),
+        'method_function_ranges': method_function_count,
+        'unique_function_ranges': len(audited_ranges),
     }
     return errors, summary
 
@@ -326,6 +483,45 @@ def self_test(data, baseline, inputs):
     unknown_scenario = copy.deepcopy(data)
     unknown_scenario['methods'][0]['scenario_ids'] = ['does_not_exist']
     cases.append(('unknown_scenario', unknown_scenario, 'scenarios'))
+    def mutate_method(name, field, value):
+        mutated = copy.deepcopy(data)
+        next(e for e in mutated['methods'] if e['method'] == name)[field] = value
+        return mutated
+    for name, owner in [('native_archive_artifact', 'A7'), ('restore_session_transcript', 'A8'),
+                        ('memory_list', 'A7'), ('hook_async_result', 'A8'),
+                        ('read_subagent_messages', 'A8'), ('memory_list', 'A6')]:
+        cases.append((f'wrong_owner_{name}_{owner}', mutate_method(name, 'owner', owner), 'owner_mapping'))
+    omitted = copy.deepcopy(data)
+    restore = next(e for e in omitted['methods'] if e['method'] == 'restore_session_transcript')
+    restore['branches']['error'] = [copy.deepcopy(restore['branches']['unconfigured'][0])]
+    cases.append(('provider_only_unconfigured', omitted, 'provider_domain_errors'))
+    single = copy.deepcopy(data)
+    artifact = next(e for e in single['methods'] if e['method'] == 'native_archive_artifact')
+    artifact['branches']['error'] = [b for b in artifact['branches']['error'] if b['code'] != 'ARCHIVE_ARTIFACT_NOT_FOUND']
+    cases.append(('missing_one_provider_code', single, 'error_code_coverage'))
+    for suffix, bad in [('bare', f'B/{relative}'), ('zero', f'B/{relative}:0'),
+                        ('filename', 'InProcessGateway.ts'),
+                        ('suffix', f'B/{relative}:1oops'), ('outside', f'B/{relative}:{line_count + 1}')]:
+        mixed = copy.deepcopy(data)
+        mixed['methods'][0]['provider']['summary'] += f' 有效引用 {anchor}，另一引用 {bad}。'
+        cases.append((f'mixed_prose_{suffix}', mixed,
+                      'reference_line' if suffix in ('zero', 'outside') else 'reference_format'))
+    no_scope = copy.deepcopy(data)
+    del no_scope['methods'][0]['source_audit']
+    cases.append(('missing_source_audit', no_scope, 'source_audit'))
+    shortened = copy.deepcopy(data)
+    scope = next(e for e in shortened['methods'] if e['method'] == 'restore_session_transcript')['source_audit']['functions'][0]
+    scope['refs'] = scope['refs'][:1]
+    cases.append(('shortened_function_scan', shortened, 'source_audit'))
+    missing_provider = copy.deepcopy(data)
+    restore = next(e for e in missing_provider['methods'] if e['method'] == 'restore_session_transcript')
+    restore['source_audit']['functions'] = [f for f in restore['source_audit']['functions']
+                                           if f['symbol'] != 'restoreSessionTranscript' or f['role'] == 'handler']
+    cases.append(('omitted_default_provider_scan', missing_provider, 'provider_scope'))
+    for source in ('docs/research/008_phase-a-session-domain/gap.md', 'docs/plan/005_phase-a-session-domain.md'):
+        drift = copy.deepcopy(data)
+        drift['input_files'][source] = '0' * 64
+        cases.append(('changed_input_hash_' + Path(source).stem, drift, 'input_drift'))
     results = []
     for name, mutated, expected_code in cases:
         errors, _ = validate(mutated, baseline, inputs)
