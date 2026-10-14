@@ -51,7 +51,7 @@
 4. 在读取任何计分 TS/proxy 内容前，先做全池 190 对原比较，再做两个单元各自的 190 对比较。**比较 U1 时仅转交 U2 精确路径差异；比较 U2 时仅转交 U1**；目标单元及全部未登记项、完整健康门、覆盖分母、SSE 时延、落盘内容继续严格比较。每单元独立确认类内全 PASS、类间全 FAIL、PASS 关系传递；至少两类、每类至少两遍。任一单元单例/单类/非传递即 **REFUSED**，不合并连通分量。
 5. 池任意一对有全部八个精确别名之外的差异即 **REFUSED**；单元内两连接不同值也 REFUSED。不能把 HTTP、WS 顺序/帧数/其他字段、SSE 或落盘噪声吸收到类里。未新增归一。
 6. 新 TS 每遍与 proxy 每遍均和池每位成员比较，保留完整严格报告，并按上述规则分别算 U1/U2 的全成员比较。**每个单元都必须完整命中该单元某一类的全部成员**；只有部分命中、单元内两连接混类或类外值均 **FAIL**。两个单元选中的类可以独立组合；例如 U1=add + U2=.jsonl 合法，即使它们的全体成员集合没有交集。最终配对只将八个别名交给单元判定，未登记差异继续 FAIL；原始登记差异保存在 registered_differences。
-7. 报告 TS_calibration 保留全池身份/哈希和原始严格 190 对，`units.U1/U2` 各保留 classes、values、完整成员和各自 190 对。multimodal 各侧保留原始严格 comparisons，`units.U1/U2` 各保留 comparisons、matched_classes、class_matches（matched_members/unmatched_members）。两个单元均通过才接受捕获。独立评审仍 null，未创建 FROZEN.md。
+7. 报告 TS_calibration 保留全池身份/哈希和原始严格 190 对，`units.U1/U2` 各保留 classes、values、完整成员和各自 190 对。multimodal 各侧保留原始严格 comparisons，`units.U1/U2` 各保留 comparisons、matched_classes、class_matches（matched_members/unmatched_members）。两个单元均通过才接受捕获。独立评审仍 null，FROZEN.md 仅为「待定标」草稿。
 
 compare.py：PASS/FAIL/REFUSED 退出码 0/1/2。check_ruler.py：当前装置的有效 k=5+proxy 全过仍为 PENDING_REVIEW/2，失败 FAIL/1，池拒收 REFUSED/2。无池仅可显式 `--paired-only` 做严格配对诊断，calibration_eligible=false；旧 `--replay-of` 仅历史重放，不与池同用。
 

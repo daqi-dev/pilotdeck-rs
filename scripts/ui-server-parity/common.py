@@ -8,10 +8,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def apparatus_hashes():
-    files = sorted((ROOT / 'scripts/ui-server-parity').rglob('*.py'))
-    files += sorted((ROOT / 'scripts/ui-server-parity').glob('*.mjs'))
-    files += [ROOT / 'scripts/ui-server-parity' / name for name in ('recording.rs', 'scenarios.json', 'coverage.json')]
-    files += sorted((ROOT / 'specs/ui-server-parity').glob('*.md'))
+    files = sorted(p for p in (ROOT / 'scripts/ui-server-parity').rglob('*')
+                   if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
+    # The approval/hash manifest is not apparatus: filling its pending review
+    # fields must not invalidate the captures used to approve this very ruler.
+    files += [ROOT / 'specs/ui-server-parity' / name for name in
+              ('acceptance.md', 'normalization.md', 'accepted-diffs.md', 'multimodal.md')]
     files += [ROOT / 'scripts/exp008' / name for name in ('run.py', 'compare.py', 'enumerate_hook.mjs', 'preload.mjs', 'proxy/src/main.rs', 'proxy/Cargo.toml', 'proxy/Cargo.lock')]
     return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
@@ -47,6 +49,8 @@ def source_hashes(baseline, recorder):
 INTERVAL_NS = 250_000_000
 MAX_GAP_NS = 2_000_000_000
 OFFSET_DROP_TOLERANCE_NS = 1_000_000
+MAX_BRACKET_NS = 1_000_000
+MAX_BRACKET_ATTEMPTS = 8
 
 
 class ClockRefused(ValueError):
@@ -62,6 +66,8 @@ def validate_clock_check(meta, *, historical=False):
     if not isinstance(check, dict) or type(check.get('schema')) is not int or check['schema'] != 1:
         raise ClockRefused('invalid clock_regression_check schema')
     samples = check.get('samples')
+    if check.get('status') == 'REFUSED':
+        raise ClockRefused('clock monitor REFUSED: ' + str(check.get('reason', 'unspecified clock failure')))
     if (check.get('status') != 'PASS' or check.get('interval_ns') != INTERVAL_NS
             or check.get('max_gap_ns') != MAX_GAP_NS
             or not isinstance(samples, list) or len(samples) < 2):
@@ -73,9 +79,11 @@ def validate_clock_check(meta, *, historical=False):
         wall, before, after = (sample.get(k) for k in ('wall_ns', 'mono_before_ns', 'mono_after_ns'))
         phase = 'start' if i == 0 else 'end' if i == len(samples) - 1 else 'periodic'
         if (sample.get('phase') != phase or any(type(v) is not int or v <= 0 for v in (wall, before, after))
-                or after < before or after - before > MAX_GAP_NS):
+                or after < before or after - before > MAX_BRACKET_NS):
             raise ClockRefused('invalid/bracket-delayed clock sample')
         if previous:
+            if after - before + previous['mono_after_ns'] - previous['mono_before_ns'] > MAX_BRACKET_NS:
+                raise ClockRefused('adjacent clock bracket uncertainty exceeds 1 ms')
             if before <= previous['mono_after_ns'] or after - previous['mono_before_ns'] > MAX_GAP_NS:
                 raise ClockRefused('clock monitor gap or nonmonotonic observer clock')
             if wall < previous['wall_ns']:
@@ -96,17 +104,37 @@ class ClockMonitor:
     def __init__(self, wall=time.time_ns, monotonic=time.monotonic_ns):
         self.wall, self.monotonic = wall, monotonic
         self.samples = []
+        self.rejected_samples = []
         self.stop_event = threading.Event()
         self.error = None
 
     def sample(self, phase):
-        before = self.monotonic()
-        wall = self.wall()
-        after = self.monotonic()
-        self.samples.append(dict(phase=phase, wall_ns=wall, mono_before_ns=before, mono_after_ns=after))
+        previous_width = (self.samples[-1]['mono_after_ns'] - self.samples[-1]['mono_before_ns']
+                          if self.samples else 0)
+        for _ in range(MAX_BRACKET_ATTEMPTS):
+            before = self.monotonic()
+            wall = self.wall()
+            after = self.monotonic()
+            sample = dict(phase=phase, wall_ns=wall, mono_before_ns=before, mono_after_ns=after)
+            if any(type(v) is not int or v <= 0 for v in (wall, before, after)) or after < before:
+                raise ClockRefused('invalid/nonmonotonic clock bracket')
+            # Keep the LAST ACCEPTED sample as the coverage anchor across retries.
+            if self.samples and (before <= self.samples[-1]['mono_after_ns']
+                                 or after - self.samples[-1]['mono_before_ns'] > MAX_GAP_NS):
+                raise ClockRefused('clock monitor gap or nonmonotonic observer clock during resampling')
+            if after - before + previous_width <= MAX_BRACKET_NS:
+                self.samples.append(sample)
+                return
+            self.rejected_samples.append({**sample, 'reason': 'bracket uncertainty exceeds 1 ms'})
+            # No sleep and no return to the 250 ms poll loop: retry this sample.
+        raise ClockRefused(f'clock bracket exceeds 1 ms budget for {MAX_BRACKET_ATTEMPTS} consecutive attempts')
 
     def start(self):
-        self.sample('start')
+        try:
+            self.sample('start')
+        except Exception as error:
+            self.error = str(error)
+            raise
         self.thread = threading.Thread(target=self._poll, name='b2-clock-monitor', daemon=True)
         self.thread.start()
         return self.samples[0]['wall_ns'] // 1_000_000
@@ -120,11 +148,17 @@ class ClockMonitor:
 
     def finish(self, meta):
         self.stop_event.set()
-        self.thread.join()
-        self.sample('end')
-        meta['wall_end_ms'] = self.samples[-1]['wall_ns'] // 1_000_000
+        if hasattr(self, 'thread'):
+            self.thread.join()
+        if self.samples:
+            try:
+                self.sample('end')
+                meta['wall_end_ms'] = self.samples[-1]['wall_ns'] // 1_000_000
+            except Exception as error:
+                self.error = self.error or str(error)
         check = dict(schema=1, interval_ns=INTERVAL_NS, max_gap_ns=MAX_GAP_NS,
-                     status='PASS', samples=self.samples)
+                     max_bracket_ns=MAX_BRACKET_NS, max_bracket_attempts=MAX_BRACKET_ATTEMPTS,
+                     status='PASS', samples=self.samples, rejected_samples=self.rejected_samples)
         meta['clock_regression_check'] = check
         try:
             if self.error:

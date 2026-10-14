@@ -8,7 +8,7 @@ import unittest
 import contextlib
 import io
 from unittest.mock import patch
-from common import ClockMonitor, ClockRefused, validate_clock_check
+from common import ClockMonitor, ClockRefused, validate_clock_check, MAX_BRACKET_ATTEMPTS
 from controls.run_all import clock_evidence
 from run import HERE, validate_recording
 
@@ -142,6 +142,92 @@ class RecordingControls(unittest.TestCase):
 
 
 class CaptureClockControls(unittest.TestCase):
+    def monitor(self, brackets, walls):
+        mono = iter(v for pair in brackets for v in pair)
+        wall = iter(1700000000000000000 + v for v in walls)
+        return ClockMonitor(wall=lambda: next(wall), monotonic=lambda: next(mono))
+
+    def test_two_ms_bracket_then_three_ms_regression_is_refused(self):
+        # Old predicate admitted equality: 3 ms drop minus 2 ms bracket = 1 ms.
+        meta = self.simulate_monitor([0, 250_000_000], [0, 247_000_000])
+        meta['clock_regression_check']['samples'][0]['mono_after_ns'] += 2_000_000
+        meta['clock_regression_check']['status'] = 'PASS'
+        first, second = meta['clock_regression_check']['samples']
+        self.assertEqual(first['wall_ns'] - first['mono_after_ns']
+                         - (second['wall_ns'] - second['mono_before_ns']), 1_000_000)
+        with self.assertRaisesRegex(ClockRefused, 'bracket-delayed'):
+            validate_clock_check(meta)
+        # Live recording discards the broad bracket, immediately retries, and
+        # the new narrow reading exposes the drop from the last valid sample.
+        monitor = self.monitor([(1_000_000, 1_000_100), (251_000_000, 253_000_000),
+                                (253_000_001, 253_000_101)], [0, 247_000_000, 249_000_001])
+        with patch('common.threading.Thread'):
+            meta = {'wall_start_ms': monitor.start()}
+            check = monitor.finish(meta)
+        self.assertEqual(check['status'], 'REFUSED')
+        self.assertIn('relative to monotonic', check['reason'])
+        self.assertEqual(len(check['rejected_samples']), 1)
+        self.assertEqual(len(check['samples']), 2)
+
+    def test_normal_bracket_and_immediate_retry_do_not_false_refuse(self):
+        monitor = self.monitor([(1_000_000, 1_000_100), (251_000_000, 253_000_000),
+                                (253_000_001, 253_000_101)], [0, 250_000_000, 252_000_001])
+        with patch('common.threading.Thread'):
+            meta = {'wall_start_ms': monitor.start()}
+            check = monitor.finish(meta)
+        self.assertEqual(check['status'], 'PASS')
+        self.assertEqual(validate_clock_check(meta), 'present')
+        self.assertEqual(len(check['rejected_samples']), 1)
+
+    def test_adjacent_combined_bracket_budget_is_enforced(self):
+        meta = self.meta()
+        for sample in meta['clock_regression_check']['samples'][:2]:
+            sample['mono_after_ns'] = sample['mono_before_ns'] + 600_000
+        with self.assertRaisesRegex(ClockRefused, 'adjacent clock bracket'):
+            validate_clock_check(meta)
+
+    def test_retry_cannot_reset_two_second_gap(self):
+        monitor = self.monitor([(1_000_000, 1_000_100), (1_999_000_000, 2_000_100_000),
+                                (2_001_000_001, 2_001_000_101)], [0, 1_998_000_000, 2_000_000_001])
+        with patch('common.threading.Thread'):
+            meta = {'wall_start_ms': monitor.start()}
+            check = monitor.finish(meta)
+        self.assertEqual(check['status'], 'REFUSED')
+        self.assertIn('gap', check['reason'])
+        self.assertEqual(len(check['samples']), 1)
+
+    def test_repeated_broad_start_and_end_are_persisted_as_refused(self):
+        import run
+        for phase in ('start', 'end'):
+            broad = [(10_000_000 + i * 3_000_000, 12_000_000 + i * 3_000_000)
+                     for i in range(MAX_BRACKET_ATTEMPTS)]
+            brackets = ([(1_000_000, 1_000_100)] if phase == 'end' else []) + broad
+            monitor = self.monitor(brackets, [i * 3_000_000 for i in range(len(brackets))])
+            with tempfile.TemporaryDirectory() as tmp, patch('common.threading.Thread'), \
+                    patch.object(run, 'ClockMonitor', return_value=monitor), \
+                    patch.object(run, 'source_hashes', return_value={}), \
+                    patch.object(run, 'record_monitored_side', return_value={}):
+                with self.subTest(phase=phase), self.assertRaises(ClockRefused):
+                    run.record_side(Path(tmp), 'direct')
+                check = json.loads((Path(tmp) / 'direct/run-meta.json').read_text())['clock_regression_check']
+                self.assertEqual(check['status'], 'REFUSED')
+                self.assertIn('8 consecutive attempts', check['reason'])
+                self.assertEqual(len(check['rejected_samples']), MAX_BRACKET_ATTEMPTS)
+
+    def test_periodic_refusal_is_not_repaired_by_good_end(self):
+        brackets = [(1_000_000, 1_000_100)] + [
+            (10_000_000 + i * 3_000_000, 12_000_000 + i * 3_000_000)
+            for i in range(MAX_BRACKET_ATTEMPTS)] + [(50_000_000, 50_000_100)]
+        monitor = self.monitor(brackets, [i * 3_000_000 for i in range(len(brackets))])
+        with patch('common.threading.Thread'):
+            meta = {'wall_start_ms': monitor.start()}
+            with self.assertRaises(ClockRefused) as caught:
+                monitor.sample('periodic')
+            monitor.error = str(caught.exception)  # _poll preserves this failure.
+            check = monitor.finish(meta)
+        self.assertEqual(check['status'], 'REFUSED')
+        self.assertIn('8 consecutive attempts', check['reason'])
+
     def simulate_monitor(self, elapsed, walls):
         wall = iter(1700000000000000000 + n for n in walls)
         # Zero-width brackets make the exact 1 ms boundary observable.
