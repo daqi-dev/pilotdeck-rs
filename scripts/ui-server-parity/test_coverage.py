@@ -18,6 +18,12 @@ MATRIX = {'routes': [{'route': 'GET /api/a', 'cases': ['a']},
         'reason': 'requires isolated write fixture', 'approver': 'AI 代批，待人复核'}}]}
 
 
+def successful_evidence():
+    return [{'kind': 'case_http', 'case': 'a', 'route': 'GET /api/a',
+             'side': side, 'ok': True, 'status': 200, 'method': 'GET', 'path': '/api/a',
+             'handler': 'ts' if side == 'proxy' else None} for side in ('direct', 'proxy')]
+
+
 class CoverageControls(unittest.TestCase):
     def test_missing_route_cli_fails_then_complete_passes(self):
         with tempfile.TemporaryDirectory(prefix='exp010-coverage-') as directory:
@@ -44,12 +50,35 @@ class CoverageControls(unittest.TestCase):
         self.assertEqual(check(ENUM, MATRIX, scenarios)['verdict'], 'FAIL')
 
     def test_declared_case_cannot_substitute_for_evidence(self):
-        evidence = [{'kind': 'case_http', 'case': 'a', 'route': 'GET /api/a',
-                     'side': side, 'ok': True, 'status': 200, 'method': 'GET', 'path': '/api/a'} for side in ('direct', 'proxy')]
+        evidence = successful_evidence()
         self.assertEqual(check(ENUM, MATRIX, SCENARIOS, evidence)['verdict'], 'PASS')
         self.assertEqual(check(ENUM, MATRIX, SCENARIOS, evidence[:1])['verdict'], 'FAIL')
         evidence[1]['method'] = 'POST'
         self.assertEqual(check(ENUM, MATRIX, SCENARIOS, evidence)['verdict'], 'FAIL')
+
+    def test_rust_ai_waiver_fails_and_human_approval_passes(self):
+        evidence = successful_evidence()
+        # This exempt route has no declared case. Even unsuccessful Rust
+        # evidence must trigger the approval gate rather than be filtered out.
+        evidence.append({'kind': 'case_http', 'case': 'b.probe', 'route': 'POST /api/b/:id',
+                         'side': 'proxy', 'ok': False, 'status': 500,
+                         'method': 'POST', 'path': '/api/b/42', 'handler': 'rust'})
+        failed = check(ENUM, MATRIX, SCENARIOS, evidence)
+        self.assertEqual(failed['verdict'], 'FAIL')
+        self.assertTrue(any('human approval' in error for error in failed['errors']))
+        matrix = copy.deepcopy(MATRIX)
+        matrix['routes'][1]['exemption']['approver'] = '协调者人工批准'
+        self.assertEqual(check(ENUM, matrix, SCENARIOS, evidence)['verdict'], 'PASS')
+        # Declaration alone is not execution evidence and retains its scope.
+        self.assertEqual(check(ENUM, MATRIX, SCENARIOS)['verdict'], 'PASS')
+        print('CONTROL Rust + AI waiver FAIL; Rust + human waiver PASS')
+
+    def test_non_rust_ai_waivers_still_pass(self):
+        for handler in ('ts', None):
+            with self.subTest(handler=handler):
+                evidence = successful_evidence()
+                evidence.append({'kind': 'case_http', 'route': 'POST /api/b/:id', 'handler': handler})
+                self.assertEqual(check(ENUM, MATRIX, SCENARIOS, evidence)['verdict'], 'PASS')
 
     def test_normalization_collision_fails(self):
         enumeration = copy.deepcopy(ENUM)

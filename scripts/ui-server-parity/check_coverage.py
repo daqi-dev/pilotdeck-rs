@@ -47,6 +47,12 @@ def check(enumeration, matrix, scenarios, evidence=None):
             errors.append(f'{route}: missing direct HTTP case or exemption')
         if waiver and (waiver.get('route') != route or not all(isinstance(waiver.get(k), str) and waiver[k].strip() for k in ('reason', 'approver'))):
             errors.append(f'{route}: malformed exemption')
+        if evidence is not None and waiver and isinstance(waiver.get('approver'), str) and 'AI 代批' in waiver['approver']:
+            # Check all observed handlers, including failures and cases outside
+            # the declared coverage list; a waiver cannot hide Rust takeover.
+            if any(e.get('kind') == 'case_http' and e.get('handler') == 'rust'
+                   and e.get('route') == route for e in evidence):
+                errors.append(f'{route}: Rust-handled route exemption requires human approval (AI 代批 forbidden)')
         for case_id in cases:
             case = definitions.get(case_id)
             if not case or case.get('transport') != 'http' or case.get('route') != route or not isinstance(case.get('expected_statuses'), list) or not case['expected_statuses'] or any(type(status) is not int or not 100 <= status < 600 for status in case['expected_statuses']):

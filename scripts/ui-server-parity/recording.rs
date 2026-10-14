@@ -125,16 +125,21 @@ pub struct RecordedBody<B> {
     id: u64,
     direction: &'static str,
     offset: u64,
+    exact_length: Option<u64>,
     ended: bool,
 }
 impl<B: Body> RecordedBody<B> {
     pub fn new(inner: B, recorder: Arc<Recorder>, id: u64, direction: &'static str) -> Self {
+        // Hyper may drop a body as soon as Content-Length bytes have been read,
+        // without polling EOF. Keep the original hint, not the remaining size.
+        let exact_length = inner.size_hint().exact();
         let mut body = Self {
             inner,
             recorder,
             id,
             direction,
             offset: 0,
+            exact_length,
             ended: false,
         };
         if body.inner.is_end_stream() {
@@ -192,6 +197,13 @@ where
             this.ended = true;
             return Poll::Ready(Some(Err(error)));
         }
+        // The final data frame can signal EOF without a subsequent None poll.
+        if !this.ended && this.inner.is_end_stream() {
+            this.ended = true;
+            if let Err(error) = this.recorder.write(this.event("http_end")) {
+                return Poll::Ready(Some(Err(error)));
+            }
+        }
         polled
             .map(|option| option.map(|result| result.map_err(|error| -> Error { Box::new(error) })))
     }
@@ -202,7 +214,12 @@ where
 impl<B> Drop for RecordedBody<B> {
     fn drop(&mut self) {
         if !self.ended {
-            let _ = self.recorder.write(self.event("http_aborted"));
+            let kind = if self.exact_length == Some(self.offset) {
+                "http_end"
+            } else {
+                "http_aborted"
+            };
+            let _ = self.recorder.write(self.event(kind));
         }
     }
 }
@@ -423,6 +440,129 @@ mod stream_controls {
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect()
+    }
+    #[tokio::test]
+    async fn final_data_frame_records_end_before_drop() {
+        let (log, memory) = memory_log();
+        let source = http_body_util::Full::new(Bytes::from_static(b"complete"));
+        let mut body = RecordedBody::new(source, log, 44, "response");
+        assert!(body.frame().await.unwrap().unwrap().is_data());
+        // No EOF poll: this is how Hyper consumes a fixed-length body.
+        let events = records(&memory);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["kind"], "http_chunk");
+        assert_eq!(events[1]["kind"], "http_end");
+        assert_eq!(events[1]["offset"], 8);
+        assert!(body.ended);
+        drop(body);
+        assert_eq!(records(&memory).len(), 2);
+    }
+    struct FixedLengthBody {
+        remaining: Bytes,
+        exact: bool,
+    }
+    impl Body for FixedLengthBody {
+        type Data = Bytes;
+        type Error = std::io::Error;
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+            let this = self.get_mut();
+            if this.remaining.is_empty() {
+                Poll::Ready(None)
+            } else {
+                // Two frames; no is_end_stream override, as allowed by Body.
+                let size = this.remaining.len().min(2);
+                Poll::Ready(Some(Ok(Frame::data(this.remaining.split_to(size)))))
+            }
+        }
+        fn size_hint(&self) -> SizeHint {
+            if self.exact {
+                SizeHint::with_exact(self.remaining.len() as u64)
+            } else {
+                SizeHint::default()
+            }
+        }
+    }
+    #[tokio::test]
+    async fn drop_after_content_length_is_end_but_partial_or_unknown_is_abort() {
+        for (exact, frames, terminal) in [
+            (true, 2, "http_end"),
+            (true, 1, "http_aborted"),
+            (false, 2, "http_aborted"),
+        ] {
+            let (log, memory) = memory_log();
+            let source = FixedLengthBody {
+                remaining: Bytes::from_static(b"abcd"),
+                exact,
+            };
+            let mut body = RecordedBody::new(source, log, 45, "request");
+            for _ in 0..frames {
+                assert!(body.frame().await.unwrap().unwrap().is_data());
+            }
+            assert!(!body.ended);
+            // Simulate Hyper dropping at Content-Length, never polling None.
+            drop(body);
+            let events = records(&memory);
+            assert_eq!(events.len(), frames + 1);
+            assert_eq!(events.last().unwrap()["kind"], terminal);
+            assert_eq!(events.last().unwrap()["offset"], (frames * 2) as u64);
+        }
+    }
+    #[tokio::test]
+    async fn hyper_fixed_length_response_drop_records_end() {
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (log, memory) = memory_log();
+        let (mut client_io, server_io) = tokio::io::duplex(4096);
+        let server = tokio::spawn(async move {
+            let service = service_fn(move |_| {
+                let body = RecordedBody::new(
+                    FixedLengthBody {
+                        remaining: Bytes::from_static(b"abcd"),
+                        exact: true,
+                    },
+                    log.clone(),
+                    46,
+                    "response",
+                );
+                async move {
+                    Ok::<_, std::convert::Infallible>(
+                        hyper::Response::builder()
+                            .header("content-length", "4")
+                            .body(body)
+                            .unwrap(),
+                    )
+                }
+            });
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(server_io), service)
+                .await
+                .unwrap();
+        });
+        client_io
+            .write_all(b"GET / HTTP/1.1\r\nHost: memory.test\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            client_io.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        server.await.unwrap();
+        assert!(response.ends_with(b"\r\n\r\nabcd"));
+        let events = records(&memory);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0]["kind"], "http_chunk");
+        assert_eq!(events[1]["kind"], "http_chunk");
+        assert_eq!(events[2]["kind"], "http_end");
+        assert_eq!(events[2]["offset"], 4);
     }
     #[tokio::test]
     async fn body_offsets_trailers_eof_and_abort() {
