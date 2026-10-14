@@ -57,7 +57,7 @@ import time
 
 import hashlib
 from apparatus import (git_admission, ApparatusUnsafe, prepare_cargo, cargo_process,
-                       cargo_identity, cargo_config_admission)
+                       cargo_identity, cargo_config_admission, node_environment)
 from common import ROOT, apparatus_hashes, source_hashes, node_modules_hash, validate_clock_check
 from multimodal import capture_identity
 
@@ -149,11 +149,11 @@ class Batch:
     def build(self):
         # Refuse even an empty pre-existing target: every batch starts from nothing.
         try:
-            prepare_cargo(self.path, self.cargo_home, self.target, ROOT / '_build/cargo-home')
+            prepare_cargo(self.path, self.cargo_home, self.target, ROOT / '_build/cargo-home', root=ROOT)
         except FileExistsError as error:
             raise ApparatusUnsafe('batch target already exists or Cargo home reused; never reuse a build') from error
         # Record the selected toolchain before executing any build input.
-        toolchain = cargo_identity(self.path, self.cargo_home, self.target)
+        toolchain = cargo_identity(self.path, self.cargo_home, self.target, root=ROOT)
         self.state['toolchain'] = toolchain
         self.save()
         for mode in ('fetch', 'build'):
@@ -162,7 +162,7 @@ class Batch:
                            str(ROOT / 'scripts/exp008/proxy/Cargo.toml')]
                 try:
                     cargo_process(command, self.path, self.cargo_home, self.target,
-                                  stdout=output, stderr=subprocess.STDOUT)
+                                  root=ROOT, stdout=output, stderr=subprocess.STDOUT)
                 except subprocess.CalledProcessError as error:
                     raise ApparatusUnsafe(f'batch Cargo {mode} failed; see {self.path / (mode + ".log")}') from error
             space_check(Path(self.state['resource_root']), Path(self.state['size_reference']), build=False)
@@ -173,14 +173,14 @@ class Batch:
 
     def verify_build(self):
         build = self.state.get('build', {})
-        cargo_config_admission(self.path, self.cargo_home)
+        cargo_config_admission(self.path, self.cargo_home, root=ROOT)
         if (build.get('target_dir') != str(self.target) or build.get('binary') != str(self.binary)
                 or build.get('cargo_home') != str(self.cargo_home) or not self.cargo_home.is_dir()
                 or self.target.is_symlink() or self.binary.is_symlink() or not self.binary.is_file()
                 or not self.binary.resolve().is_relative_to(self.target.resolve())
                 or hashlib.sha256(self.binary.read_bytes()).hexdigest() != build.get('sha256')):
             raise ApparatusUnsafe('batch build missing/changed; never use old _build artifacts')
-        if cargo_identity(self.path, self.cargo_home, self.target) != build.get('toolchain'):
+        if cargo_identity(self.path, self.cargo_home, self.target, root=ROOT) != build.get('toolchain'):
             raise ApparatusUnsafe('batch toolchain changed; start a NEW batch')
 
     def pin(self):
@@ -357,7 +357,7 @@ def main():
         else:
             estimate = space_check(resource, reference)
             print(json.dumps({'preflight': estimate}, ensure_ascii=False), flush=True)
-            if not subprocess.check_output(['node', '--version'], text=True).startswith('v22.'):
+            if not subprocess.check_output(['node', '--version'], env=node_environment(), text=True).startswith('v22.'):
                 raise ValueError('requires Node v22')
             path = ROOT / '_tmp' / ('b2-calibration-' + utc_day() + '-' + str(uuid.uuid4()))
             (path / 'attempts').mkdir(parents=True)
@@ -365,8 +365,9 @@ def main():
                      'resource_root': str(resource), 'size_reference': str(reference), 'space_estimate': estimate, 'runs': {}}
             batch = Batch(path, state)
             started = time.monotonic()
-            state['node_modules'] = {'sha256': node_modules_hash(baseline),
-                                     'elapsed_seconds': time.monotonic() - started}
+            coverage = {}
+            state['node_modules'] = {'sha256': node_modules_hash(baseline, coverage=coverage),
+                                     'elapsed_seconds': time.monotonic() - started, 'coverage': coverage}
             batch.save()
             print('batch ' + str(path), flush=True)
             batch.build()

@@ -53,9 +53,9 @@ import subprocess
 import sys
 import uuid
 
-from apparatus import load_source, prepare_cargo, cargo_process, cargo_identity
+from apparatus import load_source, prepare_cargo, cargo_process, cargo_identity, node_environment
 from snapshot import capture
-from common import apparatus_hashes, source_hashes, ClockMonitor, ClockRefused, validate_clock_check
+from common import apparatus_hashes, source_hashes, node_ancestor_admission, ClockMonitor, ClockRefused, validate_clock_check
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -80,15 +80,35 @@ b1.ALL_PORTS = set(b1.PORTS.values()) | {13101}
 BINARY = None
 
 
+# Only fixture values that B1 explicitly sets are admitted. Inherited settings
+# (including Node loaders, proxy variables and dynamic loaders) never reach Node.
+FIXTURE_ENV = ('EXP008_OUT', 'PILOT_HOME', 'PILOTDECK_CONFIG_PATH', 'TMPDIR',
+               'WORKSPACES_ROOT', 'PILOTDECK_GATEWAY_HOST', 'PILOTDECK_GATEWAY_PORT',
+               'PILOTDECK_GATEWAY_TOKEN', 'PILOTDECK_GATEWAY_TOKEN_PATH',
+               'PILOTDECK_GATEWAY_URL', 'HOST', 'SERVER_PORT', 'VITE_PORT',
+               'PILOTDECK_DISABLE_LOCAL_AUTH', 'DISABLE_LOCAL_AUTH',
+               'PILOTDECK_SKIP_BROWSER_OPEN', 'EXP008_POLL_WATCH', 'EXP008_MOCK',
+               'EXP008_MODEL_LOG')
+
+
+def build_env(out, label, extra=None):
+    node_ancestor_admission(b1.BASELINE)
+    generated = b1.build_env(out, label)
+    values = {key: generated[key] for key in FIXTURE_ENV}
+    values['HOME'] = str(out / 'home')
+    values.update(extra or {})
+    return node_environment(values)
+
+
 def build(target):
     """Standalone captures also use a newly created target, never _build artifacts."""
     global BINARY
     cwd, home = target.parent, target.parent / 'cargo-home'
-    prepare_cargo(cwd, home, target, ROOT / '_build/cargo-home')
-    identity = cargo_identity(cwd, home, target)
+    prepare_cargo(cwd, home, target, ROOT / '_build/cargo-home', root=ROOT)
+    identity = cargo_identity(cwd, home, target, root=ROOT)
     b1.save(cwd, 'toolchain.json', identity)
     cargo_process(['cargo', 'build', '--locked', '--offline', '--manifest-path',
-                   str(ROOT / 'scripts/exp008/proxy/Cargo.toml')], cwd, home, target)
+                   str(ROOT / 'scripts/exp008/proxy/Cargo.toml')], cwd, home, target, root=ROOT)
     BINARY = target / 'debug/pdrs-exp008-proxy'
 
 
@@ -127,7 +147,7 @@ def cleanup(out, first):
 
 
 def enumerate_routes(out):
-    env = b1.build_env(out, 'enumerate', {
+    env = build_env(out, 'enumerate', {
         'SERVER_PORT': '13104', 'VITE_IS_PLATFORM': 'false', 'PARITY_ENUM_OUT': str(out / 'router-enumeration.json'),
         'PARITY_BASELINE': str(b1.BASELINE),
     })
@@ -187,7 +207,7 @@ def record_side(out, side, slot=None):
 
 def record_monitored_side(directory, side, meta):
     home, project = b1.make_home(directory)
-    env = b1.build_env(directory, side, {'VITE_IS_PLATFORM': 'false', 'EXP008_POLL_WATCH': '0'})
+    env = build_env(directory, side, {'VITE_IS_PLATFORM': 'false', 'EXP008_POLL_WATCH': '0'})
     # Inherit no external record/DUT configuration.
     for key in list(env):
         if key.startswith(('EXP010_', 'PARITY_')):

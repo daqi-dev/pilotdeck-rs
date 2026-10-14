@@ -38,6 +38,7 @@ _boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
 exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 import hashlib
+import os
 from pathlib import Path
 import threading
 import time
@@ -56,17 +57,90 @@ def apparatus_hashes():
     return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 
-def node_modules_hash(baseline):
-    """Whole tree: framed relative path, lstat type, bytes digest/link target.
+def dependency_roots(baseline):
+    """Inventory physical trees once; never recurse through directory symlinks."""
+    import fnmatch
+    import json
+    baseline = Path(baseline).resolve()
+    node_ancestor_admission(baseline)
+    modules, packages, links, directories = set(), set(), [], []
 
-    Links (including directory and broken links) are recorded, never traversed.
-    Empty directories are included. Special files fail instead of being read.
+    def discover(directory):
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                if entry.name == 'node_modules':
+                    modules.add(path)
+                if entry.is_symlink():
+                    links.append(path)
+                elif entry.is_dir(follow_symlinks=False):
+                    directories.append(path)
+                    discover(path)
+
+    discover(baseline)
+    top = baseline / 'node_modules'
+    if not top.is_dir() or top.is_symlink():
+        raise ApparatusUnsafe('missing/nonregular baseline node_modules tree: ' + str(top))
+    manifest = baseline / 'package.json'
+    if manifest.exists():
+        workspaces = json.loads(manifest.read_text()).get('workspaces', [])
+        if isinstance(workspaces, dict):
+            workspaces = workspaces.get('packages', [])
+        if not isinstance(workspaces, list) or any(not isinstance(p, str) for p in workspaces):
+            raise ApparatusUnsafe('invalid baseline workspaces declaration')
+        for pattern in workspaces:
+            if Path(pattern.lstrip('!')).is_absolute() or '..' in Path(pattern).parts:
+                raise ApparatusUnsafe('escaping workspace pattern: ' + pattern)
+        def workspace_match(parts, pattern):
+            # '*' matches one segment; '**' matches zero or more segments.
+            if not pattern:
+                return not parts
+            if pattern[0] == '**':
+                return (workspace_match(parts, pattern[1:]) or
+                        bool(parts) and workspace_match(parts[1:], pattern))
+            return (bool(parts) and fnmatch.fnmatchcase(parts[0], pattern[0])
+                    and workspace_match(parts[1:], pattern[1:]))
+
+        for path in directories:
+            relative = path.relative_to(baseline).parts
+            if (any(workspace_match(relative, Path(p).parts) for p in workspaces if not p.startswith('!'))
+                    and not any(workspace_match(relative, Path(p[1:]).parts) for p in workspaces if p.startswith('!'))
+                    and (path / 'package.json').is_file()):
+                packages.add(path)
+    # Actual links cover undeclared local/file: packages too. pnpm store targets
+    # already live in node_modules; outside that tree include the entire package.
+    for link in links:
+        target = link.resolve()
+        if (target != baseline and target.is_relative_to(baseline) and target.is_dir()
+                and 'node_modules' not in target.relative_to(baseline).parts
+                and (target / 'package.json').is_file()):
+            packages.add(target)
+    roots = modules | packages
+    effective = [p for p in sorted(roots) if not any(parent in roots for parent in p.parents)]
+    return {'node_modules': sorted(str(p.relative_to(baseline)) for p in modules),
+            'workspace_packages': sorted(str(p.relative_to(baseline)) for p in packages),
+            'covered_roots': [str(p.relative_to(baseline)) for p in effective]}
+
+
+def node_ancestor_admission(baseline):
+    """Optional Node dependencies can otherwise resolve outside the baseline."""
+    ancestors = [p / 'node_modules' for p in Path(baseline).resolve().parents
+                 if os.path.lexists(p / 'node_modules')]
+    if ancestors:
+        warning = 'WARNING: Node ancestor node_modules forbidden: ' + ', '.join(map(str, ancestors))
+        print(warning, file=_boot_sys.stderr)
+        raise ApparatusUnsafe(warning)
+
+
+def node_modules_hash(baseline, *, coverage=None):
+    """One framed digest for all dependency roots, types, bytes and link targets.
+
+    Inventory all depths, then hash the union once (nested roots are not reread).
+    No metadata cache: every invocation rereads every covered ordinary file.
     """
-    import os
+    import json
     import stat
-    directory = Path(baseline) / 'node_modules'
-    if not directory.is_dir() or directory.is_symlink():
-        raise ApparatusUnsafe('missing/nonregular baseline node_modules tree: ' + str(directory))
+    baseline = Path(baseline).resolve()
     digest = hashlib.sha256()
 
     def frame(value):
@@ -75,14 +149,17 @@ def node_modules_hash(baseline):
 
     def visit(path):
         mode = path.lstat().st_mode
-        frame(os.fsencode(path.relative_to(directory)))
+        frame(os.fsencode(path.relative_to(baseline)))
         if stat.S_ISLNK(mode):
             frame(b'symlink')
             frame(os.fsencode(os.readlink(path)))
+            target = path.resolve()
+            frame(os.fsencode(target.relative_to(baseline) if target.is_relative_to(baseline) else target))
         elif stat.S_ISDIR(mode):
             frame(b'directory')
-            for entry in sorted(path.iterdir(), key=lambda p: os.fsencode(p.name)):
-                visit(entry)
+            with os.scandir(path) as entries:
+                for entry in sorted(entries, key=lambda e: os.fsencode(e.name)):
+                    visit(Path(entry.path))
         elif stat.S_ISREG(mode):
             frame(b'file')
             with path.open('rb') as source:
@@ -91,8 +168,14 @@ def node_modules_hash(baseline):
             raise ApparatusUnsafe('nonregular node_modules entry: ' + str(path))
 
     try:
-        visit(directory)
-    except OSError as error:
+        inventory = dependency_roots(baseline)
+        frame(b'baseline-dependencies-v2')
+        frame(json.dumps(inventory, sort_keys=True, separators=(',', ':')).encode())
+        for relative in inventory['covered_roots']:
+            visit(baseline / relative)
+        if coverage is not None:
+            coverage.update(inventory)
+    except (OSError, RuntimeError, ValueError) as error:
         raise ApparatusUnsafe('node_modules tree unreadable/changed: ' + str(error)) from error
     return digest.hexdigest()
 

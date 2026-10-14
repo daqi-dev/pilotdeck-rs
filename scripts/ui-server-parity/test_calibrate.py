@@ -51,6 +51,15 @@ from controls.run_all import clock_evidence
 
 
 class CalibrationControls(unittest.TestCase):
+    def setUp(self):
+        # The real worktree is below a second repository selector. Production
+        # must reject that layout; these unit fixtures have an independent cwd.
+        caller = tempfile.TemporaryDirectory()
+        self.addCleanup(caller.cleanup)
+        patcher = patch('apparatus.Path.cwd', return_value=Path(caller.name).resolve())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_exit_two_is_not_enough_to_pass_ruler_gate(self):
         good = dict(verdict='PENDING_REVIEW', calibration_eligible=True, comparison_mode='calibration',
                     self_compare=True, pairs=[{'verdict': 'PASS'} for _ in range(10)],
@@ -190,6 +199,10 @@ class CalibrationControls(unittest.TestCase):
             self.skipTest('Cargo unavailable')
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
+            import subprocess
+            (root / 'rust-toolchain.toml').write_bytes((calibrate.ROOT / 'rust-toolchain.toml').read_bytes())
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            subprocess.run(['git', '-C', str(root), 'add', 'rust-toolchain.toml'], check=True)
             manifest = root / 'scripts/exp008/proxy/Cargo.toml'
             manifest.parent.mkdir(parents=True)
             manifest.write_text('[package]\nname="pdrs-exp008-proxy"\nversion="0.1.0"\nedition="2021"\n')
@@ -340,7 +353,7 @@ class CalibrationControls(unittest.TestCase):
             for name in ('src', 'dist', 'ui/server', 'node_modules/ws'):
                 (baseline / name).mkdir(parents=True)
             for name in ('package.json', 'pnpm-lock.yaml', 'ui/package.json'):
-                (baseline / name).write_text('manifest')
+                (baseline / name).write_text('{}')
             dependency = baseline / 'node_modules/ws/index.js'
             dependency.write_text('original')
             batch.binary.parent.mkdir(parents=True)
@@ -375,7 +388,7 @@ class CalibrationControls(unittest.TestCase):
             for path in paths:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('[build]\nrustc-wrapper="injected"\n')
-                with self.subTest(path=path), patch('apparatus.subprocess.run') as run, \
+                with self.subTest(path=path), patch('apparatus.run_tool') as run, \
                         self.assertRaisesRegex(ValueError, 'forbidden'):
                     cargo_process(['cargo', '-V'], cwd, home, cwd / 'target')
                 run.assert_not_called()
@@ -401,7 +414,7 @@ class CalibrationControls(unittest.TestCase):
                     self.assertNotEqual(env.get(key), value)
                     self.assertNotIn('/injected', env['PATH'])
                     self.assertEqual(set(env), {'HOME', 'PATH', 'CARGO_HOME', 'CARGO_TARGET_DIR',
-                                                'RUSTUP_HOME', 'RUSTUP_AUTO_INSTALL'})
+                                                'RUSTUP_HOME', 'RUSTUP_AUTO_INSTALL', 'RUSTUP_TOOLCHAIN'})
 
     def test_cargo_seed_copies_only_index_and_compressed_cache(self):
         from apparatus import prepare_cargo
@@ -440,7 +453,7 @@ class CalibrationControls(unittest.TestCase):
                 'source="registry+https://github.com/rust-lang/crates.io-index"\n'
                 'checksum="' + hashlib.sha256(original).hexdigest() + '"\n')
             command = ['cargo', 'build', '--locked', '--offline', '--manifest-path', str(manifest)]
-            with patch('apparatus.subprocess.run') as run:
+            with patch('apparatus.run_tool') as run:
                 cargo_process(command, root, root / 'home', root / 'target')
                 run.assert_called_once()
                 run.reset_mock()
@@ -448,3 +461,159 @@ class CalibrationControls(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
                     cargo_process(command, root, root / 'home', root / 'target')
                 run.assert_not_called()
+
+    def test_nested_dependencies_and_workspace_packages_share_digest(self):
+        from common import dependency_roots
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            for name in ('node_modules/.pnpm/cors/node_modules/cors', 'ui/node_modules',
+                         'packages/sdk/dist', 'packages/declared/dist', 'packages/excluded/dist', 'local/pkg/dist',
+                         'arbitrary/deep/node_modules/pkg'):
+                (root / name).mkdir(parents=True)
+            (root / 'package.json').write_text('{"workspaces":{"packages":["ui","packages/*","!packages/excluded"]}}')
+            for name in ('ui', 'packages/sdk', 'packages/declared', 'packages/excluded', 'local/pkg'):
+                (root / name / 'package.json').write_text('{}')
+            (root / 'packages/sdk/dist/package.json').write_text('{}')
+            cors = root / 'node_modules/.pnpm/cors/node_modules/cors/index.js'
+            cors.write_text('original cors')
+            sdk = root / 'packages/sdk/dist/index.js'
+            sdk.write_text('original sdk')
+            declared = root / 'packages/declared/dist/index.js'
+            declared.write_text('original declared')
+            local = root / 'local/pkg/dist/index.js'
+            local.write_text('original linked package')
+            deep = root / 'arbitrary/deep/node_modules/pkg/index.js'
+            deep.write_text('original arbitrary depth')
+            ui_link = root / 'ui/node_modules/cors'
+            ui_link.symlink_to('../../node_modules/.pnpm/cors/node_modules/cors')
+            (root / 'node_modules/sdk').symlink_to('../packages/sdk')
+            (root / 'node_modules/local').symlink_to('../local/pkg')
+            # Directory links are recorded, not descended (including a cycle).
+            (root / 'cycle').symlink_to(root)
+            inventory = dependency_roots(root)
+            self.assertIn('arbitrary/deep/node_modules', inventory['node_modules'])
+            self.assertIn('node_modules/.pnpm/cors/node_modules', inventory['node_modules'])
+            self.assertEqual(inventory['workspace_packages'],
+                             ['local/pkg', 'packages/declared', 'packages/sdk', 'ui'])
+            original = node_modules_hash(root)
+            for file in (sdk, declared, local, deep):
+                before = file.read_bytes()
+                file.write_bytes(before + b'FORGED')
+                self.assertNotEqual(node_modules_hash(root), original, file)
+                file.write_bytes(before)
+            ui_link.unlink()
+            ui_link.mkdir()
+            (ui_link / 'index.js').write_text('real directory replacement')
+            self.assertNotEqual(node_modules_hash(root), original)
+            (ui_link / 'index.js').unlink()
+            ui_link.rmdir()
+            ui_link.symlink_to('../../packages/sdk')
+            self.assertNotEqual(node_modules_hash(root), original)
+            # A node_modules directory symlink still binds its raw/resolved target.
+            linked = root / 'other/node_modules'
+            linked.parent.mkdir()
+            linked.symlink_to('../node_modules')
+            changed = node_modules_hash(root)
+            linked.unlink()
+            linked.symlink_to('../ui/node_modules')
+            self.assertNotEqual(node_modules_hash(root), changed)
+            special = root / 'packages/sdk/pipe'
+            os.mkfifo(special)
+            with self.assertRaisesRegex(ValueError, 'nonregular node_modules'):
+                node_modules_hash(root)
+
+    def test_node_ancestor_modules_fail_and_record_warning(self):
+        from common import node_ancestor_admission
+        import io
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            baseline = root / 'baseline'
+            baseline.mkdir()
+            for kind in ('directory', 'broken-link'):
+                modules = root / 'node_modules'
+                modules.mkdir() if kind == 'directory' else modules.symlink_to(root / 'missing')
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaisesRegex(ValueError, 'ancestor node_modules'):
+                    node_ancestor_admission(baseline)
+                self.assertIn('WARNING', errors.getvalue())
+                modules.rmdir() if kind == 'directory' else modules.unlink()
+
+    def test_node_children_use_allowlist_and_ignore_preload_and_search_path(self):
+        import run
+        import os
+        import subprocess
+        import shutil
+        from apparatus import node_environment
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            marker = root / 'NODE_INJECTION_EXECUTED'
+            preload = root / 'preload.cjs'
+            preload.write_text('require("fs").writeFileSync(' + json.dumps(str(marker)) + ', "injected")')
+            with patch.dict(os.environ, {'NODE_PATH': str(root), 'NODE_OPTIONS': '--require=' + str(preload),
+                                         'LD_PRELOAD': '/fake', 'PARITY_ATTACK': '1', 'HTTP_PROXY': '/fake'}):
+                for env in (node_environment(), run.build_env(root, 'probe'),
+                            run.build_env(root, 'enumerate', {'PARITY_BASELINE': str(root)})):
+                    self.assertNotIn('NODE_PATH', env)
+                    self.assertNotIn('NODE_OPTIONS', env)
+                    self.assertNotIn('HTTP_PROXY', env)
+                    self.assertNotIn('PARITY_ATTACK', env)
+                    self.assertNotIn('LD_PRELOAD', env)
+                    result = subprocess.run([shutil.which('node'), '-e',
+                                             'console.log(process.env.NODE_PATH || "CLEAN")'],
+                                            env=env, capture_output=True, text=True, check=True)
+                    self.assertEqual(result.stdout.strip(), 'CLEAN')
+            self.assertFalse(marker.exists())
+
+    def test_rust_ancestor_selectors_fail_before_process_or_directory_creation(self):
+        from apparatus import cargo_process, prepare_cargo
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            cwd, home = root / 'outer/batch', root / 'cache/home'
+            cwd.mkdir(parents=True)
+            home.mkdir(parents=True)
+            paths = [cwd / 'rust-toolchain', cwd.parent / 'rust-toolchain.toml',
+                     home / 'rust-toolchain.toml', home.parent / 'rust-toolchain',
+                     root / 'rust-toolchain.toml']
+            for selector in paths:
+                for contents in ('[toolchain]\nchannel="1.98"\n', '[toolchain]\npath="/fake"\n'):
+                    selector.write_text(contents)
+                    with patch('apparatus.run_tool') as proc, self.assertRaisesRegex(ValueError, 'ancestor toolchain'):
+                        cargo_process(['cargo', '-V'], cwd, home, cwd / 'target')
+                    proc.assert_not_called()
+                    with self.assertRaisesRegex(ValueError, 'ancestor toolchain'):
+                        prepare_cargo(cwd, home, cwd / 'target', root / 'seed')
+                    self.assertFalse((cwd / 'target').exists())
+                    selector.unlink()
+            selector = home.parent / 'rust-toolchain.toml'
+            selector.symlink_to(root / 'absent')
+            with self.assertRaisesRegex(ValueError, 'ancestor toolchain'):
+                cargo_process(['rustc', '-vV'], cwd, home, cwd / 'target')
+            selector.unlink()
+            # The Python caller cwd also matters even when Cargo cwd is separate.
+            selector = root / 'rust-toolchain'
+            selector.write_text('1.98')
+            with patch('apparatus.Path.cwd', return_value=root), self.assertRaisesRegex(ValueError, 'ancestor toolchain'):
+                cargo_process(['cargo', '-V'], calibrate.ROOT, calibrate.ROOT / '_tmp/home', root / 'target')
+
+    def test_root_path_selector_and_mismatched_rustc_release_fail(self):
+        from apparatus import cargo_identity, cargo_environment
+        import subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            selector = root / 'rust-toolchain.toml'
+            selector.write_text('[toolchain]\npath="/fake"\n')
+            subprocess.run(['git', '-C', str(root), 'add', 'rust-toolchain.toml'], check=True)
+            with patch('apparatus.run_tool') as proc, self.assertRaisesRegex(ValueError, 'path= forbidden'):
+                cargo_identity(root, root / 'home', root / 'target', root=root)
+            proc.assert_not_called()
+            selector.write_text('[toolchain]\nchannel="1.99"\n')
+            env = cargo_environment(root, root / 'home', root / 'target', root=root)
+            self.assertEqual(env['RUSTUP_TOOLCHAIN'], '1.99')
+            for release in ('1.98.0', '1.99.1', '1.99.0-nightly', ''):
+                with patch('apparatus.cargo_process', return_value=type('Result', (), {'stdout': 'release: ' + release})()), \
+                        self.assertRaisesRegex(ValueError, 'release differs'):
+                    cargo_identity(root, root / 'home', root / 'target', root=root)

@@ -21,6 +21,7 @@ EXP008_FILES = ('compare.py', 'controls.py', 'driver.mjs', 'enumerate_hook.mjs',
                 'proxy/tests/node-ws-semantics.cjs', 'reconcile_routes.py', 'run.py', 'vite.config.mjs')
 APPARATUS_PATHS = ('scripts/ui-server-parity', 'scripts/exp008', 'specs/ui-server-parity')
 TOOLCHAIN_FILES = ('rust-toolchain', 'rust-toolchain.toml')
+run_tool = subprocess.run
 
 
 class ApparatusUnsafe(ValueError):
@@ -99,7 +100,7 @@ def git_admission(root, expected_head=None):
 def toolchain_files(root):
     """Optional root toolchain selectors must be tracked regular files."""
     root = Path(root)
-    tracked = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-z', '--',
+    tracked = subprocess.check_output(['/usr/bin/git', '-C', str(root), 'ls-files', '-z', '--',
                                        *TOOLCHAIN_FILES]).split(b'\0')
     files = []
     for name in TOOLCHAIN_FILES:
@@ -114,8 +115,43 @@ def toolchain_files(root):
     return files
 
 
-def cargo_config_admission(cwd, home):
+def toolchain_selector(root):
+    """Only a tracked root selector with a numbered release is admissible."""
+    import tomllib
+    files = toolchain_files(root)
+    if len(files) != 1:
+        raise ApparatusUnsafe('exactly one tracked root Rust toolchain selector required')
+    path = files[0]
+    contents = path.read_text().strip()
+    if path.name.endswith('.toml') or contents.startswith('['):
+        table = tomllib.loads(contents).get('toolchain', {})
+        if 'path' in table:
+            raise ApparatusUnsafe('root Rust toolchain path= forbidden: ' + str(path))
+        channel = table.get('channel')
+    else:
+        channel = contents
+    if not isinstance(channel, str) or not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', channel):
+        raise ApparatusUnsafe('root Rust toolchain must declare a numbered release')
+    return channel
+
+
+def rust_toolchain_admission(cwd, home, root=None):
+    root = Path(root or Path(__file__).resolve().parents[2]).resolve()
+    allowed = set(toolchain_files(root))
+    for start in (Path.cwd(), Path(cwd), Path(home)):
+        # Check lexical and real ancestors; aliases must not hide a selector.
+        for origin in (start.absolute(), start.resolve()):
+            for directory in (origin, *origin.parents):
+                for name in TOOLCHAIN_FILES:
+                    path = directory / name
+                    if os.path.lexists(path) and path not in allowed:
+                        raise ApparatusUnsafe('Rust ancestor toolchain forbidden: ' + str(path))
+    return toolchain_selector(root)
+
+
+def cargo_config_admission(cwd, home, root=None):
     """Cargo searches cwd ancestors plus CARGO_HOME; reject before any process."""
+    channel = rust_toolchain_admission(cwd, home, root)
     for directory in set([Path(cwd).absolute(), *Path(cwd).absolute().parents,
                           Path(home).absolute(), *Path(home).absolute().parents]):
         if directory.is_symlink():
@@ -126,10 +162,11 @@ def cargo_config_admission(cwd, home):
     for name in ('config', 'config.toml', 'credentials', 'credentials.toml'):
         if os.path.lexists(Path(home) / name):
             raise ApparatusUnsafe('Cargo home config/credentials forbidden: ' + str(Path(home) / name))
+    return channel
 
 
-def cargo_environment(cwd, home, target):
-    cargo_config_admission(cwd, home)
+def cargo_environment(cwd, home, target, root=None):
+    channel = cargo_config_admission(cwd, home, root)
     # Trust the installed host rustup, never a repository or inherited PATH tool.
     import pwd
     user_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -139,11 +176,12 @@ def cargo_environment(cwd, home, target):
     # An allowlist also removes linker/compiler, loader and shell injection vars.
     return {'HOME': str(user_home), 'PATH': os.pathsep.join(map(str, [tools, '/usr/bin', '/bin', '/usr/sbin', '/sbin'])),
             'CARGO_HOME': str(home), 'CARGO_TARGET_DIR': str(target),
-            'RUSTUP_HOME': str(user_home / '.rustup'), 'RUSTUP_AUTO_INSTALL': '0'}
+            'RUSTUP_HOME': str(user_home / '.rustup'), 'RUSTUP_AUTO_INSTALL': '0',
+            'RUSTUP_TOOLCHAIN': channel}
 
 
-def prepare_cargo(cwd, home, target, seed):
-    cargo_config_admission(cwd, home)
+def prepare_cargo(cwd, home, target, seed, root=None):
+    cargo_config_admission(cwd, home, root)
     target.mkdir(exist_ok=False)
     home.mkdir(exist_ok=False)
     for path in (Path(seed), Path(seed) / 'registry'):
@@ -162,14 +200,14 @@ def prepare_cargo(cwd, home, target, seed):
                 if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
                     raise ApparatusUnsafe('nonregular Cargo cache seed: ' + str(path))
         shutil.copytree(source, home / 'registry' / name)
-    return cargo_environment(cwd, home, target)
+    return cargo_environment(cwd, home, target, root)
 
 
-def cargo_process(command, cwd, home, target, **kwargs):
-    env = cargo_environment(cwd, home, target)
+def cargo_process(command, cwd, home, target, *, root=None, **kwargs):
+    env = cargo_environment(cwd, home, target, root)
     if '--manifest-path' in command:
         cargo_archive_admission(home, Path(command[command.index('--manifest-path') + 1]))
-    return subprocess.run(command, cwd=cwd, env=env, check=True, **kwargs)
+    return run_tool(command, cwd=cwd, env=env, check=True, **kwargs)
 
 
 def cargo_archive_admission(home, manifest):
@@ -196,11 +234,16 @@ def cargo_archive_admission(home, manifest):
                 raise ApparatusUnsafe('Cargo.lock archive checksum mismatch: ' + str(archive))
 
 
-def cargo_identity(cwd, home, target):
+def cargo_identity(cwd, home, target, root=None):
     versions = {}
     for name, args in (('rustc', ['-vV']), ('cargo', ['-V'])):
         versions[name] = cargo_process([name, *args], cwd, home, target,
-                                      capture_output=True, text=True).stdout.strip()
+                                      root=root, capture_output=True, text=True).stdout.strip()
+    channel = rust_toolchain_admission(cwd, home, root)
+    expected = channel if channel.count('.') == 2 else channel + '.0'
+    release = re.search(r'^release: (.+)$', versions['rustc'], re.M)
+    if not release or release[1] != expected:
+        raise ApparatusUnsafe('rustc release differs from root declaration: ' + channel)
     return versions
 
 
@@ -302,3 +345,15 @@ def preflight(directory):
         print(str(error), file=sys.stderr)
         print('{"verdict":"FAIL","errors":["unsafe apparatus; see stderr"]}')
         raise SystemExit(1)
+
+
+def node_environment(values=None):
+    """Node version probes and B2 children inherit only these host variables."""
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ')
+           if key in os.environ}
+    if values:
+        env.update(values)
+    # Even caller-supplied fixture variables cannot inject a loader/search path.
+    env.pop('NODE_PATH', None)
+    env.pop('NODE_OPTIONS', None)
+    return env
