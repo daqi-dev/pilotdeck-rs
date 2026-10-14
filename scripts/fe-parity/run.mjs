@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { baseline, root, requireUI, historicalInventory, ownedPath, origin } from './env.mjs';
-import { reportCases, checkInventory, reconcilePair, loadReportPair } from './accounting.mjs';
+import { reportCases, checkInventory, reconcile, reconcilePair, loadReportPair, PENDING_STATUS } from './accounting.mjs';
+import { executionEnv, PROFILES } from './execution-env.mjs';
 import { verifyBaseline } from './baseline.mjs';
 import { selfCheck } from './self-check.mjs';
 import { startMock, TOKEN } from './mock.mjs';
@@ -13,27 +14,33 @@ const { values } = parseArgs({ options: {
   help: { type: 'boolean' }, 'self-check': { type: 'boolean' }, 'network-self-check': { type: 'boolean' },
   reconcile: { type: 'boolean' }, suite: { type: 'string', default: 'skeleton' },
   frontends: { type: 'string', default: 'old,new' }, 'old-report': { type: 'string', multiple: true }, 'new-report': { type: 'string', multiple: true },
-  output: { type: 'string' },
+  output: { type: 'string' }, profiles: { type: 'string', default: PROFILES.join(',') }, 'rules-only': { type: 'boolean' },
 } });
 if (values.help) {
-  console.log(`Usage (from worktree root; no browser downloads):
-  node scripts/fe-parity/run.mjs --self-check
-  node scripts/fe-parity/run.mjs --network-self-check    # coordinator only: loopback HTTP/WS
+  console.log(`Usage (worktree root; system Chrome only, no browser downloads):
+  node scripts/fe-parity/run.mjs --self-check [--rules-only]
+  node scripts/fe-parity/run.mjs --network-self-check
+  node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old
+  node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old,new
+  node scripts/fe-parity/run.mjs --suite baseline --profiles staffdeck,minimal,replacement --frontends old,new
   node scripts/fe-parity/run.mjs --suite skeleton --frontends old,new
-  node scripts/fe-parity/run.mjs --reconcile --old-report <Playwright JSON> --new-report <Playwright JSON>
+  node scripts/fe-parity/run.mjs --reconcile --old-report <JSON> --new-report <JSON>
 
-Always discovers baseline ui/e2e with --list --forbid-only, compares exp007's 72 registrations.
-Skeleton = 3 new auth/transport cases against one mock, actual old Vite / Leptos probe.
-Skeleton cannot cover the 72 baseline cases: full reconciliation remains FAIL (exit 1).
---reconcile requires distinct old/new reports with matching frontend/baseURL metadata and identical merged skip sets. Repeat report flags for complete profile runs.
---self-check does not listen or launch Chrome, fails if static assets are absent.
-All generated reports/profiles/screenshots live under this worktree _tmp/fe-parity.
-Ports: mock 28376 / old 28377 / new 28378, bind only 127.0.0.1.
-See scripts/fe-parity/README.md for source builds and next PR scope.`);
+Baseline config is repository-owned: no webServer/global setup/real launch.
+Every profile produces a complete original 72-case JSON; repeated report flags merge profiles.
+Streaming and skeleton have separate denominators; they never credit the baseline 72.
+Single-side PASS means calibration only. The probe's missing chat is FAIL, never skipped.
+--rules-only omits build-artifact checks (self-check only), never used by browser preflight.
+Ports 28376/28377/28378; bind 127.0.0.1; artifacts/profiles stay in this worktree.
+See README.md for known incomplete mock deployment coverage and coordinator commands.`);
   process.exit(0);
 }
-if (values.frontends !== 'old,new' || values.suite !== 'skeleton') throw new Error('This PR supports only --suite skeleton --frontends old,new; deployment suites are next PR');
+const frontends = values.frontends.split(','), profiles = values.profiles.split(',');
+if (!['old', 'new', 'old,new'].includes(values.frontends)) throw new Error('frontends must be old, new or old,new');
+if (!['skeleton', 'streaming-scroll', 'baseline'].includes(values.suite)) throw new Error('Unknown suite');
+if (new Set(profiles).size !== profiles.length || profiles.some(profile => !PROFILES.includes(profile))) throw new Error('Invalid/duplicate profiles');
 if ([values['self-check'], values['network-self-check'], values.reconcile].filter(Boolean).length > 1) throw new Error('Select one run mode');
+if (values['rules-only'] && !values['self-check']) throw new Error('--rules-only requires --self-check');
 if (!values.reconcile && (values['old-report'] || values['new-report'])) throw new Error('Reports require --reconcile');
 const base = resolve(root, '_tmp/fe-parity'); await mkdir(base, { recursive: true });
 let output;
@@ -52,7 +59,7 @@ function command(args, env = {}) {
   return new Promise((resolveResult, reject) => {
     if (interrupted) return reject(new Error('Run interrupted'));
     const child = spawn(process.execPath, [requireUI.resolve('@playwright/test/cli'), ...args], {
-      cwd: root, detached: true, env: { ...process.env, ...env, PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: root, detached: true, env: { ...executionEnv(process.env), ...env }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     children.add(child); let stdout = '', stderr = '';
     child.stdout.on('data', data => { stdout += data; }); child.stderr.on('data', data => { stderr += data; });
@@ -61,14 +68,26 @@ function command(args, env = {}) {
   });
 }
 function printAccount(frontend, account) {
-  console.log(`${frontend}: 分母 ${account.denominator}; 应执行数 ${account.expected} vs 实际执行数 ${account.executed}; 显式 skip ${account.explicitSkips}; ${account.status}`);
-  for (const row of account.rows) if (['SKIP', 'NOT_RUN'].includes(row.status)) console.log(`  ${row.status} ${row.file} :: ${row.title} — ${row.reason}`);
+  console.log(`${frontend}: 分母 ${account.denominator}; 应执行数 ${account.expected} vs 实际执行数 ${account.executed}; 显式 skip ${account.explicitSkips}; 待编排 ${account.pendingOrchestration}; ${account.status}`);
+  for (const row of account.rows) if (['SKIP', 'NOT_RUN', PENDING_STATUS].includes(row.status)) console.log(`  ${row.status} ${row.file} :: ${row.title} — ${row.reason}${row.source ? ` — ${Object.values(row.source).join(', ')}` : ''}`);
 }
 function table(inventory, accounts) {
   const cell = value => String(value).replaceAll('|', '\\|').replaceAll('\n', ' ');
-  return ['| 用例 | old | new |', '|---|---|---|', ...inventory.map((row, index) => `| ${cell(`${row.file} :: ${row.title}`)} | ${cell(accounts.old.rows[index].status)} | ${cell(accounts.new.rows[index].status)} |`)].join('\n');
+  const lines = ['| 用例 | old | new |', '|---|---|---|', ...inventory.map((row, index) => `| ${cell(`${row.file} :: ${row.title}`)} | ${cell(accounts.old?.rows[index]?.status || 'NOT_RUN')} | ${cell(accounts.new?.rows[index]?.status || 'NOT_RUN')} |`)];
+  const pending = [];
+  for (const frontend of ['old', 'new']) for (const [index, profile] of (accounts[frontend]?.profiles || (accounts[frontend] ? [accounts[frontend]] : [])).entries()) {
+    for (const row of profile.rows.filter(row => row.status === PENDING_STATUS)) pending.push(`| ${frontend} / report ${index + 1} | ${cell(`${row.file} :: ${row.title}`)} | ${cell(JSON.stringify(row.rawSkipAnnotations))} | ${cell(row.baselineSkipDescription === null ? '无：基线未写 test.skip 理由（serial 级联）' : row.baselineSkipDescription)} | ${cell(Object.values(row.source).join(', '))} |`);
+  }
+  if (pending.length) lines.push('', `D 类 ${PENDING_STATUS}：不扣减分母/应执行数，整体仍 FAIL。逐份原件列示（含被其他 profile 执行覆盖的身份）；report 序号对应 result.json profiles 输入顺序。`, '', '| 端 / 原件 | 身份 | 原始 skip annotations | 基线 skip 原文 | 注册 / serial / 编排回源 |', '|---|---|---|---|---|', ...pending);
+  return lines.join('\n');
 }
-const result = { scope: values['self-check'] ? 'offline-self-check' : values['network-self-check'] ? 'network-self-check' : values.reconcile ? 'baseline-reconcile' : 'skeleton-double-run', output, startedAt: new Date().toISOString(), status: 'FAIL' };
+function account(inventory, reports, testDir, sides) {
+  if (sides.length === 2) return reconcilePair(inventory, reports, testDir, { old: origin('old'), new: origin('new') });
+  const frontend = sides[0], result = reconcile(inventory, reports[frontend], testDir), errors = [];
+  for (const report of reports[frontend]) if (report.config?.metadata?.frontend !== frontend || report.config?.metadata?.baseURL !== origin(frontend)) errors.push('Invalid report frontend/baseURL provenance');
+  return { [frontend]: result, errors, status: errors.length ? 'FAIL' : result.status };
+}
+const result = { scope: values['self-check'] ? 'offline-self-check' : values['network-self-check'] ? 'network-self-check' : values.reconcile ? 'baseline-reconcile' : `${values.suite}-${frontends.length === 2 ? 'double-run' : 'single-run'}`, output, startedAt: new Date().toISOString(), status: 'FAIL' };
 try {
   result.baseline = await verifyBaseline(baseline);
   console.log(`基线 commit: ${result.baseline.head}; clean tracked source`);
@@ -82,14 +101,14 @@ try {
   console.log(`基线展开注册数: exp007 ${historical.registered} vs 本次 ${inventory.length}; --forbid-only`);
   if (result.registration.errors.length) throw new Error(JSON.stringify(result.registration.errors));
   if (values['self-check'] || values['network-self-check']) {
-    result.offline = await selfCheck();
+    result.offline = await selfCheck({ assets: !values['rules-only'], frontends });
     for (const check of result.offline.checks) console.log(`${check.status} ${check.name}${check.error ? `: ${check.error}` : ''}`);
     if (result.offline.status !== 'PASS') throw new Error('Offline self-check failed (see result.json)');
     if (values['network-self-check']) {
       const mock = await startMock(); resources.push(mock);
-      for (const frontend of ['old', 'new']) resources.push(await startFrontend(frontend));
+      for (const frontend of frontends) resources.push(await startFrontend(frontend));
       const { WebSocket } = requireUI('ws');
-      for (const frontend of ['old', 'new']) {
+      for (const frontend of frontends) {
         const response = await fetch(`${origin(frontend)}${frontend === 'new' ? '/probe/leptos/' : '/'}`);
         if (!response.ok || !(await response.text()).includes('<script')) throw new Error(`${frontend}: static entry not served`);
         const login = await fetch(`${origin(frontend)}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'probe', password: 'probe-secret' }) });
@@ -103,7 +122,7 @@ try {
         });
       }
       result.network = { status: 'PASS', mock: mock.stats };
-      console.log('PASS loopback static/HTTP/WS both frontends');
+      console.log(`PASS loopback static/HTTP/WS ${frontends.join(',')}`);
     }
     // No baseline browser tests are executed by self-check. This is a separate gate.
     result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN', reason: 'self-check only' };
@@ -112,39 +131,82 @@ try {
   } else {
     const reports = {};
     if (!values.reconcile) {
-      result.offline = await selfCheck();
+      result.offline = await selfCheck({ frontends });
       if (result.offline.status !== 'PASS') throw new Error('Preflight failed; run --self-check for details');
-      resources.push(await startMock());
-      for (const frontend of ['old', 'new']) resources.push(await startFrontend(frontend));
-      for (const frontend of ['old', 'new']) {
-        const execution = await command(['test', '--config', resolve(root, 'scripts/fe-parity/browser.config.mjs'), '--forbid-only'], { FE_FRONTEND: frontend, FE_OUTPUT: output });
-        await writeFile(resolve(output, `${frontend}.stdout.log`), execution.stdout);
-        await writeFile(resolve(output, `${frontend}.stderr.log`), execution.stderr);
-        try { reports[frontend] = JSON.parse(await readFile(resolve(output, `${frontend}.json`), 'utf8')); }
-        catch { reports[frontend] = { errors: [{ message: `No JSON result: exit ${execution.code}, ${execution.stderr}` }] }; }
-        if (execution.code !== 0) (reports[frontend].errors ||= []).push({ message: `Playwright exit ${execution.code}` });
+      await mkdir(resolve(output, 'browser-tmp'));
+      await writeFile(resolve(output, 'mock-runtime.json'), JSON.stringify({ backend: 'f2-mock', projectPath: '/probe' }));
+      await writeFile(resolve(output, 'mock-replacement.ndjson'), '');
+      const mock = await startMock(); resources.push(mock);
+      for (const frontend of frontends) resources.push(await startFrontend(frontend));
+      const baselineSuite = values.suite === 'baseline';
+      const config = resolve(root, `scripts/fe-parity/${baselineSuite ? 'baseline' : 'browser'}.config.mjs`);
+      const testDir = baselineSuite ? resolve(baseline, 'e2e') : resolve(root, 'scripts/fe-parity/tests');
+      let registered;
+      result.executions = [];
+      for (const frontend of frontends) {
+        reports[frontend] = [];
+        for (const profile of baselineSuite ? profiles : [undefined]) {
+          if (interrupted) throw new Error('Run interrupted');
+          mock.stream.reset();
+          const name = profile ? `${frontend}-${profile}` : frontend;
+          const env = executionEnv(process.env, { frontend, output, profile, suite: values.suite });
+          // Discover the executing config too: catches profile-dependent registration drift.
+          const listing = await command(['test', '--config', config, '--list', '--forbid-only', '--reporter=json'], env);
+          await writeFile(resolve(output, `${name}.inventory.json`), listing.stdout);
+          await writeFile(resolve(output, `${name}.inventory.stderr.log`), listing.stderr);
+          if (listing.code !== 0) throw new Error(`${name} registration failed: ${listing.stderr}`);
+          const listReport = JSON.parse(listing.stdout);
+          const rows = reportCases(listReport, testDir);
+          if (listReport.errors?.length) throw new Error(`${name} registration errors`);
+          if (baselineSuite) {
+            const errors = checkInventory(rows, historical);
+            if (errors.length) throw new Error(JSON.stringify(errors));
+          } else {
+            const expected = values.suite === 'skeleton' ? 3 : 4;
+            if (rows.length !== expected) throw new Error(`${values.suite} registration drift ${rows.length} != ${expected}`);
+            if (registered && JSON.stringify(rows.map(({ file, title }) => ({ file, title }))) !== JSON.stringify(registered.map(({ file, title }) => ({ file, title })))) throw new Error('Frontend registration differs');
+          }
+          registered = rows;
+          console.log(`Running ${name}: ${values.suite}, ${rows.length} registered`);
+          const execution = await command(['test', '--config', config, '--forbid-only'], env);
+          await writeFile(resolve(output, `${name}.stdout.log`), execution.stdout);
+          await writeFile(resolve(output, `${name}.stderr.log`), execution.stderr);
+          let report;
+          try { report = JSON.parse(await readFile(resolve(output, `${name}.json`), 'utf8')); }
+          catch { report = { errors: [{ message: `No JSON result: exit ${execution.code}, ${execution.stderr}` }] }; }
+          // Preserve the original reporter JSON. Execution errors affect accounting in memory.
+          if (execution.code !== 0) (report.errors ||= []).push({ message: `Playwright exit ${execution.code}` });
+          reports[frontend].push(report);
+          result.executions.push({ frontend, profile, exitCode: execution.code, signal: execution.signal, report: `${name}.json` });
+        }
       }
-      const skeletonInventory = reportCases(reports.old, resolve(root, 'scripts/fe-parity/tests')).map(({ file, title }) => ({ file, title }));
-      // Independent discovery prevents both frontends omitting the same test and going green.
-      const skeletonList = await command(['test', '--config', resolve(root, 'scripts/fe-parity/browser.config.mjs'), '--list', '--forbid-only', '--reporter=json'], { FE_FRONTEND: 'old', FE_OUTPUT: output });
-      if (skeletonList.code !== 0) throw new Error('Skeleton registration failed');
-      const registered = reportCases(JSON.parse(skeletonList.stdout), resolve(root, 'scripts/fe-parity/tests'));
-      result.skeleton = reconcilePair(registered, reports, resolve(root, 'scripts/fe-parity/tests'), { old: origin('old'), new: origin('new') });
-      if (registered.length !== 3) throw new Error(`Skeleton registration drift: ${registered.length} != 3`);
-      const skeletonTable = table(registered, result.skeleton);
-      console.log(`骨架逐例对照（独立于基线72）\n${skeletonTable}`);
-      await writeFile(resolve(output, 'skeleton.md'), skeletonTable + '\n');
-      // These new tests are not baseline registrations; deliberately do not credit them.
-      reports.old = { suites: [] }; reports.new = { suites: [] };
-      result.skeleton.reported = skeletonInventory.length;
+      if (!baselineSuite) {
+        result[values.suite] = account(registered, reports, testDir, frontends);
+        const comparison = table(registered, result[values.suite]);
+        console.log(comparison);
+        await writeFile(resolve(output, `${values.suite}.md`), comparison + '\n');
+        result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN', reason: `${values.suite} has a separate denominator` };
+        result.status = result[values.suite].status === 'PASS' ? (frontends.length === 1 ? 'PASS_SINGLE_FRONTEND_ONLY' : 'PASS_SUITE_ONLY') : 'FAIL';
+        // Keep skeleton's historical full-baseline gate, streaming is an explicit standalone F5 gate.
+        if (values.suite === 'skeleton') {
+          result.accounting = reconcilePair(inventory, { old: { suites: [] }, new: { suites: [] } }, resolve(baseline, 'e2e'), { old: origin('old'), new: origin('new') });
+          await writeFile(resolve(output, 'baseline-parity.md'), table(inventory, result.accounting) + '\n');
+          result.status = 'FAIL';
+        }
+      }
+      result.mock = mock.stats;
+
     } else {
+      result.reportInputs = { old: values['old-report'] || [], new: values['new-report'] || [] };
       Object.assign(reports, await loadReportPair({ old: values['old-report'], new: values['new-report'] }));
     }
-    result.accounting = reconcilePair(inventory, reports, resolve(baseline, 'e2e'), { old: origin('old'), new: origin('new') });
-    for (const frontend of ['old', 'new']) printAccount(frontend, result.accounting[frontend]);
-    for (const error of result.accounting.errors) console.error(error);
-    await writeFile(resolve(output, 'baseline-parity.md'), table(inventory, result.accounting) + '\n');
-    result.status = result.accounting.status;
+    if (values.reconcile || values.suite === 'baseline') {
+      result.accounting = account(inventory, reports, resolve(baseline, 'e2e'), values.reconcile ? ['old', 'new'] : frontends);
+      for (const frontend of values.reconcile ? ['old', 'new'] : frontends) printAccount(frontend, result.accounting[frontend]);
+      for (const error of result.accounting.errors) console.error(error);
+      await writeFile(resolve(output, 'baseline-parity.md'), table(inventory, result.accounting) + '\n');
+      result.status = result.accounting.status === 'PASS' && frontends.length === 1 && !values.reconcile ? 'PASS_SINGLE_FRONTEND_ONLY' : result.accounting.status;
+    }
   }
 } catch (error) { result.error = error.stack; console.error(error.message); }
 finally {

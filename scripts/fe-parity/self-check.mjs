@@ -1,3 +1,5 @@
+import { streamSelfCheck } from './stream-self-check.mjs';
+import { orchestrationSelfCheck } from './orchestration-self-check.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { verifyBaseline } from './baseline.mjs';
@@ -9,7 +11,7 @@ import { reconcile, reconcilePair, loadReportPair, SKIP_ALLOWLIST, caseId, check
 import { oldDist, newDist, ports, ownedPath, root, baseline, historicalInventory, origin } from './env.mjs';
 import { assetPath } from './serve.mjs';
 import { checkMessageMap } from './message-map.mjs';
-export async function selfCheck() {
+export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = {}) {
   const checks = [];
   async function check(name, run) {
     try { await run(); checks.push({ name, status: 'PASS' }); }
@@ -32,6 +34,23 @@ export async function selfCheck() {
     assert.equal((await request('/api/projects', undefined, `Bearer ${TOKEN}`)).body[0].displayName, 'F2 project');
     assert.equal((await request('/api/projects/probe/sessions', undefined, `Bearer ${TOKEN}`)).body.sessions[0].id, 's');
     assert.equal((await request('/api/missing', undefined, `Bearer ${TOKEN}`)).status, 404);
+    const messages = await request('/api/sessions/s/messages', undefined, `Bearer ${TOKEN}`);
+    assert.equal(messages.body.messages.length, 48); assert.equal(messages.body.hasMore, false);
+    assert.equal((await request('/__parity/stream?action=start&scenario=reading', '')).status, 409);
+    const sent = [], socket = { path: '/ws', readyState: 1, send: value => sent.push(JSON.parse(value)) };
+    mock.handleMessage(socket, JSON.stringify({ type: 'watch-session', sessionId: 's' }));
+    assert.equal((await request('/__parity/stream')).body.watchers, 1);
+    try {
+      assert.equal((await request('/__parity/stream?action=start&scenario=toString', '')).status, 400);
+      assert.equal((await request('/__parity/stream?action=start&scenario=reading', '')).status, 202);
+      assert.equal(sent.at(-1).kind, 'status');
+      assert.equal((await request('/__parity/stream?action=start&scenario=reading', '')).status, 400);
+      mock.handleMessage(socket, JSON.stringify({ type: 'check-session-status', sessionId: 's', statusRequestId: 42 }));
+      assert.equal(sent.at(-1).isProcessing, true); assert.equal(sent.at(-1).statusRequestId, 42);
+      await request('/__parity/stream?action=stop', ''); assert.equal(mock.stream.state.status, 'cancelled');
+      await request('/__parity/stream?action=reset', ''); assert.equal(mock.stream.state.status, 'idle');
+      mock.detach(socket); assert.equal((await request('/__parity/stream')).body.watchers, 0);
+    } finally { mock.close(); }
   });
   await check('mock WS handlers in process (no listen)', async () => {
     const mock = createMock(), sent = [], socket = { path: '/ws', send: raw => sent.push(JSON.parse(raw)) };
@@ -92,7 +111,7 @@ export async function selfCheck() {
     }
     const downgrade = pair(make('old'), make('new', inventory.map((_, i) => i)));
     assert.equal(downgrade.status, 'FAIL');
-    assert.equal(downgrade.errors.filter(error => error.startsWith('skip identity only in new:')).length, 72);
+    assert.equal(downgrade.errors.filter(error => error.startsWith('skip identity only in new:')).length, 44); // D's 28 are pending, never SKIP.
     assert.equal(pair(make('old', [1]), make('new', [2])).status, 'FAIL');
     assert.equal(pair(make('old', [1]), make('new')).status, 'FAIL');
     assert.equal(pair(make('old'), make('old')).status, 'FAIL');
@@ -236,14 +255,21 @@ export async function selfCheck() {
     assert.deepEqual(Object.values(ports), [28376, 28377, 28378]);
     assert.throws(() => ownedPath('/tmp/external')); assert.throws(() => ownedPath(resolve(oldDist, '../../outside')));
   });
-  await check('baseline full Vite static build exists', async () => {
+  await streamSelfCheck(check);
+  await orchestrationSelfCheck(check);
+  if (assets && frontends.includes('old')) await check('baseline full Vite static build exists', async () => {
     const html = await readFile(resolve(oldDist, 'index.html'), 'utf8');
     assert.match(html, /<script[^>]+src=/);
+    for (const file of ['composition.html', 'e2e/fixtures/model-selection.html', 'e2e/fixtures/streaming-lifecycle.html', 'e2e/fixtures/streaming-scroll.html']) {
+      const fixture = await readFile(resolve(oldDist, file), 'utf8');
+      assert.match(fixture, /<script[^>]+src=/);
+      assert.equal(await assetPath('old', `/${file}`), resolve(oldDist, file));
+    }
     const assets = await readdir(resolve(oldDist, 'assets')); assert(assets.some(path => path.endsWith('.js')));
     for (const match of html.matchAll(/(?:src|href)="(\/assets\/[^"?#]+)"/g)) assert((await stat(resolve(oldDist, match[1].slice(1)))).size > 0);
     assert.equal(await assetPath('old', '/settings/models'), resolve(oldDist, 'index.html'));
   });
-  await check('Leptos JS/Wasm static build and island assets exist', async () => {
+  if (assets && frontends.includes('new')) await check('Leptos JS/Wasm static build and island assets exist', async () => {
     for (const file of ['index.html', 'probe.js', 'probe_bg.wasm']) assert((await stat(resolve(newDist, file))).size > 0);
     assert.deepEqual([...(await readFile(resolve(newDist, 'probe_bg.wasm'))).subarray(0, 4)], [0, 97, 115, 109]);
     assert.equal(await assetPath('new', '/probe/leptos/probe.js'), resolve(newDist, 'probe.js'));
@@ -251,5 +277,5 @@ export async function selfCheck() {
     await assert.rejects(() => assetPath('new', '/shared/../../CLAUDE.md'));
     await assert.rejects(() => assetPath('old', '/%2e%2e/CLAUDE.md'));
   });
-  return { scope: 'OFFLINE_ONLY: handlers and artifacts, no loopback listen or Chrome', status: checks.some(c => c.status === 'FAIL') ? 'FAIL' : 'PASS', checks };
+  return { scope: 'OFFLINE_ONLY: no loopback listen or Chrome', artifactsChecked: assets ? frontends : [], status: checks.some(c => c.status === 'FAIL') ? 'FAIL' : 'PASS', checks };
 }
