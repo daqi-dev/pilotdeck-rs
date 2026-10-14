@@ -5,6 +5,7 @@
   "yaml": "2.9.0",
   "generated": 2986,
   "legacy": 71,
+  "round4": 42,
   "shards": [
     {
       "file": "legacy-stages-000.json",
@@ -101,6 +102,12 @@
       "cases": 115,
       "bytes": 645777,
       "sha256": "c4e5c9bff759aef7a6f6ba7891b6f2bd77145e05fd60462295c6b352599e7b4b"
+    },
+    {
+      "file": "round4-000.json",
+      "cases": 42,
+      "bytes": 517022,
+      "sha256": "6f95b3eadfadda8f86be964b6970fd18944a3c36c034c5e9fbc8134b277c5f2d"
     }
   ]
 }

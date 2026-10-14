@@ -43,7 +43,7 @@ impl Context<'_> {
         };
         data.count += 1;
         if data.alias_count == 0 {
-            let count = self.alias_count(source);
+            let count = self.alias_count(source)?;
             self.anchors.get_mut(&source).unwrap().alias_count = count;
         }
         let data = self.anchors.get(&source).unwrap();
@@ -55,29 +55,40 @@ impl Context<'_> {
         }
         Ok(data.res.clone())
     }
-    pub(crate) fn alias_count(&self, id: NodeId) -> usize {
-        match &self.doc.nodes[id].kind {
-            NodeKind::Alias(_) => self
-                .resolve_alias(id)
-                .and_then(|id| self.anchors.get(&id))
-                .map_or(0, |a| a.count.saturating_mul(a.alias_count)),
-            NodeKind::Seq(items) => items
-                .iter()
-                .map(|n| self.alias_count(*n))
-                .max()
-                .unwrap_or(0),
-            NodeKind::Map(pairs)
-            | NodeKind::Set(pairs)
-            | NodeKind::OMap(pairs)
-            | NodeKind::Pairs(pairs) => pairs
-                .iter()
-                .map(|p| {
-                    self.alias_count(p.key)
-                        .max(p.value.map_or(1, |v| self.alias_count(v)))
-                })
-                .max()
-                .unwrap_or(0),
-            _ => 1,
+    pub(crate) fn alias_count(&self, id: NodeId) -> Result<usize, ConversionError> {
+        let mut maximum = 0;
+        let mut pending = vec![(id, 0)];
+        while let Some((id, depth)) = pending.pop() {
+            if depth >= crate::stack::CONVERSION_DEPTH {
+                return Err(crate::stack::conversion_exhausted());
+            }
+            let count = match &self.doc.nodes[id].kind {
+                NodeKind::Alias(_) => self
+                    .resolve_alias(id)
+                    .and_then(|id| self.anchors.get(&id))
+                    .map_or(0, |a| a.count.saturating_mul(a.alias_count)),
+                NodeKind::Seq(items) => {
+                    pending.extend(items.iter().map(|id| (*id, depth + 1)));
+                    0
+                }
+                NodeKind::Map(pairs)
+                | NodeKind::Set(pairs)
+                | NodeKind::OMap(pairs)
+                | NodeKind::Pairs(pairs) => {
+                    for p in pairs {
+                        pending.push((p.key, depth + 1));
+                        if let Some(v) = p.value {
+                            pending.push((v, depth + 1));
+                        } else {
+                            maximum = maximum.max(1);
+                        }
+                    }
+                    0
+                }
+                _ => 1,
+            };
+            maximum = maximum.max(count);
         }
+        Ok(maximum)
     }
 }

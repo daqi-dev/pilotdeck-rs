@@ -86,6 +86,8 @@ impl Composer {
         }
         let schema = Schema::new(directives.version == "1.1");
         Context {
+            depth: 0,
+            depth_limit: crate::stack::FLOW_SEQ,
             at_key: false,
             at_root: true,
             directives,
@@ -157,7 +159,7 @@ impl Composer {
     pub(crate) fn take_documents(&mut self) -> Vec<Document> {
         std::mem::take(&mut self.output)
     }
-    pub(crate) fn next(&mut self, token: Token) {
+    pub(crate) fn next(&mut self, mut token: Token) {
         match token.kind {
             Directive => {
                 for (offset, msg, warning) in self.directives.add(token.source.as_ref().unwrap()) {
@@ -170,7 +172,7 @@ impl Composer {
                         self.errors.push(d);
                     }
                 }
-                self.prelude.push(token.source.unwrap());
+                self.prelude.push(token.source.take().unwrap());
                 self.at_directives = true;
             }
             Document => {
@@ -193,7 +195,7 @@ impl Composer {
                 self.at_directives = false;
             }
             ByteOrderMark | Space => (),
-            Comment | Newline => self.prelude.push(token.source.unwrap()),
+            Comment | Newline => self.prelude.push(token.source.take().unwrap()),
             Error => {
                 let source = token.source.as_ref().unwrap();
                 let msg = if source.is_empty() {
@@ -220,6 +222,8 @@ impl Composer {
                 };
                 doc.directives.doc_end = true;
                 let mut ctx = Context {
+                    depth: 0,
+                    depth_limit: crate::stack::FLOW_SEQ,
                     at_key: false,
                     at_root: false,
                     directives: doc.directives.clone(),

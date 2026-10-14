@@ -68,9 +68,7 @@ fn fix_flow_seq_items(fc: &mut Token) {
                 }
                 let sep = it.sep.take().unwrap();
                 if is_flow_token(it.value.as_deref()) {
-                    it.value
-                        .as_mut()
-                        .unwrap()
+                    std::sync::Arc::make_mut(it.value.as_mut().unwrap())
                         .end
                         .get_or_insert_with(Vec::new)
                         .extend(sep);
@@ -87,7 +85,7 @@ fn item(start: Vec<Token>) -> CollectionItem {
         ..Default::default()
     }
 }
-fn pair(start: Vec<Token>, key: Option<Box<Token>>, sep: Vec<Token>) -> CollectionItem {
+fn pair(start: Vec<Token>, key: Option<std::sync::Arc<Token>>, sep: Vec<Token>) -> CollectionItem {
     CollectionItem {
         start,
         key: Some(key),
@@ -109,6 +107,8 @@ pub struct Parser {
     lexer: Lexer,
     pub line_counter: LineCounter,
     output: Vec<Token>,
+    stepping: bool,
+    step_pending: bool,
 }
 impl Default for Parser {
     fn default() -> Self {
@@ -124,6 +124,8 @@ impl Default for Parser {
             lexer: Lexer::default(),
             line_counter: LineCounter::default(),
             output: Vec::new(),
+            stepping: false,
+            step_pending: false,
         }
     }
 }
@@ -212,7 +214,21 @@ impl Parser {
         token.source = Some(self.source.clone());
         token
     }
+    // Upstream tail-calls step when a lexeme closes several block frames.
+    // Trampoline those calls; a dedent may close a million frames at once.
     fn step(&mut self) {
+        self.step_pending = true;
+        if self.stepping {
+            return;
+        }
+        self.stepping = true;
+        while self.step_pending {
+            self.step_pending = false;
+            self.step_inner();
+        }
+        self.stepping = false;
+    }
+    fn step_inner(&mut self) {
         if self.kind == DocEnd && self.stack.last().is_none_or(|t| t.kind != DocEnd) {
             self.finish();
             let mut token = Token::new(DocEnd, self.offset);
@@ -239,6 +255,13 @@ impl Parser {
         }
     }
     fn pop(&mut self, error: Option<Token>) {
+        let mut pending = Vec::new();
+        self.pop_inner(error, &mut pending);
+        while let Some(error) = pending.pop() {
+            self.pop_inner(error, &mut pending);
+        }
+    }
+    fn pop_inner(&mut self, error: Option<Token>, pending: &mut Vec<Option<Token>>) {
         let Some(mut token) = error.or_else(|| self.stack.pop()) else {
             let mut token = self.error("Tried to pop an empty stack".into());
             token.source = Some(JsString::default());
@@ -286,19 +309,22 @@ impl Parser {
             None
         };
         match top.kind {
-            Document => top.value = Some(Box::new(token)),
+            Document => top.value = Some(std::sync::Arc::new(token)),
             BlockScalar => top.props.push(token),
             BlockMap => {
                 let it = top.items.last_mut().unwrap();
                 if it.value.is_some() {
-                    top.items
-                        .push(pair(Vec::new(), Some(Box::new(token)), Vec::new()));
+                    top.items.push(pair(
+                        Vec::new(),
+                        Some(std::sync::Arc::new(token)),
+                        Vec::new(),
+                    ));
                     self.on_key_line = true;
                     return;
                 } else if it.sep.is_some() {
-                    it.value = Some(Box::new(token));
+                    it.value = Some(std::sync::Arc::new(token));
                 } else {
-                    it.key = Some(Some(Box::new(token)));
+                    it.key = Some(Some(std::sync::Arc::new(token)));
                     it.sep = Some(Vec::new());
                     self.on_key_line = !it.explicit_key;
                     return;
@@ -308,31 +334,34 @@ impl Parser {
                 let it = top.items.last_mut().unwrap();
                 if it.value.is_some() {
                     top.items.push(CollectionItem {
-                        value: Some(Box::new(token)),
+                        value: Some(std::sync::Arc::new(token)),
                         ..Default::default()
                     });
                 } else {
-                    it.value = Some(Box::new(token));
+                    it.value = Some(std::sync::Arc::new(token));
                 }
             }
             FlowCollection => {
                 if top.items.last().is_none_or(|it| it.value.is_some()) {
-                    top.items
-                        .push(pair(Vec::new(), Some(Box::new(token)), Vec::new()));
+                    top.items.push(pair(
+                        Vec::new(),
+                        Some(std::sync::Arc::new(token)),
+                        Vec::new(),
+                    ));
                 } else {
                     let it = top.items.last_mut().unwrap();
                     if it.sep.is_some() {
-                        it.value = Some(Box::new(token));
+                        it.value = Some(std::sync::Arc::new(token));
                     } else {
-                        it.key = Some(Some(Box::new(token)));
+                        it.key = Some(Some(std::sync::Arc::new(token)));
                         it.sep = Some(Vec::new());
                     }
                 }
                 return;
             }
             _ => {
-                self.pop(None);
-                self.pop(Some(token));
+                pending.push(Some(token));
+                pending.push(None);
                 return;
             }
         }
@@ -406,7 +435,8 @@ impl Parser {
             sep.push(self.source_token());
             let mut map = Token::new(BlockMap, scalar.offset);
             map.indent = scalar.indent;
-            map.items.push(pair(start, Some(Box::new(scalar)), sep));
+            map.items
+                .push(pair(start, Some(std::sync::Arc::new(scalar)), sep));
             self.on_key_line = true;
             self.stack.push(map);
         } else {
@@ -455,7 +485,11 @@ impl Parser {
                         .and_then(|e| e.last())
                         .is_some_and(|t| t.kind == Comment)
                     {
-                        value.end.as_mut().unwrap().push(st);
+                        std::sync::Arc::make_mut(value)
+                            .end
+                            .as_mut()
+                            .unwrap()
+                            .push(st);
                     } else {
                         map.items.push(item(vec![st]));
                     }
@@ -586,12 +620,13 @@ impl Parser {
                 Alias | Scalar | SingleQuotedScalar | DoubleQuotedScalar => {
                     let fs = self.flow_scalar();
                     if at_next_item || it.value.is_some() {
-                        map.items.push(pair(start, Some(Box::new(fs)), Vec::new()));
+                        map.items
+                            .push(pair(start, Some(std::sync::Arc::new(fs)), Vec::new()));
                         self.on_key_line = true;
                     } else if it.sep.is_some() {
                         child = Some(fs);
                     } else {
-                        it.key = Some(Some(Box::new(fs)));
+                        it.key = Some(Some(std::sync::Arc::new(fs)));
                         it.sep = Some(Vec::new());
                         self.on_key_line = true;
                     }
@@ -652,16 +687,11 @@ impl Parser {
             return false;
         }
         let start = collection.items.pop().unwrap().start;
-        let end = collection
-            .items
-            .last_mut()
-            .unwrap()
-            .value
-            .as_mut()
-            .unwrap()
-            .end
-            .as_mut()
-            .unwrap();
+        let end =
+            std::sync::Arc::make_mut(collection.items.last_mut().unwrap().value.as_mut().unwrap())
+                .end
+                .as_mut()
+                .unwrap();
         end.extend(start);
         end.push(st);
         true
@@ -679,7 +709,11 @@ impl Parser {
                         .and_then(|e| e.last())
                         .is_some_and(|t| t.kind == Comment)
                     {
-                        value.end.as_mut().unwrap().push(st);
+                        std::sync::Arc::make_mut(value)
+                            .end
+                            .as_mut()
+                            .unwrap()
+                            .push(st);
                     } else {
                         seq.items.push(item(vec![st]));
                     }
@@ -780,13 +814,13 @@ impl Parser {
                     let fs = self.flow_scalar();
                     if fc.items.last().is_none_or(|it| it.value.is_some()) {
                         fc.items
-                            .push(pair(Vec::new(), Some(Box::new(fs)), Vec::new()));
+                            .push(pair(Vec::new(), Some(std::sync::Arc::new(fs)), Vec::new()));
                     } else {
                         let it = fc.items.last_mut().unwrap();
                         if it.sep.is_some() {
                             child = Some(fs);
                         } else {
-                            it.key = Some(Some(Box::new(fs)));
+                            it.key = Some(Some(std::sync::Arc::new(fs)));
                             it.sep = Some(Vec::new());
                         }
                     }
@@ -822,7 +856,8 @@ impl Parser {
                 sep.push(self.source_token());
                 let mut map = Token::new(BlockMap, fc.offset);
                 map.indent = fc.indent;
-                map.items.push(pair(start, Some(Box::new(fc)), sep));
+                map.items
+                    .push(pair(start, Some(std::sync::Arc::new(fc)), sep));
                 self.on_key_line = true;
                 self.stack.push(map);
             } else {
@@ -847,7 +882,7 @@ impl Parser {
             FlowMapStart | FlowSeqStart => {
                 let mut t = Token::new(FlowCollection, self.offset);
                 t.indent = Some(self.indent);
-                t.flow_start = Some(Box::new(self.source_token()));
+                t.flow_start = Some(std::sync::Arc::new(self.source_token()));
                 t.end = Some(Vec::new());
                 t
             }

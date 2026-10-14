@@ -15,49 +15,109 @@ pub enum Control<'a> {
     Index(usize),
     Next(Box<Visitor<'a>>),
 }
+// Own suspended frames instead of borrowing recursively. Children are restored
+// before post-order callbacks and before returning Break, including mutations.
 pub fn visit<'a>(item: &mut CollectionItem, visitor: &mut Visitor<'a>) {
-    visit_item(&mut Vec::new(), item, visitor);
-}
-fn visit_item<'a>(
-    path: &mut Path,
-    item: &mut CollectionItem,
-    visitor: &mut Visitor<'a>,
-) -> Control<'a> {
-    let mut ctrl = visitor(item, path);
-    if matches!(ctrl, Control::Break | Control::Skip | Control::Remove) {
-        return ctrl;
+    struct Frame<'a> {
+        item: CollectionItem,
+        control: Option<Control<'a>>,
+        field: usize,
+        index: usize,
+        terminal: bool,
     }
-    for field in [Field::Key, Field::Value] {
+    fn collection(item: &mut CollectionItem, field: usize) -> Option<&mut Token> {
         let token = match field {
-            Field::Key => item.key.as_mut().and_then(Option::as_deref_mut),
-            Field::Value => item.value.as_deref_mut(),
-        };
-        if let Some(token) = token.filter(|t| t.is_collection()) {
-            let mut i = 0;
-            while i < token.items.len() {
-                path.push((field, i));
-                let ci = visit_item(path, &mut token.items[i], visitor);
-                path.pop();
-                match ci {
-                    Control::Index(next) => i = next,
-                    Control::Break => return Control::Break,
-                    Control::Remove => {
-                        token.items.remove(i);
-                    }
-                    _ => i += 1,
+            0 => item.key.as_mut().and_then(Option::as_mut),
+            1 => item.value.as_mut(),
+            _ => None,
+        }?;
+        if !token.is_collection() {
+            return None;
+        }
+        Some(std::sync::Arc::make_mut(token))
+    }
+    let mut frames = vec![Frame {
+        item: std::mem::take(item),
+        control: None,
+        field: 0,
+        index: 0,
+        terminal: false,
+    }];
+    let mut path = Vec::new();
+    loop {
+        let frame = frames.last_mut().unwrap();
+        if frame.control.is_none() {
+            frame.control = Some(visitor(&mut frame.item, &path));
+            frame.terminal = matches!(
+                frame.control,
+                Some(Control::Break | Control::Skip | Control::Remove)
+            );
+        }
+        let terminal = frame.terminal;
+        if !terminal && frame.field < 2 {
+            if let Some(token) = collection(&mut frame.item, frame.field) {
+                if frame.index < token.items.len() {
+                    let child = std::mem::take(&mut token.items[frame.index]);
+                    path.push((
+                        if frame.field == 0 {
+                            Field::Key
+                        } else {
+                            Field::Value
+                        },
+                        frame.index,
+                    ));
+                    frames.push(Frame {
+                        item: child,
+                        control: None,
+                        field: 0,
+                        index: 0,
+                        terminal: false,
+                    });
+                    continue;
+                }
+                if frame.field == 0 && matches!(frame.control, Some(Control::Next(_))) {
+                    let Some(Control::Next(mut next)) = frame.control.take() else {
+                        unreachable!()
+                    };
+                    frame.control = Some(next(&mut frame.item, &path));
                 }
             }
-            if field == Field::Key
-                && let Control::Next(mut next) = ctrl
-            {
-                ctrl = next(item, path);
-            }
+            frame.field += 1;
+            frame.index = 0;
+            continue;
         }
-    }
-    if let Control::Next(mut next) = ctrl {
-        next(item, path)
-    } else {
-        ctrl
+        let mut done = frames.pop().unwrap();
+        let control = match done.control.take().unwrap() {
+            Control::Next(mut next) if !terminal => next(&mut done.item, &path),
+            other => other,
+        };
+        let Some(parent) = frames.last_mut() else {
+            *item = done.item;
+            return;
+        };
+        path.pop();
+        let token = collection(&mut parent.item, parent.field).unwrap();
+        token.items[parent.index] = done.item;
+        match control {
+            Control::Remove => {
+                token.items.remove(parent.index);
+            }
+            Control::Index(next) => parent.index = next,
+            Control::Break => {
+                // Unwind every suspended owner while restoring the original
+                // structure. No recursive drops and no lost child mutations.
+                while let Some(done) = frames.pop() {
+                    if let Some(parent) = frames.last_mut() {
+                        collection(&mut parent.item, parent.field).unwrap().items[parent.index] =
+                            done.item;
+                    } else {
+                        *item = done.item;
+                    }
+                }
+                return;
+            }
+            _ => parent.index += 1,
+        }
     }
 }
 pub fn item_at_path<'a>(

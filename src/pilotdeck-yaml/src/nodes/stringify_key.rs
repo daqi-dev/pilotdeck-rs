@@ -12,10 +12,13 @@ pub(super) fn stringify_key(
     doc: &Document,
     id: NodeId,
     anchors: &[NodeId],
+    depth_limit: usize,
 ) -> Result<JsString, ConversionError> {
     let mut ctx = KeyContext {
         doc,
         anchors: anchors.to_vec(),
+        depth: 0,
+        depth_limit,
     };
     match &doc.nodes[id].kind {
         NodeKind::Scalar(ScalarValue::Binary(data)) => {
@@ -27,9 +30,27 @@ pub(super) fn stringify_key(
 struct KeyContext<'a> {
     doc: &'a Document,
     anchors: Vec<NodeId>,
+    depth: usize,
+    depth_limit: usize,
 }
 impl KeyContext<'_> {
     fn node(
+        &mut self,
+        id: NodeId,
+        indent: usize,
+        implicit: bool,
+        props: bool,
+        indent_at_start: Option<usize>,
+    ) -> Result<JsString, ConversionError> {
+        if self.depth >= self.depth_limit {
+            return Err(crate::stack::conversion_exhausted());
+        }
+        self.depth += 1;
+        let result = self.node_inner(id, indent, implicit, props, indent_at_start);
+        self.depth -= 1;
+        result
+    }
+    fn node_inner(
         &mut self,
         id: NodeId,
         indent: usize,

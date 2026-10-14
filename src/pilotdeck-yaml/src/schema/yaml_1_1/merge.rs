@@ -44,7 +44,9 @@ impl Context<'_> {
         };
         // JS recurses until RangeError for a cyclic merge. Detect that cycle
         // explicitly because Rust cannot recover from native stack overflow.
-        if self.merge_stack.contains(&source) {
+        if self.merge_stack.contains(&source)
+            || self.depth + self.merge_stack.len() >= crate::stack::CONVERSION_DEPTH
+        {
             return Err(ConversionError::new(
                 "RangeError",
                 "Maximum call stack size exceeded",

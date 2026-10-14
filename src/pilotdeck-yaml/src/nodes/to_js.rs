@@ -62,6 +62,7 @@ pub(crate) struct Context<'a> {
     pub(crate) anchors: HashMap<NodeId, Anchor>,
     pub(crate) order: Vec<NodeId>,
     pub(crate) merge_stack: Vec<NodeId>,
+    pub(crate) depth: usize,
 }
 pub(crate) fn to_js(doc: &Document) -> Result<ValueGraph, ConversionError> {
     let mut ctx = Context {
@@ -70,9 +71,10 @@ pub(crate) fn to_js(doc: &Document) -> Result<ValueGraph, ConversionError> {
         anchors: HashMap::new(),
         order: Vec::new(),
         merge_stack: Vec::new(),
+        depth: 0,
     };
     if let Some(root) = doc.contents {
-        ctx.visit_order(root);
+        ctx.visit_order(root)?;
     }
     let root = ctx.convert(doc.contents)?;
     Ok(ValueGraph {
@@ -88,6 +90,15 @@ impl Context<'_> {
     }
 
     pub(crate) fn convert(&mut self, id: Option<NodeId>) -> Result<Value, ConversionError> {
+        if self.depth + self.merge_stack.len() >= crate::stack::CONVERSION_DEPTH {
+            return Err(crate::stack::conversion_exhausted());
+        }
+        self.depth += 1;
+        let result = self.convert_inner(id);
+        self.depth -= 1;
+        result
+    }
+    fn convert_inner(&mut self, id: Option<NodeId>) -> Result<Value, ConversionError> {
         let Some(id) = id else { return Ok(Value::Null) };
         let kind = self.doc.nodes[id].kind.clone();
         if let NodeKind::Alias(name) = &kind {

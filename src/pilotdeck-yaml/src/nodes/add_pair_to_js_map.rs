@@ -77,38 +77,58 @@ impl Context<'_> {
         }
     }
     pub(crate) fn js_string(&self, v: &Value) -> JsString {
-        self.js_string_active(v, &mut Vec::new())
-    }
-    fn js_string_active(&self, v: &Value, active: &mut Vec<usize>) -> JsString {
-        match v {
-            Value::Null => "null".into(),
-            Value::Bool(b) => if *b { "true" } else { "false" }.into(),
-            Value::Number(n) => number_string(*n),
-            Value::String(s) => s.clone(),
-            Value::Symbol { description: s, .. } => concat(&[&"Symbol(".into(), s, &")".into()]),
-            Value::Ref(i) => match &self.nodes[*i] {
-                Container::Array(items) => {
-                    if active.contains(i) {
-                        return JsString::default();
-                    }
-                    active.push(*i);
-                    let mut result = JsString::default();
-                    for (i, v) in items.iter().enumerate() {
-                        if i > 0 {
-                            crate::string::append(&mut result, &",".into());
-                        }
-                        if !matches!(v, Value::Null) {
-                            crate::string::append(&mut result, &self.js_string_active(v, active));
-                        }
-                    }
-                    active.pop();
-                    result
-                }
-                Container::Map(_) => "[object Map]".into(),
-                Container::Set(_) => "[object Set]".into(),
-                _ => "[object Object]".into(),
-            },
+        enum Part<'a> {
+            Value(&'a Value),
+            End(usize),
+            Comma,
         }
+        let mut pending = vec![Part::Value(v)];
+        let mut active = vec![false; self.nodes.len()];
+        let mut output = Vec::new();
+        while let Some(part) = pending.pop() {
+            let scalar = match part {
+                Part::End(id) => {
+                    active[id] = false;
+                    continue;
+                }
+                Part::Comma => {
+                    output.push(44);
+                    continue;
+                }
+                Part::Value(v) => match v {
+                    Value::Null => "null".into(),
+                    Value::Bool(b) => if *b { "true" } else { "false" }.into(),
+                    Value::Number(n) => number_string(*n),
+                    Value::String(s) => s.clone(),
+                    Value::Symbol { description: s, .. } => {
+                        concat(&[&"Symbol(".into(), s, &")".into()])
+                    }
+                    Value::Ref(id) => match &self.nodes[*id] {
+                        Container::Array(items) => {
+                            if active[*id] {
+                                continue;
+                            }
+                            active[*id] = true;
+                            pending.push(Part::End(*id));
+                            for (i, v) in items.iter().enumerate().rev() {
+                                if !matches!(v, Value::Null) {
+                                    pending.push(Part::Value(v));
+                                }
+                                if i > 0 {
+                                    pending.push(Part::Comma);
+                                }
+                            }
+                            continue;
+                        }
+                        Container::Map(_) => "[object Map]".into(),
+                        Container::Set(_) => "[object Set]".into(),
+                        _ => "[object Object]".into(),
+                    },
+                },
+            };
+            output.extend_from_slice(scalar.units());
+        }
+        JsString::from_utf16(output)
     }
     pub(crate) fn stringify_key(
         &self,
@@ -122,6 +142,7 @@ impl Context<'_> {
                 self.doc,
                 key,
                 &self.anchors.keys().copied().collect::<Vec<_>>(),
+                crate::stack::CONVERSION_DEPTH.saturating_sub(self.depth + self.merge_stack.len()),
             )
         } else {
             Ok(self.js_string(value))

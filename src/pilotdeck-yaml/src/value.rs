@@ -55,6 +55,9 @@ impl ValueGraph {
                 ));
             }
             Value::Ref(id) => {
+                if active.len() >= crate::stack::CONVERSION_DEPTH {
+                    return Err(crate::stack::conversion_exhausted());
+                }
                 if active.contains(id) {
                     return Err(ConversionError::new(
                         "TypeError",

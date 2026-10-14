@@ -25,6 +25,8 @@ mod util_empty_scalar_position;
 mod util_map_includes;
 #[derive(Clone, Debug)]
 pub(crate) struct Context {
+    pub depth: usize,
+    pub depth_limit: crate::stack::DepthLimit,
     pub at_key: bool,
     pub at_root: bool,
     pub directives: Directives,

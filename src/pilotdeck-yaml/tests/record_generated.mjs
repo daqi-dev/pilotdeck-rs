@@ -109,6 +109,24 @@ for (let i = 0; i < 512; ++i) {
 }
 
 // Keep the original 71-case recordings untouched; record additional stage oracles.
+// Review round 4: separate shards preserve all earlier recordings byte-for-byte.
+const round4 = [];
+for (const escape of ['0', 'a', 'b', 'e', 'f', 'n', 'r', 't', '\t', 'v', 'N', '_', 'L', 'P', ' ', '"', '/', '\\', 'xFF', 'uFFFF', 'U0010FFFE', 'U0010FFFF', 'U00110000', 'UFFFFFFFF']) {
+  round4.push({ id: `round4-escape-${round4.length}`, yaml: `"left\\${escape}right"\n` });
+}
+for (const length of [1023, 1024, 1025]) {
+  const key = 'k'.repeat(length);
+  round4.push({ id: `round4-block-key-${length}`, yaml: `${key}: value\n` });
+  round4.push({ id: `round4-flow-seq-key-${length}`, yaml: `[${key}: value]\n` });
+  round4.push({ id: `round4-flow-map-key-${length}`, yaml: `{${key}: value}\n` });
+  round4.push({ id: `round4-explicit-key-${length}`, yaml: `? ${key}\n: value\n` });
+}
+// The indicator distance is UTF-16, including quotes, tags, spaces and pairs.
+for (const units of [1023, 1024, 1025]) {
+  const key = '🦀'.repeat(Math.floor(units / 2)) + (units % 2 ? 'k' : '');
+  round4.push({ id: `round4-utf16-key-${units}`, yaml: `${key}: value\n` });
+  round4.push({ id: `round4-quoted-key-${units}`, yaml: `"${'k'.repeat(units - 2)}": value\n` });
+}
 const legacy = JSON.parse(readFileSync(new URL('./fixtures/yaml.json', import.meta.url))).cases;
 function graph(value) {
   const seen = new Map(), nodes = [];
@@ -160,8 +178,8 @@ function cstRead(cst) {
   });
 }
 mkdirSync(output,{recursive:true});
-const manifest = {baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),seed,node:process.version,yaml:'2.9.0',generated:cases.length,legacy:legacy.length,shards:[]};
-for (const [prefix, inputs] of [['legacy-stages',legacy],['generated',cases]]) {
+const manifest = {baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),seed,node:process.version,yaml:'2.9.0',generated:cases.length,legacy:legacy.length,round4:round4.length,shards:[]};
+for (const [prefix, inputs] of [['legacy-stages',legacy],['generated',cases],['round4',round4]]) {
   let shard=[], bytes=0, part=0;
   function flush() {
     if(!shard.length)return;
@@ -179,7 +197,7 @@ for (const [prefix, inputs] of [['legacy-stages',legacy],['generated',cases]]) {
     const docLineCounter = new LineCounter(); parseDocument(test.yaml,{lineCounter:docLineCounter,prettyErrors:false}); item.docLines=docLineCounter.lineStarts;
     item.cstRead = cstRead(item.cst);
     item.cstSource = item.cst.map(CST.stringify).join('');
-    if (prefix === 'legacy-stages' || test.id.startsWith('branch-')) {
+    if (prefix === 'legacy-stages' || prefix === 'round4' || test.id.startsWith('branch-')) {
       item.streaming = [1,2,7,31].map(size => {
         const lexer = new Lexer(), lc = new LineCounter(), parser = new Parser(lc.addNewLine);
         const lex = [], cst = [];

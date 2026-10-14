@@ -38,7 +38,7 @@ fn fixtures_inner(mut test: impl FnMut(&JsValue)) {
             total += 1;
         }
     }
-    assert_eq!(total, 3057);
+    assert_eq!(total, 3099);
 }
 fn prop<'a>(v: &'a JsValue, name: &str) -> &'a JsValue {
     let JsValue::Object(o) = v else {
@@ -129,7 +129,7 @@ fn token(v: &JsValue) -> Token {
             Vec::new()
         },
         flow_start: if kind == TokenType::FlowCollection {
-            Some(Box::new(token(prop(v, "start"))))
+            Some(std::sync::Arc::new(token(prop(v, "start"))))
         } else {
             None
         },
@@ -144,7 +144,7 @@ fn token(v: &JsValue) -> Token {
             .unwrap_or_default(),
         props: v.get("props").map(tokens).unwrap_or_default(),
         end: v.get("end").map(tokens),
-        value: v.get("value").map(|v| Box::new(token(v))),
+        value: v.get("value").map(|v| std::sync::Arc::new(token(v))),
         message: v.get("message").map(|v| string(v).clone()),
     }
 }
@@ -155,11 +155,11 @@ fn collection_item(v: &JsValue) -> CollectionItem {
             if matches!(v, JsValue::Null) {
                 None
             } else {
-                Some(Box::new(token(v)))
+                Some(std::sync::Arc::new(token(v)))
             }
         }),
         sep: v.get("sep").map(tokens),
-        value: v.get("value").map(|v| Box::new(token(v))),
+        value: v.get("value").map(|v| std::sync::Arc::new(token(v))),
         explicit_key: v
             .get("explicitKey")
             .and_then(JsValue::as_bool)
@@ -462,6 +462,29 @@ fn document_matches_all_recordings() {
         );
     }
 }
+
+// A separate oracle entry lets the isolated mutation runner prove that the new
+// review probes themselves catch each branch, even when older fixtures fail too.
+#[test]
+fn review_round4_branches_match_node() {
+    let JsValue::Array(ref cases) =
+        parse_json(include_str!("fixtures/differential/round4-000.json")).unwrap()
+    else {
+        panic!("round4 cases");
+    };
+    assert_eq!(cases.len(), 42);
+    for case in cases {
+        let source = string(prop(case, "yaml"));
+        for (pretty, field) in [(false, "expected"), (true, "pretty")] {
+            assert_eq!(
+                diff(&outcome(source, pretty), prop(case, field), field),
+                None,
+                "{:?}",
+                prop(case, "id")
+            );
+        }
+    }
+}
 #[test]
 fn original_71_cases_are_unchanged_and_pass() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/yaml.json");
@@ -555,6 +578,12 @@ fn cst_source_and_incremental_input_match_recordings() {
                 .map(|n| n.as_number().unwrap() as usize)
                 .collect();
             assert_eq!(
+                parser.line_counter.line_starts.len(),
+                lines.len(),
+                "incremental lines length {:?} size={size}",
+                prop(case, "id")
+            );
+            assert_eq!(
                 parser.line_counter.line_starts,
                 lines,
                 "incremental lines {:?}",
@@ -562,7 +591,7 @@ fn cst_source_and_incremental_input_match_recordings() {
             );
         }
     });
-    assert_eq!(stream_cases, (71 + 21) * 4);
+    assert_eq!(stream_cases, (71 + 21 + 42) * 4);
 }
 fn version(d: &pilotdeck_yaml::doc::directives::Directives) -> JsValue {
     object(vec![
@@ -731,10 +760,10 @@ fn cst_visit_and_scalar_resolution_match_recordings() {
         let docs = cst
             .into_iter()
             .filter(|t| t.kind == TokenType::Document)
-            .map(|doc| {
+            .map(|mut doc| {
                 let mut root = CollectionItem {
-                    start: doc.start,
-                    value: doc.value,
+                    start: std::mem::take(&mut doc.start),
+                    value: doc.value.take(),
                     ..Default::default()
                 };
                 let original = root.clone();

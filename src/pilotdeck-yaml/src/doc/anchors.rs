@@ -6,27 +6,32 @@ use crate::{
     value::Value,
 };
 impl Context<'_> {
-    pub(crate) fn visit_order(&mut self, id: NodeId) {
-        self.order.push(id);
-        match &self.doc.nodes[id].kind {
-            NodeKind::Seq(items) => {
-                for item in items {
-                    self.visit_order(*item);
-                }
+    pub(crate) fn visit_order(&mut self, id: NodeId) -> Result<(), crate::value::ConversionError> {
+        let mut pending = vec![(id, 0)];
+        while let Some((id, depth)) = pending.pop() {
+            if depth >= crate::stack::CONVERSION_DEPTH {
+                return Err(crate::stack::conversion_exhausted());
             }
-            NodeKind::Map(pairs)
-            | NodeKind::Set(pairs)
-            | NodeKind::OMap(pairs)
-            | NodeKind::Pairs(pairs) => {
-                for p in pairs {
-                    self.visit_order(p.key);
-                    if let Some(v) = p.value {
-                        self.visit_order(v);
+            self.order.push(id);
+            match &self.doc.nodes[id].kind {
+                NodeKind::Seq(items) => {
+                    pending.extend(items.iter().rev().map(|id| (*id, depth + 1)))
+                }
+                NodeKind::Map(pairs)
+                | NodeKind::Set(pairs)
+                | NodeKind::OMap(pairs)
+                | NodeKind::Pairs(pairs) => {
+                    for p in pairs.iter().rev() {
+                        if let Some(v) = p.value {
+                            pending.push((v, depth + 1));
+                        }
+                        pending.push((p.key, depth + 1));
                     }
                 }
+                _ => (),
             }
-            _ => (),
         }
+        Ok(())
     }
     pub(crate) fn anchored(&mut self, id: NodeId, value: &Value) {
         if self.doc.nodes[id]
