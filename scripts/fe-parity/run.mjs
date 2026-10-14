@@ -205,7 +205,7 @@ try {
     printAccount('old', deploy.accounting);
     for (const cell of Object.values(deploy.accounting.partitions)) console.log(`B ${cell.cell}: 应执行数 ${cell.expected} vs 实际执行数 ${cell.executed}; profile 排除 ${cell.profileExclusions}; ${cell.status}`);
     console.log(`B 全矩阵实例 ${deploy.accounting.instanceExecuted}/${deploy.accounting.instanceExpected}; BLOCKED ${deploy.accounting.blocked}; TCP/process audit ${deploy.audit.status}`);
-    for (const row of deploy.accounting.baselineStale) console.log(`B baseline-stale ${row.title}: ${row.status}; MATCHED_FAIL 旧侧条件 ${row.matchedFailCondition ? '满足' : '不满足'}; ${row.pairedConsistency}; 行为覆盖 0`);
+    for (const row of deploy.accounting.baselineStale) console.log(`B baseline-stale ${row.title}: ${row.status}; MATCHED_FAIL 旧侧条件 ${row.matchedFailCondition ? '满足' : '不满足'}${row.pairedConsistency === 'NEEDS_HUMAN_CONFIRMATION' ? '（旧侧结果不确定：不计 MATCHED_FAIL，需人工确认）' : ''}; ${row.pairedConsistency}; 行为覆盖 0`);
     for (const error of deploy.accounting.errors) console.error(error);
     await writeFile(resolve(output, 'deploy-parity.md'), table(deploy.accounting.rows, result.accounting) + '\n\n' +
       '| 部署格 | 应执行 | 实际执行 | profile 排除 | 状态 |\n|---|---|---|---|---|\n' +
