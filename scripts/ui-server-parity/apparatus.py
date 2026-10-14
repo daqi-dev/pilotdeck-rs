@@ -14,7 +14,8 @@ import shutil
 import stat
 import subprocess
 
-SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md', 'multimodal.md', 'rust-routes.json')
+SPEC_FILES = ('acceptance.md', 'normalization.md', 'accepted-diffs.md', 'multimodal.md',
+              'rust-routes.json', 'human-approvers.txt')
 # All git-tracked exp008 files are apparatus, including its other entrypoints.
 EXP008_FILES = ('compare.py', 'controls.py', 'driver.mjs', 'enumerate_hook.mjs',
                 'preload.mjs', 'proxy/Cargo.lock', 'proxy/Cargo.toml', 'proxy/src/main.rs',
@@ -361,7 +362,7 @@ def node_environment(values=None):
 
 
 def approval_valid(approver, basis, root, *, allow_ai_delegate=False):
-    """Human approval + basis; only FROZEN may opt into the exact R5 AI delegate."""
+    """Route allowlist + basis; FROZEN explicitly selects its unchanged R5 policy."""
     import unicodedata
     approvals = [approver] if isinstance(approver, str) else []
     bases = [basis] if isinstance(basis, str) else []
@@ -376,12 +377,23 @@ def approval_valid(approver, basis, root, *, allow_ai_delegate=False):
                    and not (0xFE00 <= ord(char) <= 0xFE0F or 0xE0100 <= ord(char) <= 0xE01EF)
                    and not (char.isspace() and char != ' ') for char in value)
 
-    approved = (len(approvals) == 1 and concrete(approvals[0]) and visible(approvals[0])
-                and not re.search(r'Claude|GPT|GLM|Gemini|DeepSeek|Qwen|Doubao|ChatGPT|模型', approvals[0], re.I))
-    if approved and re.search(r'AI|代批|待人复核', approvals[0], re.I):
-        approved = allow_ai_delegate and approvals[0].strip() == 'AI 代批，待人复核（协调者）'
-    if approved and not allow_ai_delegate and '协调者' in approvals[0]:
-        approved = False
+    if allow_ai_delegate:
+        # Preserve FROZEN's R5 named-human and exact AI-delegate rules.
+        approved = (len(approvals) == 1 and concrete(approvals[0]) and visible(approvals[0])
+                    and not re.search(r'Claude|GPT|GLM|Gemini|DeepSeek|Qwen|Doubao|ChatGPT|模型', approvals[0], re.I))
+        if approved and re.search(r'AI|代批|待人复核', approvals[0], re.I):
+            approved = approvals[0].strip() == 'AI 代批，待人复核（协调者）'
+    else:
+        def identity(value):
+            value = unicodedata.normalize('NFKC', value).casefold()
+            return ''.join(char for char in value if not char.isspace() and visible(char))
+
+        try:
+            names = (root / 'specs/ui-server-parity/human-approvers.txt').read_text(encoding='utf-8')
+            humans = {identity(name) for name in names.splitlines()} - {''}
+        except (OSError, UnicodeError):
+            humans = set()
+        approved = len(approvals) == 1 and identity(approvals[0]) in humans
     # Both approval modes require one concrete basis: calibration report + two reviews.
     basis_paths = re.findall(r'(?:[^\s`+;,，；]+/)+[^\s`+;,，；]+\.(?:json|md|log|txt)', bases[0]) if len(bases) == 1 else []
     allowed = [root]

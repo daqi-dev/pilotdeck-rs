@@ -21,7 +21,7 @@
 
 `coverage.handler` 以 recorder 原始 `X-PilotDeck-Handler` 为处理侧真相源，再交叉核对 metadata 与客户端证据。direct 必须没有 DUT 标记；proxy 每条响应必须唯一 ts/rust，冲突/伪造/缺失即 FAIL。标记验完才从 HTTP 等价 diff 剥离。
 
-Rust 接管由 `specs/ui-server-parity/rust-routes.json` 的静态路由表/配置导出决定，schema=1，routes 为 `{method, path, handler: "rust"}` 数组（空清单合法，当前没有 Rust ui-server）。首次接管必须同步更新此表；不能按流量推断归属。路由规范化后与 runtime/matrix 求交，静态表未枚举的路由、matrix 声明或观测 handler 与静态表矛盾均 FAIL；handler 按结构化枚举 ts/rust 校验，别名失败。接管路由的豁免无论有无用例/流量都必须带 `Approved-By` / `Approval-Basis`，必须由具名人审批；`Approved-By` 含「AI」「代批」「待人复核」、模型名（Claude/GPT/GLM/DeepSeek/Gemini/Qwen/Doubao/ChatGPT/模型）或「协调者」均 FAIL，零宽/不可见字符变体也 FAIL。`Approval-Basis` 仍须三份存在、realpath 互异且在允许范围内的依据文件（定标报告 + 两家评审）。TS reference 无须 rust 标记；proxy 每个登记 case 必须实际由 rust 处理。豁免不算行为验证，也不能替代已有 case 的执行证明。静态表纳入装置哈希；本机同时篡改配置、装置、审批仍在威胁模型之外。
+Rust 接管由 `specs/ui-server-parity/rust-routes.json` 的静态路由表/配置导出决定，schema=1，routes 为 `{method, path, handler: "rust"}` 数组（空清单合法，当前没有 Rust ui-server）。首次接管必须同步更新此表；不能按流量推断归属。路由规范化后与 runtime/matrix 求交，静态表未枚举的路由、matrix 声明或观测 handler 与静态表矛盾均 FAIL；handler 按结构化枚举 ts/rust 校验，别名失败。接管路由的豁免无论有无用例/流量都必须带 `Approved-By` / `Approval-Basis`，审批人必须精确命中固定白名单 `specs/ui-server-parity/human-approvers.txt`（每行一个身份，初始仅仓库所有者 GitHub 用户名 `zhengdaqi`）。`Approved-By` 与白名单身份均先 NFKC、再 casefold、再去除全部空白及不可见字符（Unicode C/M 类、非 printable 字符、Hangul filler、空白盲文及 variation selector），规范化后非空且精确相等才 PASS；不接受子串或身份附注。白名单外具名人、ＡＩ批准、Ｃｌａｕｄｅ、协 调者、Opus 5.5、人工智能、空值均 FAIL；带零宽字符的 `zhengdaqi` 若规范化后相等则 PASS，这是预期。`Approval-Basis` 仍须三份存在、realpath 互异且在允许范围内的依据文件（定标报告 + 两家评审）。TS reference 无须 rust 标记；proxy 每个登记 case 必须实际由 rust 处理。豁免不算行为验证，也不能替代已有 case 的执行证明。静态表与审批人白名单纳入装置清单及 FROZEN/capture 哈希；改白名单就是装置变更，须评审，未同步 FROZEN 哈希则 FAIL；本机同时篡改配置、装置、审批仍在威胁模型之外。
 
 ## 行为硬门
 
@@ -42,11 +42,11 @@ WS **先比较同一连接内全序帧序列，再比较按 type/kind 的结构�
 
 无真实五遍输入时 self_compare=null、PENDING_CALIBRATION；已自比但未评审时 PENDING_REVIEW；这些均退出 2。任一已运行门失败则 FAIL/退出 1。另可提供 --proxy 单独报告 direct/DUT 比较，不用 DUT 结果定阈值。
 
-冻结必须先有人过目，随后协调者在 manifest 登记四份规约、B2 与 exp008 两目录的全部 Git 跟踪装置文件 SHA256，并填唯一的 `Approved-By:`、`Approval-Basis:`。FROZEN 冻结记录按 R5 接受具名人，或精确的「AI 代批，待人复核（协调者）」；拒绝 TODO、模型名、零宽/不可见字符、占位、空值与重复。依据至少包含三个 realpath 不同、确实存在的文件（定标报告 + 两家评审），且必须位于当前仓库或共享主仓 `_tmp/` 内，链接逃逸也失败。审批清单自身不参与 capture hash。共用审批函数通过显式参数区分用途：只有 FROZEN 开启 R5 AI 代批例外，Rust 接管路由豁免一律要求具名人批；冻结审批不能代替路由豁免审批。
+冻结必须先有人过目，随后协调者在 manifest 登记四份规约、B2 与 exp008 两目录的全部 Git 跟踪装置文件 SHA256，并填唯一的 `Approved-By:`、`Approval-Basis:`。FROZEN 冻结记录按 R5 接受具名人，或精确的「AI 代批，待人复核（协调者）」；拒绝 TODO、模型名、零宽/不可见字符、占位、空值与重复。依据至少包含三个 realpath 不同、确实存在的文件（定标报告 + 两家评审），且必须位于当前仓库或共享主仓 `_tmp/` 内，链接逃逸也失败。审批清单自身不参与 capture hash。共用审批函数通过显式参数区分用途：只有 FROZEN 开启 R5 原审批规则（不受路由白名单限制），Rust 接管路由豁免一律要求白名单内的人批；冻结审批不能代替路由豁免审批。
 
 装置完整性威胁模型（协调者自决，**AI 代批，待人复核**）：防 (a) 意外漂移；(b) worker / 开发者在仓库内对装置的改动，包括未跟踪文件、影子模块和旧构建产物。不防拥有本机写权限、能够同时改装置、清单与审批的恶意者；该模型之外的发现按 P2 跟进。Git 跟踪清单、FROZEN 哈希与审批材料构成本模型的信任依据。
 
-B2 与 exp008 目录实际文件必须恰好等于 Git 跟踪内容；额外文件（包括忽略文件）、缺失跟踪文件、任意链接、Python 缓存与非普通文件一律 FAIL，不得过滤后继续。FROZEN 必须完整登记两目录及四份规约与静态 Rust 路由表，重复/逃逸路径、漏项或哈希漂移均 FAIL。所有 Python 入口及子进程带 `-I`，预检断言 isolated / ignore_environment / no_user_site 和未启用 pycache prefix；Python 环境变量不生效。装置预检源码及本目录模块须经 hash 校验，显式从绝对路径按源码加载；B1 加载后恢复 sys.path，reconcile 同样使用隔离子进程。
+B2 与 exp008 目录实际文件必须恰好等于 Git 跟踪内容；额外文件（包括忽略文件）、缺失跟踪文件、任意链接、Python 缓存与非普通文件一律 FAIL，不得过滤后继续。FROZEN 必须完整登记两目录及四份规约、静态 Rust 路由表与审批人白名单，重复/逃逸路径、漏项或哈希漂移均 FAIL。所有 Python 入口及子进程带 `-I`，预检断言 isolated / ignore_environment / no_user_site 和未启用 pycache prefix；Python 环境变量不生效。装置预检源码及本目录模块须经 hash 校验，显式从绝对路径按源码加载；B1 加载后恢复 sys.path，reconcile 同样使用隔离子进程。
 
 calibrate 开始与续跑要求装置/规约路径 Git status 为空，并将 HEAD 绑定到 batch.json；批次内 HEAD 漂移即拒绝。每批创建新的 CARGO_TARGET_DIR 于批次目录中，已存在 target 不可复用；构建后登记可执行产物 hash，每遍及续跑重新核验，禁止钉住 `_build` 旧产物。缺 manifest 只允许 HEAD 源码且返回 DRAFT/2；首行「待定标」且完整哈希正确也返回 DRAFT/2；正式 manifest 缺有效审批返回 FAIL。负例自检为 `python3 -I scripts/ui-server-parity/check_frozen.py --self-test`。真实 k=5、TS 池、直连/DUT 比较、前端 page.route 与双谱系评审仍是后续验收，离线 controls 不替代它们。
 

@@ -117,7 +117,7 @@ def check(enumeration, matrix, scenarios, evidence=None, *, takeover=None):
         if route in owned and waiver and not approval_valid(
                 waiver.get('Approved-By'), waiver.get('Approval-Basis'), ROOT,
                 allow_ai_delegate=False):
-            errors.append(f'{route}: Rust exemption requires named human Approved-By / valid Approval-Basis')
+            errors.append(f'{route}: Rust exemption requires allowlisted human Approved-By / valid Approval-Basis')
         if 'handler' in row:
             try:
                 declared = Handler(row['handler'])
