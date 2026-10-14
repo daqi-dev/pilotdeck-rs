@@ -377,14 +377,22 @@ fn spread_object(v: &JsValue) -> JsValue {
         return v.clone();
     }
     let mut result = object([]);
-    if let JsValue::String(s) = v
-        && let JsValue::Object(o) = &mut result
-    {
-        for (i, unit) in s.units().iter().enumerate() {
-            o.insert(
-                i.to_string().into(),
-                JsValue::String(pilotdeck_protocol::JsString::from_utf16(vec![*unit])),
-            );
+    if let JsValue::Object(o) = &mut result {
+        match v {
+            JsValue::Array(items) => {
+                for (i, value) in items.iter().enumerate() {
+                    o.insert(i.to_string().into(), value.clone());
+                }
+            }
+            JsValue::String(s) => {
+                for (i, unit) in s.units().iter().enumerate() {
+                    o.insert(
+                        i.to_string().into(),
+                        JsValue::String(pilotdeck_protocol::JsString::from_utf16(vec![*unit])),
+                    );
+                }
+            }
+            _ => {}
         }
     }
     result
@@ -436,6 +444,51 @@ pub(crate) fn io_code(e: &std::io::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn webui_spread_preserves_array_indices_in_both_binding_branches() {
+        let fixture = parse_json(include_str!(
+            "../../tests/fixtures/session-model/webui-spread.json"
+        ))
+        .unwrap();
+        let JsValue::Array(rows) = field(&fixture, "spread") else {
+            panic!("spread fixtures")
+        };
+        let io_fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/session-model/io-errors.json"
+        ))
+        .unwrap();
+        // A bound store with matching identity enables the binding; omitting
+        // that identity exercises the disabled branch over the same input.
+        let metadata = crate::session_model::tests::snapshot(
+            io_fixture["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == "io-transcript-read-missing")
+                .unwrap(),
+        );
+        for row in rows {
+            let mut env = Env::from([("STAFFDECK_PROJECT_BINDING_ENABLED".into(), "true".into())]);
+            if field(row, "enabled") == &JsValue::Bool(true) {
+                env.insert(
+                    "STAFFDECK_FORMAL_API_ORIGIN".into(),
+                    "https://staffdeck.invalid".into(),
+                );
+                env.insert("STAFFDECK_COPY_TENANT_ID".into(), "tenant".into());
+            }
+            let next = apply(
+                &metadata,
+                field(row, "input").clone(),
+                Some("/fixture/home"),
+                &env,
+            )
+            .unwrap();
+            assert_eq!(
+                pilotdeck_protocol::stringify_json(field(&next, "webui")).unwrap(),
+                pilotdeck_protocol::stringify_json(field(row, "webui")).unwrap(),
+            );
+        }
+    }
     #[test]
     fn js_number_and_node_int32_gate_match_recorded_node_validation() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(

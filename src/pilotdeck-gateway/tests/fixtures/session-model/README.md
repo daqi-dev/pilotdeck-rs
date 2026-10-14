@@ -93,3 +93,54 @@ python3 src/pilotdeck-gateway/tests/check_session_model_wire.py \
 D6/原型 fallback 由 pairing 的原始帧对照验证，EPERM 和 NUL env 对象由单元
 fixture 验证；这四项不计入 189 个真实二进制案例。fixture 哈希、原始请求/响应、observations、进程 argv/
 PID/结束状态写入输出目录。fixture 源码被更新时必须用新目录重跑。
+
+第 4 轮的 `io-errors.json` 另录 **39** 个真实 Node 文件系统错误案例，原有
+193 个 `cases.json` 原件保持不变。新增案例仍调用默认 native provider 和真实
+GatewayWsConnection；另外比较项目 loader 的完整诊断。每项 `io.observations`
+保留实际 Node 的 code/syscall/message/path；只有案例根映射为 `/fixture`。
+
+| 调用点 | Node 行为及 Rust 对照 |
+|---|---|
+| transcript stat | EACCES / ENOTDIR 报 `stat 'path'`；ENOENT 被 reader 当作缺失，RPC 返回默认选择。 |
+| transcript readFile | EACCES / ENOTDIR 报 `open 'path'`；ENOENT（含 stat 后消失）仍当作缺失；EISDIR 报 `illegal operation on a directory, read`，不带路径。 |
+| default/project existsSync | EACCES / ENOENT / ENOTDIR 均返回 false，不传播底层 stat 错误；后续配置诊断优先级保持 Node 行为。 |
+| default/project readFileSync | CONFIG_READ_FAILED 诊断 hint 保留 `open 'path'`；目录读取 hint 为 EISDIR/read。 |
+| binding store existsSync/readFileSync | exists 失败视作无绑定；read 失败统一 PROJECT_BINDING_STORE_INVALID，不暴露底层 syscall。 |
+| SOP bundle existsSync/readFileSync | exists 失败使用空 bundle；read 失败传播真实 Node code/message：EACCES / ENOENT / ENOTDIR 为 open，EISDIR 为 read。 |
+| binding lock readFileSync | 所有读取失败均返回 false，不调用 kill、不暴露底层 syscall。 |
+
+权限案例通过 chmod 实际制造 EACCES，要求非 root。read ENOENT / ENOTDIR 竞态
+在真实 stat/existsSync 成功后移除文件或将父目录替换成普通文件；lock 的 ENOTDIR
+在进入锁读取时才替换父目录，避免提前遮住 binding store。hooks 只调度自有文件
+变更，不注入错误、syscall 或 message；两次调用各恢复再构造同一场景。
+Rust SnapshotFiles 按录制的 statError/readError 重放对应阶段，逐字节比较 RPC
+response，同时比较有序 loader diagnostics；39 项均为必跑测试。
+
+`webui-spread.json` 录制 **14** 个真实 applyProjectBinding 输出，包含启用/禁用
+两分支的空数组、混合数组、12 项索引顺序、字符串 UTF-16 单元、null/number 和
+已有 staffdeckCopy 的对象。Rust 测试调用完整 binding::apply，比较 webui JSON，
+因此即使 session_model_get 不输出 webui，也会检查数组的 "0","1"… 键。
+字符串展开产生孤立 surrogate，使用 protocol 的 UTF-16 JSON codec 读取原件。
+
+复录本轮新增原件（非 root、仓根运行、全新 scratch；复用既有 Node 22/tsx）：
+
+```sh
+A4_IO="$(mktemp -d /private/tmp/a4-session-io.XXXXXX)"
+A4_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
+mkdir -p "$A4_IO/isolation/home" "$A4_IO/isolation/xdg" "$A4_IO/isolation/tmp"
+env HOME="$A4_IO/isolation/home" XDG_CONFIG_HOME="$A4_IO/isolation/xdg" \
+  XDG_CACHE_HOME="$A4_IO/isolation/xdg" XDG_DATA_HOME="$A4_IO/isolation/xdg" \
+  TMPDIR="$A4_IO/isolation/tmp" PILOTDECK_SKIP_BROWSER_OPEN=1 SKIP_BROWSER_OPEN=1 \
+  node --import "$A4_BASELINE/node_modules/tsx/dist/loader.mjs" \
+  src/pilotdeck-gateway/tests/record_session_io.mts "$A4_BASELINE" \
+  "$A4_IO/io-errors.json" "$A4_IO"
+```
+
+本轮真实 proxy 检查现在同时读取两个 fixture，预期 **217** 项本地 wire 匹配
+（原有 189 + 新增 28）。11 个精确控制读取时机的竞态由必跑单元 fixture 验证，
+不计作真实 binary wire 命中；连同原有四项控制，在 observations.json 明确列出
+15 个 excluded ID。稳态权限、路径缺失、非目录和目录读取案例均进入实际 binary
+检查；每项上游仍只允许 observer-fence。新增 ioFixtureSha256 与原有 fixtureSha256
+分别保存两个原件哈希。前文 wire 命令仍可使用，须非 root 且选择全新输出目录。
+新增 39 项的 RPC/load killCalls 在真实 Node `_kill` 边界分别计数，均为空；
+任何意外 PID 探测都会使录制失败，不会访问归档或用户进程。

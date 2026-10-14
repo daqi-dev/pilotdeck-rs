@@ -29,6 +29,7 @@ impl Files for SnapshotFiles {
             .files
             .get(path.to_str().unwrap())
             .ok_or(io::ErrorKind::NotFound)?;
+        recorded_io_error(fact, "readError")?;
         if fact["directory"].as_bool() == Some(true) {
             return Err(io::Error::from_raw_os_error(libc::EISDIR));
         }
@@ -41,6 +42,7 @@ impl Files for SnapshotFiles {
             .files
             .get(path.to_str().unwrap())
             .ok_or(io::ErrorKind::NotFound)?;
+        recorded_io_error(fact, "statError")?;
         Ok(Stat {
             directory: fact["directory"].as_bool().unwrap(),
             size: fact["size"].as_u64().unwrap(),
@@ -57,6 +59,18 @@ impl Files for SnapshotFiles {
         self.process["alive"].as_bool().unwrap() && !self.process["eperm"].as_bool().unwrap()
     }
 }
+fn recorded_io_error(fact: &serde_json::Value, key: &str) -> io::Result<()> {
+    let errno = match fact[key].as_str() {
+        Some("EACCES") => libc::EACCES,
+        Some("ENOENT") => libc::ENOENT,
+        Some("ENOTDIR") => libc::ENOTDIR,
+        Some("EISDIR") => libc::EISDIR,
+        None => return Ok(()),
+        Some(code) => panic!("unrecorded errno {code}"),
+    };
+    Err(io::Error::from_raw_os_error(errno))
+}
+const IO_FIXTURE: &str = include_str!("../../tests/fixtures/session-model/io-errors.json");
 pub(crate) fn fixture() -> serde_json::Value {
     serde_json::from_str(include_str!(
         "../../tests/fixtures/session-model/cases.json"
@@ -84,7 +98,15 @@ fn env(row: &serde_json::Value) -> Env {
 }
 #[test]
 fn complete_default_provider_matches_node_wire_fixtures() {
-    let fixture = fixture();
+    verify_responses(&fixture());
+}
+#[test]
+fn filesystem_stages_match_real_node_failures_and_races() {
+    let fixture = serde_json::from_str(IO_FIXTURE).unwrap();
+    verify_responses(&fixture);
+    verify_diagnostics(IO_FIXTURE);
+}
+fn verify_responses(fixture: &serde_json::Value) {
     assert_eq!(fixture["routerCalls"], 0);
     let mut failures = vec![];
     for row in fixture["cases"].as_array().unwrap() {
@@ -150,11 +172,13 @@ fn real_libc_probe_only_uses_an_owned_child_that_exits_naturally() {
 
 #[test]
 fn project_configuration_diagnostics_match_the_real_node_loader() {
-    let fixture = fixture();
-    let ordered = parse_json(include_str!(
+    verify_diagnostics(include_str!(
         "../../tests/fixtures/session-model/cases.json"
-    ))
-    .unwrap();
+    ));
+}
+fn verify_diagnostics(source: &str) {
+    let fixture: serde_json::Value = serde_json::from_str(source).unwrap();
+    let ordered = parse_json(source).unwrap();
     let JsValue::Array(ordered) = field(&ordered, "cases") else {
         panic!("cases")
     };

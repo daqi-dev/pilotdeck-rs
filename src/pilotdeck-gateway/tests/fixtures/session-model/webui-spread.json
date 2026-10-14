@@ -1,0 +1,338 @@
+{
+  "node": "v22.22.0",
+  "spread": [
+    {
+      "enabled": false,
+      "input": {
+        "webui": []
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "enabled": false,
+      "input": {
+        "webui": [
+          null,
+          "x",
+          {
+            "nested": [
+              1,
+              2
+            ]
+          },
+          false
+        ]
+      },
+      "webui": {
+        "0": null,
+        "1": "x",
+        "2": {
+          "nested": [
+            1,
+            2
+          ]
+        },
+        "3": false,
+        "staffdeckCopy": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "enabled": false,
+      "input": {
+        "webui": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "webui": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5,
+        "6": 6,
+        "7": 7,
+        "8": 8,
+        "9": 9,
+        "10": 10,
+        "11": 11,
+        "staffdeckCopy": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "enabled": false,
+      "input": {
+        "webui": "😀x"
+      },
+      "webui": {
+        "0": "\ud83d",
+        "1": "\ude00",
+        "2": "x",
+        "staffdeckCopy": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "enabled": false,
+      "input": {
+        "webui": null
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "enabled": false,
+      "input": {
+        "webui": 7
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "enabled": false,
+      "input": {
+        "webui": {
+          "staffdeckCopy": "old",
+          "keep": true
+        }
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": false
+        },
+        "keep": true
+      }
+    },
+    {
+      "enabled": true,
+      "input": {
+        "webui": []
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": true,
+          "contract": "staffdeck.enterprise-copy/v1",
+          "methods": [
+            "list_agents",
+            "list_knowledge_bases",
+            "list_skills",
+            "import_resources"
+          ],
+          "endpoint": "https://staffdeck.invalid",
+          "tenantId": "tenant",
+          "targetAgentId": "a",
+          "userTokenEnv": "STAFFDECK_COPY_USER_TOKEN"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "input": {
+        "webui": [
+          null,
+          "x",
+          {
+            "nested": [
+              1,
+              2
+            ]
+          },
+          false
+        ]
+      },
+      "webui": {
+        "0": null,
+        "1": "x",
+        "2": {
+          "nested": [
+            1,
+            2
+          ]
+        },
+        "3": false,
+        "staffdeckCopy": {
+          "enabled": true,
+          "contract": "staffdeck.enterprise-copy/v1",
+          "methods": [
+            "list_agents",
+            "list_knowledge_bases",
+            "list_skills",
+            "import_resources"
+          ],
+          "endpoint": "https://staffdeck.invalid",
+          "tenantId": "tenant",
+          "targetAgentId": "a",
+          "userTokenEnv": "STAFFDECK_COPY_USER_TOKEN"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "input": {
+        "webui": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      },
+      "webui": {
+        "0": 0,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5,
+        "6": 6,
+        "7": 7,
+        "8": 8,
+        "9": 9,
+        "10": 10,
+        "11": 11,
+        "staffdeckCopy": {
+          "enabled": true,
+          "contract": "staffdeck.enterprise-copy/v1",
+          "methods": [
+            "list_agents",
+            "list_knowledge_bases",
+            "list_skills",
+            "import_resources"
+          ],
+          "endpoint": "https://staffdeck.invalid",
+          "tenantId": "tenant",
+          "targetAgentId": "a",
+          "userTokenEnv": "STAFFDECK_COPY_USER_TOKEN"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "input": {
+        "webui": "😀x"
+      },
+      "webui": {
+        "0": "\ud83d",
+        "1": "\ude00",
+        "2": "x",
+        "staffdeckCopy": {
+          "enabled": true,
+          "contract": "staffdeck.enterprise-copy/v1",
+          "methods": [
+            "list_agents",
+            "list_knowledge_bases",
+            "list_skills",
+            "import_resources"
+          ],
+          "endpoint": "https://staffdeck.invalid",
+          "tenantId": "tenant",
+          "targetAgentId": "a",
+          "userTokenEnv": "STAFFDECK_COPY_USER_TOKEN"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "input": {
+        "webui": null
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": true,
+          "contract": "staffdeck.enterprise-copy/v1",
+          "methods": [
+            "list_agents",
+            "list_knowledge_bases",
+            "list_skills",
+            "import_resources"
+          ],
+          "endpoint": "https://staffdeck.invalid",
+          "tenantId": "tenant",
+          "targetAgentId": "a",
+          "userTokenEnv": "STAFFDECK_COPY_USER_TOKEN"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "input": {
+        "webui": 7
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": true,
+          "contract": "staffdeck.enterprise-copy/v1",
+          "methods": [
+            "list_agents",
+            "list_knowledge_bases",
+            "list_skills",
+            "import_resources"
+          ],
+          "endpoint": "https://staffdeck.invalid",
+          "tenantId": "tenant",
+          "targetAgentId": "a",
+          "userTokenEnv": "STAFFDECK_COPY_USER_TOKEN"
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "input": {
+        "webui": {
+          "staffdeckCopy": "old",
+          "keep": true
+        }
+      },
+      "webui": {
+        "staffdeckCopy": {
+          "enabled": true,
+          "contract": "staffdeck.enterprise-copy/v1",
+          "methods": [
+            "list_agents",
+            "list_knowledge_bases",
+            "list_skills",
+            "import_resources"
+          ],
+          "endpoint": "https://staffdeck.invalid",
+          "tenantId": "tenant",
+          "targetAgentId": "a",
+          "userTokenEnv": "STAFFDECK_COPY_USER_TOKEN"
+        },
+        "keep": true
+      }
+    }
+  ]
+}
