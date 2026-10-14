@@ -23,6 +23,33 @@ pub(crate) fn text_field(value: &JsValue, key: &str) -> Option<String> {
     string(value.get(key)?)
 }
 
+/// Node's primitive/constructor argument description. Unsupported constructor
+/// names require the host's util.inspect contract, as with describe_project.
+pub(crate) fn argument_received(v: &JsValue) -> Option<String> {
+    Some(match v {
+        JsValue::Undefined => "undefined".into(),
+        JsValue::Null => "null".into(),
+        JsValue::Number(n) => format!("type number ({})", crate::dispatch::error_number(*n)),
+        JsValue::Bool(b) => format!("type boolean ({b})"),
+        JsValue::Array(_) => "an instance of Array".into(),
+        JsValue::Object(o) => match o.get("constructor") {
+            None => "an instance of Object".into(),
+            Some(c) => match c.get("name") {
+                Some(JsValue::String(s)) if !s.is_empty() => {
+                    format!("an instance of {}", s.to_utf8().ok()?)
+                }
+                Some(JsValue::Number(n)) if *n != 0.0 && !n.is_nan() => {
+                    format!("an instance of {}", crate::dispatch::error_number(*n))
+                }
+                Some(JsValue::Bool(true)) => "an instance of true".into(),
+                Some(JsValue::Object(_) | JsValue::Array(_)) => return None,
+                _ => "[Object]".into(),
+            },
+        },
+        JsValue::String(_) => return None,
+    })
+}
+
 pub(crate) fn js_trim(value: &str) -> &str {
     value.trim_matches(|c: char| matches!(c, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'))
 }
@@ -59,6 +86,12 @@ pub(crate) trait Files {
     }
     fn project_read(&self, _root: &Path, _path: &Path, _limit: usize) -> io::Result<Vec<u8>> {
         Err(io::ErrorKind::Unsupported.into())
+    }
+    /// libc kill(pid, 0), through rustix's safe libc wrapper. All errors, including
+    /// EPERM, mean false, matching Node's unconditional catch.
+    fn process_alive(&self, pid: i32) -> bool {
+        rustix::process::Pid::from_raw(pid)
+            .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
     }
     /// stat follows symlinks.
     fn stat(&self, path: &Path) -> io::Result<Stat>;
@@ -346,7 +379,7 @@ impl<F: Files> Metadata<F> {
         let path = String::from_utf16_lossy(root.units());
         self.summary(&path, self.describe_storage(&path).as_deref(), root.clone())
     }
-    fn chat_dir(&self, root: &str) -> PathBuf {
+    pub(crate) fn chat_dir(&self, root: &str) -> PathBuf {
         let target = resolve(&self.cwd, root);
         let projects_dir = self.home.join("projects");
         for (id, directory) in self.files.entries(&projects_dir).unwrap_or_default() {

@@ -7,6 +7,8 @@ use pilotdeck_yaml::value::{Container, Value, ValueGraph};
 #[derive(Clone, Copy)]
 enum Role {
     Root,
+    SopBundle,
+    SopRows,
     Agent,
     Subagents,
     Model,
@@ -36,6 +38,14 @@ enum Role {
 fn child(role: Role, key: &str) -> Role {
     use Role::*;
     match role {
+        SopBundle => {
+            if key == "sops" {
+                SopRows
+            } else {
+                Opaque
+            }
+        }
+        SopRows => Fields,
         Root => match key {
             "agent" => Agent,
             "__proto__" => Root,
@@ -152,6 +162,9 @@ fn child(role: Role, key: &str) -> Role {
         Fields | Array | Opaque => Opaque,
     }
 }
+pub(super) fn inspect_sops(g: &ValueGraph) -> JsValue {
+    convert(g, &g.root, Role::SopBundle, &mut vec![])
+}
 pub(super) fn inspect(g: &ValueGraph) -> JsValue {
     convert(g, &g.root, Role::Root, &mut vec![])
 }
@@ -187,7 +200,7 @@ fn convert(g: &ValueGraph, v: &Value, role: Role, active: &mut Vec<usize>) -> Js
                     return JsValue::Array(vec![]);
                 }
                 active.push(*id);
-                let role = if matches!(role, Role::Array) {
+                let role = if matches!(role, Role::Array | Role::SopRows) {
                     Role::Fields
                 } else {
                     Role::Opaque

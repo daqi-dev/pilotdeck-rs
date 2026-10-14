@@ -8,6 +8,7 @@ mod metadata;
 mod model_catalog;
 mod pairing;
 mod project_files;
+mod session_model;
 mod upstream;
 
 use bytes::Bytes;
