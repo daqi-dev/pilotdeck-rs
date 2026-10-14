@@ -4,11 +4,11 @@
 
 威胁模型（协调者自决，**AI 代批，待人复核**）：防意外漂移，以及 worker / 开发者在仓库内对装置的改动，包括未跟踪文件、影子模块和旧构建产物。不防拥有本机写权限、能够同时篡改装置、哈希清单与审批的恶意者；模型外发现按 P2 跟进。Git 跟踪清单、FROZEN 哈希和审批材料是本模型的信任依据。
 
-装置目录 `scripts/ui-server-parity/` 与 `scripts/exp008/` 的实际文件必须**恰好等于 Git 跟踪内容**，两目录的全部跟踪文件都进入 FROZEN 和 capture hash。任何多余/未跟踪文件（含被 .gitignore 忽略的文件）、缺失跟踪文件、符号链接（目录/文件/断链）、`.pyc`、`__pycache__` 或非普通文件均 FAIL。递归扫描不跟随链接，不以排除缓存或影子模块的方式继续运行。审批清单 FROZEN.md 自身不进入 capture hash。
+装置目录 `scripts/ui-server-parity/` 与 `scripts/exp008/` 的实际文件必须**恰好等于 Git 跟踪内容**，两目录的全部跟踪文件都进入 FROZEN 和 capture hash。精确名为 `.DS_Store` 的普通文件不执行、不登记、不参与 hash；同名链接、目录或特殊文件仍 FAIL。除此以外任何多余/未跟踪文件（含被 .gitignore 忽略的文件）、缺失跟踪文件、符号链接（目录/文件/断链）、`.pyc`、`__pycache__` 或非普通文件均 FAIL。递归扫描不跟随链接，不以排除缓存或影子模块的方式继续运行。审批清单 FROZEN.md 自身不进入 capture hash。
 
 所有 B2 Python 入口和 Python 子进程使用 `python3 -I`，隐含 `-E -s`；入口先断言 isolated、ignore_environment、no_user_site 和 `sys.pycache_prefix is None`，不带 `-I` 或显式 `-X pycache_prefix` 均 FAIL。`PYTHONPATH`、`PYTHONHOME`、`PYTHONUSERBASE`、`PYTHONPYCACHEPREFIX` 等环境变量由解释器忽略。入口在执行装置预检源码前先校验其 FROZEN 哈希；清单缺失时只允许与 HEAD 相同的装置源码，checker 仍返回 DRAFT/2。本目录模块由显式绝对路径的源码加载器校验哈希后执行，不走 pyc，也不把装置目录加入 sys.path。B1 compare/run 同样先验哈希，加载结束恢复 sys.path 和 compare 模块绑定；reconcile 子进程也带 `-I`。关闭字节码写入；unittest 的第一个测试由标准库 discovery 导入，因此测试命令额外带 `-B`，避免在入口代码执行前写缓存（`-I` 会忽略 PYTHONDONTWRITEBYTECODE 环境变量）。
 
-正式定标开始、每遍前后及续跑均要求装置路径 `git status --porcelain --untracked-files=all` 为空（含四份规约及 FROZEN），并在 batch.json 记录 HEAD；HEAD 与批次记录不同即拒绝，必须另建批次。每批独占全新 `batch/cargo-target/`，已存在的 target 一律拒绝；Cargo 使用该目录构建，记录 target 路径、产物路径与 SHA256。每遍 run 只使用本批校验通过的产物，续跑不重建、不复用 `_build` 的旧产物；独立 run 也在其新输出目录内构建新 target。
+正式定标开始、每遍前后及续跑均要求装置路径 `git status --porcelain --untracked-files=all` 为空（含四份规约及 FROZEN），并在 batch.json 记录 HEAD；HEAD 与批次记录不同即拒绝，必须另建批次。根目录 `rust-toolchain` / `rust-toolchain.toml` 若存在必须为 Git 跟踪的普通文件，纳入 FROZEN、capture hash 和 Git admission。每批独占全新 `batch/cargo-target/` 与 `batch/cargo-home/`，已存在的 target 一律拒绝；Cargo 使用该目录构建，记录 target 路径、产物路径与 SHA256。每遍 run 只使用本批校验通过的产物，续跑不重建、不复用 `_build` 的旧产物；独立 run 也在其新输出目录内构建新 target。
 
 `Approved-By:` 拒绝 TODO、模型名（Claude/GPT/GLM 等）和零宽/不可见字符；精确的协调者代批串仍可用。`Approval-Basis:` 至少三项不同的真实文件，按 realpath 去重，路径必须落在当前仓库或共享主仓的 `_tmp/`，不得借别名、不存在文件或符号链接逃逸凑数。
 
@@ -40,3 +40,7 @@ bash scripts/ui-server-parity/calibrate.sh --batch /absolute/path/to/batch --ret
 REFUSED 原档和日志保留在 `attempts/`；重采只能替换那一个尚未接受的轮次。PASS 轮次不可覆盖；计分开始后不可替换参考池，池与计分身份/录制 hash 不重复、区间不重叠。跨 UTC 日、源码/装置变更、已有 slot 尚未归档、采集 FAIL、池分类 REFUSED 等需查看证据，不能用改 metadata 或 replay 标记补救。跨日/变更必须新建完整 batch。因中断留下 slot 时脚本拒绝覆盖，先按 audit 核实自有进程清理再人工归档。
 
 磁盘按 git common dir 找到共享主仓，统计其 `_build` + `_tmp`（包括 worktree 内输出），上限保守取十进制 30 GB。默认只读查找历史 live3 单遍目录，取实际占用最大的完整遍作尺寸参考；也可显式 `--size-reference` 指定。预计每遍尺寸为历史尺寸 ×1.5，另预留构建 1 GB、报告 1 GB；开始、构建后、每遍前后和尺子检查前后重查，并校验文件系统可用空间。估算是启动门，若输出增长耗尽预算则停止并保留证据。历史 live3 只作磁盘估算，不进入新 TS 参考池。
+
+构建输入边界：只从仓内 `_build/cargo-home/registry/{index,cache}` 复制索引和压缩 `.crate`，不复制 `registry/src`、`git/checkouts`、config 或 credentials；装置在每次 fetch/build 前按 Cargo.lock 显式校验缓存 .crate 的 SHA256（Cargo 离线可能直接信任缓存），再由 Cargo 重新解压。fetch/build 都带 `--locked --offline`，缓存不足即 FAIL，须在开始新批次前备好压缩包。Cargo 的 cwd 为批次目录（独立 run 为 out），manifest 用绝对 `--manifest-path`。每次 cargo/rustc 启动前检查 cwd 与新 CARGO_HOME 的全部祖先，不得出现 `.cargo/config` 或 `.cargo/config.toml`（含断链）；新 CARGO_HOME 本身的 config/credentials 也拒绝。继承环境全部丢弃，只设置 HOME、受限 PATH、新 CARGO_HOME/CARGO_TARGET_DIR、宿主 RUSTUP_HOME 和禁止自动下载的 RUSTUP_AUTO_INSTALL。PATH 只含宿主 `~/.cargo/bin` 与系统目录，因此仓内 wrapper、RUST*/CARGO_*、linker 和动态加载变量不生效。构建前记录 `rustc -vV` / `cargo -V` 到 batch.json（独立 run 到 toolchain.json），每次 guard 复核同一工具链版本。
+
+批次在构建前记录基线整个 `node_modules` 的单一 SHA256 与实测耗时到 batch.json.node_modules；相对路径、lstat 文件类型、普通文件字节 SHA256、空目录以及符号链接目标均参与摘要，链接不跟随，特殊文件拒绝。每遍 source_sha256/source_sha256_end 增加 node_modules，批次每遍前后、结束与续跑均重新计算并匹配最初摘要，漂移即 FAIL。旧批次/新采集元数据缺此字段不能用于定标；历史严格复算仍按 historical-replay 路径使用旧录制，不能取得 calibration_eligible。

@@ -41,7 +41,7 @@ import hashlib
 from pathlib import Path
 import threading
 import time
-from apparatus import scan, SPEC_FILES, EXP008_FILES
+from apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_files, ApparatusUnsafe
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -52,7 +52,49 @@ def apparatus_hashes():
     # The approval/hash manifest is not apparatus: filling its pending review
     # fields must not invalidate the captures used to approve this very ruler.
     files += [ROOT / 'specs/ui-server-parity' / name for name in SPEC_FILES]
+    files += toolchain_files(ROOT)
     return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+
+
+def node_modules_hash(baseline):
+    """Whole tree: framed relative path, lstat type, bytes digest/link target.
+
+    Links (including directory and broken links) are recorded, never traversed.
+    Empty directories are included. Special files fail instead of being read.
+    """
+    import os
+    import stat
+    directory = Path(baseline) / 'node_modules'
+    if not directory.is_dir() or directory.is_symlink():
+        raise ApparatusUnsafe('missing/nonregular baseline node_modules tree: ' + str(directory))
+    digest = hashlib.sha256()
+
+    def frame(value):
+        digest.update(len(value).to_bytes(8, 'big'))
+        digest.update(value)
+
+    def visit(path):
+        mode = path.lstat().st_mode
+        frame(os.fsencode(path.relative_to(directory)))
+        if stat.S_ISLNK(mode):
+            frame(b'symlink')
+            frame(os.fsencode(os.readlink(path)))
+        elif stat.S_ISDIR(mode):
+            frame(b'directory')
+            for entry in sorted(path.iterdir(), key=lambda p: os.fsencode(p.name)):
+                visit(entry)
+        elif stat.S_ISREG(mode):
+            frame(b'file')
+            with path.open('rb') as source:
+                frame(hashlib.file_digest(source, 'sha256').digest())
+        else:
+            raise ApparatusUnsafe('nonregular node_modules entry: ' + str(path))
+
+    try:
+        visit(directory)
+    except OSError as error:
+        raise ApparatusUnsafe('node_modules tree unreadable/changed: ' + str(error)) from error
+    return digest.hexdigest()
 
 
 def source_hashes(baseline, recorder):
@@ -79,6 +121,7 @@ def source_hashes(baseline, recorder):
         raise ValueError('node executable missing')
     return {'node': hashlib.sha256(Path(node).read_bytes()).hexdigest(),
             'baseline': digest.hexdigest(),
+            'node_modules': node_modules_hash(baseline),
             'recorder_proxy': hashlib.sha256(Path(recorder).read_bytes()).hexdigest()}
 
 

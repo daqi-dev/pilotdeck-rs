@@ -53,10 +53,12 @@ import shutil
 import subprocess
 import sys
 import uuid
+import time
 
 import hashlib
-from apparatus import git_admission, ApparatusUnsafe
-from common import ROOT, apparatus_hashes, source_hashes, validate_clock_check
+from apparatus import (git_admission, ApparatusUnsafe, prepare_cargo, cargo_process,
+                       cargo_identity, cargo_config_admission)
+from common import ROOT, apparatus_hashes, source_hashes, node_modules_hash, validate_clock_check
 from multimodal import capture_identity
 
 NAMES = [f'ref{i}' for i in range(1, 21)] + [f'ts{i}' for i in range(1, 6)] + ['proxy']
@@ -138,6 +140,7 @@ class Batch:
         self.path, self.state = path, state
         self.slot = path / 'slot'
         self.target = path / 'cargo-target'
+        self.cargo_home = path / 'cargo-home'
         self.binary = self.target / 'debug/pdrs-exp008-proxy'
 
     def save(self):
@@ -146,35 +149,48 @@ class Batch:
     def build(self):
         # Refuse even an empty pre-existing target: every batch starts from nothing.
         try:
-            self.target.mkdir(exist_ok=False)
+            prepare_cargo(self.path, self.cargo_home, self.target, ROOT / '_build/cargo-home')
         except FileExistsError as error:
-            raise ApparatusUnsafe('batch target already exists; never reuse a build') from error
-        env = dict(os.environ, CARGO_HOME=str(ROOT / '_build/cargo-home'),
-                   CARGO_TARGET_DIR=str(self.target))
+            raise ApparatusUnsafe('batch target already exists or Cargo home reused; never reuse a build') from error
+        # Record the selected toolchain before executing any build input.
+        toolchain = cargo_identity(self.path, self.cargo_home, self.target)
+        self.state['toolchain'] = toolchain
+        self.save()
         for mode in ('fetch', 'build'):
             with (self.path / (mode + '.log')).open('w') as output:
-                command = ['cargo', mode, '--locked', '--manifest-path',
+                command = ['cargo', mode, '--locked', '--offline', '--manifest-path',
                            str(ROOT / 'scripts/exp008/proxy/Cargo.toml')]
-                if mode == 'build':
-                    command.append('--offline')
-                subprocess.run(command, cwd=ROOT, env=env, stdout=output,
-                               stderr=subprocess.STDOUT, check=True)
+                try:
+                    cargo_process(command, self.path, self.cargo_home, self.target,
+                                  stdout=output, stderr=subprocess.STDOUT)
+                except subprocess.CalledProcessError as error:
+                    raise ApparatusUnsafe(f'batch Cargo {mode} failed; see {self.path / (mode + ".log")}') from error
             space_check(Path(self.state['resource_root']), Path(self.state['size_reference']), build=False)
         self.state['build'] = {'target_dir': str(self.target), 'binary': str(self.binary),
+                               'cargo_home': str(self.cargo_home), 'toolchain': toolchain,
                                'sha256': hashlib.sha256(self.binary.read_bytes()).hexdigest()}
         self.save()
 
     def verify_build(self):
         build = self.state.get('build', {})
+        cargo_config_admission(self.path, self.cargo_home)
         if (build.get('target_dir') != str(self.target) or build.get('binary') != str(self.binary)
+                or build.get('cargo_home') != str(self.cargo_home) or not self.cargo_home.is_dir()
                 or self.target.is_symlink() or self.binary.is_symlink() or not self.binary.is_file()
                 or not self.binary.resolve().is_relative_to(self.target.resolve())
                 or hashlib.sha256(self.binary.read_bytes()).hexdigest() != build.get('sha256')):
             raise ApparatusUnsafe('batch build missing/changed; never use old _build artifacts')
+        if cargo_identity(self.path, self.cargo_home, self.target) != build.get('toolchain'):
+            raise ApparatusUnsafe('batch toolchain changed; start a NEW batch')
 
     def pin(self):
-        return {'apparatus': apparatus_hashes(),
-                'source': source_hashes(Path(self.state['baseline']), self.binary)}
+        try:
+            source = source_hashes(Path(self.state['baseline']), self.binary)
+        except (OSError, ValueError) as error:
+            raise ApparatusUnsafe('batch source unavailable/changed: ' + str(error)) from error
+        if source['node_modules'] != self.state.get('node_modules', {}).get('sha256'):
+            raise ApparatusUnsafe('FAIL: baseline node_modules changed/absent batch binding')
+        return {'apparatus': apparatus_hashes(), 'source': source}
 
     def guard(self, remaining=0):
         if not self.state.get('head'):
@@ -348,6 +364,9 @@ def main():
             state = {'schema': 1, 'root': str(ROOT), 'head': head, 'utc_day': utc_day(), 'baseline': str(baseline),
                      'resource_root': str(resource), 'size_reference': str(reference), 'space_estimate': estimate, 'runs': {}}
             batch = Batch(path, state)
+            started = time.monotonic()
+            state['node_modules'] = {'sha256': node_modules_hash(baseline),
+                                     'elapsed_seconds': time.monotonic() - started}
             batch.save()
             print('batch ' + str(path), flush=True)
             batch.build()

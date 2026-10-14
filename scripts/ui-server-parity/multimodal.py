@@ -51,7 +51,7 @@ CONNECTIONS = ('ws.chat.2#0', 'ws.chat.3#0')
 UNITS = {'U1': (0, ('changeType',)), 'U2': (1, ('changedFile',))}
 UNIT_LOCATION = 'chat.projects_updated.independent_units'
 MIN_POOL = 20
-SOURCE_KEYS = {'node', 'baseline', 'recorder_proxy'}
+SOURCE_KEYS = {'node', 'baseline', 'node_modules', 'recorder_proxy'}
 
 
 def registered_fields(side, units=None):
@@ -114,7 +114,7 @@ def confirmed_classes(count, pairs):
             for n, group in enumerate(groups)]
 
 
-def capture_identity(directory, expected_mode, apparatus):
+def capture_identity(directory, expected_mode, apparatus, *, historical=False):
     from compare import read_json
     directory = Path(directory).resolve()
     meta = read_json(directory / 'run-meta.json')
@@ -127,7 +127,8 @@ def capture_identity(directory, expected_mode, apparatus):
             or type(recorder[0].get('pid')) is not int or recorder[0]['pid'] <= 0):
         raise ValueError(f'{directory}: requires real, clean, same-apparatus {expected_mode} capture')
     source = meta.get('source_sha256')
-    if (not isinstance(source, dict) or set(source) != SOURCE_KEYS
+    keys = [SOURCE_KEYS, SOURCE_KEYS - {'node_modules'}] if historical else [SOURCE_KEYS]
+    if (not isinstance(source, dict) or set(source) not in keys
             or any(not isinstance(v, str) or len(v) != 64 or any(c not in '0123456789abcdef' for c in v) for v in source.values())
             or meta.get('source_sha256_end') != source):
         raise ValueError(f'{directory}: incomplete or changed capture-time binary/source hashes')
@@ -203,7 +204,8 @@ class ReferencePool:
         directory = Path(directory).resolve()
         clock_check = validate_clock_check(read_json(directory / 'run-meta.json'),
                                            historical=self.recorded_apparatus is not None)
-        identity = capture_identity(directory, mode, self.apparatus)
+        identity = capture_identity(directory, mode, self.apparatus,
+                                    historical=self.recorded_apparatus is not None)
         identity['clock_regression_check'] = clock_check
         for previous in self.identities:
             if any(identity[key] == previous[key] for key in ('directory', 'run_id', 'recording_sha256', 'recorder_pid')):

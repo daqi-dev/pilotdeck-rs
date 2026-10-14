@@ -55,8 +55,9 @@ def copy_apparatus(root):
     shutil.copytree(ROOT / 'scripts/ui-server-parity', root / 'scripts/ui-server-parity')
     shutil.copytree(ROOT / 'scripts/exp008', root / 'scripts/exp008')
     shutil.copytree(ROOT / 'specs/ui-server-parity', root / 'specs/ui-server-parity')
+    shutil.copyfile(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
-    subprocess.run(['git', '-C', str(root), 'add', 'scripts', 'specs'], check=True)
+    subprocess.run(['git', '-C', str(root), 'add', 'scripts', 'specs', 'rust-toolchain.toml'], check=True)
 
 
 
@@ -65,6 +66,64 @@ class FrozenControls(unittest.TestCase):
         hashes = apparatus_hashes()
         self.assertNotIn('specs/ui-server-parity/FROZEN.md', hashes)
         self.assertTrue({str(p.relative_to(ROOT)) for p in required_files(ROOT, SPEC)} <= set(hashes))
+
+    def test_DS_Store_regular_file_is_ignored_by_all_entrypoints_and_hashes(self):
+        import common
+        entrypoints = ['check_frozen.py', 'run.py', 'calibrate.py', 'check_ruler.py',
+                       'compare.py', 'check_coverage.py', 'benchmark_clock.py',
+                       'summarize_ruler.py', 'controls/run_all.py']
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            copy_apparatus(root)
+            subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--no-verify'], check=True)
+            with patch.object(common, 'ROOT', root):
+                original = apparatus_hashes()
+                for name in ('scripts/ui-server-parity/.DS_Store',
+                             'scripts/ui-server-parity/controls/.DS_Store', 'scripts/exp008/.DS_Store'):
+                    (root / name).write_bytes(b'not executable')
+                self.assertEqual(apparatus_hashes(), original)
+            self.assertEqual(git_admission(root), subprocess.check_output(
+                ['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip())
+            for entry in entrypoints:
+                result = subprocess.run([sys.executable, '-I', str(root / 'scripts/ui-server-parity' / entry), '--help'],
+                                        cwd=root, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, (entry, result.stderr))
+            store = root / 'scripts/exp008/.DS_Store'
+            store.unlink()
+            for kind in ('directory', 'symlink', 'fifo'):
+                if kind == 'directory':
+                    store.mkdir()
+                elif kind == 'symlink':
+                    store.symlink_to(root / 'missing')
+                else:
+                    os.mkfifo(store)
+                with self.subTest(kind=kind), self.assertRaises(ApparatusUnsafe):
+                    scan(store.parent)
+                store.rmdir() if kind == 'directory' else store.unlink()
+            (store.parent / '.DS_Store.py').write_text('injected')
+            with self.assertRaisesRegex(ApparatusUnsafe, 'untracked apparatus'):
+                scan(store.parent)
+
+    def test_toolchain_inputs_are_admitted_and_hashed(self):
+        import common
+        from check_frozen import check
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            copy_apparatus(root)
+            subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--no-verify'], check=True)
+            with patch.object(common, 'ROOT', root):
+                self.assertIn('rust-toolchain.toml', apparatus_hashes())
+            path = root / 'rust-toolchain.toml'
+            path.write_text('[toolchain]\nchannel="injected"\n')
+            self.assertEqual(check(root / 'specs/ui-server-parity', root=root)['verdict'], 'FAIL')
+            with self.assertRaisesRegex(ApparatusUnsafe, 'dirty apparatus'):
+                git_admission(root)
+            rogue = root / 'rust-toolchain'
+            rogue.write_text('injected')
+            with self.assertRaisesRegex(ApparatusUnsafe, 'untracked/missing toolchain'):
+                git_admission(root)
 
     def test_positive_draft_and_negative_manifest_controls(self):
         report = self_test()

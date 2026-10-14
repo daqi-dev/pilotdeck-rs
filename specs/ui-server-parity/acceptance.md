@@ -66,3 +66,5 @@ calibrate 开始与续跑要求装置/规约路径 Git status 为空，并将 HE
 ## 第 6 轮：独立单元更正（替代第 5 轮联合判法）
 
 多态范围以 multimodal.md 第 6 轮为准：U1 为两连接第一次 changeType，U2 为第二次 changedFile，分别满足池 >=20、每类 >=2、全成员命中；同单元两连接同值，跨单元类独立组合。判定一个单元时只将另一个单元的精确登记差异交给其独立判定，其他完整比较/健康门不变。报告 TS_calibration.units 与 multimodal 各侧的 units 分别保存 U1/U2 类和全成员证据；保留原始严格比较。历史池离线入口及其 calibration_eligible=false 标记不变。
+
+构建输入与 JS 依赖也属于装置威胁模型：基线整个 node_modules 按路径、文件类型、普通文件字节摘要与链接目标（不跟随）计算单一摘要，在批次开始、每遍 source 前后、批次结束与续跑复核，不一致 FAIL。每批新 CARGO_HOME 只复制 registry/index 和 registry/cache，装置按 Cargo.lock 显式校验缓存 .crate 的 SHA256 后由 Cargo 重新解压，不复用 registry/src、git/checkouts 或配置/凭据。Cargo cwd 为批次目录，使用绝对 --manifest-path；启动前拒绝 cwd/CARGO_HOME 全部祖先的 .cargo/config(.toml) 及新 CARGO_HOME 配置/凭据。构建环境只设必要白名单，PATH 限宿主 rustup/cargo 目录与系统目录；记录并复核 rustc -vV、cargo -V，根 rust-toolchain(.toml) 若存在纳入 Git admission 与 hash。精确名为 .DS_Store 的普通文件不执行、不登记、不参与装置 hash；同名非普通文件及其他未跟踪文件仍 FAIL。
