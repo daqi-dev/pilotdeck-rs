@@ -12,7 +12,7 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 
 ## Context
 
-承接计划 002 的“A5 起·深水区”：现在要迁走的是拥有状态的 gateway 宿主，包含会话接纳、agent 宿主能力、binding、交互、历史/运行登记、项目配置与其它入口。架构依据集中在 [调研 008](../research/008_phase-a-session-domain/must-know.md)，91 个未本地化 method 的工作包映射和 #19 因果链在 [gap](../research/008_phase-a-session-domain/gap.md)，决策分级在 [decision](../research/008_phase-a-session-domain/decision.md)。计划 002 对后续编号“003”的占位由本 **005** 承接；003 已用于阶段 B，本轮不重排旧编号、不修改旧计划。
+承接计划 002 的“A5 起·深水区”：现在要迁走的是拥有状态的 gateway 宿主，包含会话接纳、agent 宿主能力、binding、交互、历史/运行登记、项目配置与其它入口。架构依据集中在 [调研 008](../research/008_phase-a-session-domain/must-know.md)，91 个未本地化 method 的工作包映射和 #19 因果链在 [gap](../research/008_phase-a-session-domain/gap.md)，决策分级在 [decision](../research/008_phase-a-session-domain/decision.md)。计划 002 对后续编号“003”的占位由本 **005** 承接；003 已用于阶段 B，本轮不重排旧编号，仅同步其与 D5 有关的候选阶段门。
 
 **方案**：按状态所有者分小 PR 构建，默认代理链路保持完整；使用独立 home/project 测试 Rust 原生链路。Rust gateway 通过 Module Protocol 直接驱动阶段 C Rust sidecar，同时承担全部宿主回调。会话域和相关全局写者都准备齐后，在排空边界一次切换权威。没有同一 `PILOT_HOME` 下 TS/Rust 会话状态双写期，也没有逐个打开 (b)(c) 的生产白名单阶段。
 
@@ -44,6 +44,8 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 
 **依赖顺序**：A5 定标/装置 → A6 宿主和存储 → A7 会话域 → A8 旁路入口与整体切换。A4 与 A5 研究可独立推进；A7 原生整域验收及 A8 切换要求 A4 `10/10` 已有证据。#19 沿用现有 issue，A5 提供复现，A7 的收尾 PR 实现；D4 未批不能改变对拍评分语义，D5 未批不能关闭完整 UI 门。
 
+**与 B3 的解环草案（D5 等人，未生效）**：若人采纳 D5 建议 A，B3 所需的“阶段 A 对拍达标”具体指 **A8「gateway 退役验证完成（不含 UI 自动恢复）」**：A4/A6/A7 前置齐备，101 method、全部 gateway HTTP/后台入口、无 TS host、隔离切换/重启/回滚、E0/E1 retirement 和已批准口径下的完整 gateway 回归通过，阶段 P2 依赖清完。候选顺序为 **A8 gateway 里程碑 → B3（另须满足 B1/B2 自身前置）→ B 后续客户端恢复修复 → 真实 UI 自动恢复验收 → 完整用户验收/本计划 done**。A8 gateway 里程碑不依赖最后的 UI 门；仅 A7 会话协议域通过也不满足 B3。B 的修复工作包须显式登记，不能声称现有 B3 已包含它。这样保留完整 UI 承诺而不让 A 与 B 互等；D5 未批时只能记录 gateway 证据与 UI BLOCKED，不能据此自动放行 B3。[计划 003](003_phase-b-ui-server.md) 同步保留这一待批说明。
+
 **粒度铁律**：每条 issue 对应一个独立可验收结果，不按 method 建几十条 issue；工程量大仍留在同一 issue 中拆小 PR。下列估算是静态调研的规划区间，不是源码事实或工期承诺。预计超过3天的 issue 不整条无人值守发车；每次只派一个 **0.5–3天**、有自己证据与回归的小 PR。如果表内某 PR 开工细化后超过3天，就继续按 provider/操作/配置分支在原 issue 内拆分，先补具体输入、输出、负例、依赖再派工，不以“基础设施”打包无限工作。依据为共享 `dev-launch/SKILL.md` §3 粒度铁律；本轮不执行其发车、评论、提交流程。
 
 每个代码 PR 通用完成条件：冻结文件检查、受影响 contract/负例、当前已有场景回归、CI check、原始输出与进程身份归档；按 CLAUDE.md 走非作者 simplify/pr-ready 和双谱系评审，无 P0/P1。依赖上的 P2 先清，阶段结束清一次 P2-跟进。未开启的原生组件可以合并，但默认代理回归不能退步、不能声称已接管。
@@ -57,11 +59,19 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 | PR | 工作 / 目标位置 | 自己怎么算做完 |
 |---|---|---|
 | A5.1 依赖账本 | 基于研究 gap 的50+41列表，扩展 `scripts/gateway-parity/` 的 coverage manifest（拟新增）；逐项列 handler→provider→存储/内存→通知→成功/错误/未配置分支。补 memory/snapshot/browser、external binding 的实际提供者、配置和释放证据 | method 集合与冻结 schema/101清单一一相等、无重复；每项有 owner 和场景ID；未知项明确 BLOCKED；补全后才估算 A6 provider 子 PR |
-| A5.2 并发/重启夹具 | 复用官方 client、独立 driver 录帧、进程管理与高位端口隔离；新增双连接、多会话、旧close/新reconnect交错、store 故障、可控 clock/barrier、cold-restart；测试 #19 的模型/工具两种等待与 timeout/unknown 顺序 | 每个夹具有独立 oracle；不能靠 sleep 调到“碰巧绿”；真 bridge 重连另列，不代替协议闭环；#19 原始帧与 durable.status 同时在案 |
+| A5.2 并发/重启夹具 | 复用官方 client、独立 driver 录帧、进程管理与高位端口隔离；新增双连接、多会话、旧close/新reconnect交错、store 故障、可控 clock/barrier、cold-restart；#19 覆盖模型/工具等待 × timeout/unknown 顺序 × 快/慢/失败 writer，控制 queue.close 与外层 complete 边界 | 每个夹具有独立 oracle；不能靠 sleep 调到“碰巧绿”；真 bridge 重连另列，不代替协议闭环；#19 原始帧与 durable.status 分开断言，快 writer 下帧只有 timeout 也必须能检出 durable 多写，详见下表 |
 | A5.3 原生拓扑与四格入口 | 拟新增 `scripts/gateway-parity/session_domain.py`，接口见下；复用现有 compare/driver 而不复制一套尺子。新增 Rust-host→TS/Rust-sidecar、禁 TS host-helper 审计；连接数、进程树、argv/hash、输出/落盘/HTTP 都记账 | native 拓扑被声明时，启动 TS gateway、调用隐形 helper、漏一组场景、伪造 unavailable、丢/重/乱序事件、错误 binding、空 observer、两侧同坏都须 FAIL |
 | A5.4 定标/评审/冻结 | TS-only 先校准新增组 k=5；#19 已知非稳定交错单列，受控预期与批准差异明确，不能删场景。按独立 issue 理由更新装置白名单/哈希、acceptance/normalization 与差异登记；D4 的评分语义、人审门另记 | 原八组仍通过；新增各组有完整5轮与全对比较、33项旧 controls 及新增 controls；两家评审无P0/P1；语义变化依 D4 人批后冻结，未批只交草稿不伪称通过 |
 
-**#19 在此的工作**：验证调研 gap §四的候选机制，特别是慢 status writer 保持 current fence 时的异常路径；测试用例应分别强制 timeout-first / unknown-first / known-final-first，以及 timeout status 与 run registry 写失败。只读基线、不改资源源码；用独立 fixture/注入的 session/storage 实现控制交错，真实 sidecar 场景用于交叉确认。记录 bug②证据不足的情形，不把“所有 unknown 都是超时”写入 oracle。
+**#19 在此的工作**：验证调研 gap §四的更正因果链：handle 到外层 finally complete 才移除，timeout writer 返回/queue.close 不使其失效；timeout-first/current handle 下 catch 仍落盘 gateway_submit_failed，快慢 writer 都如此。只读基线、不改资源源码；用独立 fixture/注入的 session/storage 及消费端 barrier 控制交错，真实 sidecar 场景用于交叉确认。下面是 A5.2 待实现的基线断言，不是本轮实测；成功落盘分支与故障分支分别记录，不能以实时帧结果代替 durable 结果。
+
+| 受控次序 | 基线帧断言 | 基线 durable.status 断言 |
+|---|---|---|
+| timeout-first，快 writer；timeout 落盘并关 queue 后 unknown 进入 catch，外层尚未 complete | timeout status/error 可见；后续 gateway_submit_failed 的 status/error 被关闭的 queue 丢弃 | timeout 与额外一条 gateway_submit_failed 都存在；catch 落盘不受 queue.close 影响 |
+| timeout-first，慢 writer；阻塞 timeout 写入，先让 unknown 的失败写入及帧入队，再释放 timeout writer | gateway_submit_failed 与 timeout 的 status/error 均可见，顺序按 barrier 固定 | 两类状态都存在，各一次；落盘顺序按写入 barrier 固定，不能猜测与帧顺序相同 |
+| timeout-first，但 unknown 迟至外层 complete 后才进入 catch | 旧 handle 不应追加失败帧 | current fence 拒绝旧 catch，不追加 gateway_submit_failed；这是 handle 生命周期边界，不是“快 writer 就安全” |
+
+另分别强制 unknown-first / known-final-first、timeout status 与 run registry 写失败；失败注入时核实写入尝试、实际 durable 结果及错误帧，不把写失败当作“已成功持久化唯一 timeout”。**D4 选 B 的候选 Rust oracle**须另列：timeout-first 快/慢 writer 都不追加 durable gateway_submit_failed，帧仅一套 timeout status/error，ledger 仍 unknown；D4 未批不能用候选规则改评分。记录 bug②证据不足的情形，不把“所有 unknown 都是超时”写入 oracle。源码依据 `B/src/gateway/client/InProcessGateway.ts:1252-1266,1384-1439,1727-1759,1848`、`B/src/gateway/util/AsyncQueue.ts:17-18`。
 
 **怎么算做完**：上述四 PR 各自完成；101清单及 provider 分支无无主项；原生拓扑与错误对照可判；D4 涉及的规则未获批时 A5 标“兼容部分完成，修正口径待批”。现有 A2 八组全绿不是 A5 的替代物。
 
@@ -106,10 +116,10 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 | A7.4 user_dialog | A6 store接通校验、claim/renew/release/expiry、hosted→live→recovered、broadcast | 两renderer争租约、错误值不消费、崩溃后恢复、owner租约与renderer租约分离；notify失败不改变bus/store权威 |
 | A7.5 历史与会话写事务 | `storage/history`、`runtime/replacement`；S1/S3/S5，A6 catalog、fork/replace/finalize、session model/config、read_subagent_messages恢复 | close/delete/export/restore忙闲边界、替换claim/commit/rollback、半写/重启、读epoch校验；原A4读方法看到同一新状态 |
 | A7.6 运行中控制/统计 | S2/S6与hook_async_result；steer/cancel/abort、usage、background、MCP status、seed/rewind | late/duplicate hook不注入新轮次；abort drain有界；后台任务真停、usage归属正确，不拿空列表过关 |
-| A7.7 #19 收尾修复 | `runtime/turn` 的单一收尾裁决，复用 A6 operation ledger；按D4批准的精确范围修，关联原 #19，不另建同义 issue | timeout-first/unknown-first/known-final-first、慢/失败writer、Requested、late ACK、sidecar crash全部有断言；未知effect不再执行；两条deadline各5对通过已批准口径，完整C/A回归无新差异 |
+| A7.7 #19 收尾修复 | `runtime/turn` 的单一收尾裁决，复用 A6 operation ledger；按D4批准的精确范围修，关联原 #19，不另建同义 issue | timeout-first/unknown-first/known-final-first、快/慢/失败writer、Requested、late ACK、sidecar crash全部有断言；帧与durable分开验证，unknown仍入账且未知effect不再执行；两条deadline各5对通过已批准口径，完整C/A回归无新差异 |
 | A7.8 自动化与整域装配 | S7 SOP/always-on；能力声明、所有50项与U9/U10一起装配；测试时HTTP同域入口也直达这个owner或明确尚未开放，不能回TS修改同域 | 50项覆盖无漏项；全会话域报告PASS；无TS内部宿主；真实Web普通轮次/权限/历史可验，D5自动恢复仍单列；默认代理仍不进行半域切换 |
 
-**#19 修正的原则与范围**：分别维护“执行事实 unknown/known”和“可见收尾 open/settling/settled”。timeout 首先取得当前 run 的收尾权并 abort，随后等待该等待的状态写入；迟到 reconciliation 错误仍保留 ledger unknown，但不能再次写可见 gateway_submit_failed。**只在 D4 已定标的 timeout-first 情形应用**；unknown-first 保持原失败投影，已知 final 与 timeout 竞合采用 A5 预注册次序。禁止改成成功、删除未知状态、重发工具、人为延时、改归一化屏蔽错误。#19 在代码、精确差异登记、回归证据齐备并按流程回复之后才能关闭。
+**#19 修正的原则与范围（D4 等人，以下为候选）**：分别维护“执行事实 unknown/known”和“可见收尾 open/settling/settled”。timeout 首先取得当前 run 的收尾权并 abort，随后等待该等待的状态写入；迟到 reconciliation 错误仍保留 ledger unknown，但不能再次追加 durable gateway_submit_failed 或发布对应失败帧。**只在 D4 已定标且获批的 timeout-first 情形应用，覆盖快/慢 writer，不以阻塞或帧可见为条件**；unknown-first 保持原失败投影，已知 final 与 timeout 竞合采用 A5 预注册次序。禁止改成成功、删除未知状态、重发工具、人为延时、改归一化屏蔽错误。#19 在代码、精确差异登记、回归证据齐备并按流程回复之后才能关闭。
 
 **怎么算做完**
 
@@ -140,7 +150,7 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 - [ ] 完整HTTP route manifest、内部host callback、cron/channel/background均已接管；没有因WS全绿而遗留TS HTTP/后台owner。
 - [ ] native轮只启动Rust gateway与Rust sidecar及明确外部mock，原版ui/server/测试driver可在独立角色运行；身份审计和故意fallback对照均有效。
 - [ ] 冷切换/重启/回滚在隔离数据上完成；用户18789、3001、真实home和进程从未接触。
-- [ ] E0、E1 retirement及完整回归通过；阶段P2依赖清完。D5未闭合则报告“gateway退役验证完成，完整Web自动恢复验收阻塞”，不标计划done；人工实效验收与桌面边界明确。
+- [ ] E0、E1 retirement及完整 gateway 回归通过；阶段P2依赖清完。与上述 A8 条件共同形成“gateway 退役验证完成（不含 UI 自动恢复）”里程碑；只有 D5 的 A8→B3 闸门获人批准后，才可用它满足 B3 的 A 侧前置。完整 UI 门未闭合则报告“gateway退役验证完成，完整Web自动恢复验收阻塞”，不标计划done；人工实效验收与桌面边界明确。
 
 **验收命令**：E0；E1 `--suite retirement`，它必须包含101 coverage、生产HTTP/后台入口、无TS宿主审计、cold-restart/rollback、阳性对照。原 `run_round.py --side rust` 默认仍是Rust前置+TS上游，不得拿它作为退役证据。
 

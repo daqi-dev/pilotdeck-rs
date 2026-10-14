@@ -44,7 +44,7 @@ related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-se
 |---|---|
 | 卡在哪 | binding/permission/elicitation 的 Map 内有回调，不能靠拷贝 transcript 恢复。dialog 另有 hosted/recovered 协议。证据 `B/src/gateway/permission/GatewayPermissionBus.ts:53-110`、`B/src/interaction/InteractionReconnect.ts:67-70`、`B/src/gateway/client/InProcessGateway.ts:2658-2672`。 |
 | 谁受影响 | 等待人答复的轮次、renderer lease、run_reattach、历史替换恢复。证据 `B/src/gateway/user-dialog/FileGatewayUserDialogStore.ts:149-171,227-245`、`B/src/gateway/run/RunRegistry.ts:285-307`。 |
-| 能否撤回 | 隔离演练可撤回；真正数据切换需先验证 TS 可读 Rust 落盘，并在回滚时先停止新写者，不能恢复旧备份盖掉新工作。依据 `.42cog/intent.md:26-27`、`B/src/gateway/run/RunRegistry.ts:184-211`。 |
+| 能否撤回 | 隔离演练可撤回；真正数据切换需先验证 TS 可读 Rust 落盘，并在回滚时先停止新写者，不能恢复旧备份盖掉新工作。这是基于持久化会改写当前快照、每次 mutation 需锁内刷新而提出的回滚约束，依据 `B/src/gateway/run/RunRegistry.ts:184-211`；兼容性仍须演练证明。 |
 | 动不动尺子 / 意向 | 不新增“所有 pending 跨进程无损续跑”承诺；若提出此功能属于新行为，需另议。依据 `.42cog/intent.md:23,27`。 |
 | 选项与后果 | A 内存序列化热迁：需要新协议转移回调/lease/执行责任。B **排空后持久状态恢复**：可审计，保留既有 crash/recovered 行为，有维护窗口。C 全部易失状态持久化：扩大本次范围及崩溃语义。 |
 | 建议与分级 | **选 B，自决·待复核**。Rust 保持进程内 generation 与新 connectionId；模块的 `{moduleInstanceId, connectionGeneration}` 与 WS `{connectionId, generation}` 是两个身份域，不能混用。后者见 `B/src/gateway/server/GatewayWsConnection.ts:35-38`，前者见 `B/src/agent/modules/transport/agentLoopSidecarClient.ts:1040-1055`。 |
@@ -54,25 +54,29 @@ related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-se
 
 | 卡项 | 内容 |
 |---|---|
-| 卡在哪 | current fence 仍有效时，timeout 后 catch 可以多写 gateway_submit_failed；timeout 测试断言只有 turn_timeout。已有 accepted-diffs 又曾把“原版缺陷”更正为“Rust 产品问题”，不能当作已获豁免。证据 `B/src/gateway/client/InProcessGateway.ts:1708-1760`、`B/tests/gateway/operation-deadline.spec.ts:154-160`、`specs/parity/accepted-diffs.md:9-11`。 |
+| 卡在哪 | handle 只在外层 finally complete 移除，writer 完成和 queue.close 都不使其失效；timeout-first 后 unknown 在 handle 仍 current 时进入 catch，成功落盘必追加 gateway_submit_failed，与 writer 快慢无关。快 writer 已关 queue 只会隐藏失败帧，durable 仍多写；慢 writer 下关流前入队的失败帧也会可见。测试却只断言 timeout 帧，不能拿帧通过推断落盘正确。需人决定是否修此行为及相应评分语义；accepted-diffs 曾把“原版缺陷”更正为“Rust 产品问题”，不能当作豁免。证据 `B/src/gateway/client/InProcessGateway.ts:1252-1266,1708-1760,1848`、`B/src/gateway/util/AsyncQueue.ts:17-18`、`B/tests/gateway/operation-deadline.spec.ts:154-160`、`specs/parity/accepted-diffs.md:9-11`。 |
 | 谁受影响 | deadline 两场景的帧与 durable.status、UI 错误展示、C/A 分数与 unknown 责任。Module final 权威见 `B/src/agent/modules/transport/agentLoopSidecarClient.ts:662-684,1017-1033`。 |
 | 能否撤回 | 实现可撤回；已写的用户状态/已执行副作用不能靠回滚二进制撤销。只在隔离夹具验证后再定行为。 |
 | 动不动尺子 / 意向 | 修已证 bug 符合 intent；差异接受与“唯一终态” oracle 可能改变冻结评分语义，**必须等人**，不能从“默认修 bug”推导可自行放宽尺子。依据 `.42cog/intent.md:23`、`CLAUDE.md:123-128`。 |
-| 选项与后果 | A 复刻竞态：容易继续出现时序差异，无法保证确定通过。B **精确修 timeout 已取得收尾权后重复失败写入**：保持 unknown ledger，单一可见 timeout；补 bug②证据与差异登记。C 把全部 DEADLINE_EXCEEDED/unknown 统一吞掉或成功化：丢失不确定副作用责任，不接受。 |
-| 建议与分级 | **建议 B，等人（A19-HOST 候选）**。先在 A5 用可控 writer/回调顺序重现；只在证据覆盖的 timeout-first 情形修。unknown-first 尚无完整证据，默认保留既有失败处理。#19 继续使用原 issue，不再建一条同义 issue，不因文档写完而关闭。 |
-| 原则 → 断言 | 执行未知可以和用户已超时并存；同一 run 的可见收尾只能裁决一次 → timeout-first 时只出现一套 timeout status/error，ledger 仍 unknown；late ACK 不变 known，generic error 与用户取消不被吞；慢/失败持久化都测。依据 `B/tests/gateway/operation-deadline.spec.ts:117-197`、`B/src/agent/modules/transport/sessionOperationLedger.ts:132-164`。 |
+| 选项与后果 | A 复刻基线：保留 timeout-first/current handle 下的重复 durable 失败，帧是否可见仍取决于关 queue 次序，不能承诺唯一 timeout 或稳定对拍。B **精确修 timeout 已取得收尾权后的重复失败写入**：覆盖快/慢 writer，不以 writer 阻塞或失败帧可见为条件；保留 unknown ledger，帧和 durable 都只保留 timeout 收尾，须补 bug②证据并分别登记帧/落盘差异及评分口径。C 把全部 DEADLINE_EXCEEDED/unknown 统一吞掉或成功化：会丢失不确定副作用责任，AI 不建议。 |
+| 建议与分级 | **建议 B，等人（A19-HOST 候选）**。先在 A5 分别控制快/慢 writer、queue.close 与 unknown catch 的次序，帧和 durable 各有 oracle；仅建议修证据覆盖的 timeout-first 重复收尾，不把 writer 阻塞当修复前提。unknown-first 尚无完整证据，默认保留既有失败处理。#19 继续使用原 issue，不再建一条同义 issue，不因文档写完而关闭。 |
+| 原则 → 断言（候选，待批） | 执行未知可以和用户已超时并存；同一 run 的收尾只能裁决一次 → timeout-first 成功落盘分支中，帧仅一套 timeout status/error，durable.status 仅 timeout、无 gateway_submit_failed，ledger 仍 unknown；late ACK 不变 known，generic error 与用户取消不被吞。快/慢/失败持久化分别测，写失败仍报 timeout、不得伪称 durable 成功；外层 complete 后的旧 catch 单测 fence。依据 `B/tests/gateway/operation-deadline.spec.ts:117-197`、`B/src/agent/modules/transport/sessionOperationLedger.ts:132-164`。 |
+
+**给人的三句话摘要（协调者可原样转发）**：卡在哪：timeout 先到、unknown 后到且 handle 仍 current 时，快慢 writer 都会多写 durable 失败，queue 关闭只隐藏帧，修正行为和评分口径仍等人定。选项：A 保留重复落盘及帧时序差异，B 在所有已定标的 timeout-first 情形阻止重复收尾并保留 unknown 责任，C 吞掉或成功化 unknown 会丢失副作用责任。AI 建议：选 B，先用快/慢/失败 writer 分别验证帧与 durable，再请人批准精确修复及差异规则，D4 仍为「等人」。
 
 ## D5 · 原版 UI 自动恢复失败如何验收
 
 | 卡项 | 内容 |
 |---|---|
-| 卡在哪 | 客户端 close 时先清 hello，bridge 取不到旧 binding；真实 UI 未发送 reconnect/snapshot。Rust gateway 无法可靠替客户端猜 previousBinding。证据 `B/src/gateway/client/GatewayWsClient.ts:93-100`、`B/src/gateway/client/RemoteGateway.ts:111-112`、`B/ui/server/pilotdeck-bridge.js:255-258,2127-2130`，实测见 `docs/experiments/exp003-transparent-proxy/readme.md:55,65-70`。 |
+| 卡在哪 | 客户端 close 时先清 hello，bridge 取不到旧 binding；真实 UI 未发送 reconnect/snapshot，Rust gateway 无法可靠替客户端猜 previousBinding。若完整 UI 门等 B 修客户端，而计划 003 的 B3 又等未定义里程碑的“阶段 A 对拍达标”，就会形成 A 完整 UI 门 → B 修复 → B3 → A 完整 UI 门的互等。需人同时确定 UI 完成条件和 B3 的前置里程碑。源码证据 `B/src/gateway/client/GatewayWsClient.ts:93-100`、`B/src/gateway/client/RemoteGateway.ts:111-112`、`B/ui/server/pilotdeck-bridge.js:255-258,2127-2130`；实测见 `docs/experiments/exp003-transparent-proxy/readme.md:55,65-70`；阶段门见 [计划 003](../../plan/003_phase-b-ui-server.md) Context/B3，解环草案见 [计划 005](../../plan/005_phase-a-session-domain.md) 依赖顺序/A8。 |
 | 谁受影响 | Web 用户断线中的权限/问题交互，A 的人工验收声明；桌面仍不纳入此次变更，依据 `.42cog/intent.md:24`。 |
 | 能否撤回 | 文档上的阶段验收分层可撤回；改 UI 越过本轮只写文档范围以及阶段 A 不改 UI 的边界。 |
 | 动不动尺子 / 意向 | 扩大 A 改 UI 或缩减“真实 UI 自动恢复”完成条件都需人定；协议探针通过不是自动豁免。依据 `CLAUDE.md:123`、`.42cog/intent.md:24`。 |
-| 选项与后果 | A 等阶段 B 修客户端后才关闭完整 UI 闸门：严格但可延后最终声明。B 人批准 A 有一项明确已知限制，允许协议域先验收：不再声称完整 UI 恢复。C 提前改基线 UI：触红线，本任务不能执行。 |
-| 建议与分级 | **建议 A，等人**。让 A5–A8 的代码与协议证据继续推进，最终“完整 UI 恢复”保持 BLOCKED；协议/会话域完成与最终用户验收分开记录。不在 gateway 删除 previousBinding 校验来绕过。 |
-| 原则 → 断言 | 客户端没发的请求不是服务器恢复成功 → 真 bridge 录帧必须出现 reconnect_interaction、active_turn_snapshot、成功答复与轮次结束；保存 binding 的专用 driver 仅计协议证据。依据 `docs/experiments/exp006-gateway-parity-ruler/readme.md:78`。 |
+| 选项与后果 | A 等 B 修客户端后才关闭完整 UI 门，**同时批准以 A8“gateway 退役验证完成（不含 UI 自动恢复）”作为 B3 的 A 侧闸门**：A8 → B3 → B 的客户端恢复修复 → 完整 UI 验收，解开互等；只同意“等 B”而不明确此闸门仍会成环，完整用户验收须延后。B 人批准 A 带明确 UI 恢复限制验收，并同样明确 B3 依赖 A8 gateway 证据、不依赖完整 UI 门：可解除互等，但收窄 A 的最终验收承诺，不能声称完整 UI 恢复；仅让 A7 协议域先验收仍不足以放行 B3。C 提前改 UI 来消除 B 依赖：必须另获阶段边界调整授权并明确修复归属，否则 B3 仍等 A、循环仍在；修改固定基线会改变对照物，本任务不能执行。 |
+| 建议与分级 | **建议 A 加上述 A8→B3 解环方案，等人**。A8 gateway 里程碑要求 A4/A6/A7 前置、101 method、HTTP/后台入口、无 TS host、隔离切换/回滚及已批准口径下的完整 gateway 回归齐备；不含 UI 自动恢复，但也不能只凭 A7 或一次协议探针放行。完整 UI 恢复独立保持 BLOCKED，待 B 修客户端并完成真实 bridge 验收后关闭；修复须在 B 的后续工作包显式登记，B3 只表示可进入产品实现，并不表示 B3 自身包含该修复。本轮仅写候选依赖，不批准 B3 发车，不在 gateway 删除 previousBinding 校验绕过。 |
+| 原则 → 断言（候选，待批） | B3 的 gateway 前置和最终用户验收分开，前者不得反向依赖 B 的客户端修复；A8 gateway 报告与 D5 人批记录齐备后才可按候选闸门放行 B3。完整 UI 门仍要求真 bridge 录帧出现 reconnect_interaction、active_turn_snapshot、成功答复与轮次结束；保存 binding 的专用 driver 仅计协议证据。依据 `docs/experiments/exp006-gateway-parity-ruler/readme.md:78`。 |
+
+**给人的三句话摘要（协调者可原样转发）**：卡在哪：真实 UI 丢 binding 没发恢复请求，若 A 的完整 UI 门等 B 修复、B3 又等 A 全部验收，就会互等。选项：A 保留完整 UI 门并批准 A8 gateway 退役验证（不含 UI 自动恢复）作为 B3 闸门，B 批准 A 带已知 UI 限制验收并明确同一 B3 闸门，C 另行授权提前改 UI 和阶段边界。AI 建议：选 A 加 A8→B3 解环方案，再由 B 修客户端、真实 UI 验收关闭最终门，D5 仍为「等人」，本轮不放行 B3。
 
 ## D6 · 41 待定与外部 provider 的完成口径
 
