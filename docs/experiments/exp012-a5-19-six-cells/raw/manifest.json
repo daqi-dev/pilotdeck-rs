@@ -1,11 +1,11 @@
 {
-  "generatedAt": "2026-10-14T06:38:45.922Z",
+  "generatedAt": "2026-10-14T06:51:51.966Z",
   "node": "v22.22.0",
   "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
-  "worktreeCommit": "11cfa4da543418ebbc82233b557eefa7f668365c",
+  "worktreeCommit": "c5ab36fb2884892366adf7923305fc0fe5130c46",
   "command": "node scripts/a5-19/six_cells.mts",
-  "pilotHome": "/Users/da/ws/pilotdeck-rs/_build/wt-a5x/_tmp/20261014-a5-19/run-tJd1xr/home",
-  "scriptSha256": "9609bf3ac2d2af52558c24bad424ed1aea89ca1f9d801bdbade80c5fe06086ca",
+  "pilotHome": "/Users/da/ws/pilotdeck-rs/_build/wt-a5x/_tmp/20261014-a5-19/run-cY2Jmu/home",
+  "scriptSha256": "108b0556bcfbd635bd1ccfb2b9d31092327abce19439f3f007b04573fe33a388",
   "importedSources": [
     {
       "path": "src/gateway/client/InProcessGateway.ts",
@@ -2107,6 +2107,8 @@
   "checks": {
     "nonemptyObservers": true,
     "diskRereadAgreesWithFreshRegistry": true,
+    "statusInjectionInsideWriteTail": true,
+    "registryInjectionInsideMutationChain": true,
     "baselineHashesUnchanged": true,
     "observerControls": [
       {
@@ -2124,11 +2126,19 @@
       {
         "mutation": "hide registry result overwrite",
         "detected": true
+      },
+      {
+        "mutation": "reverse observed FIFO entry order at status.store.enter",
+        "detected": true
+      },
+      {
+        "mutation": "reverse observed FIFO entry order at registry.persist.enter",
+        "detected": true
       }
     ]
   },
   "repeats": 5,
-  "totalMeasurements": 240,
+  "totalMeasurements": 280,
   "summary": [
     {
       "cell": "no-registry-fast",
@@ -2526,39 +2536,41 @@
       "distinct": 1,
       "stable": true,
       "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
         "agent_status:turn_timeout",
         "error:turn_timeout"
       ],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": "N/A",
       "registryState": "N/A",
       "registryResult": "N/A",
       "registryRevision": "N/A",
       "registryLastSeq": "N/A",
-      "droppedEnqueues": [],
+      "droppedEnqueues": [
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
       "observedAlternatives": [
         {
           "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
             "agent_status:turn_timeout",
             "error:turn_timeout"
           ],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": "N/A",
           "registryState": "N/A",
           "registryResult": "N/A",
           "registryRevision": "N/A",
           "registryLastSeq": "N/A",
-          "droppedEnqueues": []
+          "droppedEnqueues": [
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
         }
       ]
     },
@@ -2570,39 +2582,41 @@
       "distinct": 1,
       "stable": true,
       "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
         "agent_status:turn_timeout",
         "error:turn_timeout"
       ],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": "N/A",
       "registryState": "N/A",
       "registryResult": "N/A",
       "registryRevision": "N/A",
       "registryLastSeq": "N/A",
-      "droppedEnqueues": [],
+      "droppedEnqueues": [
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
       "observedAlternatives": [
         {
           "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
             "agent_status:turn_timeout",
             "error:turn_timeout"
           ],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": "N/A",
           "registryState": "N/A",
           "registryResult": "N/A",
           "registryRevision": "N/A",
           "registryLastSeq": "N/A",
-          "droppedEnqueues": []
+          "droppedEnqueues": [
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
         }
       ]
     },
@@ -3237,51 +3251,49 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "4:agent_status:gateway_submit_failed",
-        "5:error:gateway_submit_failed",
-        "6:agent_status:turn_timeout",
-        "7:error:turn_timeout"
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 8,
       "registryLastSeq": 7,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "4:agent_status:gateway_submit_failed",
-            "5:error:gateway_submit_failed",
-            "6:agent_status:turn_timeout",
-            "7:error:turn_timeout"
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 8,
           "registryLastSeq": 7,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3293,51 +3305,49 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "5:agent_status:gateway_submit_failed",
-        "6:error:gateway_submit_failed",
-        "7:agent_status:turn_timeout",
-        "8:error:turn_timeout"
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed",
+        "8:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 9,
       "registryLastSeq": 8,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "5:agent_status:gateway_submit_failed",
-            "6:error:gateway_submit_failed",
-            "7:agent_status:turn_timeout",
-            "8:error:turn_timeout"
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 9,
           "registryLastSeq": 8,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3355,20 +3365,20 @@
         "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "4:agent_status:gateway_submit_failed",
-        "5:error:gateway_submit_failed",
-        "6:agent_status:turn_timeout",
-        "7:error:turn_timeout"
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 8,
       "registryLastSeq": 7,
       "droppedEnqueues": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
@@ -3378,20 +3388,20 @@
             "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "4:agent_status:gateway_submit_failed",
-            "5:error:gateway_submit_failed",
-            "6:agent_status:turn_timeout",
-            "7:error:turn_timeout"
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 8,
           "registryLastSeq": 7,
           "droppedEnqueues": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3409,20 +3419,20 @@
         "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "5:agent_status:gateway_submit_failed",
-        "6:error:gateway_submit_failed",
-        "7:agent_status:turn_timeout",
-        "8:error:turn_timeout"
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed",
+        "8:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 9,
       "registryLastSeq": 8,
       "droppedEnqueues": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
@@ -3432,20 +3442,20 @@
             "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "5:agent_status:gateway_submit_failed",
-            "6:error:gateway_submit_failed",
-            "7:agent_status:turn_timeout",
-            "8:error:turn_timeout"
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 9,
           "registryLastSeq": 8,
           "droppedEnqueues": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3457,51 +3467,49 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "4:agent_status:gateway_submit_failed",
-        "5:error:gateway_submit_failed",
-        "6:agent_status:turn_timeout",
-        "7:error:turn_timeout"
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 8,
       "registryLastSeq": 7,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "4:agent_status:gateway_submit_failed",
-            "5:error:gateway_submit_failed",
-            "6:agent_status:turn_timeout",
-            "7:error:turn_timeout"
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 8,
           "registryLastSeq": 7,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3513,51 +3521,265 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "5:agent_status:gateway_submit_failed",
-        "6:error:gateway_submit_failed",
-        "7:agent_status:turn_timeout",
-        "8:error:turn_timeout"
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed",
+        "8:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 9,
       "registryLastSeq": 8,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "5:agent_status:gateway_submit_failed",
-            "6:error:gateway_submit_failed",
-            "7:agent_status:turn_timeout",
-            "8:error:turn_timeout"
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 9,
           "registryLastSeq": 8,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-slow",
+      "variant": "status-fast-catch-append-slow",
+      "phase": "model",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "turn_timeout",
+        "gateway_submit_failed"
+      ],
+      "registryEventsAfterPrefix": [
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 8,
+      "registryLastSeq": 7,
+      "droppedEnqueues": [
+        "agent_status:turn_timeout",
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "turn_timeout",
+            "gateway_submit_failed"
+          ],
+          "registryEventsAfterPrefix": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 8,
+          "registryLastSeq": 7,
+          "droppedEnqueues": [
+            "agent_status:turn_timeout",
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-slow",
+      "variant": "status-fast-catch-append-slow",
+      "phase": "tool",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "turn_timeout",
+        "gateway_submit_failed"
+      ],
+      "registryEventsAfterPrefix": [
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed",
+        "8:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 9,
+      "registryLastSeq": 8,
+      "droppedEnqueues": [
+        "agent_status:turn_timeout",
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "turn_timeout",
+            "gateway_submit_failed"
+          ],
+          "registryEventsAfterPrefix": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 9,
+          "registryLastSeq": 8,
+          "droppedEnqueues": [
+            "agent_status:turn_timeout",
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-slow",
+      "variant": "status-slow-catch-append-slow",
+      "phase": "model",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "turn_timeout",
+        "gateway_submit_failed"
+      ],
+      "registryEventsAfterPrefix": [
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 8,
+      "registryLastSeq": 7,
+      "droppedEnqueues": [
+        "agent_status:turn_timeout",
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "turn_timeout",
+            "gateway_submit_failed"
+          ],
+          "registryEventsAfterPrefix": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 8,
+          "registryLastSeq": 7,
+          "droppedEnqueues": [
+            "agent_status:turn_timeout",
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-slow",
+      "variant": "status-slow-catch-append-slow",
+      "phase": "tool",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "turn_timeout",
+        "gateway_submit_failed"
+      ],
+      "registryEventsAfterPrefix": [
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed",
+        "8:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 9,
+      "registryLastSeq": 8,
+      "droppedEnqueues": [
+        "agent_status:turn_timeout",
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "turn_timeout",
+            "gateway_submit_failed"
+          ],
+          "registryEventsAfterPrefix": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 9,
+          "registryLastSeq": 8,
+          "droppedEnqueues": [
+            "agent_status:turn_timeout",
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3774,18 +3996,18 @@
         "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "4:agent_status:gateway_submit_failed",
-        "5:error:gateway_submit_failed",
-        "6:error:turn_timeout"
+        "4:error:turn_timeout",
+        "5:agent_status:gateway_submit_failed",
+        "6:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 7,
       "registryLastSeq": 6,
       "droppedEnqueues": [
+        "error:turn_timeout",
         "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
-        "error:turn_timeout"
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
@@ -3794,18 +4016,18 @@
             "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "4:agent_status:gateway_submit_failed",
-            "5:error:gateway_submit_failed",
-            "6:error:turn_timeout"
+            "4:error:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 7,
           "registryLastSeq": 6,
           "droppedEnqueues": [
+            "error:turn_timeout",
             "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
-            "error:turn_timeout"
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3822,18 +4044,18 @@
         "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "5:agent_status:gateway_submit_failed",
-        "6:error:gateway_submit_failed",
-        "7:error:turn_timeout"
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 8,
       "registryLastSeq": 7,
       "droppedEnqueues": [
+        "error:turn_timeout",
         "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
-        "error:turn_timeout"
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
@@ -3842,18 +4064,18 @@
             "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "5:agent_status:gateway_submit_failed",
-            "6:error:gateway_submit_failed",
-            "7:error:turn_timeout"
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 8,
           "registryLastSeq": 7,
           "droppedEnqueues": [
+            "error:turn_timeout",
             "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
-            "error:turn_timeout"
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3870,20 +4092,20 @@
         "turn_timeout"
       ],
       "registryEventsAfterPrefix": [
-        "4:agent_status:gateway_submit_failed",
-        "5:error:gateway_submit_failed",
-        "6:agent_status:turn_timeout",
-        "7:error:turn_timeout"
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 8,
       "registryLastSeq": 7,
       "droppedEnqueues": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
@@ -3892,20 +4114,20 @@
             "turn_timeout"
           ],
           "registryEventsAfterPrefix": [
-            "4:agent_status:gateway_submit_failed",
-            "5:error:gateway_submit_failed",
-            "6:agent_status:turn_timeout",
-            "7:error:turn_timeout"
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 8,
           "registryLastSeq": 7,
           "droppedEnqueues": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -3922,20 +4144,20 @@
         "turn_timeout"
       ],
       "registryEventsAfterPrefix": [
-        "5:agent_status:gateway_submit_failed",
-        "6:error:gateway_submit_failed",
-        "7:agent_status:turn_timeout",
-        "8:error:turn_timeout"
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed",
+        "8:error:gateway_submit_failed"
       ],
       "registryState": "failed",
-      "registryResult": "error:turn_timeout",
+      "registryResult": "error:gateway_submit_failed",
       "registryRevision": 9,
       "registryLastSeq": 8,
       "droppedEnqueues": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed",
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
@@ -3944,20 +4166,220 @@
             "turn_timeout"
           ],
           "registryEventsAfterPrefix": [
-            "5:agent_status:gateway_submit_failed",
-            "6:error:gateway_submit_failed",
-            "7:agent_status:turn_timeout",
-            "8:error:turn_timeout"
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
           ],
           "registryState": "failed",
-          "registryResult": "error:turn_timeout",
+          "registryResult": "error:gateway_submit_failed",
           "registryRevision": 9,
           "registryLastSeq": 8,
           "droppedEnqueues": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed",
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-failure",
+      "variant": "timeout-status-fails-catch-append-slow",
+      "phase": "model",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "gateway_submit_failed"
+      ],
+      "registryEventsAfterPrefix": [
+        "4:error:turn_timeout",
+        "5:agent_status:gateway_submit_failed",
+        "6:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 7,
+      "registryLastSeq": 6,
+      "droppedEnqueues": [
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "gateway_submit_failed"
+          ],
+          "registryEventsAfterPrefix": [
+            "4:error:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 7,
+          "registryLastSeq": 6,
+          "droppedEnqueues": [
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-failure",
+      "variant": "timeout-status-fails-catch-append-slow",
+      "phase": "tool",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "gateway_submit_failed"
+      ],
+      "registryEventsAfterPrefix": [
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 8,
+      "registryLastSeq": 7,
+      "droppedEnqueues": [
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "gateway_submit_failed"
+          ],
+          "registryEventsAfterPrefix": [
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 8,
+          "registryLastSeq": 7,
+          "droppedEnqueues": [
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-failure",
+      "variant": "catch-status-fails-catch-append-slow",
+      "phase": "model",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "turn_timeout"
+      ],
+      "registryEventsAfterPrefix": [
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 8,
+      "registryLastSeq": 7,
+      "droppedEnqueues": [
+        "agent_status:turn_timeout",
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "turn_timeout"
+          ],
+          "registryEventsAfterPrefix": [
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 8,
+          "registryLastSeq": 7,
+          "droppedEnqueues": [
+            "agent_status:turn_timeout",
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "registry-failure",
+      "variant": "catch-status-fails-catch-append-slow",
+      "phase": "tool",
+      "runs": 5,
+      "distinct": 1,
+      "stable": true,
+      "framesAfterPrefix": [],
+      "durableStatuses": [
+        "turn_timeout"
+      ],
+      "registryEventsAfterPrefix": [
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed",
+        "8:error:gateway_submit_failed"
+      ],
+      "registryState": "failed",
+      "registryResult": "error:gateway_submit_failed",
+      "registryRevision": 9,
+      "registryLastSeq": 8,
+      "droppedEnqueues": [
+        "agent_status:turn_timeout",
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
+      ],
+      "observedAlternatives": [
+        {
+          "framesAfterPrefix": [],
+          "durableStatuses": [
+            "turn_timeout"
+          ],
+          "registryEventsAfterPrefix": [
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed",
+            "8:error:gateway_submit_failed"
+          ],
+          "registryState": "failed",
+          "registryResult": "error:gateway_submit_failed",
+          "registryRevision": 9,
+          "registryLastSeq": 8,
+          "droppedEnqueues": [
+            "agent_status:turn_timeout",
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -4177,18 +4599,15 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "4:agent_status:gateway_submit_failed",
-        "5:error:gateway_submit_failed",
-        "6:agent_status:turn_timeout"
+        "4:agent_status:turn_timeout",
+        "5:agent_status:gateway_submit_failed",
+        "6:error:gateway_submit_failed"
       ],
       "registryState": "failed",
       "registryResult": "error:gateway_submit_failed",
@@ -4196,22 +4615,21 @@
       "registryLastSeq": 6,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:result_unknown"
+        "error:result_unknown",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "4:agent_status:gateway_submit_failed",
-            "5:error:gateway_submit_failed",
-            "6:agent_status:turn_timeout"
+            "4:agent_status:turn_timeout",
+            "5:agent_status:gateway_submit_failed",
+            "6:error:gateway_submit_failed"
           ],
           "registryState": "failed",
           "registryResult": "error:gateway_submit_failed",
@@ -4219,7 +4637,9 @@
           "registryLastSeq": 6,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:result_unknown"
+            "error:result_unknown",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -4231,18 +4651,15 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:gateway_submit_failed"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "5:agent_status:gateway_submit_failed",
-        "6:error:gateway_submit_failed",
-        "7:agent_status:turn_timeout"
+        "5:agent_status:turn_timeout",
+        "6:agent_status:gateway_submit_failed",
+        "7:error:gateway_submit_failed"
       ],
       "registryState": "failed",
       "registryResult": "error:gateway_submit_failed",
@@ -4250,22 +4667,21 @@
       "registryLastSeq": 7,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:result_unknown"
+        "error:result_unknown",
+        "agent_status:gateway_submit_failed",
+        "error:gateway_submit_failed"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:gateway_submit_failed"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "5:agent_status:gateway_submit_failed",
-            "6:error:gateway_submit_failed",
-            "7:agent_status:turn_timeout"
+            "5:agent_status:turn_timeout",
+            "6:agent_status:gateway_submit_failed",
+            "7:error:gateway_submit_failed"
           ],
           "registryState": "failed",
           "registryResult": "error:gateway_submit_failed",
@@ -4273,7 +4689,9 @@
           "registryLastSeq": 7,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:result_unknown"
+            "error:result_unknown",
+            "agent_status:gateway_submit_failed",
+            "error:gateway_submit_failed"
           ]
         }
       ]
@@ -4285,18 +4703,15 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:result_unknown"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "4:agent_status:gateway_submit_failed",
-        "5:agent_status:turn_timeout",
-        "6:error:turn_timeout"
+        "4:agent_status:turn_timeout",
+        "5:error:turn_timeout",
+        "6:agent_status:gateway_submit_failed"
       ],
       "registryState": "failed",
       "registryResult": "error:turn_timeout",
@@ -4304,22 +4719,21 @@
       "registryLastSeq": 6,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:result_unknown"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:result_unknown"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "4:agent_status:gateway_submit_failed",
-            "5:agent_status:turn_timeout",
-            "6:error:turn_timeout"
+            "4:agent_status:turn_timeout",
+            "5:error:turn_timeout",
+            "6:agent_status:gateway_submit_failed"
           ],
           "registryState": "failed",
           "registryResult": "error:turn_timeout",
@@ -4327,7 +4741,9 @@
           "registryLastSeq": 6,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:result_unknown"
           ]
         }
       ]
@@ -4339,18 +4755,15 @@
       "runs": 5,
       "distinct": 1,
       "stable": true,
-      "framesAfterPrefix": [
-        "agent_status:gateway_submit_failed",
-        "error:result_unknown"
-      ],
+      "framesAfterPrefix": [],
       "durableStatuses": [
-        "gateway_submit_failed",
-        "turn_timeout"
+        "turn_timeout",
+        "gateway_submit_failed"
       ],
       "registryEventsAfterPrefix": [
-        "5:agent_status:gateway_submit_failed",
-        "6:agent_status:turn_timeout",
-        "7:error:turn_timeout"
+        "5:agent_status:turn_timeout",
+        "6:error:turn_timeout",
+        "7:agent_status:gateway_submit_failed"
       ],
       "registryState": "failed",
       "registryResult": "error:turn_timeout",
@@ -4358,22 +4771,21 @@
       "registryLastSeq": 7,
       "droppedEnqueues": [
         "agent_status:turn_timeout",
-        "error:turn_timeout"
+        "error:turn_timeout",
+        "agent_status:gateway_submit_failed",
+        "error:result_unknown"
       ],
       "observedAlternatives": [
         {
-          "framesAfterPrefix": [
-            "agent_status:gateway_submit_failed",
-            "error:result_unknown"
-          ],
+          "framesAfterPrefix": [],
           "durableStatuses": [
-            "gateway_submit_failed",
-            "turn_timeout"
+            "turn_timeout",
+            "gateway_submit_failed"
           ],
           "registryEventsAfterPrefix": [
-            "5:agent_status:gateway_submit_failed",
-            "6:agent_status:turn_timeout",
-            "7:error:turn_timeout"
+            "5:agent_status:turn_timeout",
+            "6:error:turn_timeout",
+            "7:agent_status:gateway_submit_failed"
           ],
           "registryState": "failed",
           "registryResult": "error:turn_timeout",
@@ -4381,7 +4793,9 @@
           "registryLastSeq": 7,
           "droppedEnqueues": [
             "agent_status:turn_timeout",
-            "error:turn_timeout"
+            "error:turn_timeout",
+            "agent_status:gateway_submit_failed",
+            "error:result_unknown"
           ]
         }
       ]

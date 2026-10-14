@@ -1,7 +1,7 @@
 /** TS-only observation harness; no product oracle and no network listener. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { registerHooks, stripTypeScriptTypes } from 'node:module';
 import { dirname, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -44,6 +44,8 @@ registerHooks({
 const { InProcessGateway } = await import(BASE_URL + 'src/gateway/client/InProcessGateway.ts');
 const { SessionRouter } = await import(BASE_URL + 'src/gateway/SessionRouter.ts');
 const { FileRunRegistry } = await import(BASE_URL + 'src/gateway/run/RunRegistry.ts');
+const { JsonlTranscriptWriter } = await import(BASE_URL + 'src/session/transcript/JsonlTranscriptWriter.ts');
+const { JsonlSessionEventStore } = await import(BASE_URL + 'src/session/events/JsonlSessionEventStore.ts');
 const { AsyncQueue } = await import(BASE_URL + 'src/gateway/util/AsyncQueue.ts');
 const { GatewayTurnCompletionFence } = await import(BASE_URL + 'src/gateway/client/GatewayTurnCompletionFence.ts');
 const { AgentSession } = await import(BASE_URL + 'src/agent/session/AgentSession.ts');
@@ -85,7 +87,7 @@ type Variant = {
   name: string;
   order?: 'timeout-first' | 'unknown-first' | 'known-final-first' | 'after-complete' | 'known-final-before-timeout-pending';
   slowStatus?: boolean;
-  slowAppend?: boolean;
+  slowAppend?: 'turn_timeout' | 'gateway_submit_failed';
   failStatus?: 'turn_timeout' | 'gateway_submit_failed';
   failAppend?: string;
 };
@@ -99,14 +101,18 @@ const cells: { name: string; registry: boolean; variants: Variant[] }[] = [
   { name: 'registry-fast', registry: true, variants: [{ name: 'fast' }] },
   { name: 'registry-slow', registry: true, variants: [
     { name: 'status-slow-append-fast', slowStatus: true },
-    { name: 'status-fast-append-slow', slowAppend: true },
-    { name: 'both-slow', slowStatus: true, slowAppend: true },
+    { name: 'status-fast-append-slow', slowAppend: 'turn_timeout' },
+    { name: 'both-slow', slowStatus: true, slowAppend: 'turn_timeout' },
+    { name: 'status-fast-catch-append-slow', slowAppend: 'gateway_submit_failed' },
+    { name: 'status-slow-catch-append-slow', slowStatus: true, slowAppend: 'gateway_submit_failed' },
   ] },
   { name: 'registry-failure', registry: true, variants: [
     { name: 'timeout-status-fails-append-fast', failStatus: 'turn_timeout' },
     { name: 'catch-status-fails-append-fast', failStatus: 'gateway_submit_failed' },
-    { name: 'timeout-status-fails-append-slow', failStatus: 'turn_timeout', slowAppend: true },
-    { name: 'catch-status-fails-append-slow', failStatus: 'gateway_submit_failed', slowAppend: true },
+    { name: 'timeout-status-fails-append-slow', failStatus: 'turn_timeout', slowAppend: 'turn_timeout' },
+    { name: 'catch-status-fails-append-slow', failStatus: 'gateway_submit_failed', slowAppend: 'turn_timeout' },
+    { name: 'timeout-status-fails-catch-append-slow', failStatus: 'turn_timeout', slowAppend: 'gateway_submit_failed' },
+    { name: 'catch-status-fails-catch-append-slow', failStatus: 'gateway_submit_failed', slowAppend: 'gateway_submit_failed' },
     { name: 'timeout-append-fails-status-fast', failAppend: 'error:turn_timeout' },
     { name: 'catch-append-fails-status-fast', failAppend: 'error:gateway_submit_failed' },
     { name: 'timeout-append-fails-status-slow', failAppend: 'error:turn_timeout', slowStatus: true },
@@ -125,10 +131,9 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   const id = `${cell.name}/${variant.name}/${phase}/${repetition}`;
   const dir = resolve(RUN_DIR, id);
   mkdirSync(dir, { recursive: true });
-  const statusPath = resolve(dir, 'status.jsonl');
   const transcriptPath = resolve(dir, 'transcript.jsonl');
   const registryPath = resolve(dir, 'registry.json');
-  writeFileSync(statusPath, ''); writeFileSync(transcriptPath, '');
+  writeFileSync(transcriptPath, '');
   const j = new Journal();
   const frames: any[] = [];
   const statusGate = deferred();
@@ -137,7 +142,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   const knownReturn = deferred();
   const order = variant.order ?? 'timeout-first';
   let timer: any;
-  let statusSeq = 0;
+  let entryId = 0;
   const appendPromises = new Set<Promise<void>>();
   const activeQueue = new Set<any>();
   const oldEnqueue = AsyncQueue.prototype.enqueue;
@@ -170,26 +175,40 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     else realClearTimeout(handle);
   }) as any;
 
-  const recordStatus = async (sessionId: string, turnId: string, status: any) => {
-    const key = status.event;
-    j.add('status.attempt', { key, status });
-    if (key === 'turn_timeout' && variant.slowStatus) {
-      j.add('status.block', { key }); await statusGate.promise; j.add('status.release', { key });
-    }
-    if (key === variant.failStatus) {
-      const error = fault(`status:${key}`); j.add('status.failure', { key, error: errorData(error) }); throw error;
-    }
-    const entry = { sequence: ++statusSeq, sessionId, turnId, status: clone(status) };
-    appendFileSync(statusPath, JSON.stringify(entry) + '\n');
-    j.add('status.commit', { key, sequence: entry.sequence });
+  // Both ordinary transcript entries and Gateway status use ONE real writer.
+  // Only the underlying store append is delayed/failed: writeTail already owns
+  // this operation. Outer record methods always delegate synchronously.
+  const eventStore = new JsonlSessionEventStore({
+    path: transcriptPath, now: () => new Date(TIME), uuid: () => `entry-${++entryId}`,
+  });
+  const originalStoreAppend = eventStore.append.bind(eventStore);
+  let activeStoreWrites = 0;
+  eventStore.append = async (sessionId: string, turnId: string, event: any) => {
+    assert.equal(++activeStoreWrites, 1, 'real writer serializes underlying store appends');
+    const key = event.type === 'agent_status_message' ? event.event : undefined;
+    j.add('transcript.store.enter', { type: event.type, key });
+    try {
+      if (key !== undefined) j.add('status.store.enter', { key });
+      if (key === 'turn_timeout' && variant.slowStatus) {
+        j.add('status.block', { key, boundary: 'eventStore.append inside writer.writeTail' });
+        await statusGate.promise; j.add('status.release', { key });
+      }
+      if (key !== undefined && key === variant.failStatus) {
+        const error = fault(`eventStore.append:${key}`);
+        j.add('status.failure', { key, error: errorData(error) }); throw error;
+      }
+      const entry = await originalStoreAppend(sessionId, turnId, event);
+      if (key !== undefined) j.add('status.commit', { key, sequence: entry.sequence });
+      return entry;
+    } finally { activeStoreWrites--; }
   };
-  const transcript = {
-    recordSessionEvent: (sessionId: string, turnId: string, event: any) => appendFileSync(transcriptPath, JSON.stringify({ sessionId, turnId, event }) + '\n'),
-    recordAcceptedInput: (sessionId: string, turnId: string, messages: any) => appendFileSync(transcriptPath, JSON.stringify({ sessionId, turnId, messages }) + '\n'),
-    recordDurableMessage: (sessionId: string, turnId: string, message: any) => appendFileSync(transcriptPath, JSON.stringify({ sessionId, turnId, message }) + '\n'),
-    recordTurnResult: (sessionId: string, turnId: string, result: any) => appendFileSync(transcriptPath, JSON.stringify({ sessionId, turnId, result }) + '\n'),
-    recordAgentStatusMessage: recordStatus,
+  const transcript = new JsonlTranscriptWriter({ path: transcriptPath, eventStore });
+  const originalRecordStatus = transcript.recordAgentStatusMessage.bind(transcript);
+  const recordStatus = (sessionId: string, turnId: string, status: any) => {
+    j.add('status.attempt', { key: status.event, status });
+    return originalRecordStatus(sessionId, turnId, status);
   };
+  transcript.recordAgentStatusMessage = recordStatus;
   const loop = {
     snapshotFileState: () => ({}),
     async *run(input: any): AsyncGenerator<any, any, any> {
@@ -226,33 +245,43 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   fence.complete = (...args: any[]) => { j.add('fence.complete'); return originalComplete(...args); };
   const registry = cell.registry ? new FileRunRegistry(registryPath) : undefined;
   if (registry) {
-    // Fault occurs inside the production mutation, AFTER memory changes and
+    // Both delay and fault occur inside the production mutation, AFTER memory changes and
     // BEFORE atomic snapshot persistence. Subsequent writes keep real refresh,
     // lock, terminal fencing, revision and seq semantics.
     const originalPersist = registry.persist.bind(registry);
     let failed = false;
+    let activePersists = 0;
     registry.persist = async () => {
-      const entries = [...registry.eventMap.values()][0] ?? [];
-      const event = entries.at(-1)?.event;
-      if (!failed && event && label(event) === variant.failAppend) {
-        failed = true;
-        const error = fault(`registry.persist:${label(event)}`);
-        j.add('registry.persist.failure', {
-          key: label(event), error: errorData(error), memoryRecordsAtFailure: [...registry.records.values()],
-          diskRecordAtFailure: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
-        });
-        throw error;
-      }
-      await originalPersist();
+      assert.equal(++activePersists, 1, 'real mutationChain serializes persists');
+      try {
+        const entries = [...registry.eventMap.values()][0] ?? [];
+        const event = entries.at(-1)?.event;
+        const key = event ? label(event) : 'accept';
+        j.add('registry.persist.enter', { key });
+        if (variant.slowAppend && (key === `agent_status:${variant.slowAppend}` || key === `error:${variant.slowAppend}`)) {
+          j.add('registry.persist.block', { key, boundary: 'persist inside mutationChain and file lock' });
+          await appendGate.promise; j.add('registry.persist.release', { key });
+        }
+        if (!failed && event && label(event) === variant.failAppend) {
+          failed = true;
+          const error = fault(`registry.persist:${label(event)}`);
+          j.add('registry.persist.failure', {
+            key: label(event), error: errorData(error), memoryRecordsAtFailure: [...registry.records.values()],
+            diskRecordAtFailure: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
+          });
+          throw error;
+        }
+        await originalPersist();
+        j.add('registry.persist.commit', { key });
+      } finally { activePersists--; }
     };
+    // Passive outer tap: call the real append immediately, with no gate or
+    // failure before admission to the production mutationChain.
     const originalAppend = registry.append.bind(registry);
     registry.append = (input: any) => {
       const key = label(input.event);
       j.add('registry.append.attempt', { key, event: input.event });
       const write = (async () => {
-        if (variant.slowAppend && (key === 'agent_status:turn_timeout' || key === 'error:turn_timeout')) {
-          j.add('registry.append.block', { key }); await appendGate.promise; j.add('registry.append.release', { key });
-        }
         try {
           await originalAppend(input);
           j.add('registry.append.commit', {
@@ -315,21 +344,32 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
         await waitClose(); await consume();
         assert.ok(j.has('fence.complete'));
         releaseUnknown();
-      } else if (variant.slowStatus) {
-        await j.wait(r => r.kind === 'status.block');
-        releaseUnknown();
-        if (variant.failAppend === 'error:gateway_submit_failed') {
-          await j.wait(r => r.kind === 'queue.enqueue' && r.key === 'error:result_unknown');
-        } else await waitCatchPublished();
-        j.add('control.release.status'); statusGate.resolve();
-        await waitClose();
       } else {
-        await waitClose(); releaseUnknown();
-        if (variant.failAppend === 'error:gateway_submit_failed') {
+        if (variant.slowStatus) {
+          await j.wait(r => r.kind === 'status.block');
+          releaseUnknown();
+          // G has called the same writer but cannot enter its store until T
+          // leaves writeTail. Waiting for G publication here would deadlock.
+          await j.wait(r => r.kind === 'status.attempt' && r.key === 'gateway_submit_failed');
+          assert.ok(!j.has('status.store.enter', 'gateway_submit_failed'));
+          j.add('control.status.fifo.checked', { queued: 'gateway_submit_failed', blocked: 'turn_timeout' });
+          j.add('control.release.status'); statusGate.resolve();
+        }
+        await waitClose();
+        if (!variant.slowStatus) releaseUnknown();
+        if (variant.slowAppend) {
+          await j.wait(r => r.kind === 'registry.persist.block');
+          // Both G append calls are now queued behind the held persist (T or
+          // G). Observe admission, never demand completion behind a barrier.
+          await j.wait(r => r.kind === 'registry.append.attempt' && r.key === 'error:gateway_submit_failed');
+          assert.ok(!j.has('registry.persist.enter', 'error:gateway_submit_failed'));
+          if (variant.slowAppend === 'turn_timeout') assert.ok(!j.has('registry.persist.enter', 'agent_status:gateway_submit_failed'));
+          j.add('control.registry.fifo.checked', { queued: 'error:gateway_submit_failed', blocked: variant.slowAppend });
+          j.add('control.release.append'); appendGate.resolve();
+        } else if (variant.failAppend === 'error:gateway_submit_failed') {
           await j.wait(r => r.kind === 'registry.append.failure' && r.key === variant.failAppend);
         } else await waitCatchPublished();
       }
-      j.add('control.release.append'); appendGate.resolve();
     }
     // Pump finally closes again after timeoutSettlement and all registry writes.
     await j.wait(r => r.kind === 'session.submit.exit');
@@ -338,9 +378,11 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     if (!j.has('client.done')) { j.add('client.resume'); await consume(); }
     assert.ok(j.has('fence.complete'));
     assert.equal(activeQueue.size, 1, 'the passive tap must observe one queue only');
-    const statusText = readFileSync(statusPath, 'utf8');
-    const statuses = statusText.trim() ? statusText.trim().split('\n').map(line => JSON.parse(line)) : [];
-    const durable = { source: relative(WORKTREE, statusPath), rawText: statusText, entries: statuses,
+    await transcript.writeTail;
+    await eventStore.flush();
+    const statusText = readFileSync(transcriptPath, 'utf8');
+    const statuses = statusEntries(statusText);
+    const durable = { source: relative(WORKTREE, transcriptPath), rawText: statusText, entries: statuses,
       emptyReason: statuses.length ? null : 'Storage reread contained zero committed status entries; see attempts/failures or known final in timeline.' };
     let registryObservation: any = { applicable: false, reason: 'runRegistry was not configured' };
     if (registry) {
@@ -360,15 +402,24 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     if (variant.failStatus) assert.ok(j.has('status.failure', variant.failStatus), 'status fault was exercised');
     if (variant.failAppend) assert.ok(j.has('registry.persist.failure', variant.failAppend), 'registry disk fault was exercised');
     if (variant.slowStatus) assert.ok(j.has('status.block', 'turn_timeout'), 'status barrier was exercised');
-    if (variant.slowAppend) assert.ok(j.has('registry.append.block', 'error:turn_timeout'), 'append barrier was exercised');
+    if (variant.slowAppend) {
+      assert.ok(j.has('registry.persist.block', `error:${variant.slowAppend}`), 'append barrier was exercised inside persist');
+      assert.ok(j.has('control.registry.fifo.checked'), 'queued append did not overtake held persist');
+    }
     return observation;
   } finally {
+    await transcript.close();
     gateway.dispose();
     await router.shutdown();
     globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
     AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
     console.warn = oldWarn; console.info = oldInfo;
   }
+}
+
+function statusEntries(rawText: string) {
+  return rawText.trim() ? rawText.trim().split('\n').map(line => JSON.parse(line))
+    .filter(entry => entry.type === 'agent_status_message') : [];
 }
 
 function checkCompleteness(o: any) {
@@ -383,9 +434,14 @@ function checkCompleteness(o: any) {
     assert.deepEqual(o.registry.events, Object.values(disk.events)[0] ?? [], 'event observer agrees with raw disk snapshot');
   } else assert.ok(o.registry.reason);
   const storedStatus = o.durableStatus.rawText.trim();
-  assert.deepEqual(o.durableStatus.entries, storedStatus ? storedStatus.split('\n').map((line: string) => JSON.parse(line)) : [], 'status observer agrees with raw file');
+  assert.deepEqual(o.durableStatus.entries, statusEntries(storedStatus), 'status observer agrees with raw file');
+  const keys = (kind: string) => o.timeline.filter((r: any) => r.kind === kind).map((r: any) => r.key);
+  assert.deepEqual(keys('status.store.enter'), keys('status.attempt'), 'status store entry follows real writer admission FIFO');
+  if (o.registry.applicable) assert.deepEqual(
+    keys('registry.persist.enter').filter((key: string) => key !== 'accept'),
+    keys('registry.append.attempt'), 'persist entry follows real registry admission FIFO');
   const committed = o.timeline.filter((r: any) => r.kind === 'status.commit').map((r: any) => r.key);
-  assert.deepEqual(o.durableStatus.entries.map((r: any) => r.status.event), committed, 'durable reread vs commit journal (not frames)');
+  assert.deepEqual(o.durableStatus.entries.map((r: any) => r.event), committed, 'durable reread vs commit journal (not frames)');
   const published = o.timeline.filter((r: any) => r.kind === 'queue.enqueue' && !r.closed).map((r: any) => r.event);
   assert.deepEqual(o.frames, published, 'actual client frames vs open queue publications');
   if (o.registry.applicable) {
@@ -414,7 +470,7 @@ function summarize(o: any) {
   const prefix = new Set(['turn_started', 'input_accepted', 'model_request_started', 'tool_call_started']);
   return {
     framesAfterPrefix: o.frames.filter((e: any) => !prefix.has(e.type)).map(label),
-    durableStatuses: o.durableStatus.entries.map((e: any) => e.status.event),
+    durableStatuses: o.durableStatus.entries.map((e: any) => e.event),
     registryEventsAfterPrefix: o.registry.applicable ? o.registry.events.filter((e: any) => !prefix.has(e.event.type)).map((e: any) => `${e.seq}:${label(e.event)}`) : 'N/A',
     registryState: o.registry.applicable ? o.registry.record.state : 'N/A',
     registryResult: o.registry.applicable ? (o.registry.record.result ? label(o.registry.record.result) : '(absent)') : 'N/A',
@@ -464,6 +520,13 @@ controls.push({ mutation: 'drop registry event', detected: true });
 const ignoredResult = clone(firstRegistry); ignoredResult.registry.record.result = { type: 'error', code: 'turn_timeout' };
 assert.throws(() => checkCompleteness(ignoredResult));
 controls.push({ mutation: 'hide registry result overwrite', detected: true });
+for (const kind of ['status.store.enter', 'registry.persist.enter']) {
+  const reversed = clone(firstRegistry);
+  const rows = reversed.timeline.filter((r: any) => r.kind === kind && r.key !== 'accept');
+  [rows[0].key, rows[1].key] = [rows[1].key, rows[0].key];
+  assert.throws(() => checkCompleteness(reversed));
+  controls.push({ mutation: `reverse observed FIFO entry order at ${kind}`, detected: true });
+}
 for (const [path, hash] of importedSources) assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), hash, `baseline changed: ${path}`);
 const manifest = {
   generatedAt: new Date().toISOString(), node: process.version, baselineCommit,
@@ -472,7 +535,7 @@ const manifest = {
   scriptSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
   // 路径与哈希分两行写：文件名含 token / credential 时，同一行的 64 位哈希会被 gitleaks 误判为密钥。
   importedSources: [...importedSources].map(([path, hash]) => ({ path: relative(BASELINE, path), sha256: hash })),
-  checks: { nonemptyObservers: true, diskRereadAgreesWithFreshRegistry: true, baselineHashesUnchanged: true, observerControls: controls },
+  checks: { nonemptyObservers: true, diskRereadAgreesWithFreshRegistry: true, statusInjectionInsideWriteTail: true, registryInjectionInsideMutationChain: true, baselineHashesUnchanged: true, observerControls: controls },
   repeats: 5, totalMeasurements: summary.reduce((n, r) => n + r.runs, 0), summary,
 };
 writeFileSync(resolve(OUTPUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
