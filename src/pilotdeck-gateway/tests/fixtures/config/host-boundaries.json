@@ -1,0 +1,272 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "diag-2620-prototype-always",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/deterministic\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}},\"alwaysOn\":{\"__proto__\":7}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "message": {},
+            "path": "alwaysOn.__proto__",
+            "recoverable": true
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2620-prototype-always\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2620-prototype-always\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2621-prototype-provider",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"__proto__/deterministic\"},\"model\":{\"providers\":{\"__proto__\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2621-prototype-provider\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2621-prototype-provider\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'deterministic')\"}}"
+    },
+    {
+      "id": "diag-2622-prototype-model",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/__proto__\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"__proto__\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2622-prototype-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2622-prototype-model\",\"ok\":true,\"result\":{\"items\":[],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"__proto__\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2625-prototype-always",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/deterministic\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}},\"alwaysOn\":{\"constructor\":7}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.constructor",
+            "recoverable": true
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2625-prototype-always\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2625-prototype-always\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2626-prototype-provider",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"constructor/deterministic\"},\"model\":{\"providers\":{\"constructor\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2626-prototype-provider\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2626-prototype-provider\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'deterministic')\"}}"
+    },
+    {
+      "id": "diag-2627-prototype-model",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/constructor\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"constructor\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2627-prototype-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2627-prototype-model\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/constructor\",\"provider\":\"parity\",\"model\":\"constructor\",\"displayName\":\"constructor\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"constructor\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2630-prototype-always",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/deterministic\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}},\"alwaysOn\":{\"toString\":7}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.toString",
+            "recoverable": true
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2630-prototype-always\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2630-prototype-always\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2631-prototype-provider",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"toString/deterministic\"},\"model\":{\"providers\":{\"toString\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2631-prototype-provider\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2631-prototype-provider\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'deterministic')\"}}"
+    },
+    {
+      "id": "diag-2632-prototype-model",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/toString\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"toString\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2632-prototype-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2632-prototype-model\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/toString\",\"provider\":\"parity\",\"model\":\"toString\",\"displayName\":\"toString\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"toString\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2635-prototype-always",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/deterministic\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}},\"alwaysOn\":{\"valueOf\":7}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.valueOf",
+            "recoverable": true
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2635-prototype-always\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2635-prototype-always\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2636-prototype-provider",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"valueOf/deterministic\"},\"model\":{\"providers\":{\"valueOf\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2636-prototype-provider\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2636-prototype-provider\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'deterministic')\"}}"
+    },
+    {
+      "id": "diag-2637-prototype-model",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/valueOf\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"valueOf\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2637-prototype-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2637-prototype-model\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/valueOf\",\"provider\":\"parity\",\"model\":\"valueOf\",\"displayName\":\"valueOf\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"valueOf\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2640-prototype-always",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/deterministic\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}},\"alwaysOn\":{\"hasOwnProperty\":7}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.hasOwnProperty",
+            "recoverable": true
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2640-prototype-always\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2640-prototype-always\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2641-prototype-provider",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"hasOwnProperty/deterministic\"},\"model\":{\"providers\":{\"hasOwnProperty\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2641-prototype-provider\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2641-prototype-provider\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'deterministic')\"}}"
+    },
+    {
+      "id": "diag-2642-prototype-model",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/hasOwnProperty\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"hasOwnProperty\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2642-prototype-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2642-prototype-model\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/hasOwnProperty\",\"provider\":\"parity\",\"model\":\"hasOwnProperty\",\"displayName\":\"hasOwnProperty\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"hasOwnProperty\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2645-prototype-always",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/deterministic\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}},\"alwaysOn\":{\"__defineGetter__\":7}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "ALWAYS_ON_FIELD_REMOVED",
+            "severity": "warning",
+            "path": "alwaysOn.__defineGetter__",
+            "recoverable": true
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2645-prototype-always\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2645-prototype-always\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "diag-2646-prototype-provider",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"__defineGetter__/deterministic\"},\"model\":{\"providers\":{\"__defineGetter__\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"deterministic\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'deterministic')"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2646-prototype-provider\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2646-prototype-provider\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'deterministic')\"}}"
+    },
+    {
+      "id": "diag-2647-prototype-model",
+      "yaml": "{\"schemaVersion\":1,\"agent\":{\"model\":\"parity/__defineGetter__\"},\"model\":{\"providers\":{\"parity\":{\"protocol\":\"openai\",\"url\":\"http://127.0.0.1:28794/v1\",\"apiKey\":\"mock-only\",\"models\":{\"__defineGetter__\":{}}}}}}",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"diag-2647-prototype-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"diag-2647-prototype-model\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/__defineGetter__\",\"provider\":\"parity\",\"model\":\"__defineGetter__\",\"displayName\":\"__defineGetter__\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"__defineGetter__\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    }
+  ]
+}

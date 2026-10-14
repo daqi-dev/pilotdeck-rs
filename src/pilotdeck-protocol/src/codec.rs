@@ -369,6 +369,9 @@ pub(super) fn clone_value(value: &JsValue) -> JsValue {
                 }
                 JsValue::Object(object) => {
                     tasks.push(CloneTask::Object(object));
+                    if let Some(prototype) = object.prototype() {
+                        tasks.push(CloneTask::Visit(prototype));
+                    }
                     tasks.extend(
                         object
                             .entries()
@@ -383,8 +386,16 @@ pub(super) fn clone_value(value: &JsValue) -> JsValue {
                 values.push(JsValue::Array(items));
             }
             CloneTask::Object(source) => {
-                let children = values.split_off(values.len() - source.len());
+                let mut children = values.split_off(
+                    values.len() - source.len() - usize::from(source.prototype().is_some()),
+                );
                 let mut object = JsObject::new();
+                if source.prototype().is_some() {
+                    object.set_prototype(children.pop().expect("visited prototype"));
+                }
+                if let Some(tag) = source.native_tag() {
+                    object.set_native_tag(tag);
+                }
                 for ((key, _), child) in source.entries().iter().zip(children) {
                     object.insert(key.clone(), child);
                 }

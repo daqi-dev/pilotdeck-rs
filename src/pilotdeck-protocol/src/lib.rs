@@ -60,6 +60,8 @@ impl fmt::Debug for JsString {
 pub struct JsObject {
     entries: Vec<(JsString, JsValue)>,
     indices: HashMap<JsString, usize>,
+    prototype: Option<Box<JsValue>>,
+    native_tag: Option<&'static str>,
 }
 impl JsObject {
     pub fn new() -> Self {
@@ -87,6 +89,30 @@ impl JsObject {
         self.indices.insert(name.clone(), self.entries.len());
         self.entries.push((name, value));
         None
+    }
+    /// Configuration-only prototype assignment. Own-property inspection and
+    /// JSON encoding remain unchanged; property lookup is explicitly opt-in.
+    pub fn set_prototype(&mut self, value: JsValue) {
+        self.prototype = Some(Box::new(value));
+    }
+    /// Native Map/Set toString tag for configuration inspection; not an own key.
+    pub fn set_native_tag(&mut self, tag: &'static str) {
+        self.native_tag = Some(tag);
+    }
+    pub fn native_tag(&self) -> Option<&'static str> {
+        self.native_tag
+    }
+    pub fn prototype(&self) -> Option<&JsValue> {
+        self.prototype.as_deref()
+    }
+    pub fn get_property(&self, name: &str) -> Option<&JsValue> {
+        let mut object = self;
+        loop {
+            if let Some(value) = object.get(name) {
+                return Some(value);
+            }
+            object = object.prototype.as_deref()?.as_object()?;
+        }
     }
     /// Insertion order, for lossless boundary inspection. Stringify uses JS key order.
     pub fn entries(&self) -> &[(JsString, JsValue)] {
@@ -202,6 +228,9 @@ impl Drop for JsValue {
                 JsValue::Object(object) => {
                     pending.extend(object.entries.drain(..).map(|(_, value)| value));
                     object.indices.clear();
+                    if let Some(prototype) = object.prototype.take() {
+                        pending.push(*prototype);
+                    }
                 }
                 _ => (),
             }
@@ -233,4 +262,39 @@ pub fn parse_json(raw: &str) -> Result<JsValue, CodecError> {
 /// Top-level Undefined has no JSON text; array Undefined becomes null, object omits it.
 pub fn stringify_json(value: &JsValue) -> Result<Option<String>, CodecError> {
     codec::stringify(value)
+}
+
+#[cfg(test)]
+mod prototype_tests {
+    use super::*;
+    #[test]
+    fn prototypes_are_explicit_and_do_not_change_wire_properties() {
+        let mut parent = JsObject::new();
+        parent.insert("inherited".into(), "value".into());
+        let mut child = JsObject::new();
+        child.insert("own".into(), "value".into());
+        child.set_prototype(JsValue::Object(parent));
+        assert!(child.get("inherited").is_none());
+        assert_eq!(
+            child.get_property("inherited"),
+            Some(&JsValue::from("value"))
+        );
+        let cloned = child.clone();
+        assert_eq!(
+            cloned.get_property("inherited"),
+            child.get_property("inherited")
+        );
+        child.set_native_tag("Map");
+        let value = JsValue::Object(child);
+        let cloned = value.clone();
+        assert_eq!(cloned.as_object().unwrap().native_tag(), Some("Map"));
+        assert_eq!(
+            cloned.as_object().unwrap().get_property("inherited"),
+            Some(&JsValue::from("value"))
+        );
+        assert_eq!(
+            stringify_json(&value).unwrap().unwrap(),
+            "{\"own\":\"value\"}"
+        );
+    }
 }

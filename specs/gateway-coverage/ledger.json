@@ -4755,7 +4755,7 @@
 "order": [186,8,18,17,19,20,9,10,3,49,50,51,52,84,85,86,4,5,182,105,106,107,177,179,116,117,183,178,33,34,35,73,74,75,112,156,157,7,98,99,100,160,161,76,11,12,13,113,114,14,15,142,143,144,16,176,174,87,88,89,90,173,6,21,22,23,24,25,26,27,28,108,40,109,69,70,71,72,115,136,137,138,139,140,141,145,146,147,148,149,150,151,152,153,154,155,158,159,175,171,172,68,162,38,39,163,164,166,167,168,169,170,103,101,93,102,180,94,104,95,96,53,29,54,55,63,97,56,41,42,43,44,45,46,47,30,57,58,31,59,60,32,135,64,61,62,184,2,65,66,67,77,78,79,81,82,83,111,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,36,37,165,187,92,91,181,110,0,185,80,1,48],
 "specific": [
 {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2182"],"summary":"handler 显式分支返回/抛出 CAPABILITY_UNAVAILABLE；触发条件见锚点。"},
-{"code":"<dyn_Yufvlw>","dynamic":true,"origin":{"expression":"error.code","refs":["B/src/gateway/server/GatewayWsConnection.ts:201","B/src/gateway/server/GatewayWsConnection.ts:216","B/src/gateway/server/GatewayWsConnection.ts:233"]},"refs":["B/src/gateway/server/GatewayWsConnection.ts:201","B/src/gateway/server/GatewayWsConnection.ts:216","B/src/gateway/server/GatewayWsConnection.ts:233"],"summary":{"template":"k7tN9w"}}
+{"code":"<dyn_Yufvlw>","dynamic":true,"origin":{"expression":"error.code","refs":["B/src/gateway/server/GatewayWsConnection.ts:201","B/src/gateway/server/GatewayWsConnection.ts:216","B/src/gateway/server/GatewayWsConnection.ts:233"]},"refs":["B/src/gateway/server/GatewayWsConnection.ts:201","B/src/gateway/server/GatewayWsConnection.ts:216","B/src/gateway/server/GatewayWsConnection.ts:233"],"summary":"配置错误先于 query 类型错误；累计 fatal 取首条，但 memory/subagents 数值等立即抛错可抢先。已有 string code 保留原码；未带 string code 的 query/StaffDeck TypeError、保留循环配置的 RangeError 进入 gateway_request_failed。"}
 ]
 },
 "success": [
@@ -4765,17 +4765,17 @@
 {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2182"],"summary":"handler 显式分支返回/抛出 CAPABILITY_UNAVAILABLE；触发条件见锚点。"}
 ]
 },
-"configuration": ["boot","project_config"],
+"configuration": ["boot"],
 "delivery_package": "A4",
 "frozen_category": "(a)",
-"guard": {"refs":["B/src/gateway/client/InProcessGateway.ts:2181","B/src/cli/createLocalGateway.ts:1094","B/src/cli/GatewaySessionModelBundle.ts:36","B/src/model/session/NativeSessionModelSelectionPolicy.ts:21","B/src/gateway/dialog/modelCatalog.ts:17"],"summary":"目录列表不验证某个 session override；未注入策略 port 才 CAPABILITY_UNAVAILABLE。"},
+"guard": {"refs":["B/src/gateway/client/InProcessGateway.ts:2181","B/src/cli/createLocalGateway.ts:1094","B/src/cli/GatewaySessionModelBundle.ts:36","B/src/model/session/NativeSessionModelSelectionPolicy.ts:21","B/src/gateway/dialog/modelCatalog.ts:17"],"summary":"目录列表不读 projectKey、不验证 session override；先加载并验证全局配置，再读取 query。provider 按 truthiness 和严格相等筛选；includeAuto 仅严格 true；不读取 filter/order。未注入 catalog 回调才 CAPABILITY_UNAVAILABLE。"},
 "handler": {"refs":["B/src/gateway/server/GatewayWsConnection.ts:367","B/src/gateway/client/InProcessGateway.ts:2181"],"summary":"GatewayWsConnection → InProcessGateway.modelCatalogList"},
 "lifecycle": {"effects":[],"refs":["B/src/cli/LocalGatewayLifecycleBundle.ts:42","B/src/cli/LocalGatewayLifecycleBundle.ts:61"],"summary":"按所列 owner 释放；通用宿主退出先 gateway/subagents/router，再 session MCP/project generations。仅指默认装配，不替代外部 provider 释放证据。"},
 "method": "model_catalog_list",
 "notifications": {"names":[],"refs":["B/src/gateway/client/InProcessGateway.ts:2181"],"scope":"direct_handler","summary":"该 handler 无直接 notification 调用；provider、bus 或会话副作用的通知另列；未闭合者以 BLOCKED 为准。"},
 "owner": "A4",
 "proposed_scenarios": ["a51.model_catalog_list.success","a51.model_catalog_list.error","a51.model_catalog_list.unconfigured"],
-"provider": {"default_refs":["9Zw1Pg","F2FGRQ"],"refs":["B/src/gateway/client/InProcessGateway.ts:2181","B/src/cli/createLocalGateway.ts:1094","B/src/cli/GatewaySessionModelBundle.ts:36","B/src/model/session/NativeSessionModelSelectionPolicy.ts:21","B/src/gateway/dialog/modelCatalog.ts:17"],"summary":"GatewaySessionModelBundle 调 NativeSessionModelSelectionPolicy.listCatalog，再调用 listModelCatalog(input, env)。"},
+"provider": {"default_refs":["9Zw1Pg","F2FGRQ"],"refs":["B/src/gateway/client/InProcessGateway.ts:2181","B/src/cli/createLocalGateway.ts:1094","B/src/cli/GatewaySessionModelBundle.ts:36","B/src/model/session/NativeSessionModelSelectionPolicy.ts:21","B/src/gateway/dialog/modelCatalog.ts:17"],"summary":"GatewaySessionModelBundle 调 NativeSessionModelSelectionPolicy.listCatalog，再调用 listModelCatalog(input, env)；loadPilotConfig 使用 parseDocument，验证全部配置节。单 provider 的 ModelConfigError 转 warning 并排除 provider；agent 引用被排除项时再产生 fatal。"},
 "scenario_ids": ["readonly"],
 "source_audit": {
 "automatic_providers": ["9Zw1Pg","F2FGRQ"],
@@ -4796,7 +4796,7 @@
 {"assembly":"automatic_default","ranges":["dZl9pA","aAPuKw","kRvHxQ","luBD2Q","QQR4yg","FMZ_pg","Ox_8WA","qSua9w","5mX6Jg","ucZU9g","DZu4nQ","51WbVw","QKXjAw","I1f2LA","azpH2A","kDtiVQ","LZb1bA","qsSiuw","3XVMlg","VetW8A","1uIycg","eMrp5w","XgNjlw","yPyi5g","qpPipg","s0Kz4g","Fhw6UA","f_21UA","QQu_ig","d9wrcQ","qII95A","sBbi6A","CHzHnA","NhDqqQ","2C93BA","IH-FDw"],"role":"callee"}
 ]
 },
-"state": {"effects":[],"kinds":["storage"],"refs":["B/src/gateway/client/InProcessGateway.ts:2181","B/src/cli/createLocalGateway.ts:1094","B/src/cli/GatewaySessionModelBundle.ts:36","B/src/model/session/NativeSessionModelSelectionPolicy.ts:21","B/src/gateway/dialog/modelCatalog.ts:17"],"summary":"loadPilotConfig 读取模型 YAML/env；此调用未传 projectRoot，排序过滤后返回可用模型与 auto 能力。"},
+"state": {"effects":["config_snapshot_frozen"],"kinds":["storage","memory"],"refs":["B/src/gateway/client/InProcessGateway.ts:2181","B/src/cli/createLocalGateway.ts:1094","B/src/cli/GatewaySessionModelBundle.ts:36","B/src/model/session/NativeSessionModelSelectionPolicy.ts:21","B/src/gateway/dialog/modelCatalog.ts:17","B/src/pilot/config/loadPilotConfig.ts:188","B/src/pilot/config/loadPilotConfig.ts:914"],"summary":"loadPilotConfig 读取全局 YAML/env 并冻结配置快照；此调用不传 projectRoot、不读项目配置或 transcript。STAFFDECK_PROJECT_BINDING_ENABLED 严格 true 时仍改写 modules 的 knowledge/sop disabled；JS 原型诊断可能引用并冻结宿主 intrinsic，依赖该共享状态的特殊配置保留 TS 所有权。目录按 id.localeCompare 稳定排序，Auto 在排序后插入。"},
 "status": "READY",
 "work_package": "A4"
 },

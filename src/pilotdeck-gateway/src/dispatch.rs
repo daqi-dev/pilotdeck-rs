@@ -8,6 +8,7 @@ const LOCAL_METHODS: &[&str] = &[
     "describe_project",
     "project_files_list",
     "project_file_read",
+    "model_catalog_list",
 ];
 
 pub(crate) enum Route {
@@ -40,7 +41,7 @@ pub(crate) fn is_local(request: &JsValue) -> bool {
 pub(crate) fn needs_files(request: &JsValue) -> bool {
     matches!(
         text_field(request, "method").as_deref(),
-        Some("list_projects" | "project_files_list" | "project_file_read")
+        Some("list_projects" | "project_files_list" | "project_file_read" | "model_catalog_list")
     ) || (text_field(request, "method").as_deref() == Some("describe_project")
         && request
             .get("params")
@@ -61,6 +62,17 @@ pub(crate) fn route_with_metadata<F: Files>(
     };
     if !LOCAL_METHODS.contains(&method.as_str()) {
         return Route::Forward;
+    }
+    if method == "model_catalog_list" {
+        let env = std::env::vars_os()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        return route_catalog(request, metadata, &env);
     }
     let result = match method.as_str() {
         "supported_agents" => Ok(supported_agents()),
@@ -243,3 +255,24 @@ fn supported_agents() -> JsValue {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+pub(crate) fn route_catalog<F: Files>(
+    request: &JsValue,
+    metadata: Option<&Metadata<F>>,
+    env: &crate::config::Env,
+) -> Route {
+    if !is_request(request)
+        || text_field(request, "method").as_deref() != Some("model_catalog_list")
+    {
+        return Route::Forward;
+    }
+    if let Some(metadata) = metadata {
+        return crate::model_catalog::response(request, metadata, env)
+            .map_or(Route::Forward, Route::LocalResponse);
+    }
+    match crate::model_catalog::native_metadata(env) {
+        Some(metadata) => crate::model_catalog::response(request, &metadata, env)
+            .map_or(Route::Forward, Route::LocalResponse),
+        None => Route::Forward,
+    }
+}
