@@ -93,3 +93,15 @@ related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-se
 ## 供后续协调者回填的拍板入口
 
 人只需决定 D4 的精确 bug 修正/评分登记和 D5 的最终 UI 闸门；D1/D2/D3/D6 已作为本计划的技术建议，但发车仍须人的指令（`CLAUDE.md:48`）。尺子变更要另开有理由的 issue、两家评审；本计划 A5 就承担这一独立可验收成果，**不意味着此刻允许修改 specs**（`specs/gateway-parity/FROZEN.md:5`）。本轮仅产出调研/计划，不发送 issue 评论、不提交新 issue、不改 state 或 specs。
+
+
+## 人的拍板（2026-10-14 下午）
+
+- **D4 → B，分两步**：①先实测「有 / 无 runRegistry」×「writer 快 / 慢 / 失败」6 种情形，分别断言帧、durable status、registry events 与 result（计划 005 A5.2）；②**看到实测结果后，再由人选定具体差异与评分口径**——在此之前不改尺子、不登记豁免。
+- **D5 → A**：保留「完整 UI 自动恢复」门；批准以 **A8「gateway 退役验证完成（不含 UI 自动恢复）」作为 B3 的闸门**（解环）；之后由阶段 B 修客户端，用真实 UI 验收后关闭最终门。
+
+### 抽出的原则（一次拍板 → 一条原则 → 一条断言）
+| 拍板 | 原则 | 断言 / 落点 |
+|---|---|---|
+| D4 → B（两步） | 修原版宿主 bug 之前，先把它在各种拓扑下的真实行为测全；修法与评分口径看证据再定 | A5.2 的 6 格矩阵每格都有帧 / durable / registry 三份独立断言与原始录制；矩阵不全不进入修复 |
+| D5 → A | 客户端没发的请求不算服务器恢复成功；协议完成与用户验收分开记；阶段之间的闸门要写成可判定的里程碑，不能互等 | 真 bridge 录帧须出现 reconnect_interaction → active_turn_snapshot → 成功答复；B3 开工前检查 A8 的完成条件全部勾选 |

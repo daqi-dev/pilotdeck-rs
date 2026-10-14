@@ -182,3 +182,6 @@ cd resources/PilotDeck/ui && PILOTDECK_E2E_SERVER_PORT=13001 npx playwright test
 ## 相关
 
 `docs/research/006_phase-b-ui-server/` · `docs/research/005_phase-a-gateway/` · `docs/research/002_parity-boundary/` · `docs/experiments/exp002-connection-state/` · `docs/plan/001_phase-c-agent-loop-sidecar.md` · `docs/plan/002_phase-a-gateway.md`
+
+
+> **2026-10-14 人已批准（D5 → A）**：B3 的闸门为计划 005 的 **A8「gateway 退役验证完成（不含 UI 自动恢复）」**，取代上文「阶段 A 达标」的未定义表述；「完整 UI 自动恢复」由阶段 B 修客户端后以真实 UI 验收关闭。见 `docs/research/008_phase-a-session-domain/decision.md`「人的拍板」。
