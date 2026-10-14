@@ -2,7 +2,7 @@
 
 2026-10-14，GitHub #47（B2 第二个 PR），基于 `60ca8e5`。本次范围是计划 003 Issue B2 的 **S1 + S2**。实验原拟用 exp007，但编号已被前端占用，改用 **exp010**。S3 比较器、S4 规约与冻结是下一个 PR，本次的 PASS 只表示录制/场景/覆盖检查成立，不代表 Rust/TS 行为等价。
 
-**状态：离线检查 PASS；真实服务的六场景 × 直连/反代为待协调者运行。** worker 沙箱禁止 loopback listen，没有启动真实服务，也没有用离线结果冒充端到端证据。完整交接与最不确定的三处见 worktree 的 `_tmp/RESULT.md`。
+**状态：第 3 轮修复的离线检查 PASS；协调者 run2 六场景 × 直连/反代通过，但录制含误记的 `http_aborted`，需 run3 按新完整性门重录。** worker 沙箱禁止 loopback listen，没有启动真实服务，也没有用离线结果冒充端到端证据。完整交接与最不确定的三处见 worktree 的 `_tmp/RESULT.md`。
 
 ## 组件与拓扑
 
@@ -36,7 +36,7 @@
 | `http_request` | id、method、path、query、headers 列表、驱动提供时的 case 关联键 |
 | `http_response` | id、status、headers 列表、上游 `X-PilotDeck-Handler`；WS 101 另带 connection |
 | `http_chunk` | id、direction=request/response、**该块起始 byte offset**、bytes、body_b64；trailer 帧另记 trailers 列表 |
-| `http_end` | 本方向完整 EOF、总 byte offset；已知空 body 也记结束 |
+| `http_end` | 本方向完整 EOF，或已读满构造 body 时的精确长度；总 byte offset；已知空 body 也记结束 |
 | `http_body_error` / `http_aborted` | 传输错误或消费者中断，保留已录制部分；不能当完整 body |
 | `recorder_error` | 录制器生成的 400/502/500、body_b64，区别于 DUT 响应 |
 | `ws_frame` | connection、leg、dir、FIN、RSV、数值 opcode、masked、payload_b64（解除 mask 后）、wire_b64（原始帧）；含 continuation/binary/ping/pong/close |
@@ -44,15 +44,15 @@
 | `ws_end` | 连接退出与 error；TCP 异常断开也留记录 |
 | `run_end` | SIGINT/SIGTERM 正常收尾标志；进程异常退出不能只看已有日志就 PASS |
 
-头是 `[{name, value_b64}, ...]`，**不是 dict**；`get_all`/iteration 保留同名重复值（包括 Set-Cookie、Connection），base64 保留非 ASCII 字节。请求 Authorization/Cookie/API-key/凭证 token 头整值替为 `<redacted>`，query 的 token 参数也遮蔽（包含 percent-encoded 参数名）；其他 query 顺序与重复项保留。响应头/body 原样记录，所以鉴权响应里的临时 token 仍在本轮 `_tmp` 证据中，勿把真实录制产物直接入库。
+头是 `[{name, value_b64}, ...]`，**不是 dict**；`get_all`/iteration 保留同名重复值（包括 Set-Cookie、Connection），base64 保留非 ASCII 字节。请求 Authorization/Cookie/API-key/凭证 token 头整值替为 `<redacted>`，query 的 token 参数也遮蔽（包含 percent-encoded 参数名）；其他 query 顺序与重复项保留。**请求凭证只遮头与 query；请求 body 不解析、不遮蔽，注册/登录等 body 中的密码、token 等凭证会原样以 base64 落盘。** 响应头/body 同样原样记录，所以请求凭证和鉴权响应里的临时 token 都仍在本轮 `_tmp` 证据中，勿把真实录制产物直接入库。
 
 驱动给请求加 `X-Pdrs-Parity-Case`，在录制 metadata 中关联 HTTP 用例或 WS 场景；同一字段贯穿请求头与录制 id，后续 S3 不必靠时间猜重复请求的用例归属。该头在两侧一致，不作为处理侧证明。
 
-HTTP tee 逐块转发，**不攒完整响应**。记录块边界仅用于诊断，S3 不能用块数/边界当 SSE 硬门。本次没有设 k/m、没有归一化 token/ID/revision、没有引入比较规则。
+HTTP tee 逐块转发，**不攒完整响应**。录完帧后检查 inner body 的 `is_end_stream()`，已结束时立即补记 `http_end`；Hyper 读满 Content-Length 后可能直接丢弃 body，不再轮询 EOF，因此 Drop 还用构造时保存的 `size_hint().exact()` 与累计 offset 判断是否完整，未读满或未知长度的 Drop 仍记 `http_aborted`。记录块边界仅用于诊断，S3 不能用块数/边界当 SSE 硬门。本次没有设 k/m、没有归一化 token/ID/revision、没有引入比较规则。
 
 WS 录制模式用 Hyper 的双向 Upgrade 保留握手后的预读字节，随后 raw duplex 搬运。旁路帧解析器只观察字节，不重组消息、不自行产生 pong/close；单帧录制上限 16 MiB。四个 leg 区分 `downstream-read/write` 与 `upstream-read/write`，同一帧在入/出边界各有记录。S3 应明确选择边界（例如 downstream-read 的上行 + downstream-write 的下行），**不得把四条腿混起来当四个应用事件**。B1 原有消息级 tee 的 `ws_message` 是另一模式，不用作 exp010 的全帧证据。
 
-每条写盘事件在 `write + flush` 成功后才确认；没有异步批次静默丢弃窗口。写失败设置共享 fatal 标志，HTTP body/WS 传输立即返回错误，主循环独立 interval 检查并非零退出。协调者 runner 还在进程收尾后要求 recorder exit=0、日志 start/end 与连续 seq 完整、每个 HTTP 用例在 recorder 中有对应请求/状态码，避免写失败恰好发生在驱动结束前而漏判。这个完整性门不做行为 diff。同步写盘会增加录制开销，真实延迟数据需协调者检查，S3 再定口径。这里的 flush 不宣称抗断电 fsync 持久性。
+每条写盘事件在 `write + flush` 成功后才确认；没有异步批次静默丢弃窗口。写失败设置共享 fatal 标志，HTTP body/WS 传输立即返回错误，主循环独立 interval 检查并非零退出。协调者 runner 还在进程收尾后要求 recorder exit=0、日志 start/end 与连续 seq 完整、每个 HTTP 用例在 recorder 中有对应请求/状态码。**每个 HTTP 用例的每次请求及响应 body 都必须以唯一 `http_end` 收尾，chunk 与结束 offset 必须符合已录字节，有 Content-Length 时总 offset 必须等于它；用例关联记录中出现 `http_aborted` 或 WS 连接的 `ws_partial` 即拒收。** 这避免写失败恰好发生在驱动结束前而漏判。这个完整性门不做行为 diff。同步写盘会增加录制开销，真实延迟数据需协调者检查，S3 再定口径。这里的 flush 不宣称抗断电 fsync 持久性。
 
 ## #53 前置闭环
 
@@ -82,7 +82,7 @@ WS 录制模式用 Hyper 的双向 Upgrade 保留握手后的预读字节，随�
 
 矩阵用 B1 已保存的 **263 条唯一运行时路由**预填，当前 **24 个直接 HTTP 用例覆盖 19 条路由、244 条显式豁免**。每个豁免均有 `{route, reason, approver:"AI 代批，待人复核"}`，多数是「首批六场景未驱动、目前仍留 TS，接管前补例或重新批准」。这不等于 100% 实测覆盖，也不是接管许可。
 
-`check_coverage.py` 必须显式传本轮 `--enumeration`；命令无默认静态分母。声明模式检查每条枚举路由都有直接 HTTP 用例或有效豁免、case 定义一致、新路由/过期行/重复行都 FAIL。`--evidence cases.jsonl` 另要求每个登记用例在 direct/proxy 两侧都有匹配 method/path/route、符合 manifest 状态码且 ok=true 的实际 HTTP 记录。**声明 PASS 不能当执行 PASS**；S3 还需读取 recorder 中的处理侧与真实响应作比对。
+`check_coverage.py` 必须显式传本轮 `--enumeration`；命令无默认静态分母。声明模式检查每条枚举路由都有直接 HTTP 用例或有效豁免、case 定义一致、新路由/过期行/重复行都 FAIL。`--evidence cases.jsonl` 另要求每个登记用例在 direct/proxy 两侧都有匹配 method/path/route、符合 manifest 状态码且 ok=true 的实际 HTTP 记录。**evidence 模式下，只要某路由任一 `case_http` 记录的实际 `handler` 为 `rust`，该路由的豁免 approver 含「AI 代批」就 FAIL，必须人批；失败记录和未登记用例的记录也参与这项检查。其他路由暂允许 AI 代批，目前无 Rust 接管路由。** 声明模式不推断实际处理侧。**声明 PASS 不能当执行 PASS**；S3 还需读取 recorder 中的处理侧与真实响应作比对。
 
 ## 可复现命令
 
@@ -131,5 +131,6 @@ S3/S4 接续时保留这些原始字段；在新 PR 决定比较/归一化、SSE
 
 ## 协调者实跑（2026-10-14，沙箱外）
 - 第 1 次 `_tmp/20261014-exp010-run`：auth / chat / readonly / watch / config 两侧 PASS；upload 两侧同样 FAIL（`PUBLIC_SELECTED_SCOPE_REQUIRED`）→ 夹具缺 scope，第 2 轮按 `ui/server/routes/modules.js:334-353` 补齐。
-- 第 2 次 `_tmp/20261014-exp010-run2`：**六场景直连 / 反代全部 PASS**；`result.json` status=PASS；`check_coverage.py`（本轮枚举 + 用例证据）PASS。审计：监听全在 127.0.0.1（13101–13104、28990），自有进程组全部退出，cleanup_errors=[]。
+- 第 2 次 `_tmp/20261014-exp010-run2`：**六场景直连 / 反代全部 PASS**；当时 `result.json` status=PASS；`check_coverage.py`（本轮枚举 + 用例证据）PASS。审计：监听全在 127.0.0.1（13101–13104、28990），自有进程组全部退出，cleanup_errors=[]。第 2 轮评审核实两侧各有 30 条 `http_aborted`、27 条 `http_end`，正常定长 body 读满后被误记为中断；这些旧录制在第 3 轮的新完整性门下拒收，不能作为完整 body 证据。修复后的实录需新建 `_tmp/20261014-exp010-run3` 由协调者重跑，见 `_tmp/RESULT.md`「第 3 轮」。
 - 边界：本 PR 只有录制与覆盖门，**没有行为比较**（S3）；覆盖矩阵 244 条为 AI 代批豁免——当前没有路由由 Rust 接管，豁免只是占位，B3 起每接管一条路由须先补直接用例。
+- 第 3 次 `_tmp/20261014-exp010-run3`（PR #57 第 2 轮评审修改后）：六场景两侧 PASS；每侧 `http_end` 57、`http_aborted` **0**（修前误记 30 条）；覆盖门 PASS。

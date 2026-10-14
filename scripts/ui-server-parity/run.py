@@ -5,10 +5,13 @@ Recorder 13101 -> [B1 DUT 13103 ->] TS UI 13102 -> gateway 28990.
 Enumerator 13104; reserved browser frontend 13105. Loopback only.
 """
 import argparse
+import base64
+import binascii
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -132,11 +135,61 @@ def validate_recording(path):
     if any(r.get('kind') in ('recorder_error', 'http_body_error') for r in records):
         raise RuntimeError('recorder/HTTP body error present')
     definitions = json.loads((HERE / 'scenarios.json').read_text())['http_cases']
+    case_requests = {r['id']: r for r in records if r.get('kind') == 'http_request' and r.get('case')}
     responses = {r['id']: r for r in records if r.get('kind') == 'http_response'}
+    case_connections = {r['connection'] for r in responses.values()
+                        if r['id'] in case_requests and 'connection' in r}
+    for record in records:
+        if record.get('kind') == 'http_aborted' and record.get('id') in case_requests:
+            raise RuntimeError(f"http_aborted in case {case_requests[record['id']]['case']}")
+        if record.get('kind') == 'ws_partial' and record.get('connection') in case_connections:
+            raise RuntimeError(f"ws_partial in case connection {record['connection']}")
+    bodies = {}
+    for record in records:
+        if record.get('kind') in ('http_chunk', 'http_end', 'http_aborted', 'http_body_error'):
+            bodies.setdefault((record['id'], record['direction']), []).append(record)
     for case in definitions:
         requests = [r for r in records if r.get('kind') == 'http_request' and r.get('case') == case['id']]
         if not requests or not any(responses.get(r['id'], {}).get('status') in case['expected_statuses'] for r in requests):
             raise RuntimeError(f"recording lacks HTTP request/response evidence for {case['id']}")
+        # Every attempt needs complete bodies, even if another attempt succeeded.
+        for request in requests:
+            response = responses.get(request['id'])
+            if response is None:
+                raise RuntimeError(f"recording lacks HTTP request/response evidence for {case['id']}")
+            for direction, metadata in (('request', request), ('response', response)):
+                validate_http_body(case['id'], direction, metadata,
+                                   bodies.get((request['id'], direction), []))
+
+
+def validate_http_body(case_id, direction, metadata, events):
+    label = f'{case_id} {direction}'
+    if not events or events[-1].get('kind') != 'http_end' or sum(e.get('kind') == 'http_end' for e in events) != 1:
+        raise RuntimeError(f'{label}: body must finish with one http_end')
+    offset = 0
+    for event in events:
+        if type(event.get('offset')) is not int or event['offset'] != offset:
+            raise RuntimeError(f'{label}: body offset disagrees with recorded bytes')
+        if event['kind'] == 'http_chunk' and 'body_b64' in event:
+            try:
+                data = base64.b64decode(event['body_b64'], validate=True)
+            except (ValueError, TypeError, binascii.Error) as error:
+                raise RuntimeError(f'{label}: invalid body base64') from error
+            if type(event.get('bytes')) is not int or event['bytes'] != len(data):
+                raise RuntimeError(f'{label}: chunk bytes disagree with body base64')
+            offset += len(data)
+    lengths = []
+    for header in metadata.get('headers', []):
+        if header['name'].lower() == 'content-length':
+            try:
+                raw = base64.b64decode(header['value_b64'], validate=True).decode('ascii')
+            except (ValueError, TypeError, binascii.Error) as error:
+                raise RuntimeError(f'{label}: invalid Content-Length') from error
+            if not re.fullmatch(r'[0-9]+', raw):
+                raise RuntimeError(f'{label}: invalid Content-Length')
+            lengths.append(int(raw))
+    if lengths and any(length != offset for length in lengths):
+        raise RuntimeError(f'{label}: http_end offset {offset} disagrees with Content-Length {lengths}')
 
 
 def main():
