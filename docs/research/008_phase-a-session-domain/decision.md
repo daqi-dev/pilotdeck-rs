@@ -62,7 +62,7 @@ related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-se
 | 建议与分级 | **建议 B，等人（A19-HOST 候选）**。A5.2 必须实测复现有/无 registry × 快/慢/失败 writer，独立控制 status 写入、registry append、queue.close 与 unknown catch/外层 complete，分开记录各观察面的结果，不预填基线输出；修复仅覆盖已定标的 timeout-first 情形，不以 writer 阻塞或帧可见为前提。unknown-first 尚无完整证据，保留原失败处理；#19 沿用原 issue，文档完成不等于关闭。 |
 | 原则 → 断言（候选，待批） | 执行未知可以和用户已超时并存，同一 run 的收尾只裁决一次 → 成功持久化分支：帧仅一套 timeout status/error；durable status 仅 timeout、无 gateway_submit_failed；有 registry 时 events 无迟到失败、result 保持 timeout，无 registry 时明确不适用；ledger 仍 unknown。快/慢/失败 writer 分开测，status 与 registry 故障分别注入；写失败不得伪称 durable 成功，错误帧及 registry 的最终状态须按实测与人批口径断言。late ACK 不变 known，generic error/用户取消不被吞；外层 complete 后的旧 catch 单测 fence。依据 `B/tests/gateway/operation-deadline.spec.ts:117-197`、`B/src/gateway/client/InProcessGateway.ts:1216-1243,1433-1434`、`B/src/gateway/run/RunRegistry.ts:242-258`、`B/src/agent/modules/transport/sessionOperationLedger.ts:132-164`。 |
 
-**给人的三句话摘要（协调者可原样转发）**：卡在哪：timeout-first/current handle 下仍可多写失败 status，生产有 registry 时异步 append 后才入队使 timeout 自己的帧也可能丢失，后到 error 还可追加 registry events 并覆盖 result，有/无 registry 的实际结果都待复现。选项：A 保留实测确认的基线行为，B 精确修重复收尾与发布顺序并保留 unknown 责任，C 吞掉或成功化 unknown 会丢失副作用责任。AI 建议：选 B，先实测有/无 registry × 快/慢/失败 writer，分开断言帧、durable status、registry events/result，再请人批准精确差异与评分口径，D4 仍为「等人」。
+**给人的三句话摘要（协调者可原样转发）**：卡在哪：timeout-first/current handle 下仍可多写失败 status，生产有 registry 时异步 append 后才入队使 timeout 自己的帧也可能丢失，后到 error 还可追加 registry events 并覆盖 result，有/无 registry 的实际结果都待复现。选项：A 保留待实测复现确认的基线行为，B 精确修重复收尾与发布顺序并保留 unknown 责任，C 吞掉或成功化 unknown 会丢失副作用责任。AI 建议：选 B，先实测有/无 registry × 快/慢/失败 writer，分开断言帧、durable status、registry events/result，再请人批准精确差异与评分口径，D4 仍为「等人」。
 
 ## D5 · 原版 UI 自动恢复失败如何验收
 
