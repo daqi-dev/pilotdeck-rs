@@ -156,7 +156,11 @@ async fn ping_returns_payload_in_canonical_unmasked_pong() {
     for payload in [vec![], vec![0, 255, 128, 1], vec![42; 126], vec![7; 65536]] {
         // FIN=0, RSV=7, extended encoding and oversized control payloads are
         // accepted by TS; a strict RFC codec would reject this input.
-        write(&mut pair.client, &client_frame(0x79, 127, &payload)).await;
+        let ping = client_frame(0x79, 127, &payload);
+        write(&mut pair.client, &ping).await;
+        read(&mut pair.server, &ping).await;
+        silent(&mut pair.client).await;
+        write(&mut pair.server, &server_frame(10, &payload)).await;
         read(&mut pair.client, &server_frame(10, &payload)).await;
     }
     silent(&mut pair.server).await;
@@ -168,8 +172,11 @@ async fn check_client_close(payload: &[u8]) {
     let mut pair = Pair::new();
     let wire = client_frame(0x78, 127, payload);
     write(&mut pair.client, &wire).await;
-    read(&mut pair.client, &[0x88, 2, 3, 232]).await;
     read(&mut pair.server, &wire).await;
+    silent(&mut pair.client).await;
+    write(&mut pair.server, &[0x88, 2, 3, 232]).await;
+    pair.server.shutdown().await.unwrap();
+    read(&mut pair.client, &[0x88, 2, 3, 232]).await;
     eof(&mut pair.client).await;
     eof(&mut pair.server).await;
     pair.finish().await;
@@ -193,8 +200,11 @@ async fn close_discards_following_coalesced_text() {
     let mut wire = close.clone();
     wire.extend(client_frame(0x81, 5, b"after"));
     write(&mut pair.client, &wire).await;
-    read(&mut pair.client, &[0x88, 2, 3, 232]).await;
     read(&mut pair.server, &close).await;
+    silent(&mut pair.server).await;
+    write(&mut pair.server, &[0x88, 2, 3, 232]).await;
+    pair.server.shutdown().await.unwrap();
+    read(&mut pair.client, &[0x88, 2, 3, 232]).await;
     eof(&mut pair.server).await;
     pair.finish().await;
 }
@@ -413,18 +423,214 @@ async fn upstream_truncated_tail_remains_exact_on_eof() {
 }
 
 #[tokio::test]
-async fn local_pong_never_interleaves_inside_upstream_frame_chunks() {
+async fn ts_pong_preserves_order_after_fragmented_upstream_text() {
     let mut pair = Pair::new();
     let big = server_frame(1, &vec![b'x'; 65536]);
     // Feed only a prefix, guaranteeing a TCP-chunk boundary in the text frame.
     write(&mut pair.server, &big[..8192]).await;
     let ping = client_frame(0x89, 1, b"p");
     write(&mut pair.client, &ping).await;
-    // The whole pong may precede the not-yet-complete upstream frame; it must
-    // never appear after that frame's header but before its remaining payload.
-    read(&mut pair.client, &[0x8a, 1, b'p']).await;
+    read(&mut pair.server, &ping).await;
+    silent(&mut pair.client).await;
     write(&mut pair.server, &big[8192..]).await;
+    write(&mut pair.server, &[0x8a, 1, b'p']).await;
     read(&mut pair.client, &big).await;
+    read(&mut pair.client, &[0x8a, 1, b'p']).await;
     pair.server.shutdown().await.unwrap();
     pair.finish().await;
+}
+
+fn close_wire(code: u16, reason: &str) -> Vec<u8> {
+    let mut payload = code.to_be_bytes().to_vec();
+    payload.extend_from_slice(reason.as_bytes());
+    server_frame(8, &payload)
+}
+
+// A bounded in-memory fixture for the TS semantics exercised by these tests:
+// synchronous invalid JSON / bad hello closes; close is idempotent; end prevents
+// further socket output; queued bytes precede close. It is not a hello/auth oracle.
+async fn fake_ts_control_exchange(
+    mut server: DuplexStream,
+    expected_input: Vec<u8>,
+    queued_output: Vec<u8>,
+) {
+    read(&mut server, &expected_input).await;
+    let mut decoder = Decoder::default();
+    decoder.buffer.extend_from_slice(&expected_input);
+    let mut output = queued_output;
+    let mut closed = false;
+    while let Some(frame) = decoder.next().unwrap() {
+        match frame.opcode {
+            1 if !closed => {
+                let failure = match serde_json::from_slice::<serde_json::Value>(&frame.payload) {
+                    Err(_) => Some((4002, "invalid_json")),
+                    Ok(value) if value.get("type").and_then(|v| v.as_str()) != Some("hello") => {
+                        Some((4001, "hello_required"))
+                    }
+                    Ok(_) => None,
+                };
+                if let Some((code, reason)) = failure {
+                    closed = true;
+                    output.extend(close_wire(code, reason));
+                }
+            }
+            9 if !closed => output.extend(server_frame(10, &frame.payload)),
+            8 => {
+                if !closed {
+                    output.extend(close_wire(1000, ""));
+                }
+                break;
+            }
+            _ => {}
+        }
+    }
+    write(&mut server, &output).await;
+    server.shutdown().await.unwrap();
+    eof(&mut server).await;
+}
+
+async fn assert_ts_control_exchange(client_wire: Vec<u8>, queued: Vec<u8>, expected: &[u8]) {
+    let Pair {
+        mut client,
+        server,
+        task,
+    } = Pair::new();
+    let fake = tokio::spawn(fake_ts_control_exchange(
+        server,
+        client_wire.clone(),
+        queued,
+    ));
+    // One write holds both frames, reproducing the coalesced TCP input ordering.
+    write(&mut client, &client_wire).await;
+    let mut output = Vec::new();
+    timeout(DEADLINE, client.read_to_end(&mut output))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(output, expected, "client byte order must match TS");
+    timeout(DEADLINE, fake).await.unwrap().unwrap();
+    timeout(DEADLINE, task).await.unwrap().unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn invalid_json_and_client_close_coalesced_reply_only_4002() {
+    let mut wire = client_frame(0x81, 127, b"invalid json");
+    wire.extend(client_frame(0x88, 126, &[]));
+    assert_ts_control_exchange(wire, vec![], &close_wire(4002, "invalid_json")).await;
+}
+
+#[tokio::test]
+async fn bad_hello_and_ping_coalesced_reply_close_without_pong() {
+    let mut wire = client_frame(0x81, 126, br#"{"type":"request","id":"before-hello"}"#);
+    wire.extend(client_frame(0x79, 127, b"must not receive a pong"));
+    assert_ts_control_exchange(wire, vec![], &close_wire(4001, "hello_required")).await;
+}
+
+#[tokio::test]
+async fn client_close_drains_inflight_event_response_then_ts_close_to_eof() {
+    let Pair {
+        mut client,
+        mut server,
+        task,
+    } = Pair::new();
+    let event = server_frame(
+        1,
+        br#"{"type":"event","seq":7,"event":{"type":"text","text":"in flight"}}"#,
+    );
+    let response = server_frame(1, br#"{"type":"response","id":"pending","result":true}"#);
+    // A partial event is already in the receive pump when close arrives.
+    write(&mut server, &event[..5]).await;
+    silent(&mut client).await;
+    let close = client_frame(0x88, 127, &[255]);
+    let mut queued = event[5..].to_vec();
+    queued.extend_from_slice(&response);
+    let fake = tokio::spawn(fake_ts_control_exchange(server, close.clone(), queued));
+    write(&mut client, &close).await;
+    // Even a subsequent TCP half-close must not cancel the draining receive pump.
+    client.shutdown().await.unwrap();
+    let mut output = Vec::new();
+    timeout(DEADLINE, client.read_to_end(&mut output))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut expected = event;
+    expected.extend(response);
+    expected.extend(close_wire(1000, ""));
+    assert_eq!(output, expected);
+    timeout(DEADLINE, fake).await.unwrap().unwrap();
+    timeout(DEADLINE, task).await.unwrap().unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn upstream_close_followed_by_client_ping_has_no_local_reply() {
+    let mut pair = Pair::new();
+    let close = close_wire(4002, "invalid_json");
+    write(&mut pair.server, &close).await;
+    read(&mut pair.client, &close).await;
+    let ping = client_frame(0x89, 1, b"p");
+    write(&mut pair.client, &ping).await;
+    read(&mut pair.server, &ping).await;
+    silent(&mut pair.client).await;
+    pair.server.shutdown().await.unwrap();
+    eof(&mut pair.client).await;
+    pair.finish().await;
+}
+
+struct BrokenUpstreamWriter(DuplexStream);
+
+impl AsyncRead for BrokenUpstreamWriter {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for BrokenUpstreamWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        _: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn upstream_write_failure_on_text_ping_or_close_drains_pending_ts_close() {
+    for opcode in [1, 9, 8] {
+        let (mut client, downstream) = tokio::io::duplex(4096);
+        let (upstream, mut server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(run(downstream, BrokenUpstreamWriter(upstream)));
+        let close = close_wire(4002, "invalid_json");
+        write(&mut server, &close[..3]).await;
+        write(&mut client, &client_frame(0x80 | opcode, 0, &[])).await;
+        // The partial TS close must survive the injected upstream write error.
+        silent(&mut client).await;
+        write(&mut server, &close[3..]).await;
+        server.shutdown().await.unwrap();
+        let mut output = Vec::new();
+        timeout(DEADLINE, client.read_to_end(&mut output))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(output, close);
+        timeout(DEADLINE, task).await.unwrap().unwrap().unwrap();
+    }
 }

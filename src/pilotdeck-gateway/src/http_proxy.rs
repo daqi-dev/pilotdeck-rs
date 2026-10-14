@@ -5,6 +5,10 @@ use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response, StatusCode, body::Incoming, header};
 use hyper_util::rt::TokioIo;
 use std::convert::Infallible;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
 pub struct Proxy {
     pub upstream: String,
     pub client: HttpClient,
@@ -15,10 +19,9 @@ impl Proxy {
         &self,
         mut request: Request<Incoming>,
     ) -> Result<Response<Body>, std::io::Error> {
-        let is_upgrade = request
-            .headers()
-            .get(header::UPGRADE)
-            .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"));
+        // Node dispatches any Upgrade protocol to handleUpgrade, which checks
+        // the pathname and key rather than requiring "websocket" here.
+        let is_upgrade = request.headers().contains_key(header::UPGRADE);
         if is_upgrade {
             if request.uri().path() != "/ws" {
                 // A service error makes Hyper close the socket without an HTTP
@@ -95,7 +98,7 @@ impl Proxy {
             match upgraded.await {
                 Ok(downstream) => {
                     if let Err(error) =
-                        pairing::run(TokioIo::new(downstream), TokioIo::new(upstream)).await
+                        pair_upgraded::<TcpStream, _>(downstream, TokioIo::new(upstream)).await
                     {
                         eprintln!("WS pairing: {error}");
                     }
@@ -105,6 +108,24 @@ impl Proxy {
         });
         Ok(acceptor::websocket_response(upstream_headers, &accept))
     }
+}
+
+async fn pair_upgraded<S, U>(
+    downstream: hyper::upgrade::Upgraded,
+    upstream: U,
+) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    U: AsyncRead + AsyncWrite + Unpin,
+{
+    let parts = downstream
+        .downcast::<TokioIo<S>>()
+        .map_err(|_| std::io::Error::other("unexpected downstream upgrade IO type"))?;
+    // GatewayServer.ts:67 ignores Node's upgrade `head`. Hyper's equivalent
+    // is read_buf: discard client frames already read with the HTTP request.
+    // Upstream response read-ahead remains intact because it is TS output.
+    drop(parts.read_buf);
+    pairing::run(parts.io.into_inner(), upstream).await
 }
 
 pub(crate) fn strip_hop_headers(headers: &mut hyper::HeaderMap) {
@@ -205,7 +226,7 @@ mod tests {
         );
     }
 
-    async fn rejected_upgrade(path: &str, key: Option<&str>) {
+    async fn rejected_upgrade(path: &str, key: Option<&str>, protocol: &str) {
         let (server_io, mut client_io) = tokio::io::duplex(4096);
         let proxy = Arc::new(Proxy {
             upstream: "http://127.0.0.1:28790".into(),
@@ -225,7 +246,7 @@ mod tests {
             .map(|key| format!("Sec-WebSocket-Key: {key}\r\n"))
             .unwrap_or_default();
         let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n{key}\r\n"
+            "GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: {protocol}\r\nConnection: Upgrade\r\n{key}\r\n"
         );
         timeout(
             Duration::from_secs(3),
@@ -251,14 +272,69 @@ mod tests {
 
     #[tokio::test]
     async fn missing_client_key_destroys_socket_before_upstream_connect() {
-        rejected_upgrade("/ws?allowed=query", None).await;
+        rejected_upgrade("/ws?allowed=query", None, "websocket").await;
     }
 
     #[tokio::test]
     async fn only_ws_path_upgrades_and_other_paths_destroy_socket() {
         for path in ["/", "/WS", "/ws/", "/other?path=/ws"] {
-            rejected_upgrade(path, Some("arbitrary-key")).await;
+            rejected_upgrade(path, Some("arbitrary-key"), "websocket").await;
         }
+    }
+
+    #[tokio::test]
+    async fn arbitrary_upgrade_protocol_uses_ts_path_and_key_rejections() {
+        for protocol in ["h2c", "WebSocket, custom", "custom-protocol"] {
+            rejected_upgrade("/other", Some("key"), protocol).await;
+            rejected_upgrade("/ws", None, protocol).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn get_and_first_frame_in_same_write_discards_upgrade_head() {
+        use crate::frame::{client_frame, server_frame};
+        use tokio::io::DuplexStream;
+
+        timeout(Duration::from_secs(3), async {
+            let (downstream, mut client) = tokio::io::duplex(4096);
+            let (upstream, mut fake_ts) = tokio::io::duplex(4096);
+            let first = client_frame(0x81, 127, b"discard this first frame");
+            let second = client_frame(0x81, 126, b"forward only after upgrade");
+            let mut request = b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: key\r\n\r\n".to_vec();
+            request.extend_from_slice(&first);
+            // Queue the entire packet before Hyper starts reading so the first
+            // frame deterministically belongs to upgrade head, not a later read.
+            client.write_all(&request).await.unwrap();
+            let (upgrade_tx, upgrade_rx) = tokio::sync::oneshot::channel();
+            let upgrade_tx = Arc::new(std::sync::Mutex::new(Some(upgrade_tx)));
+            let http = tokio::spawn(async move {
+                let service = service_fn(move |mut request: Request<Incoming>| {
+                    let upgraded = hyper::upgrade::on(&mut request);
+                    upgrade_tx.lock().unwrap().take().unwrap().send(upgraded).unwrap();
+                    async { Ok::<_, Infallible>(acceptor::websocket_response(hyper::HeaderMap::new(), "accept")) }
+                });
+                http1::Builder::new().serve_connection(TokioIo::new(downstream), service).with_upgrades().await.unwrap();
+            });
+            let upgraded = upgrade_rx.await.unwrap().await.unwrap();
+            let pair = tokio::spawn(pair_upgraded::<DuplexStream, _>(upgraded, upstream));
+            let mut response = Vec::new();
+            while !response.ends_with(b"\r\n\r\n") {
+                response.push(client.read_u8().await.unwrap());
+            }
+            assert!(response.starts_with(b"HTTP/1.1 101"));
+            client.write_all(&second).await.unwrap();
+            let mut forwarded = vec![0; second.len()];
+            fake_ts.read_exact(&mut forwarded).await.unwrap();
+            assert_eq!(forwarded, second, "pre-read first frame must be discarded");
+            let reply = server_frame(1, b"only second frame reached TS");
+            fake_ts.write_all(&reply).await.unwrap();
+            fake_ts.shutdown().await.unwrap();
+            let mut output = Vec::new();
+            client.read_to_end(&mut output).await.unwrap();
+            assert_eq!(output, reply);
+            pair.await.unwrap().unwrap();
+            http.await.unwrap();
+        }).await.expect("upgrade head test timeout");
     }
 
     #[test]
