@@ -284,7 +284,9 @@ class ComparatorBoundaries(unittest.TestCase):
         uuid = '11111111-1111-4111-8111-111111111111'
         errors = []
         norm = Normalizer('left', errors)
-        http = norm.value({'messages': [{'turnId': uuid, 'blockId': uuid + ':text:0'}]}, 'http', 'readonly.messages')
+        norm.wall_bounds = (1700000000000, 1700000010000)
+        norm.chat_timestamps.add('2023-11-14T22:13:20.000Z')
+        http = norm.value({'messages': [{'timestamp': '2023-11-14T22:13:20.000Z', 'turnId': uuid, 'blockId': uuid + ':text:0'}]}, 'http', 'readonly.messages')
         ws = norm.value({'runId': uuid, 'timeline': {'id': uuid + ':text:0'}}, 'ws', 'text')
         disk = norm.value([{'turnId': uuid, 'message': {'content': [{'blockId': uuid + ':text:0'}]}}], 'disk', '@chat')
         self.assertEqual(http['messages'][0]['turnId'], ws['runId'])
@@ -320,9 +322,9 @@ class ComparatorBoundaries(unittest.TestCase):
                                   (self.right, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')):
             chat = side / f'home/projects/exp008-fixture/chats/{CHAT_FIXTURE_SESSIONS[0]}.jsonl'
             chat.parent.mkdir(parents=True)
-            chat.write_text(json.dumps({'turnId': uuid, 'entryId': other, 'message': {'content': [
+            chat.write_text(json.dumps({'sequence': 1, 'createdAt': '2023-11-14T22:13:20.000Z', 'turnId': uuid, 'entryId': other, 'message': {'content': [
                 {'blockId': other + ':text:0', 'timeline': {'id': other + ':text:0', 'turnId': uuid}}]}}) + '\n'
-                + json.dumps({'turnId': uuid}) + '\n')
+                + json.dumps({'sequence': 2, 'createdAt': '2023-11-14T22:13:20.000Z', 'turnId': uuid}) + '\n')
             controls.write_json(side / 'snapshot.json', capture(side))
             rows = read_jsonl(side / 'recording.jsonl')
             template = next(r for r in rows if r['kind'] == 'ws_frame' and r['dir'] == 'u2c' and r['opcode'] == 1)

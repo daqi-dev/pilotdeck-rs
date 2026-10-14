@@ -24,7 +24,7 @@ from policy import (HEADER_OMIT, SSE_ABSOLUTE_NS, SSE_DELAY_NS, field_key, field
                     UUID_VALUE, BLOCK_VALUE, MESSAGE_VALUE, CHAT_FIXTURE_SESSIONS,
                     CLOCK_FORMATS, CLOCK_PAIRS, CLOCK_RESPONSE_ORDER, ISO_MS, SQL_S, EPOCH_MS, MTIME_MS)
 from snapshot import capture
-from common import apparatus_hashes
+from common import apparatus_hashes, ClockRefused, validate_clock_check
 
 HERE = Path(__file__).resolve().parent
 NOT_JSON = object()
@@ -96,6 +96,43 @@ class Normalizer:
         self.auth_secret_rows = set()
         self.vapid_keys = set()
         self.expiries = {}
+        self.chat_timestamps = set()
+        self.reading_clock_paths = []
+
+    def nondecreasing(self, values, location, contract):
+        previous = None
+        for i, value in enumerate(values):
+            instant = self.clock_instant(value, ISO_MS, f'{location}[{i}]')
+            if instant is not None:
+                if previous is not None and instant < previous:
+                    issue(self.out, 'normalization.field', f'{location}[{i}]', contract,
+                          side=self.side)
+                previous = instant
+
+    def history_clocks(self, body, location):
+        messages = body.get('messages', [])
+        historical = []
+        for i, message in enumerate(messages):
+            stamp = message.get('timestamp')
+            path = f'{location}.messages[{i}].timestamp'
+            # Exact source-generated status shape; arbitrary status messages
+            # and the independently generated stream array are not this case.
+            prefix = str(message.get('sessionId', '')) + '-incomplete-turn-status-'
+            if (message.get('kind') == 'status' and message.get('provider') == 'pilotdeck'
+                    and isinstance(message.get('sessionId'), str) and message['sessionId']
+                    and isinstance(message.get('id'), str) and message['id'].startswith(prefix)
+                    and len(message['id']) > len(prefix)
+                    and message.get('text') == '本轮记录尚未写入最终结果，已恢复当时产生的工具调用和输出。'
+                    and not any(k in message for k in ('entryId', 'sequence', 'turnId', 'runId'))):
+                self.reading_clock_paths.append(path)
+                self.clock_instant(stamp, ISO_MS, path)
+                continue
+            historical.append(stamp)
+            if not isinstance(stamp, str) or stamp not in self.chat_timestamps:
+                issue(self.out, 'normalization.field', path,
+                      'history timestamp lacks local @chat createdAt witness', side=self.side)
+        self.nondecreasing(historical, location + '.messages.timestamps',
+                           'history timestamps must be nondecreasing in message order')
 
     def ref(self, category, value, location):
         if value is None:
@@ -254,6 +291,8 @@ class Normalizer:
                     visit(entry.get('data'))
 
     def value(self, value, channel, context, path=(), location='body', upload_id=None):
+        if not path and channel == 'http' and context == 'readonly.messages' and isinstance(value, dict):
+            self.history_clocks(value, location)
         ids, clocks = fields(channel, context)
         field = pattern(path)
         if not path and isinstance(value, dict) and 'expiresAt' in clocks:
@@ -572,6 +611,7 @@ class Side:
         self.types = {}
         self.pty_diagnostics = {}
         self.meta = read_json(self.directory / 'run-meta.json')
+        self.clock_regression_check = validate_clock_check(self.meta, historical=recorded_apparatus is not None)
         if (type(self.meta.get('schema')) is not int or self.meta.get('schema') != 1 or self.meta.get('observer_port') != 13102 or self.meta.get('mode') not in ('direct', 'proxy')
                 or not isinstance(self.meta.get('fixture_path'), str) or not self.meta['fixture_path'].startswith('/')
                 or not isinstance(self.meta.get('run_id'), str) or not self.meta['run_id']):
@@ -595,6 +635,7 @@ class Side:
         self.norm.gateway_pid = next((p['pid'] for p in audit['processes'] if p.get('name') == 'gateway'), None)
         self.load_activities()
         self.actual_snapshot = capture(self.directory)
+        self.load_chat_clocks()
         self.norm.seed_chat_identities(self.actual_snapshot['entries'])
         self.verify_auth()
         self.load_upload_expiries()
@@ -631,6 +672,68 @@ class Side:
             if 'data' in entry:
                 entry['data'] = self.norm.value(entry['data'], 'disk', context, location=f'disk.{path}.data')
             self.disk.append(entry)
+
+    def load_chat_clocks(self):
+        """Witness raw values from this side's disk, before any normalization."""
+        files = {e['path']: e.get('data') for e in self.actual_snapshot['entries']}
+        for path in files:
+            if (re.fullmatch(r'home/projects/exp008-fixture/chats/[^/]+\.jsonl\.projections\.json', path)
+                    and path.removesuffix('.projections.json') not in files):
+                issue(self.out, 'normalization.field', 'disk.' + path,
+                      'projection has no local @chat event witness file', side=self.label)
+        for path, entries in files.items():
+            if not re.fullmatch(r'home/projects/exp008-fixture/chats/[^/]+\.jsonl', path):
+                continue
+            location = 'disk.' + path
+            if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
+                issue(self.out, 'normalization.field', location, 'invalid @chat events', side=self.label)
+                continue
+            sequences = [e.get('sequence') for e in entries]
+            if (any(type(n) is not int or n < 1 for n in sequences)
+                    or any(a >= b for a, b in zip(sequences, sequences[1:]))):
+                issue(self.out, 'normalization.field', location, 'invalid @chat sequence order', side=self.label)
+                continue
+            self.norm.nondecreasing([e.get('createdAt') for e in entries], location + '.createdAt',
+                                    '@chat createdAt must be nondecreasing by sequence')
+            self.norm.chat_timestamps.update(e['createdAt'] for e in entries if isinstance(e.get('createdAt'), str))
+            projection_path = path + '.projections.json'
+            projection = files.get(projection_path)
+            if not isinstance(projection, dict):
+                continue
+            ploc = 'disk.' + projection_path
+            upto = projection.get('asOfSequence')
+            eligible = [e for e in entries if type(upto) is int and e['sequence'] <= upto]
+
+            def witness(entry, loc, anchor=False):
+                keys = ('sequence', 'entryId', 'parentEntryId', 'turnId', 'type') + (() if anchor else ('sessionId',))
+                matches = [e for e in eligible if isinstance(entry, dict)
+                           and all(e.get(k) == entry.get(k) for k in keys)
+                           and (not anchor or e['sequence'] == upto)]
+                if (len(matches) != 1 or not isinstance(entry.get('createdAt'), str)
+                        or entry['createdAt'] != matches[0].get('createdAt')):
+                    issue(self.out, 'normalization.field', loc + '.createdAt',
+                          'projection timestamp differs from local event identity witness', side=self.label)
+
+            if projection.get('anchor') is not None or upto != -1:
+                witness(projection.get('anchor'), ploc + '.anchor', anchor=True)
+            for name, envelope in projection.get('projections', {}).items():
+                bound = envelope.get('asOfSequence')
+                eligible = [e for e in entries if type(bound) is int and e['sequence'] <= bound
+                            and type(upto) is int and e['sequence'] <= upto]
+                state = envelope.get('state')
+                loc = ploc + '.projections.' + field_key(name) + '.state'
+                if name == 'agent-transcript.conversation':
+                    for i, item in enumerate(state.get('entries', [])):
+                        witness(item.get('entry'), f'{loc}.entries[{i}].entry')
+                elif name == 'web-history.agent-statuses':
+                    for i, entry in enumerate(state):
+                        witness(entry, f'{loc}[{i}]')
+                elif name == 'agent-transcript.metadata':
+                    updates = [e['metadata']['updatedAt'] for e in eligible
+                               if e.get('type') == 'session_metadata' and 'updatedAt' in e.get('metadata', {})]
+                    if ('updatedAt' in state or updates) and (not updates or state.get('updatedAt') != updates[-1]):
+                        issue(self.out, 'normalization.field', loc + '.updatedAt',
+                              'projection metadata updatedAt differs from latest log metadata witness', side=self.label)
 
     def registry(self, data):
         result = dict(data)
@@ -1037,6 +1140,18 @@ def compare_sides(left, right, enumeration, matrix=None, scenarios=None, *, reco
                   _prepared=None, _registered=False):
     out = []
     sides = []
+    clock_checks = {}
+    try:
+        for label, directory in (('left', left), ('right', right)):
+            clock_checks[label] = validate_clock_check(read_json(Path(directory) / 'run-meta.json'),
+                                                       historical=recorded_apparatus is not None)
+    except ClockRefused as error:
+        return {'verdict': 'REFUSED', 'spec_status': 'DRAFT', 'calibration_eligible': False,
+                'comparison_mode': 'historical-replay' if recorded_apparatus is not None else 'calibration',
+                'clock_regression_check': {**clock_checks, label: 'refused'},
+                'errors': [str(error)], 'differences': [], 'rules': []}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass  # Existing integrity diagnostics below handle malformed archives.
     try:
         enumeration = read_json(enumeration) if not isinstance(enumeration, dict) else enumeration
         matrix = read_json(matrix or HERE / 'coverage.json') if not isinstance(matrix, dict) else matrix
@@ -1126,6 +1241,8 @@ def compare_sides(left, right, enumeration, matrix=None, scenarios=None, *, reco
         except (ValueError, TypeError, KeyError, AttributeError) as error:
             issue(out, 'multimodal.membership', UNIT_LOCATION, str(error))
     return {'verdict': 'FAIL' if out else 'PASS', 'spec_status': 'DRAFT',
+            'clock_regression_check': clock_checks,
+            'reading_clock_paths': {label: side.norm.reading_clock_paths for label, side in zip(('left', 'right'), sides)},
             'registered_differences': registered_differences,
             'calibration_eligible': recorded_apparatus is None,
             'comparison_mode': 'calibration' if recorded_apparatus is None else 'historical-replay',

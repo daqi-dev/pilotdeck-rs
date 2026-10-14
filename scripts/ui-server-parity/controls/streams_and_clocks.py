@@ -9,6 +9,7 @@ import shutil
 import tempfile
 
 from compare import compare_sides, read_jsonl
+from snapshot import capture
 
 
 def run_stream_clock_controls(fixture, write_log):
@@ -271,4 +272,126 @@ def run_http_clock_controls():
                                     'both_sides': both, 'expected_rule': rule if expected == 'FAIL' else None,
                                     'passed': report['verdict'] == expected and (bool(hits) if expected == 'FAIL' else True),
                                     'matched': hits[:3], 'differences': report['differences'][:5]})
+    return results
+
+
+SESSION = 'web:33333333-3333-4333-8333-000000000002'
+CHAT = f'home/projects/exp008-fixture/chats/{SESSION}.jsonl'
+STAMPS = [f'2023-11-14T22:13:2{i}.000Z' for i in (1, 2, 3)]
+
+
+def run_history_clock_controls():
+    from controls.run_all import fixture, write_json, write_log, b64
+    results = []
+    with tempfile.TemporaryDirectory(prefix='b2-history-clock-') as tmp:
+        root = Path(tmp)
+        enumeration, matrix, manifest = fixture(root)
+        events = [dict(sequence=i + 1, entryId=f'event-{i}', parentEntryId=f'event-{i-1}' if i else None,
+                       turnId='turn', sessionId=SESSION, type=kind, createdAt=stamp)
+                  for i, (stamp, kind) in enumerate(zip(STAMPS, ('accepted_input', 'agent_status_message', 'session_metadata')))]
+        events[-1]['metadata'] = {'updatedAt': STAMPS[0]}
+        anchor = {k: v for k, v in events[-1].items() if k not in ('metadata', 'sessionId')}
+        projection = dict(sessionId=SESSION, asOfSequence=3, anchor=anchor, projections={
+            'agent-transcript.conversation': {'asOfSequence': 3, 'state': {'entries': [{'entry': events[0]}]}},
+            'web-history.agent-statuses': {'asOfSequence': 3, 'state': [events[1]]},
+            'agent-transcript.metadata': {'asOfSequence': 3, 'state': events[-1]['metadata']}})
+        messages = [dict(kind='text', id=f'm-{i}', sessionId=SESSION, timestamp=stamp) for i, stamp in enumerate(STAMPS)]
+        for label in ('left', 'right'):
+            side = root / label
+            chat = side / CHAT
+            chat.parent.mkdir(parents=True)
+            chat.write_text(''.join(json.dumps(e) + '\n' for e in events))
+            write_json(Path(str(chat) + '.projections.json'), projection)
+            write_json(side / 'snapshot.json', capture(side))
+            path = side / 'recording.jsonl'
+            rows = read_jsonl(path)
+            extra = [copy.deepcopy(r) for r in rows if r.get('id') == 2]
+            for r in extra:
+                r['id'] = 6
+                if r['kind'] == 'http_request':
+                    r.update(method='GET', path='/api/messages', case='readonly.messages')
+                    r['headers'] = [h for h in r['headers'] if h['name'] != 'x-pdrs-parity-case']
+                    r['headers'].append({'name': 'x-pdrs-parity-case', 'value_b64': b64('readonly.messages')})
+            rows[-1:-1] = extra
+            replace_response(rows, 6, {'messages': messages})
+            write_log(path, rows)
+
+        contracts = {
+            'messages-reverse': 'history timestamps must be nondecreasing',
+            'messages-read-time': 'history timestamp lacks local @chat',
+            'chat-reverse': '@chat createdAt must be nondecreasing',
+            'anchor': 'projection timestamp differs from local event identity',
+            'conversation': 'projection timestamp differs from local event identity',
+            'statuses': 'projection timestamp differs from local event identity',
+            'metadata': 'projection metadata updatedAt differs from latest log metadata',
+        }
+        for name in ('equivalence', 'ties', 'incomplete', 'fake-incomplete', *contracts, 'clock-regression', 'clock-missing'):
+            for both in ((False, True) if name in contracts or name in ('clock-regression', 'incomplete') else (False,)):
+                test = root / f'{name}-{both}'
+                for label in ('left', 'right'):
+                    side = test / label
+                    shutil.copytree(root / label, side)
+                    if label == 'left' and not both:
+                        continue
+                    path = side / 'recording.jsonl'
+                    rows = read_jsonl(path)
+                    body = {'messages': copy.deepcopy(messages)}
+                    if name == 'messages-reverse':
+                        for message, stamp in zip(body['messages'], reversed(STAMPS)):
+                            message['timestamp'] = stamp
+                    elif name == 'messages-read-time':
+                        for message in body['messages']:
+                            message['timestamp'] = '2023-11-14T22:13:29.000Z'
+                    elif name == 'ties':
+                        body['messages'][1]['timestamp'] = STAMPS[0]
+                    elif name in ('incomplete', 'fake-incomplete'):
+                        injected = dict(kind='status', provider='pilotdeck', sessionId=SESSION,
+                                        id=SESSION + '-incomplete-turn-status-turn',
+                                        text='本轮记录尚未写入最终结果，已恢复当时产生的工具调用和输出。',
+                                        timestamp='2023-11-14T22:13:29.000Z')
+                        if name == 'fake-incomplete':
+                            injected['entryId'] = 'event-1'
+                        body['messages'].append(injected)
+                    if name.startswith('messages-') or name in ('ties', 'incomplete', 'fake-incomplete'):
+                        replace_response(rows, 6, body)
+                        write_log(path, rows)
+                    chat = side / CHAT
+                    if name == 'chat-reverse':
+                        changed = copy.deepcopy(events)
+                        for e, stamp in zip(changed, reversed(STAMPS)):
+                            e['createdAt'] = stamp
+                        chat.write_text(''.join(json.dumps(e) + '\n' for e in changed))
+                    if name in ('anchor', 'conversation', 'statuses', 'metadata'):
+                        changed = copy.deepcopy(projection)
+                        target = {'anchor': changed['anchor'],
+                                  'conversation': changed['projections']['agent-transcript.conversation']['state']['entries'][0]['entry'],
+                                  'statuses': changed['projections']['web-history.agent-statuses']['state'][0],
+                                  'metadata': changed['projections']['agent-transcript.metadata']['state']}[name]
+                        # Another *valid log time* must not satisfy an identity witness.
+                        target['updatedAt' if name == 'metadata' else 'createdAt'] = STAMPS[1 if name != 'statuses' else 0]
+                        write_json(Path(str(chat) + '.projections.json'), changed)
+                    if name.startswith('clock-'):
+                        meta = json.loads((side / 'run-meta.json').read_text())
+                        if name == 'clock-missing':
+                            del meta['clock_regression_check']
+                        else:
+                            # Keep claimed PASS, wall still increasing: offset regression
+                            # must be recomputed from samples, not trusted from status.
+                            meta['clock_regression_check']['samples'][1]['wall_ns'] -= 100_000_000
+                        write_json(side / 'run-meta.json', meta)
+                    write_json(side / 'snapshot.json', capture(side))
+                report = compare_sides(test / 'left', test / 'right', enumeration, matrix, manifest)
+                expect = 'REFUSED' if name.startswith('clock-') else 'PASS' if name in ('equivalence', 'ties') or name == 'incomplete' and both else 'FAIL'
+                hits = [d for d in report['differences'] if d['rule'] == 'normalization.field'
+                        and contracts.get(name, 'history timestamp lacks local @chat') in d['message']]
+                if name == 'incomplete':
+                    valid = (report['reading_clock_paths']['right'] == ['http[readonly.messages#0].body.messages[3].timestamp']
+                             and not any(d['rule'] == 'normalization.field' for d in report['differences']))
+                else:
+                    valid = bool(hits) if expect == 'FAIL' else True
+                results.append(dict(name='history-clock-' + name + ('-both' if both else ''), both_sides=both,
+                                    expect=expect, actual=report['verdict'], expected_rule='normalization.field' if hits else None,
+                                    passed=report['verdict'] == expect and valid,
+                                    matched=hits[:4], differences=report['differences'],
+                                    clock_regression_check=report['clock_regression_check']))
     return results

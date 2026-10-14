@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from common import apparatus_hashes
+from controls.run_all import clock_evidence
 from multimodal import (capture_identity, ReferencePool, confirmed_classes, compare_with_pool,
                         pool_replay_provenance, registered_fields)
 from types import SimpleNamespace
@@ -33,6 +34,9 @@ class AdmissionBoundaries(unittest.TestCase):
     def write(self, name, meta):
         folder = self.root / name / 'direct'
         folder.mkdir(parents=True, exist_ok=True)
+        start, end = meta['wall_start_ms'], meta['wall_end_ms']
+        evidence = clock_evidence(start, end) if type(start) is int and type(end) is int and 0 < end - start < 10000 else {}
+        meta = {**meta, 'clock_regression_check': evidence}
         (folder / 'run-meta.json').write_text(json.dumps(meta))
         (folder / 'audit.json').write_text(json.dumps(self.audit))
         (folder / 'recording.jsonl').write_text(name)
@@ -56,6 +60,7 @@ class AdmissionBoundaries(unittest.TestCase):
     def test_copied_identity_cross_day_source_path_and_interval_rejected(self):
         pool = ReferencePool.__new__(ReferencePool)
         pool.apparatus, pool.enumeration = self.apparatus, self.enum
+        pool.recorded_apparatus = None
         pool.identities = [capture_identity(self.first, 'direct', self.apparatus)]
         self.audit['processes'][0]['pid'] = 102
         base = {**self.meta, 'run_id': 'test-only-2', 'wall_start_ms': 1791936003000, 'wall_end_ms': 1791936004000}

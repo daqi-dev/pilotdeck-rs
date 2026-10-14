@@ -15,6 +15,7 @@ from compare import RULES, compare_sides, read_jsonl  # noqa: E402
 from snapshot import capture  # noqa: E402
 from controls.identity_paths import run_identity_controls  # noqa: E402
 from controls.multimodal import run_multimodal_controls
+from controls.streams_and_clocks import run_history_clock_controls
 from controls.streams_and_clocks import run_stream_clock_controls, run_http_clock_controls  # noqa: E402
 
 
@@ -48,6 +49,16 @@ def hdr(name, value):
     return {'name': name, 'value_b64': b64(value)}
 
 
+def clock_evidence(start_ms, end_ms):
+    from common import INTERVAL_NS, MAX_GAP_NS
+    stamps = list(range(start_ms, end_ms, 1000)) + [end_ms]
+    samples = [dict(phase='start' if i == 0 else 'end' if i == len(stamps) - 1 else 'periodic',
+                    wall_ns=t * 1_000_000, mono_before_ns=(t - start_ms + 1) * 1_000_000,
+                    mono_after_ns=(t - start_ms + 1) * 1_000_000 + 100)
+               for i, t in enumerate(stamps)]
+    return dict(schema=1, status='PASS', interval_ns=INTERVAL_NS, max_gap_ns=MAX_GAP_NS, samples=samples)
+
+
 def fixture(root):
     enumeration = {'appCaptured': True, 'uniqueRouteCount': 3, 'routes': [
         {'method': 'POST', 'path': '/api/auth/register'},
@@ -74,7 +85,8 @@ def fixture(root):
         write_json(side / 'snapshot.json', capture(side))
         write_json(side / 'run-meta.json', {'schema': 1, 'mode': mode, 'fixture_path': '/fixture/common/direct',
                                           'run_id': f'offline-{label}', 'observer_port': 13102,
-                                          'wall_start_ms': 1700000000000, 'wall_end_ms': 1700000010000, 'synthetic': True})
+                                          'wall_start_ms': 1700000000000, 'wall_end_ms': 1700000010000, 'synthetic': True,
+                                          'clock_regression_check': clock_evidence(1700000000000, 1700000010000)})
         write_json(side / 'scenarios.json', {'probe': {'status': 'PASS'}})
         rows = []
         clock = 0
@@ -307,6 +319,7 @@ def run_controls(output=None):
         results.extend(run_stream_clock_controls(fixture, write_log))
         results.extend(run_multimodal_controls())
         results.extend(run_http_clock_controls())
+        results.extend(run_history_clock_controls())
         exercised = {row['expected_rule'] for row in results if row.get('passed') and 'expected_rule' in row}
         missing = sorted(RULES - exercised)
         report = {'verdict': 'PASS' if all(row['passed'] for row in results) and not missing else 'FAIL',

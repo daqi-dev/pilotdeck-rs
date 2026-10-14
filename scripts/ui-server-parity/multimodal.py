@@ -161,8 +161,12 @@ class ReferencePool:
 
     def admit(self, directory, mode):
         from compare import read_json
+        from common import validate_clock_check
         directory = Path(directory).resolve()
+        clock_check = validate_clock_check(read_json(directory / 'run-meta.json'),
+                                           historical=self.recorded_apparatus is not None)
         identity = capture_identity(directory, mode, self.apparatus)
+        identity['clock_regression_check'] = clock_check
         for previous in self.identities:
             if any(identity[key] == previous[key] for key in ('directory', 'run_id', 'recording_sha256', 'recorder_pid')):
                 raise ValueError('reference/scoring captures overlap or duplicate raw recording')
@@ -221,6 +225,8 @@ class ReferencePool:
 
     def score_pair(self, left, right):
         report = self.compare(left, right, registered=True)
+        if report['verdict'] == 'REFUSED':
+            return report
         checks = {name: self.evaluate(path) for name, path in (('left', left), ('right', right))}
         report['multimodal'] = checks
         if any(c['verdict'] != 'PASS' for c in checks.values()):

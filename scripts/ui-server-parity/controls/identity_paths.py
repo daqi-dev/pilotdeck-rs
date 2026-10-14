@@ -55,8 +55,15 @@ def run_identity_controls():
             if mutation == 'kind':
                 rv = D + ':thinking:0'
             location = f'{channel}[{context}].body'
-            a = left.value(document(path, lv), channel, context, location=location)
-            b = right.value(document(path, rv), channel, context, location=location)
+            documents = [document(path, lv), document(path, rv)]
+            if channel == 'http' and context == 'readonly.messages' and path.startswith('messages.'):
+                for norm, doc in zip((left, right), documents):
+                    stamp = '2023-11-14T22:13:20.000Z'
+                    norm.wall_bounds = (1700000000000, 1700000010000)
+                    norm.chat_timestamps.add(stamp)
+                    doc['messages'][0]['timestamp'] = stamp
+            a = left.value(documents[0], channel, context, location=location)
+            b = right.value(documents[1], channel, context, location=location)
             rule = {'http': 'http.body', 'ws': 'ws.structure', 'disk': 'disk.snapshot', 'sse': 'sse.sequence'}[channel]
             diff(a, b, errors, rule, location)
             return errors, rule
