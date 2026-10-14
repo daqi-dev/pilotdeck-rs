@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import sys
 
-from common import DEFAULT_OUT, SCRIPT, apparatus_hashes, install_shutdown, parity_lock, save
+from common import DEFAULT_OUT, ROOT, SCRIPT, apparatus_hashes, digest, install_shutdown, parity_lock, save
 from compare import compare
 from run_round import run_round
 
@@ -57,6 +57,7 @@ def main():
         proxy = compare(output / 'ts1', output / 'proxy')
         save(output / 'compare-proxy.json', proxy)
         spec = importlib.util.spec_from_file_location('gateway_controls', SCRIPT / 'controls/run_all.py')
+        sys.path.insert(0, str(SCRIPT / 'controls'))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         controls_path = output / 'controls'
@@ -73,6 +74,9 @@ def main():
             'self_compare': distinct and all(item['status'] == 'PASS' for item in comparisons),
             'distinct_ts_rounds': distinct, 'gateway_pids': identities,
             'positive_controls': bool(cases) and all(item['passed'] for name, item in cases.items() if not item.get('bothSides')),
+            'prerequisite_controls': controls.get('prerequisites', {}).get('passed', False),
+            'prerequisiteSha256': controls.get('prerequisites', {}).get('inputSha256', {}),
+            'prerequisiteAuditSha256': controls.get('prerequisites', {}).get('auditSha256'),
             'same_bad_rejected': bool(cases) and all(cases.get(name, {}).get('passed', False) for name in
                                                   ('both-sides-bad', 'corrupt-fingerprint', 'both-bad-disk', 'both-bad-http', 'both-bad-wire-metadata')),
             'independent_review': None,
@@ -81,10 +85,14 @@ def main():
             'controls': str(controls_path / 'results.json'), 'lock_takeovers': takeovers,
             'status': 'PENDING_REVIEW',
         }
-        if not all(report[key] for key in ('self_compare', 'positive_controls', 'same_bad_rejected', 'proxy_parity')):
+        if not all(report[key] for key in ('self_compare', 'positive_controls', 'prerequisite_controls', 'same_bad_rejected', 'proxy_parity')):
             report['status'] = 'FAIL'
         if apparatus_hashes() != hashes:
             raise ValueError('apparatus changed during run; report cannot certify mixed versions')
+        if any(digest(ROOT / name) != expected for name, expected in report['prerequisiteSha256'].items()):
+            raise ValueError('prerequisite inputs changed after controls; report cannot certify mixed versions')
+        if digest(ROOT / 'docs/reviews/002_a4-prerequisites.md') != report['prerequisiteAuditSha256']:
+            raise ValueError('audit artifact changed after controls; report cannot certify mixed versions')
         save(output / 'ruler.json', report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if report['status'] == 'FAIL' else 2

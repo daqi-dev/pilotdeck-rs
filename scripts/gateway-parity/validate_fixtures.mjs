@@ -33,6 +33,10 @@ const fixturesPath = argOf('--fixtures') ?? path.join(here, 'fixtures', 'gateway
 const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
 const snapshot = JSON.parse(fs.readFileSync(path.join(repoRoot, 'schema', 'gateway-methods.snapshot.json'), 'utf8'));
 const fixtures = JSON.parse(fs.readFileSync(fixturesPath, 'utf8'));
+if (!fixtures || typeof fixtures !== 'object' || Array.isArray(fixtures)) {
+  console.error('FAIL validate_fixtures: fixtures 证据缺失/畸形（根必须是对象）');
+  process.exit(1);
+}
 const ajv = new Ajv({ strict: false }); // draft-07；strict 关掉只为容忍 x-pilotdeck-* 注解关键字
 const definitions = schema.definitions ?? schema.$defs ?? {};
 
@@ -43,6 +47,39 @@ const judge = (label, expectPass, actualPass, errors) => {
     + (ok || !errors ? '' : ` —— ${errors}`));
   if (!ok) failures.push(label);
 };
+
+// Fixtures are evidence, not optional input: reject empty/malformed suites before judging.
+const aliases = (snapshot.payloadAliases ?? []).flatMap((e) => [e.input, e.result].filter(Boolean));
+const requireCases = (label, cases) => {
+  if (!Array.isArray(cases) || cases.length === 0) failures.push(`${label} 必须是非空数组`);
+};
+requireCases('frames.positive', fixtures.frames?.positive);
+requireCases('frames.negative', fixtures.frames?.negative);
+requireCases('definitions', fixtures.definitions);
+if (Array.isArray(fixtures.definitions)) {
+  for (const [i, c] of fixtures.definitions.entries()) {
+    if (!c || typeof c !== 'object' || typeof c.definition !== 'string'
+        || !Object.hasOwn(c, 'data') || !['pass', 'fail'].includes(c.expect)) {
+      failures.push(`definitions[${i}] 必须含 definition/data 和 expect: pass|fail`);
+    }
+  }
+  for (const expect of ['pass', 'fail']) {
+    if (!fixtures.definitions.some((c) => c?.expect === expect)) failures.push(`definitions 缺 ${expect} 用例`);
+  }
+  for (const name of aliases) {
+    for (const expect of ['pass', 'fail']) {
+      if (!fixtures.definitions.some((c) => c?.definition === name && c.expect === expect)) {
+        failures.push(`payloadAlias ${name} 缺 definition 级 ${expect} 用例`);
+      }
+    }
+  }
+}
+if (!aliases.length) failures.push('快照 payloadAliases 必须非空');
+if (failures.length) {
+  console.error('FAIL validate_fixtures: fixtures 证据缺失/畸形');
+  for (const f of failures) console.error(`  - ${f}`);
+  process.exit(1);
+}
 
 // 帧级正负例：根 schema
 const validateFrame = ajv.compile(schema);
@@ -89,7 +126,6 @@ if (!Array.isArray(rootTypes) || !rootTypes.includes('WsGatewayFrame')) {
   console.log(`[${missing.length ? 'FAIL' : 'PASS'}] rootTypes ${rootTypes.length} 个全部有 definition`);
   if (missing.length) failures.push(`rootTypes 缺 definition: ${missing.join(', ')}`);
 }
-const aliases = (snapshot.payloadAliases ?? []).flatMap((e) => [e.input, e.result].filter(Boolean));
 const aliasMissing = aliases.filter((n) => !definitions[n] || !rootTypes?.includes(n));
 console.log(`[${aliasMissing.length ? 'FAIL' : 'PASS'}] 快照 payloadAliases ${aliases.length} 条全部有 definition 且列入 rootTypes`);
 if (aliasMissing.length) failures.push(`payloadAliases 缺失: ${aliasMissing.join(', ')}`);
@@ -99,4 +135,4 @@ if (failures.length) {
   for (const f of failures) console.error(`  - ${f}`);
   process.exit(1);
 }
-console.log('\nvalidate_fixtures: 全部正负例与机判通过');
+console.log(`\nvalidate_fixtures: 全部正负例与机判通过；frames ${fixtures.frames.positive.length}+${fixtures.frames.negative.length}，definitions ${fixtures.definitions.length}，total ${fixtures.frames.positive.length + fixtures.frames.negative.length + fixtures.definitions.length}，payloadAliases ${aliases.length}`);
