@@ -257,8 +257,67 @@ enum Capture {
     Unknown,
     Closed,
     RetiredBefore,
+    RetiredAtDispatch,
     RetiredDuring,
     UncancelledUnknown,
+}
+enum RetirementGate {
+    AfterUnknown(mpsc::Receiver<()>),
+    BeforeCapture {
+        started: mpsc::Sender<()>,
+        retired: mpsc::Receiver<()>,
+    },
+}
+// Only the test worker is gated. Real RemoteHost/ConnectionOwner calls and
+// cancellation propagation still run on their normal product paths.
+struct RetirementHost<H> {
+    inner: H,
+    gate: Option<RetirementGate>,
+}
+impl<H: HostPort> HostPort for RetirementHost<H> {
+    fn advertised(&self, module: &str, operation: &str) -> bool {
+        self.inner.advertised(module, operation)
+    }
+    fn call(&mut self, control: &CallControl, call: HostCall) -> PortResult<HostReply> {
+        if matches!(call, HostCall::CaptureTurn(_))
+            && matches!(self.gate, Some(RetirementGate::BeforeCapture { .. }))
+        {
+            let Some(RetirementGate::BeforeCapture { started, retired }) = self.gate.take() else {
+                unreachable!();
+            };
+            // The fresh cleanup scope exists and is live before retirement.
+            assert!(control.check().is_ok());
+            started.send(()).unwrap();
+            retired.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert!(matches!(
+                control.check(),
+                Err(PortError::Cancelled {
+                    cause: CancelCause::OwnerRetired
+                })
+            ));
+        }
+        let result = self.inner.call(control, call);
+        if matches!(result, Err(PortError::AcceptedUnknown { .. }))
+            && matches!(self.gate, Some(RetirementGate::AfterUnknown(_)))
+        {
+            let Some(RetirementGate::AfterUnknown(retired)) = self.gate.take() else {
+                unreachable!();
+            };
+            // Requested wakes the pending call before the peer can retire it.
+            // Keep the loop here until the hard stop is fully published, so
+            // "before capture" is a happens-before relation, not a scheduling bet.
+            retired.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert!(matches!(
+                control.cancellation.cause(),
+                Some(CancelCause::Requested(_))
+            ));
+            assert_eq!(
+                control.cancellation.hard_stop_cause(),
+                Some(CancelCause::OwnerRetired)
+            );
+        }
+        result
+    }
 }
 fn run_pending(capture: Capture, requested: bool, tool: bool) {
     let owner = ConnectionOwner::new(
@@ -283,7 +342,16 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     let cancellation = Cancellation::default();
     let control = CallControl {
         cancellation: cancellation.clone(),
-        deadline: Some(Instant::now() + Duration::from_millis(120)),
+        // Handshakes drive retirement ordering. A longer failure watchdog also
+        // bounds the model calls if a broken writer never reaches the peer.
+        deadline: Some(
+            Instant::now()
+                + if matches!(capture, Capture::RetiredBefore | Capture::RetiredAtDispatch) {
+                    Duration::from_secs(10)
+                } else {
+                    Duration::from_millis(120)
+                },
+        ),
     };
     let cleanup = CallControl {
         cancellation: cancellation.clone(),
@@ -291,6 +359,8 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     };
     let (sent, received) = mpsc::channel();
     let (capture_seen, capture_received) = mpsc::channel();
+    let (retire_completed, retire_received) = mpsc::channel();
+    let (capture_ready, capture_started) = mpsc::channel();
     let writer_owner = owner.clone();
     let writer = std::thread::spawn(move || writer_owner.drive_writer(Wire(sent, vec![])));
     let peer_owner = owner.clone();
@@ -353,8 +423,14 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
                     // a local CallControl bound alone must not freeze late ACKs.
                     cancellation.cancel(CancelCause::Deadline);
                 }
-                if matches!(capture, Capture::RetiredBefore) {
+                if matches!(capture, Capture::RetiredBefore | Capture::RetiredAtDispatch) {
+                    if matches!(capture, Capture::RetiredAtDispatch) {
+                        capture_started
+                            .recv_timeout(Duration::from_secs(10))
+                            .unwrap();
+                    }
                     assert!(!cancellation.cancel(CancelCause::OwnerRetired));
+                    retire_completed.send(()).unwrap();
                 }
                 continue; // actual accepted stream with no response
             }
@@ -433,10 +509,20 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     if tool {
         modules.push(("capability".into(), vec!["execute_batch".into()]));
     }
-    let mut host = RemoteHost::new(
-        owner.bound_exchange(identity.clone()).unwrap(),
-        AdvertisedMethods { modules },
-    );
+    let mut host = RetirementHost {
+        inner: RemoteHost::new(
+            owner.bound_exchange(identity.clone()).unwrap(),
+            AdvertisedMethods { modules },
+        ),
+        gate: match capture {
+            Capture::RetiredBefore => Some(RetirementGate::AfterUnknown(retire_received)),
+            Capture::RetiredAtDispatch => Some(RetirementGate::BeforeCapture {
+                started: capture_ready,
+                retired: retire_received,
+            }),
+            _ => None,
+        },
+    };
     let log: Log = Arc::default();
     let mut preparation = Preparation {
         log: log.clone(),
@@ -458,7 +544,10 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     let elapsed = start.elapsed();
     if !matches!(
         capture,
-        Capture::Absent | Capture::RetiredBefore | Capture::UncancelledUnknown
+        Capture::Absent
+            | Capture::RetiredBefore
+            | Capture::RetiredAtDispatch
+            | Capture::UncancelledUnknown
     ) {
         capture_received
             .recv_timeout(Duration::from_secs(1))
@@ -468,17 +557,6 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     assert_eq!(
         records.iter().filter(|(_, op)| op == "stream_next").count(),
         if tool { 1 } else { 2 }
-    );
-    assert_eq!(
-        records
-            .iter()
-            .filter(|(_, op)| op == "capture_turn")
-            .count(),
-        usize::from(!matches!(
-            capture,
-            Capture::Absent | Capture::RetiredBefore | Capture::UncancelledUnknown
-        )),
-        "missing or duplicate capture"
     );
     let original = owner.call_record(&records[1].0).unwrap();
     assert!(
@@ -566,7 +644,11 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     }
     owner.release_known_calls(&identity);
     // Replay and unrelated advancement remain blocked by the ORIGINAL identity.
-    let mut exchange = host.into_exchange();
+    assert!(
+        host.gate.is_none(),
+        "retirement handshake was not exercised"
+    );
+    let mut exchange = host.inner.into_exchange();
     let fresh = CallControl {
         cancellation: Cancellation::default(),
         deadline: Some(Instant::now() + Duration::from_secs(1)),
@@ -587,6 +669,24 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
     owner.close();
     writer.join().unwrap().unwrap();
     peer.join().unwrap();
+    // Closing and joining the writer disconnects the channel; joining the peer
+    // drains every flushed packet. A zero/duplicate assertion on an earlier
+    // snapshot could overlook a capture whose bytes were already sent.
+    let records = receipts.lock().unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|(_, op)| op == "capture_turn")
+            .count(),
+        usize::from(!matches!(
+            capture,
+            Capture::Absent
+                | Capture::RetiredBefore
+                | Capture::RetiredAtDispatch
+                | Capture::UncancelledUnknown
+        )),
+        "missing or duplicate capture; receipts: {records:?}"
+    );
 }
 #[test]
 fn bounded_capture_owning_pending_model_deadline_ack() {
@@ -634,6 +734,10 @@ fn bounded_capture_during_tool_requested() {
 #[test]
 fn bounded_capture_requested_then_retired_before_capture() {
     run_pending(Capture::RetiredBefore, true, false);
+}
+#[test]
+fn bounded_capture_requested_then_retired_at_capture_dispatch() {
+    run_pending(Capture::RetiredAtDispatch, true, false);
 }
 #[test]
 fn bounded_capture_requested_then_retired_during_capture() {
