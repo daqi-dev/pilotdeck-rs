@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""离线核对 A5.1 依赖账本；只读输入，标准库，无服务、网络或冻结文件写入。
+"""离线核对 A5.1 依赖账本；只读输入，Python + 已安装 Node/TypeScript parser，无服务、网络或冻结文件写入。
 
 PASS 表示账本结构/集合/锚点完整，不表示 BLOCKED 项已解决或原生实现通过。
-默认同时运行负例自检；--ledger 支持验证待评审副本，--baseline 指定只读 B/。
+默认同时运行负例自检；v2 组/范围先展开，既有检查全部保留。
+--ledger 支持待评审副本，--baseline 指定只读 B/；--compare-expanded 作一次性逐项对照。
 """
 import argparse
+from ledger_format import expand, read_json, unique_object
 from collections import Counter
 import copy
 import hashlib
+from functools import lru_cache
 import json
 from pathlib import Path
 import re
 import sys
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER = ROOT / 'specs/gateway-coverage/ledger.json'
@@ -24,15 +28,6 @@ PROSE_REF = re.compile(r'B/[A-Za-z0-9_./-]+(?::[^\s，。；、）)\]}`]+)?')
 SOURCE_MENTION = re.compile(r'(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:tsx?|mts|mjs|js)(?![A-Za-z0-9_])'
                             r'(?::[^\s，。；、）)\]}`]+)?')
 UNCONFIGURED = {'CAPABILITY_UNAVAILABLE', 'not_configured', 'SKILL_MODULE_DISABLED', 'unsupported'}
-# Only constructors/factories whose first argument is a domain code. Plain Error,
-# TypeError and diagnostics are deliberately not interpreted as domain codes.
-ERROR_CALL = re.compile(
-    r'\b(?:new\s+(?:DialogGatewayError|SkillManagerError|ForkSessionError|'
-    r'ReplaceLastTurnError|NodeProjectSessionReplacementError|PilotLocalSettingsError|PilotSdkSessionSettingsError|'
-    r'AlwaysOnError|RouterRuntimeError)|sopStateError|controlError|transportError)'
-    r'\s*\(\s*[\"\']([A-Za-z][A-Za-z0-9_]*)[\"\']')
-CODE_PROPERTY = re.compile(r'\bcode\s*:\s*[\"\']([A-Za-z][A-Za-z0-9_]*)[\"\']')
-APPROVAL_FAILURE = re.compile(r'\b(?:failure|reject)\s*\([^,\n]+,\s*[\"\']([A-Za-z][A-Za-z0-9_]*)[\"\']')
 CATEGORIES = {'(a)': 10, '(b)': 46, '(c)': 4, '待定': 41}
 BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 REQUIRED = {
@@ -44,22 +39,28 @@ REQUIRED = {
 EVIDENCE_FIELDS = ('handler', 'provider', 'state', 'notifications', 'lifecycle', 'guard')
 
 
-def scan_error_literals(source):
-    """Bounded lexical scan; comments excluded, source line offsets preserved.
+@lru_cache(maxsize=2)
+def source_graph(baseline):
+    """The installed TS parser matches actual blocks, expressions and bindings.
 
-    This is not TypeScript call-graph inference. Reviewed complete function ranges
-    and indirect callees live in source_audit; dynamic codes remain manual evidence.
+    No product module is executed. Missing Node/parser or analysis failures are
+    fatal. Cache only within one validation process, never from a ledger file.
     """
-    # Mask comments without treating comment markers inside strings as comments.
-    tokens = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|'
-                        r'`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/')
-    def mask(match):
-        value = match.group()
-        return re.sub(r'[^\n]', ' ', value) if value.startswith(('//', '/*')) else value
-    cleaned = tokens.sub(mask, source)
-    return sorted({(match.group(1), cleaned.count('\n', 0, match.start()))
-                   for pattern in (ERROR_CALL, CODE_PROPERTY, APPROVAL_FAILURE)
-                   for match in pattern.finditer(cleaned)})
+    result = subprocess.run(['node', str(ROOT / 'scripts/gateway-coverage/source_graph.cjs'),
+                             str(baseline)], capture_output=True, text=True, timeout=120)
+    if result.returncode:
+        raise ValueError('independent source analysis failed: ' + result.stderr[-2000:])
+    return json.loads(result.stdout)
+
+
+# Exceptions belong to the checker, not the ledger author. All have actual
+# handler evidence; these have no separate callable provider in the CLI graph.
+PROVIDER_EXCEPTIONS = {
+    'manager_browsers': 'CLI does not supply managerBrowsers; host-only optional capability, no production constructor.',
+    'resume_session': 'Identity response implemented entirely in IPG; no downstream provider call.',
+    'new_session': 'IPG UUID response; node:crypto.randomUUID is an external builtin, no repository function.',
+    'supported_agents': 'Static IPG response; no downstream provider call.',
+}
 
 
 def expected_owner(package):
@@ -71,44 +72,6 @@ def expected_owner(package):
     if package in {f'U{i}' for i in range(1, 14)}:
         return 'A8'
     return None
-
-
-def primary_function_starts(baseline):
-    """Independently locate WS -> IPG and default CLI injection declarations.
-
-    Indirect interface implementations still require source review; direct provider
-    bodies cannot be silently dropped from the ledger's selected scan ranges.
-    """
-    ip_path = 'src/gateway/client/InProcessGateway.ts'
-    cli_path = 'src/cli/createLocalGateway.ts'
-    ws = (baseline / 'src/gateway/server/GatewayWsConnection.ts').read_text()
-    ip = (baseline / ip_path).read_text()
-    cli = (baseline / cli_path).read_text()
-    methods = {'submit_turn': 'submitTurn'}
-    for block in re.split(r'\n\s*case ', ws)[1:]:
-        name = re.match(r'"([a-z_]+)":', block)
-        member = re.search(r'this\.options\.gateway\.(\w+)', block)
-        if not member:
-            member = re.search(r'this\.requireCapability\("[^"]+", "(\w+)"', block)
-        if name and member:
-            methods[name[1]] = member[1]
-    begin = cli.index('const gateway = new InProcessGateway')
-    end = re.search(r'^  \}\);', cli[begin:], re.M)
-    if end is None:
-        raise ValueError('cannot locate createLocalGateway injection boundary')
-    injection = cli[begin:begin + end.end()]
-    result = {}
-    for method, name in methods.items():
-        handler = re.search(r'^  (?:async )?\*?' + re.escape(name) + r'\(', ip, re.M)
-        if handler is None:
-            raise ValueError(f'cannot locate handler for {method}')
-        required = {(ip_path, ip.count('\n', 0, handler.start()) + 1)}
-        provider = re.search(r'^    (?:async )?' + re.escape(name)
-                             + r'(?:\(|:\s*(?:async\s+)?\()', injection, re.M)
-        if provider:
-            required.add((cli_path, cli.count('\n', 0, begin + provider.start()) + 1))
-        result[method] = required
-    return result
 
 
 def digest(path):
@@ -167,12 +130,24 @@ def load_inputs():
     }
 
 
-def validate(data, baseline, inputs):
-    errors = []
+def validate(data, baseline, inputs, graph=None):
+    data, errors = expand(data)
     references = []
     referenced_files = set()
     file_cache = {}
-    primary_starts = primary_function_starts(baseline)
+    source_lines = {}
+
+    def lines(relative):
+        if relative not in source_lines:
+            source_lines[relative] = (baseline / relative).read_text().splitlines()
+        return source_lines[relative]
+    graph = graph if graph is not None else source_graph(baseline)
+    functions = graph['functions']
+    function_index = {}
+    for function in functions:
+        function_index.setdefault((function['file'], function['start']), []).append(function)
+    automatic_count = 0
+    provider_count = 0
     audited_ranges = set()
     method_function_count = 0
 
@@ -218,6 +193,12 @@ def validate(data, baseline, inputs):
                     else:
                         for i, item in enumerate(child):
                             check_ref(item, f'{where}.refs[{i}]')
+                elif key == 'file' and (where.startswith('$.error_classes.') or where == '$.default_boot'):
+                    # Source-derived metadata has a separately checked refs field.
+                    continue
+                elif key == 'expression' and where.endswith('.origin'):
+                    # Exact source text, verified against its origin line below.
+                    continue
                 else:
                     walk(child, f'{where}.{key}')
         elif isinstance(value, list):
@@ -239,6 +220,8 @@ def validate(data, baseline, inputs):
 
     if not isinstance(data, dict):
         return [{'code': 'document', 'path': '$', 'detail': 'expected object'}], {}
+    if any(control['result'] != 'PASS' for control in graph['parser_controls']):
+        fail('parser_controls', '$', graph['parser_controls'])
     if data.get('format_version') != 1:
         fail('format_version', '$', 'expected format_version=1')
     if not isinstance(data.get('baseline'), dict) or data['baseline'].get('commit') != BASELINE_COMMIT:
@@ -279,6 +262,18 @@ def validate(data, baseline, inputs):
         configuration = {}
     for key, value in configuration.items():
         evidence(value, f'$.configuration.{key}')
+    if data.get('provider_exceptions') != PROVIDER_EXCEPTIONS:
+        fail('provider_exceptions', '$.provider_exceptions', 'must exactly match reviewed checker-owned reasons')
+    catalog = {name: dict(value, refs=[f"B/{value['file']}:{value['line']}"]) for name, value in graph['errorClasses'].items()}
+    if data.get('error_classes') != catalog:
+        fail('error_class_catalog', '$.error_classes', 'all production Error classes, inherited code and origins must match source')
+    if data.get('default_boot') != dict(graph['boot'], refs=[f"B/{graph['boot']['file']}:{graph['boot']['line']}"]):
+        fail('default_construction', '$.default_boot', 'default root must be CLI createLocalGateway call')
+    transport = next(f for f in functions if f['file'] == 'src/gateway/server/GatewayWsConnection.ts' and f['symbol'] == 'handleRequest')
+    expected_transport = {'summary': '所有 RPC 的共同 WS 错误响应边界；只用于运输码字面量与动态 origin 核验，不把 switch 的其他方法领域码归给本方法。',
+                          'refs': [f"B/{transport['file']}:{transport['start']}", f"B/{transport['file']}:{transport['end']}"]}
+    if data.get('transport_boundary') != expected_transport:
+        fail('transport_scope', '$.transport_boundary', 'common response boundary must match independently bounded function')
     for index, entry in enumerate(entries):
         where = f'$.methods[{index}]'
         if not isinstance(entry, dict):
@@ -311,7 +306,7 @@ def validate(data, baseline, inputs):
         branches = entry.get('branches', {})
         for kind in ('success', 'error', 'unconfigured'):
             branch = branches.get(kind) if isinstance(branches, dict) else None
-            if not isinstance(branch, list) or not branch:
+            if not isinstance(branch, list) or (kind != 'error' and not branch):
                 fail('branches', where + '.' + kind, 'at least one evidenced branch required')
                 continue
             for j, item in enumerate(branch):
@@ -320,12 +315,35 @@ def validate(data, baseline, inputs):
                     fail('branches', where + '.' + kind, 'explicit error/result code or N/A required')
         audit = entry.get('source_audit')
         if not isinstance(audit, dict) or not isinstance(audit.get('functions'), list) or not audit['functions']:
-            fail('source_audit', where, 'reviewed handler/provider/callee function ranges required')
+            fail('source_audit', where, 'independently bounded handler/provider/callee ranges required')
         else:
-            recorded_codes = {b.get('code') for b in branches.get('error', []) if isinstance(b, dict)} if isinstance(branches, dict) else set()
-            scanned_codes = set()
-            roles = set()
-            seen_ranges = set()
+            route = graph['routes'].get(method)
+            if route is None:
+                fail('provider_scope', where, 'WS to IPG route not discovered')
+                continue
+            reached = [functions[x['id']] for x in route['functions']]
+            reached_keys = {(f['file'], f['start'], f['end']) for f in reached}
+            automatic_count += len(reached)
+            providers = [functions[i] for i in route['providers']]
+            provider_count += bool(providers)
+            constructed_classes = {point['class'] for point in route['construction_points']}
+            for provider in providers:
+                if provider['class'] and provider['class'] not in constructed_classes:
+                    fail('default_construction', where, 'provider class has no production construction point: ' + provider['class'])
+            expected_providers = sorted({f"B/{f['file']}:{f['start']}" for f in providers})
+            if entry.get('provider', {}).get('default_refs') != expected_providers:
+                fail('default_construction', where, 'provider.default_refs must equal independently discovered default providers')
+            if audit.get('automatic_providers') != expected_providers:
+                fail('provider_scope', where, {'expected_automatic_providers': expected_providers})
+            if not providers and method not in PROVIDER_EXCEPTIONS:
+                fail('provider_scope', where, 'no provider discovered and no reviewed exception')
+            if audit.get('depth') != graph['depth']:
+                fail('callee_scope', where, 'reported callee depth differs from checker-owned bound')
+            if audit.get('default_constructions') != route['construction_points']:
+                fail('default_construction', where, 'default provider construction points disagree with source graph')
+            recorded_codes = {b.get('code') for b in branches.get('error', []) if isinstance(b, dict)}
+            scanned_codes, literals, roles, seen_ranges = set(), set(), set(), set()
+            scanned = {f['id']: f for f in reached}
             for i, scope in enumerate(audit['functions']):
                 location = f'{where}.source_audit.functions[{i}]'
                 if not isinstance(scope, dict):
@@ -333,15 +351,24 @@ def validate(data, baseline, inputs):
                     continue
                 refs = scope.get('refs', [])
                 if not string_list(refs, True) or len(refs) not in (1, 2) or any(not REF.fullmatch(r) for r in refs):
-                    fail('source_audit', location, 'function start/end refs required (one for single line)')
+                    fail('source_audit', location, 'function start/end refs required')
                     continue
                 start, end = REF.fullmatch(refs[0]), REF.fullmatch(refs[-1])
-                path, first = start[1], int(start[2])
-                last = int(end[2])
-                if path != end[1] or first > last or '..' in Path(path).parts:
-                    fail('source_audit', location, 'invalid function range')
+                path, first, last = start[1], int(start[2]), int(end[2])
+                matches = [f for f in function_index.get((path, first), []) if f['symbol'] == scope.get('symbol')]
+                # Multiple callbacks can start on one line; the containing callable
+                # with that symbol is the reviewed scope, never a self-reported end.
+                actual = max(matches, key=lambda f: f['end']) if matches else None
+                if actual is None:
+                    fail('source_audit', location, 'start/symbol is not an independently discovered function')
                     continue
-                key = (path, first, last)
+                expected_assembly = ('code_definition' if actual.get('kind') == 'error_class' else
+                                     'automatic_default' if (actual['file'], actual['start'], actual['end']) in reached_keys else
+                                     'optional_host' if 'FileGatewayUserDialogStore' in actual['file'] else 'supplemental_review')
+                if scope.get('assembly') != expected_assembly:
+                    fail('default_construction', location, {'expected_assembly': expected_assembly})
+                actual_last = actual['end']
+                key = (path, first, actual_last)
                 if key in seen_ranges:
                     fail('source_audit', location, 'duplicate function range')
                 seen_ranges.add(key)
@@ -349,36 +376,75 @@ def validate(data, baseline, inputs):
                 method_function_count += 1
                 role = scope.get('role')
                 roles.add(role)
-                if role not in ('handler', 'provider', 'callee') or not isinstance(scope.get('symbol'), str) or not scope['symbol']:
-                    fail('source_audit', location, 'symbol and handler/provider/callee role required')
-                file_path = (baseline / path).resolve()
-                if not file_path.is_relative_to(baseline):
-                    fail('source_audit', location, 'scope escapes baseline')
-                    continue
-                try:
-                    lines = file_path.read_text().splitlines()
-                except (OSError, UnicodeError) as exc:
-                    fail('source_audit', location, str(exc))
-                    continue
-                if not 1 <= first <= last <= len(lines):
-                    fail('source_audit', location, 'function range outside source')
-                    continue
-                source = '\n'.join(lines[first - 1:last])
+                if role not in ('handler', 'provider', 'callee'):
+                    fail('source_audit', location, 'handler/provider/callee role required')
+                if end[1] != path or last != actual_last:
+                    fail('source_audit', location, {'independent_end': actual_last, 'reported_end': last})
+                source = '\n'.join(lines(path)[first - 1:actual_last])
                 if scope.get('sha256') != hashlib.sha256(source.encode()).hexdigest():
-                    fail('source_audit', location, 'function range/hash differs from reviewed source')
-                scanned_codes.update(code for code, _ in scan_error_literals(source))
+                    fail('source_audit', location, 'hash differs from independently bounded complete source')
+                scanned[actual['id']] = actual
             if 'handler' not in roles:
                 fail('source_audit', where, 'handler scope missing')
-            actual_starts = {(path, first) for path, first, _ in seen_ranges}
-            required_starts = primary_starts.get(method, set())
-            if not required_starts or not required_starts.issubset(actual_starts):
-                fail('provider_scope', where, 'real WS handler/default CLI injection is missing from scan ranges')
+            required_ranges = {(f['file'], f['start'], f['end']) for f in reached}
+            missing_ranges = required_ranges - seen_ranges
+            if missing_ranges:
+                fail('callee_scope', where, {'missing_automatic_ranges': sorted(missing_ranges)})
+            if any((f['file'], f['start'], f['end']) not in seen_ranges for f in providers):
+                fail('provider_scope', where, 'automatic provider missing from ranges')
+            handler = functions[route['handler']]
+            if (handler['file'], handler['start'], handler['end']) not in seen_ranges:
+                fail('provider_scope', where, 'real WS handler missing from ranges')
+            for function in scanned.values():
+                scanned_codes.update(x['code'] for x in function['errors'])
+                literals.update(x['value'] for x in function['literals'])
+                if function['unknown_errors']:
+                    fail('unknown_error_class', where, function['unknown_errors'])
+            # The common, independently bounded WS response boundary supplies
+            # transport literals/origins, without attributing every WS switch
+            # branch to every method's provider domain errors.
+            scanned[transport['id']] = transport
+            literals.update(x['value'] for x in transport['literals'])
             domain = scanned_codes - UNCONFIGURED
             if domain and recorded_codes.issubset(UNCONFIGURED | {'N/A', 'gateway_request_failed'}):
                 fail('provider_domain_errors', where, {'missing_domain_codes': sorted(domain - recorded_codes)})
-            missing_codes = scanned_codes - recorded_codes
-            if missing_codes:
-                fail('error_code_coverage', where, {'missing_scanned_codes': sorted(missing_codes)})
+            if scanned_codes - recorded_codes:
+                fail('error_code_coverage', where, {'missing_scanned_codes': sorted(scanned_codes - recorded_codes)})
+            # Reverse inclusion rejects invented codes. Nonliteral codes/results
+            # require a precise producing expression inside a scanned function.
+            for j, branch in enumerate(branches.get('error', [])):
+                code = branch.get('code')
+                if branch.get('dynamic') is True:
+                    origin = branch.get('origin', {})
+                    refs = origin.get('refs', [])
+                    if not string_list(refs, True) or not isinstance(origin.get('expression'), str) or not origin['expression'].strip():
+                        fail('dynamic_code_origin', where, 'dynamic code requires producing refs and expression')
+                    else:
+                        for ref in refs:
+                            match = REF.fullmatch(ref)
+                            if not match or not any(f['file'] == match[1] and f['start'] <= int(match[2]) <= f['end'] for f in scanned.values()):
+                                fail('dynamic_code_origin', where, 'origin outside independently scanned functions: ' + str(ref))
+                            elif origin['expression'] not in lines(match[1])[int(match[2]) - 1]:
+                                fail('dynamic_code_origin', where, 'producing expression not present at origin: ' + ref)
+                elif code not in literals:
+                    fail('invented_error_code', f'{where}.branches.error[{j}]', {'code': code})
+            tags = set()
+            if any(f['class'] == 'InProcessGateway' and f['symbol'] == 'closeSession' for f in reached):
+                tags.update(('session_permissions_removed', 'permission_mode_cleared', 'reconnect_owner_disposed', 'dialog_project_key_deleted'))
+            if any(f['class'] == 'SessionRouter' and f['symbol'] == 'close' for f in reached):
+                tags.update(('agent_evicted', 'permission_mode_cleared'))
+            if any(f['symbol'] == 'onSessionEvict' for f in reached):
+                tags.add('permission_mode_cleared')
+            if tags - set(state.get('effects', [])):
+                fail('close_state_effects', where, {'missing': sorted(tags - set(state.get('effects', [])))})
+            if any(f['class'] == 'ProjectRuntimeRegistry' and f['symbol'] == 'resolve' for f in reached):
+                if 'lazy_project_runtime_and_watcher' not in entry.get('lifecycle', {}).get('effects', []):
+                    fail('lazy_runtime_lifecycle', where, 'registry.resolve can build/cache runtime and activate watcher')
+            # An unconstructed class may be supplemental host evidence, never a
+            # default provider. Structured optional=true is mandatory for it.
+            for scope in audit['functions']:
+                if scope.get('symbol') and any('FileGatewayUserDialogStore' in ref for ref in scope.get('refs', [])) and scope.get('optional') is not True:
+                    fail('default_construction', where, 'FileGatewayUserDialogStore has no default CLI construction; mark optional=true')
         deps = entry.get('a6_dependencies')
         if not string_list(deps) or not set(deps).issubset({f'A6.{i}' for i in range(1, 10)}):
             fail('dependencies', where, 'unknown/duplicate A6 dependency')
@@ -443,6 +509,9 @@ def validate(data, baseline, inputs):
     if data.get('input_files') != wanted_hashes:
         fail('input_drift', '$.input_files', 'schema/snapshot/inventory/driver changed since audit')
     summary = {
+        'parser': graph['parser'], 'callee_depth': graph['depth'],
+        'automatic_function_associations': automatic_count, 'automatic_provider_methods': provider_count,
+        'provider_exception_methods': len(PROVIDER_EXCEPTIONS),
         'method_count': len(entries), 'expected_count': len(expected),
         'categories': dict(Counter(x.get('frozen_category') for x in entries if isinstance(x, dict))),
         'by_status': dict(Counter(x.get('status') for x in entries if isinstance(x, dict))),
@@ -457,6 +526,10 @@ def validate(data, baseline, inputs):
 
 def self_test(data, baseline, inputs):
     """Mutations are in memory only and must fail for the intended reason."""
+    compact_data = data
+    data, expansion_errors = expand(data)
+    if expansion_errors:
+        raise ValueError(str(expansion_errors))
     cases = []
     deleted = copy.deepcopy(data)
     deleted['methods'].pop()
@@ -522,11 +595,102 @@ def self_test(data, baseline, inputs):
         drift = copy.deepcopy(data)
         drift['input_files'][source] = '0' * 64
         cases.append(('changed_input_hash_' + Path(source).stem, drift, 'input_drift'))
+    narrowed = copy.deepcopy(data)
+    for entry in narrowed['methods']:
+        entry['source_audit']['functions'] = [f for f in entry['source_audit']['functions'] if f['role'] != 'callee']
+        for scope in entry['source_audit']['functions']:
+            scope['refs'] = scope['refs'][:1]
+            match = REF.fullmatch(scope['refs'][0])
+            source = (baseline / match[1]).read_text().splitlines()[int(match[2]) - 1]
+            scope['sha256'] = hashlib.sha256(source.encode()).hexdigest()
+        entry['branches']['error'] = copy.deepcopy(entry['branches']['unconfigured'])
+    cases.append(('shrink_all_ranges_rehash_delete_callees', narrowed, 'source_audit'))
+    no_callees = copy.deepcopy(data)
+    for entry in no_callees['methods']:
+        entry['source_audit']['functions'] = [f for f in entry['source_audit']['functions'] if f['role'] != 'callee']
+    cases.append(('delete_all_callees', no_callees, 'callee_scope'))
+    invented = copy.deepcopy(data)
+    invented['methods'][0]['branches']['error'].append({'code': 'TOTALLY_FAKE_CODE', 'summary': 'fabricated negative control', 'refs': [anchor]})
+    cases.append(('invented_error_code', invented, 'invented_error_code'))
+    for label, mutate in (
+        ('remove', lambda value: value.pop('manager_browsers')),
+        ('invent', lambda value: value.update({'restore_session_transcript': 'skip provider'})),
+        ('empty_reason', lambda value: value.update({'manager_browsers': ''})),
+    ):
+        exception = copy.deepcopy(data)
+        mutate(exception['provider_exceptions'])
+        cases.append(('provider_exception_' + label, exception, 'provider_exceptions'))
+    no_effect = copy.deepcopy(data)
+    next(e for e in no_effect['methods'] if e['method'] == 'mcp_server_reconnect')['state']['effects'] = []
+    cases.append(('omit_close_state_effects', no_effect, 'close_state_effects'))
+    no_lazy = copy.deepcopy(data)
+    next(e for e in no_lazy['methods'] if e['method'] == 'background_tasks')['lifecycle']['effects'] = []
+    cases.append(('omit_lazy_runtime_lifecycle', no_lazy, 'lazy_runtime_lifecycle'))
+    false_default = copy.deepcopy(data)
+    next(e for e in false_default['methods'] if e['method'] == 'user_dialog_release')['source_audit']['default_constructions'].append(
+        {'class': 'FileGatewayUserDialogStore', 'ref': anchor})
+    cases.append(('optional_store_claimed_default', false_default, 'default_construction'))
+    wrong_assembly = copy.deepcopy(data)
+    next(f for e in wrong_assembly['methods'] for f in e['source_audit']['functions'] if f.get('assembly') == 'optional_host')['assembly'] = 'automatic_default'
+    cases.append(('optional_provider_marked_default', wrong_assembly, 'default_construction'))
+    no_origin = copy.deepcopy(data)
+    next(b for e in no_origin['methods'] for b in e['branches']['error'] if b.get('dynamic'))['origin'] = {}
+    cases.append(('dynamic_code_missing_origin', no_origin, 'dynamic_code_origin'))
+    if compact_data.get('format_version') == 2:
+        unknown = copy.deepcopy(compact_data)
+        target = next(e for e in unknown['methods'] if e['branches']['error']['groups'])
+        target['branches']['error']['groups'][0] = 'does_not_exist'
+        cases.append(('unknown_error_group', unknown, 'error_group_reference'))
+        fake = copy.deepcopy(compact_data)
+        next(iter(fake['error_code_groups'].values()))['errors'][0]['code'] = 'TOTALLY_FAKE_CODE'
+        cases.append(('invented_code_in_group', fake, 'invented_error_code'))
+        conflict = copy.deepcopy(compact_data)
+        group = next(iter(conflict['error_code_groups'].values()))
+        other = next(rid for table in conflict['ranges'].values() for rid in table if rid not in group['source_ranges'])
+        group['source_ranges'].append(other)
+        cases.append(('group_declared_by_two_sources', conflict, 'error_group_source'))
+        unknown_range = copy.deepcopy(compact_data)
+        unknown_range['methods'][0]['source_audit']['functions'][0]['ranges'][0] = 'missing_range'
+        cases.append(('unknown_range', unknown_range, 'range_reference'))
+        wrong_hash = copy.deepcopy(compact_data)
+        next(iter(next(iter(wrong_hash['ranges'].values())).values()))['sha256'] = '0' * 64
+        cases.append(('changed_shared_range_hash', wrong_hash, 'source_audit'))
     results = []
     for name, mutated, expected_code in cases:
         errors, _ = validate(mutated, baseline, inputs)
         detected = any(e['code'] == expected_code for e in errors)
         results.append({'name': name, 'expected': 'FAIL', 'observed': 'FAIL' if errors else 'PASS',
+                        'required_error': expected_code, 'result': 'PASS' if detected else 'FAIL'})
+    if compact_data.get('format_version') == 2:
+        # Same strict JSON loader used by --ledger: one name cannot have two
+        # source declarations silently resolved by last-key-wins parsing.
+        name, group = next(iter(compact_data['error_code_groups'].items()))
+        other = copy.deepcopy(group)
+        other['source_ranges'] = ['different_source']
+        encoded_name = json.dumps(name)
+        raw = '{' + encoded_name + ':' + json.dumps(group) + ',' + encoded_name + ':' + json.dumps(other) + '}'
+        detected = False
+        try:
+            json.loads(raw, object_pairs_hook=unique_object)
+        except ValueError as exc:
+            detected = str(exc).startswith('duplicate_json_key:')
+        results.append({'name': 'duplicate_group_json_declaration', 'expected': 'FAIL',
+                        'observed': 'FAIL' if detected else 'PASS', 'required_error': 'duplicate_json_key',
+                        'result': 'PASS' if detected else 'FAIL'})
+    graph = source_graph(baseline)
+    # This literal was extracted from a renamed, newly declared code-bearing
+    # Error class by the SAME production constructor rule (ast_rules.cjs).
+    renamed_code = next(c['observed_code'] for c in graph['parser_controls'] if c['name'] == 'renamed_code_error_class')
+    for label, change, expected_code in (
+        ('replace_with_previously_uncovered_code_class', lambda f: f['errors'].append({'code': renamed_code, 'line': f['start'], 'class': 'R3PreviouslyUncoveredError'}), 'error_code_coverage'),
+        ('replace_with_undefined_error_class', lambda f: f['unknown_errors'].append({'class': 'R3UndefinedError', 'line': f['start']}), 'unknown_error_class'),
+    ):
+        altered = copy.deepcopy(graph)
+        handler = altered['functions'][altered['routes'][data['methods'][0]['method']]['handler']]
+        change(handler)
+        errors, _ = validate(data, baseline, inputs, altered)
+        detected = any(e['code'] == expected_code for e in errors)
+        results.append({'name': label, 'expected': 'FAIL', 'observed': 'FAIL' if errors else 'PASS',
                         'required_error': expected_code, 'result': 'PASS' if detected else 'FAIL'})
     return results
 
@@ -535,17 +699,51 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ledger', type=Path, default=LEDGER)
     parser.add_argument('--baseline', type=Path, default=default_baseline())
+    parser.add_argument('--compare-expanded', type=Path,
+                        help='one-time exact comparison with round-3 expanded ledger')
     args = parser.parse_args()
     try:
-        data = json.loads(args.ledger.read_text())
+        data = read_json(args.ledger)
         inputs = load_inputs()
         baseline = args.baseline.resolve()
         failures, summary = validate(data, baseline, inputs)
+        comparison = None
+        if args.compare_expanded:
+            expanded, expansion_errors = expand(data)
+            previous = read_json(args.compare_expanded)
+            changes = []
+            def compare(old, new, path='$'):
+                if type(old) is not type(new):
+                    changes.append(path)
+                elif isinstance(old, dict):
+                    for key in sorted(old.keys() | new.keys()):
+                        if key not in old or key not in new:
+                            changes.append(path + '.' + key)
+                        else:
+                            compare(old[key], new[key], path + '.' + key)
+                elif isinstance(old, list):
+                    if len(old) != len(new):
+                        changes.append(path + '.length')
+                    for i, (left, right) in enumerate(zip(old, new)):
+                        compare(left, right, f'{path}[{i}]')
+                elif old != new:
+                    changes.append(path)
+            compare(previous, expanded)
+            comparison = {'result': 'PASS' if not changes and not expansion_errors else 'FAIL',
+                          'reference_sha256': digest(args.compare_expanded),
+                          'method_count': len(expanded['methods']),
+                          'error_records': sum(len(e['branches']['error']) for e in expanded['methods']),
+                          'function_associations': sum(len(e['source_audit']['functions']) for e in expanded['methods']),
+                          'changed_paths': changes}
+            if comparison['result'] != 'PASS':
+                failures.append({'code': 'expanded_equivalence', 'path': '$', 'detail': comparison})
         controls = self_test(data, baseline, inputs) if not failures else []
         failed = bool(failures) or any(c['result'] != 'PASS' for c in controls)
         report = {'status': 'FAIL' if failed else 'PASS', 'scope': 'static_coverage_ledger',
-                  **summary, 'failures': failures, 'negative_self_tests': controls}
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
+                  **summary, 'failures': failures, 'negative_self_tests': controls,
+                  'parser_self_tests': source_graph(baseline)['parser_controls'],
+                  'expanded_comparison': comparison}
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
         report = {'status': 'FAIL', 'failures': [{'code': 'input', 'detail': str(exc)}], 'negative_self_tests': []}
         failed = True
     print(json.dumps(report, ensure_ascii=False, indent=2))
