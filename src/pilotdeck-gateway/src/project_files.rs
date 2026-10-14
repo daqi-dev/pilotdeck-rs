@@ -132,10 +132,14 @@ fn node_locale(env: impl FnMut(&str) -> Option<String>) -> Locale {
         .parse()
         .unwrap_or_else(|_| "en-US".parse().unwrap())
 }
-fn lowercase(value: &str, locale: &LanguageIdentifier) -> String {
-    // V8's Latin-1 fast path ignores the default locale (Node v22 probes).
+fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> String {
+    // Node v22.22.0 / V8 12.4: Latin-1 fast casing ignores the locale only
+    // for non-sliced strings. Substrings shorter than 13 UTF-16 units are
+    // copied; longer ones remain slices. This is representation-dependent,
+    // not a Unicode guarantee: remeasure on engine upgrades (round4 fixture).
+    let sliced = substring && value.encode_utf16().count() >= 13;
     let root = LanguageIdentifier::UNKNOWN;
-    let locale = if value.encode_utf16().all(|unit| unit <= 0xff) {
+    let locale = if !sliced && value.encode_utf16().all(|unit| unit <= 0xff) {
         &root
     } else {
         locale
@@ -284,9 +288,14 @@ fn read<F: Files>(
     let Ok((stat, true)) = metadata.files.project_stat(&root, &canonical) else {
         return Ok(JsValue::Null);
     };
-    // Node readFile checks this before slicing to maxBytes, even for sparse
-    // files. The code survives hasStructuredErrorCode in the TS WS wrapper.
+    // Node readFile opens before checking size, then slices to maxBytes.
+    // A zero-byte prefix performs our safe open without reading the huge file,
+    // so EACCES (and NOFOLLOW failures) take precedence over the size error.
     if stat.size > 2_147_483_647 {
+        metadata
+            .files
+            .project_read(&root, &canonical, 0)
+            .map_err(|e| fs_error(e, "open", &canonical))?;
         return Err((
             "ERR_FS_FILE_TOO_LARGE",
             format!("File size ({}) is greater than 2 GiB", stat.size),
@@ -450,7 +459,8 @@ fn list<F: Files>(
         ));
     }
     let locale = node_locale(|key| std::env::var(key).ok());
-    let query = lowercase(js_trim(query), &locale.id);
+    let trimmed = js_trim(query);
+    let query = lowercase(trimmed, &locale.id, trimmed != query);
     if query.encode_utf16().count() > 256 {
         return Err((
             "INVALID_QUERY",
@@ -687,7 +697,11 @@ fn append_matches(
     query: &str,
     locale: &LanguageIdentifier,
 ) {
-    let lower = lowercase(value, locale);
+    // The baseline's relative(root, canonical).split(sep).join("/") keeps
+    // a top-level substring; nested paths are rebuilt by join. Dirent.name
+    // is not a slice. Use canonical depth, including for symlink targets.
+    let substring = field == "relativePath" && !value.contains('/');
+    let lower = lowercase(value, locale, substring);
     for (byte, _) in lower.match_indices(query) {
         let start = lower[..byte].encode_utf16().count();
         output.push(object([
