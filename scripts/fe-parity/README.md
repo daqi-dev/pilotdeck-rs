@@ -382,3 +382,31 @@ Chrome、固定 bundle Helpers/crashpad、已有用户 GoogleUpdater 与 soffice
 协调者新增的 launchd 收养 `--wake-all`（PPID 1）例外及三条断言已审阅保留：规范已安装用户 updater 路径、realpath、精确两元素 argv、HOME/不可读证据门仍须成立；同路径 wake 子进程可获准，PPID 1 的裸 `--wake` 或附加参数仍 FAIL。此例外只处理已经进入自有审计树的 updater。
 
 第 11 轮离线验证、old13 只读快照回放与 **old14** 命令见 `_tmp/RESULT.md` 第 11 轮。采样/ps 扁平 argv 的验证边界继续保留；old13 原 FAIL 不追溯改判。
+
+## 第 12 轮：参数不可读的 `(comm)` 行也执行禁止规则
+
+每次采样对 `(name)` 行补查 `ps -ww -p <pid> -o pid=,ppid=,pgid=,stat=,comm=`，绑定当前 PID/PPID/PGID，核对绝对路径及 realpath。原始 command 保留，`processes[].executableObservation` 记录来源、路径、realpath、stat 与 resolved/exited/zombie/unavailable 状态。路径、realpath 的 basename 和括号内名称都过 open/xdg-open/osascript、xcodebuild/xcrun、updater、soffice 及 `/Applications/` 规则；不可读 argv 不能证明精确 license-check 或 updater wake 参数，因而不能获得这两项例外。
+
+Chrome 子树的 `(name)` 行必须沿当前祖先链回到已验证的 Playwright 主 Chrome，且 executable 与 realpath 都在固定 Chrome bundle 的 `Contents/` 内（含 Helpers/crashpad/Frameworks）。bundle 外的系统程序也 FAIL；祖先断链、路径边界伪装、realpath 指向 bundle 外均 FAIL。既有 updater 例外仍要求完整精确 argv、路径、HOME 与父链。Chrome 系列仍不做 HOME 核对。
+
+路径不可取得时，只有目标 ps 明确为空（已退出）、stat 为 Z，或当前 `<defunct>` 标记可记录后放行；仍存活、查询报错/超时、身份改变或记录异常均 FAIL。realpath 失败会再查当前状态，只有确认退出/僵尸才能放行。路径证据逐次重查，不缓存授权。soffice 放行新增固定 `/Applications/LibreOffice.app/Contents/MacOS/soffice` 与相同 realpath 约束，并继续要求当前被测服务祖先及隔离 HOME。
+
+指定六项对照、40 组离线单测、完整 self-check、old14 原件摘要及 **old15** 命令见 `_tmp/RESULT.md` 第 12 轮。old14 没有保存 comm/stat 路径证据，历史快照的注入控制不证明其实际可执行路径，也不重算原结果。
+
+## 第 13 轮：Node 环境读取的启动 / 退出 / argv 竞态
+
+old15 在 PID 45129（Playwright 1.60 test worker，PPID/PGID 35658）此前已经实际读到隔离 HOME 后，报 `ps -E did not expose environment with unchanged argv`。原件只读，失败采样没有保存原始 ps -E，不能据此确定是 exec、退出还是改标题。
+
+Node 环境目标首次只有 argv、缺行或与首份 argv 不匹配时，允许**初读之外最多 3 次重采**，每个 PID 从首次失败起使用单调时钟 **500ms 总预算**；重采间隔 50ms，每次重新取目标 `ps args` 与 `ps -E args`，每条都绑定原 PID/PPID/PGID。允许最新 argv 替换旧 argv 后重新配对，HOME 仍必须实际可读、唯一且等于所属隔离根。重采子命令按剩余预算超时并以 SIGKILL 终止；身份改变、查询失败/超时、可见环境 HOME 缺失/重复/为空或错误 HOME 仍 FAIL。3 次仍不可读或预算耗尽 FAIL。soffice/updater/git/Xcode 的既有门保持。
+
+重采的目标 ps 或 ps -E 明确为空时，记录 `environmentEvidence[].environment: "exited-before-environment"` 及 PID/PPID/PGID、重采次数和来源；该进程本次跳过 HOME 校验与 lsof。重采成功记录 `retries`、`argvRebound` 和最新双快照绑定来源。新 argv 仍经过本次禁止规则，不缓存上次 HOME，不保存完整环境。
+
+回源本机 Playwright **1.60.0** 的 worker/common/runner 与 playwright-core JS 未找到 `process.title` 赋值；[workerProcessEntry.ts](https://github.com/microsoft/playwright/blob/v1.60.0/packages/playwright/src/worker/workerProcessEntry.ts) 调用 [startProcessRunner](https://github.com/microsoft/playwright/blob/v1.60.0/packages/playwright/src/common/process.ts)，初始化仅保存内部 `processName`，用于 profiling；[workerHost.ts](https://github.com/microsoft/playwright/blob/v1.60.0/packages/playwright/src/runner/workerHost.ts) 传入 `worker-${workerIndex}`。这不是设置 OS 进程标题的证据。本轮仍支持同身份的标题变化后重新绑定，不把改标题认作已证实的 old15 根因。
+
+四项指定控制、额外边界、全量离线自检及 **old16** 命令见 `_tmp/RESULT.md` 第 13 轮。本轮保留第 12 轮未提交改动，不代跑 real、不起服务、不提交；old15 原 FAIL 不改判，定期 ps 采样仍不证明全生命周期。
+
+## 第 14 轮：R14 updater 按身份放行，不再要求父进程
+
+R14 替代第 7/9/10/11/12 轮的 updater 父链条件：操作者已安装的规范 `~/Library/Application Support/Google/GoogleUpdater/<版本>/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`、与 argv 路径相同的 realpath，以及恰为 `path --wake` 或 `path --wake-all` 的完整 argv 即可按身份放行。非 Chrome 父进程、无 Playwright 祖先、wake 父进程和 launchd 收养均不再构成 updater 的拒绝理由。现有可读 HOME 核对与不可读环境的双快照绑定继续执行；路径不规范、realpath 越界或版本目录与 argv 不同、额外参数、安装/注册/卸载等仍 FAIL。父进程自身继续按原有规则审计，updater 独立 PGID 仍纳入 TCP 和 fatal 清理。
+
+协调者的 inactiveProcess 修复保留：当前 executableObservation.stat 含 E（exiting）或 Z 的行视为不活跃。old17 的 `(Google Chrome He)` 为 `?E`；old16/old18 的 wake-all 由 `(Google Chrome)` 且 status exited 的父进程启动，无法再提供主 Chrome 祖先证明。四组旧测试已按 R14 更新；集成测试用 finally 清理定时器，`node --test --test-timeout=8000` 的完整 **44/44** 单测及 **32/32** real 全量离线自检通过。详细原件行号、哈希及 **old19** 命令见 `_tmp/RESULT.md` 第 14 轮。本轮不代跑 real、不起服务、不提交，old16–old18 原 FAIL 保留。
