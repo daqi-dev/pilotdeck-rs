@@ -4,7 +4,7 @@
 > 定标命令及重采规则：`scripts/ui-server-parity/README.md`；不得借历史 replay 定标。
 > 冻结时由协调者补定标证据与两家评审路径、替换下方审批及依据占位，再移除首行「待定标」。`Approved-By:` 接受具名人或「AI 代批，待人复核（协调者）」，并必须有 `Approval-Basis:` 记明定标报告路径和两家评审路径。冻结后变更需遵循 CLAUDE.md §五。
 > 校验：`python3 -I scripts/ui-server-parity/check_frozen.py`；格式沿用 gateway：「sha256 两空格 相对本目录路径」。草稿哈希全一致退出 2 / DRAFT，缺项/漂移/未登记装置文件退出 1 / FAIL。
-> 清单覆盖规约四份及 rust-routes.json、scripts/ui-server-parity 与 scripts/exp008 两目录的全部 Git 跟踪文件；实际文件必须等于 Git 跟踪清单，额外/未跟踪/缺失文件、链接、__pycache__、*.pyc 一律 FAIL；仅精确名为 .DS_Store 的普通文件不登记、不执行、不参与 hash。根 rust-toolchain(.toml) 若存在也纳入清单。所有 Python 入口带 -I，装置预检源码自身先校验哈希，本目录模块按已验哈希的绝对路径载入。威胁模型与每批新构建规则见 README 和 acceptance.md；不防同时篡改装置、清单与审批的本机恶意者。
+> 清单覆盖规约四份及 rust-routes.json、human-approvers.txt（路由审批白名单；改动属装置变更，须评审）、scripts/ui-server-parity 与 scripts/exp008 两目录的全部 Git 跟踪文件；实际文件必须等于 Git 跟踪清单，额外/未跟踪/缺失文件、链接、__pycache__、*.pyc 一律 FAIL；仅精确名为 .DS_Store 的普通文件不登记、不执行、不参与 hash。根 rust-toolchain(.toml) 若存在也纳入清单。所有 Python 入口带 -I，装置预检源码自身先校验哈希，本目录模块按已验哈希的绝对路径载入。威胁模型与每批新构建规则见 README 和 acceptance.md；不防同时篡改装置、清单与审批的本机恶意者。
 
 Approved-By: <待定标后由协调者填写>
 Approval-Basis: <待定标后由协调者填写>
@@ -23,14 +23,14 @@ abde68d203a8c76330668554b3606a10a94c1e4a145effcb3cbfc856556aadce  ../../scripts/
 ed5d447d3ac2e4ba03def27645f355997be981e3d82012427f14b1f1a76870c1  ../../scripts/exp008/reconcile_routes.py
 a60f04b6ce5cccab4c40c75b0a6d8204344977bde85d4931dde213b18ddd126e  ../../scripts/exp008/run.py
 980130c241a926b0854c719210b8d1ccdbcf294f99bde3beb567a5bfda072d90  ../../scripts/exp008/vite.config.mjs
-b8e5f32c031cb678a7708f444bf37a6398aeed9f6d266ace19ee7befc8b0fb22  ../../scripts/ui-server-parity/README.md
-015358eaf17c5c1caa63bb9dc16443dbb77717184d4797aa7f6b0d34ff9748f8  ../../scripts/ui-server-parity/apparatus.py
+a57f3d6b8a942b16ac17cebbac6b7564d236699b5f84fb9b17e6690f6805d5d8  ../../scripts/ui-server-parity/README.md
+34d08991149d39843bc6a2133359cc05a288a6e4e2a162737817b03928fadd2f  ../../scripts/ui-server-parity/apparatus.py
 985515952fd382a08c9766c6bd507baf0192a8499a975d4479f62fcb7dc39711  ../../scripts/ui-server-parity/benchmark_clock.py
 bc2a16f7c50431f1b6588c394184d87a0258e719c4605f4f0c000525839b421e  ../../scripts/ui-server-parity/calibrate.py
 58f1641047497c8076ea93ed2119ffd7aa62601ff2360a99b79f1e55a2a91194  ../../scripts/ui-server-parity/calibrate.sh
 206000021604a6f45890b1a3f8bc919117843452ca08648267de9c851b03ecd6  ../../scripts/ui-server-parity/chat_driver.mjs
-adaf7a8f8f987337f852df3ac565234c963b8567c07e71b56124823845d6f3bf  ../../scripts/ui-server-parity/check_coverage.py
-8cd67754c1907c462c3faea8ba330b9c3ddb475c60c727d234b0a3130d09c1c4  ../../scripts/ui-server-parity/check_frozen.py
+88b788b631e956f9b4fd3219bbfd53a5e5fd52215c1d51233da9cb3fc0442200  ../../scripts/ui-server-parity/check_coverage.py
+517ef5940a65abcff8c193ba77b3bff11b92750ac7d0db86e63f3043e91bd48a  ../../scripts/ui-server-parity/check_frozen.py
 83a0026fd43d885e857015b826242fbe2ec68706e419e1ba150d8157e44a2125  ../../scripts/ui-server-parity/check_ruler.py
 84df4021c035a1af4426b175dc6634a7db1d31f2172d7d8c5f24991b8c3692f0  ../../scripts/ui-server-parity/common.py
 e09b8199597d3a4b9751a056b168d7e9272a5c3e1d18053e56590c10642e8ea7  ../../scripts/ui-server-parity/compare.py
@@ -52,14 +52,15 @@ f74dd7c3acfb8a3c44c750772f98b9af93662539ce65dbe9aea7297ce638d389  ../../scripts/
 13fabe1a72f3e1c156005624532127abe3f878baaadf8a8ff9cb1ef34db093d0  ../../scripts/ui-server-parity/test_calibrate.py
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
 bdd5bc5f85ac703a8fca8b4221f5c06f56efd94c02c47dd118854485e02f048b  ../../scripts/ui-server-parity/test_compare.py
-826ae13a3d594b631182ec8e6aed8e221acd59b7d0e31b4a54da907c2b79b613  ../../scripts/ui-server-parity/test_coverage.py
-8cfc8ea18906981b14dcf5e1b757fecdbee6e38aa045e3c10fb38db8760adc56  ../../scripts/ui-server-parity/test_frozen.py
+43d6a28e6c97ea525769b4faee0c03d934e887175813d97eadcad25f0b3cb1e0  ../../scripts/ui-server-parity/test_coverage.py
+ac4cd82e1076e8e19ef35b6e65e93bf090eb3961b1022b9e50a672b6cd91a1a6  ../../scripts/ui-server-parity/test_frozen.py
 75d9418fa858c51ca9cd1bae960137be53edfe94d3e2b4f41413a6f4741a29ac  ../../scripts/ui-server-parity/test_multimodal.py
 8568dbaffd2b20c070a20a773ab4fe73110d01def63f6364f6a007985c0fcca9  ../../scripts/ui-server-parity/test_recording.py
 9ccf2a7fef528fdfecea33b8c9dc0c9cbd2982f09631b6fe2f3e377dca122d5e  ../../scripts/ui-server-parity/verify_auth.mjs
-ba052ec1490ad6488699c50e3c5bf3997b72f54d34354bc414861e4b500aaf5a  ../../specs/ui-server-parity/acceptance.md
-69cf0da549def689dc00754bbde9e643740aed57871fd958005369a3753f9daf  ../../specs/ui-server-parity/accepted-diffs.md
+1da2613ac4ac554550b0d46e4f05c2d71085595f807f9f46f6b6574a1755ac78  ../../specs/ui-server-parity/acceptance.md
+f8d552dcebfc6bc702aaac6ecc546c7969a83fa7ea178e6a8ea8b1a5ce272484  ../../specs/ui-server-parity/accepted-diffs.md
 b2004ddf95e02c24b307a9c20905d76437c3eae1a251cff189dd6836e3be85bf  ../../specs/ui-server-parity/multimodal.md
 37cd7d5f8358cdac36cf0d2bd5d5c09a73fa0d429d5225583d61abe261441b02  ../../specs/ui-server-parity/normalization.md
 a1cf65d93b72351eaf5fce8c5356bfaa3b40f56f401d41151123b78582412fc4  ../../rust-toolchain.toml
 7670c4a531150c7886d224ecdebb9eca3fa7724ac91ac8632cc98446d501964f  ../../specs/ui-server-parity/rust-routes.json
+0365b045f3ec15853726a26ccd7b4b6f54993c3d52d6c667f9b6e81341121a65  ../../specs/ui-server-parity/human-approvers.txt

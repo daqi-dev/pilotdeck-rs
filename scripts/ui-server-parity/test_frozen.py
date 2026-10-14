@@ -65,7 +65,24 @@ class FrozenControls(unittest.TestCase):
     def test_capture_binds_all_registered_files_except_approval_manifest(self):
         hashes = apparatus_hashes()
         self.assertNotIn('specs/ui-server-parity/FROZEN.md', hashes)
+        self.assertIn('specs/ui-server-parity/human-approvers.txt', hashes)
         self.assertTrue({str(p.relative_to(ROOT)) for p in required_files(ROOT, SPEC)} <= set(hashes))
+
+    def test_human_allowlist_tampering_fails_checker_preflight(self):
+        from check_frozen import check
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            copy_apparatus(root)
+            folder = root / 'specs/ui-server-parity'
+            (folder / 'human-approvers.txt').write_text('zhengdaqi\nunauthorized-human\n')
+            report = check(folder, root=root)
+            self.assertEqual(report['verdict'], 'FAIL', report)
+            self.assertTrue(any('human-approvers.txt' in error for error in report['errors']))
+            result = subprocess.run([sys.executable, '-I', str(root / 'scripts/ui-server-parity/check_frozen.py')],
+                                    cwd=root, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(json.loads(result.stdout)['verdict'], 'FAIL')
+            self.assertIn('human-approvers.txt', result.stderr)
 
     def test_DS_Store_regular_file_is_ignored_by_all_entrypoints_and_hashes(self):
         import common

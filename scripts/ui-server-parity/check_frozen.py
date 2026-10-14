@@ -180,6 +180,12 @@ def self_test():
         expect('changed-checker', good, 'FAIL')
         expect('changed-draft', good.replace('# B2', '# B2（待定标）'), 'FAIL')
         device.write_text('check_frozen.py')
+        humans = folder / 'human-approvers.txt'
+        original_humans = humans.read_text()
+        humans.write_text('zhengdaqi\nunauthorized-human\n')
+        expect('changed-human-approvers', good, 'FAIL')
+        expect('changed-human-approvers-draft', good.replace('# B2', '# B2（待定标）'), 'FAIL')
+        humans.write_text(original_humans)
         device_dir = device.parent
         outside = root / '_tmp/jsonpkg'
         outside.mkdir(parents=True)

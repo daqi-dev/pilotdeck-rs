@@ -54,7 +54,7 @@ B2 Node version probe、枚举器、gateway、UI 与 driver 的环境只允许�
 
 缓存来源说明：calibrate 与独立 run 默认仍从**当前 checkout 根**的 `_build/cargo-home/registry/{index,cache}` 复制，不取 git common dir。此 worktree 的默认路径是 `/Users/da/ws/pilotdeck-rs/_build/wt-b2f/_build/cargo-home`，与协调者预取的 `/Users/da/ws/pilotdeck-rs/_build/cargo-home` 不同。在无额外祖先 selector 的独立 checkout 开批前，将协调者已预取的 registry/index、registry/cache 复制到该 checkout 的 `_build/cargo-home/registry/`（普通目录，不能用符号链接）；不复制 src、git、配置或凭据。干净临时 Batch.build 验证使用该预取来源的副本。
 
-B3 前置改装（#59 / #80 / #53 / #88，#89 P2）：Rust 路由清单固定读取 `specs/ui-server-parity/rust-routes.json`，不提供可替换路径；schema=1，routes 数组元素为 `{method, path, handler:"rust"}`，method 为大写 HTTP verb 或 ALL，path 为 runtime/matrix 的路由模板。空数组表示目前全部由 TS 处理。Rust 侧接管配置/路由表须同步静态导出，审批字段与 FROZEN 共用检查函数，但 Rust 路由豁免必须具名人批并有三份依据；只有 FROZEN 按 R5 接受精确 AI 代批串。没有用例的豁免也过门。此文件与规约共同进入哈希。
+B3 前置改装（#59 / #80 / #53 / #88，#89 P2）：Rust 路由清单固定读取 `specs/ui-server-parity/rust-routes.json`，不提供可替换路径；schema=1，routes 数组元素为 `{method, path, handler:"rust"}`，method 为大写 HTTP verb 或 ALL，path 为 runtime/matrix 的路由模板。空数组表示目前全部由 TS 处理。Rust 侧接管配置/路由表须同步静态导出，审批字段与 FROZEN 共用检查函数，但 Rust 路由豁免必须命中固定白名单 `specs/ui-server-parity/human-approvers.txt` 并有三份依据。白名单每行一个身份，初始仅 `zhengdaqi`；审批人与每行身份同样经过 NFKC + casefold + 去除全部空白及不可见字符，再作非空精确匹配。不可见字符口径见 acceptance.md。白名单外具名人、模型或角色名称、空值均 FAIL；`zhengdaqi` 的零宽字符变体规范化后相等则预期 PASS。只有 FROZEN 沿用 R5 原审批规则（具名人或精确 AI 代批串），不受路由白名单限制。没有用例的豁免也过门。静态路由表和审批人白名单与规约共同进入装置清单、FROZEN 及 capture hash；改白名单即装置变更，须评审，未更新 FROZEN 哈希则 FAIL。
 
 `du` 仅对每行均为 ENOENT 的错误重试三次；耗尽取四次输出总量的最大值，stderr 与 space_check.events 同时记录 approximate、各次字节数。初始 space_estimate 及后续 space_checks 写入 batch.json，不把近似测量冒充精确值。
 

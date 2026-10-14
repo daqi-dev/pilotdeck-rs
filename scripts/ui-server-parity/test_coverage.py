@@ -100,6 +100,10 @@ class CoverageControls(unittest.TestCase):
         self.assertEqual(check(ENUM, MATRIX, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            allowlist = root / 'specs/ui-server-parity/human-approvers.txt'
+            allowlist.parent.mkdir(parents=True)
+            # Both the configured identity and Approved-By use the same normalization.
+            allowlist.write_text('ＺＨＥＮＧＤＡＱＩ\u200b\n', encoding='utf-8')
             basis = []
             for name in ('report.json', 'review-one.md', 'review-two.md'):
                 path = root / name
@@ -109,23 +113,49 @@ class CoverageControls(unittest.TestCase):
             waiver = matrix['routes'][1]['exemption']
             waiver['Approval-Basis'] = '; '.join(basis)
             with patch('check_coverage.ROOT', root):
-                for approver in ('张三', '李四'):
+                for approver in ('zhengdaqi', 'ZHENGDAQI', 'ｚｈｅｎｇｄａｑｉ',
+                                 ' zheng\t da\nqi\u00a0', 'zheng\u200bdaqi',
+                                 'zheng\ufeffdaqi', 'zheng\u034fdaqi', 'zheng\u3164daqi'):
                     waiver['Approved-By'] = approver
-                    self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'PASS')
+                    # Zero-width variants resolving to an allowlisted human intentionally PASS.
+                    with self.subTest(approver=approver):
+                        self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'PASS')
                 rejected = ('AI 代批，待人复核（协调者）', 'AI', 'AI 代批，待人复核',
                             '代批：张三', '协调者', '张三（协调者）', '待批准',
                             'Claude', 'GPT批准', 'GLM', 'DeepSeek', 'Gemini', 'Qwen',
-                            'Doubao', 'ChatGPT', '模型', '张三\u200b')
+                            'Doubao', 'ChatGPT', '模型', '张三', '李四',
+                            'ＡＩ批准', 'Ｃｌａｕｄｅ', '协 调者', 'Opus 5.5', '人工智能',
+                            '', ' \t\n\u200b', None, 123, 'zhengdaqi-approved',
+                            'approved-zhengdaqi', 'zhengdaqi（协调者）')
                 # Invisible characters must not disguise any forbidden identity.
                 for approver in rejected + tuple(value[:1] + '\u200b' + value[1:]
-                                                  for value in rejected):
+                                                  for value in rejected if isinstance(value, str)):
                     waiver['Approved-By'] = approver
                     with self.subTest(approver=approver):
                         self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
-                waiver['Approved-By'] = '张三'
+                waiver['Approved-By'] = 'zhengdaqi'
+                for bad_basis in ('; '.join(basis[:2]), '; '.join([basis[0], basis[1], basis[1]]),
+                                  '; '.join([basis[0], basis[1], str(root / 'missing.md')])):
+                    waiver['Approval-Basis'] = bad_basis
+                    with self.subTest(basis=bad_basis):
+                        self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+                outside = root.parent / (root.name + '-outside.md')
+                outside.write_text('outside evidence')
+                try:
+                    waiver['Approval-Basis'] = '; '.join([basis[0], basis[1], str(outside)])
+                    self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+                finally:
+                    outside.unlink()
                 del waiver['Approval-Basis']
                 self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
                 waiver['Approval-Basis'] = str(root / 'missing.md')
+                self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+                waiver['Approval-Basis'] = '; '.join(basis)
+                for contents in ('', '\u200b\n', 'someone-else\n'):
+                    allowlist.write_text(contents, encoding='utf-8')
+                    with self.subTest(allowlist=contents):
+                        self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+                allowlist.unlink()
                 self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
 
     def test_invalid_and_unlisted_handlers_cannot_hide_takeover(self):
