@@ -1,15 +1,40 @@
-# Admit source-only apparatus before json or any local module can be imported.
+# Isolated bootstrap: verify the source loader before executing local code.
 import os as _boot_os
 import sys as _boot_sys
+if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
+        and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
+    print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
+    raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
     raise SystemExit(1)
-_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+import hashlib as _boot_hashlib
+import subprocess as _boot_subprocess
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+_boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
-    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+    _boot_bytes = _boot_file.read()
+try:
+    if _boot_os.path.isfile(_boot_manifest):
+        with open(_boot_manifest) as _boot_file:
+            _boot_pins = [line.split()[0] for line in _boot_file
+                          if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]
+        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
+            raise ValueError('apparatus bootstrap hash mismatch')
+    else:
+        _boot_trusted = _boot_subprocess.check_output(
+            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        if _boot_bytes != _boot_trusted:
+            raise ValueError('apparatus bootstrap differs from HEAD without manifest')
+except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
+    print(str(_boot_error), file=_boot_sys.stderr)
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap hash admission failed"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 import unittest
 import json
@@ -23,7 +48,16 @@ import tempfile
 from unittest.mock import patch
 from check_frozen import self_test, required_files, ROOT, SPEC
 from common import apparatus_hashes
-from apparatus import ApparatusUnsafe, EXP008_FILES, scan
+from apparatus import ApparatusUnsafe, EXP008_FILES, scan, git_admission
+
+
+def copy_apparatus(root):
+    shutil.copytree(ROOT / 'scripts/ui-server-parity', root / 'scripts/ui-server-parity')
+    shutil.copytree(ROOT / 'scripts/exp008', root / 'scripts/exp008')
+    shutil.copytree(ROOT / 'specs/ui-server-parity', root / 'specs/ui-server-parity')
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    subprocess.run(['git', '-C', str(root), 'add', 'scripts', 'specs'], check=True)
+
 
 
 class FrozenControls(unittest.TestCase):
@@ -39,12 +73,13 @@ class FrozenControls(unittest.TestCase):
     def test_checker_and_capture_hashes_reject_the_same_unsafe_tree(self):
         from check_frozen import check
         import common
-        for kind in ('symlink-directory', 'symlink-file', 'pyc', 'cache-directory'):
+        for kind in ('symlink-directory', 'symlink-file', 'pyc', 'cache-directory', 'json-file', 'exp008-json', 'exp008-textwrap'):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 device = root / 'scripts/ui-server-parity'
                 device.mkdir(parents=True)
                 (root / 'scripts/exp008').mkdir()
+                payload = 'raise RuntimeError(\"unregistered\")'
                 outside = root / 'outside'
                 outside.mkdir()
                 (outside / 'payload.py').write_text('injected')
@@ -54,8 +89,12 @@ class FrozenControls(unittest.TestCase):
                     (device / 'json.py').symlink_to(outside / 'payload.py')
                 elif kind == 'pyc':
                     (device / 'common.pyc').write_bytes(b'forged')
-                else:
+                elif kind == 'cache-directory':
                     (device / '__pycache__').mkdir()
+                elif kind == 'json-file':
+                    (device / 'json.py').write_text(payload + 'print(\"{\\\"verdict\\\":\\\"PASS\\\"}\")\nraise SystemExit(0)\n')
+                else:
+                    (root / 'scripts/exp008' / ('json.py' if kind == 'exp008-json' else 'textwrap.py')).write_text(payload)
                 with self.subTest(kind=kind), patch.object(common, 'ROOT', root):
                     self.assertEqual(check(root / 'specs/ui-server-parity', root=root)['verdict'], 'FAIL')
                     with self.assertRaises(ApparatusUnsafe):
@@ -66,12 +105,11 @@ class FrozenControls(unittest.TestCase):
         entrypoints = ['check_frozen.py', 'run.py', 'calibrate.py', 'check_ruler.py',
                        'compare.py', 'check_coverage.py', 'benchmark_clock.py',
                        'summarize_ruler.py', 'controls/run_all.py']
-        for kind in ('symlink-directory', 'symlink-file', 'pyc', 'cache-directory'):
+        for kind in ('symlink-directory', 'symlink-file', 'pyc', 'cache-directory', 'json-file', 'exp008-json', 'exp008-textwrap'):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 device = root / 'scripts/ui-server-parity'
-                shutil.copytree(ROOT / 'scripts/ui-server-parity', device)
-                (root / 'scripts/exp008').mkdir()
+                copy_apparatus(root)
                 marker = root / 'INJECTION_EXECUTED'
                 payload = f'from pathlib import Path\nPath({str(marker)!r}).write_text("injected")\nMAX_BRACKET_NS = 10**12\n'
                 external = root / '_tmp/jsonpkg'
@@ -91,21 +129,25 @@ class FrozenControls(unittest.TestCase):
                     stat = (device / 'common.py').stat()
                     data = cfile.read_bytes()
                     cfile.write_bytes(data[:8] + struct.pack('<II', int(stat.st_mtime), stat.st_size) + data[16:])
-                else:
+                elif kind == 'cache-directory':
                     (device / '__pycache__').mkdir()
+                elif kind == 'json-file':
+                    (device / 'json.py').write_text(payload + 'print(\"{\\\"verdict\\\":\\\"PASS\\\"}\")\nraise SystemExit(0)\n')
+                else:
+                    (root / 'scripts/exp008' / ('json.py' if kind == 'exp008-json' else 'textwrap.py')).write_text(payload)
                 env = {key: value for key, value in os.environ.items()
                        if key not in ('PYTHONDONTWRITEBYTECODE', 'PYTHONPATH')}
                 if kind == 'pyc':
                     # Control: this is executable bytecode, and -B does not prevent loading it.
-                    probe = 'import sys; sys.path.insert(0, sys.argv[1]); import common; assert common.MAX_BRACKET_NS == 10**12'
-                    result = subprocess.run([sys.executable, '-B', '-c', probe, str(device)],
+                    probe = 'import importlib.machinery, sys; m = importlib.machinery.SourcelessFileLoader("payload", sys.argv[1]).load_module(); assert m.MAX_BRACKET_NS == 10**12'
+                    result = subprocess.run([sys.executable, '-I', '-c', probe, str(cfile)],
                                             env=env, cwd=root, text=True, capture_output=True, timeout=10)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertTrue(marker.exists())
                     marker.unlink()
                 for entry in entrypoints:
                     with self.subTest(kind=kind, entry=entry):
-                        result = subprocess.run([sys.executable, str(device / entry), '--help'],
+                        result = subprocess.run([sys.executable, '-I', str(device / entry), '--help'],
                                                 env=env, cwd=root, text=True, capture_output=True, timeout=10)
                         self.assertEqual(result.returncode, 1, result.stderr)
                         self.assertEqual(json.loads(result.stdout)['verdict'], 'FAIL')
@@ -123,12 +165,91 @@ class FrozenControls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             device = root / 'scripts/ui-server-parity'
-            shutil.copytree(ROOT / 'scripts/ui-server-parity', device)
-            (root / 'scripts/exp008').mkdir()
+            copy_apparatus(root)
             env = {key: value for key, value in os.environ.items()
                    if key not in ('PYTHONDONTWRITEBYTECODE', 'PYTHONPATH')}
-            result = subprocess.run([sys.executable, str(device / 'check_frozen.py'), '--self-test'],
+            result = subprocess.run([sys.executable, '-I', str(device / 'check_frozen.py'), '--self-test'],
                                     env=env, cwd=root, text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['verdict'], 'PASS')
             self.assertFalse(list(device.rglob('__pycache__')))
+
+    def test_isolation_ignores_python_environment_and_rejects_nonisolated_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shadow = root / 'shadow'
+            shadow.mkdir()
+            marker = root / 'ENVIRONMENT_EXECUTED'
+            (shadow / 'json.py').write_text(f'open({str(marker)!r}, "w").write("injected")\n')
+            cache = root / 'external-cache'
+            env = dict(os.environ, PYTHONPATH=str(shadow), PYTHONHOME=str(root / 'fake-home'),
+                       PYTHONPYCACHEPREFIX=str(cache), PYTHONUSERBASE=str(shadow))
+            isolated = subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/ui-server-parity/check_frozen.py')],
+                                      env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(isolated.returncode, 2, isolated.stderr)
+            self.assertEqual(json.loads(isolated.stdout)['verdict'], 'DRAFT')
+            self.assertFalse(marker.exists())
+            self.assertFalse(cache.exists())
+            for flags in ([], ['-E', '-s'], ['-I', '-X', f'pycache_prefix={cache}']):
+                result = subprocess.run([sys.executable, *flags, str(ROOT / 'scripts/ui-server-parity/check_frozen.py')],
+                                        env={k: v for k, v in os.environ.items() if not k.startswith('PYTHON')},
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['verdict'], 'FAIL')
+                self.assertFalse(marker.exists())
+
+    def test_git_admission_rejects_dirty_apparatus_and_changed_HEAD(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            copy_apparatus(root)
+            subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--no-verify'], check=True)
+            head = git_admission(root)
+            self.assertEqual(git_admission(root, head), head)
+            with self.assertRaisesRegex(ApparatusUnsafe, 'HEAD changed'):
+                git_admission(root, '0' * 40)
+            path = root / 'scripts/exp008/run.py'
+            original = path.read_bytes()
+            path.write_bytes(original + b'\n# worker drift\n')
+            with self.assertRaisesRegex(ApparatusUnsafe, 'dirty apparatus'):
+                git_admission(root, head)
+            path.write_bytes(original)
+            rogue = root / 'scripts/exp008/textwrap.py'
+            rogue.write_text('raise RuntimeError("shadow")')
+            with self.assertRaisesRegex(ApparatusUnsafe, 'untracked apparatus'):
+                git_admission(root, head)
+            rogue.unlink()
+            # Git status includes staged edits too, even with no unstaged diff.
+            path.write_bytes(original + b'\n# staged drift\n')
+            subprocess.run(['git', '-C', str(root), 'add', str(path)], check=True)
+            with self.assertRaisesRegex(ApparatusUnsafe, 'dirty apparatus'):
+                git_admission(root, head)
+
+    def test_checked_source_loader_rejects_changed_bytes_before_execution(self):
+        from apparatus import SourceLoader, manifest_pins
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            copy_apparatus(root)
+            path = root / 'scripts/ui-server-parity/common.py'
+            marker = root / 'CHANGED_SOURCE_EXECUTED'
+            path.write_text(f'open({str(marker)!r}, "w").write("injected")')
+            module = type(sys)('changed_source')
+            with self.assertRaisesRegex(ApparatusUnsafe, 'changed source hash'):
+                SourceLoader(path, root, manifest_pins(root)).exec_module(module)
+            self.assertFalse(marker.exists())
+
+    def test_b1_load_restores_path_and_reconcile_child_is_isolated(self):
+        before = sys.path[:]
+        import run
+        self.assertEqual(sys.path, before)
+        self.assertNotIn(str(ROOT / 'scripts/exp008'), sys.path)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dependency = root / 'exp008'
+            shutil.copytree(ROOT / 'scripts/exp008', dependency)
+            marker = root / 'RECONCILE_SHADOW_EXECUTED'
+            (dependency / 'json.py').write_text(f'open({str(marker)!r}, "w").write("injected")\n')
+            result = subprocess.run([sys.executable, '-I', str(dependency / 'reconcile_routes.py'), '--help'],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(marker.exists())

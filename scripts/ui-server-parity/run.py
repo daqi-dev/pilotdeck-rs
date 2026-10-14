@@ -1,26 +1,50 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """exp010 S1/S2: fresh direct and proxied runs, six driver scenarios each.
 
 Recorder 13101 -> [B1 DUT 13103 ->] TS UI 13102 -> gateway 28990.
 Enumerator 13104; reserved browser frontend 13105. Loopback only.
 """
-# Admit source-only apparatus before json or any local module can be imported.
+# Isolated bootstrap: verify the source loader before executing local code.
 import os as _boot_os
 import sys as _boot_sys
+if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
+        and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
+    print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
+    raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
     raise SystemExit(1)
-_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+import hashlib as _boot_hashlib
+import subprocess as _boot_subprocess
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+_boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
-    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+    _boot_bytes = _boot_file.read()
+try:
+    if _boot_os.path.isfile(_boot_manifest):
+        with open(_boot_manifest) as _boot_file:
+            _boot_pins = [line.split()[0] for line in _boot_file
+                          if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]
+        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
+            raise ValueError('apparatus bootstrap hash mismatch')
+    else:
+        _boot_trusted = _boot_subprocess.check_output(
+            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        if _boot_bytes != _boot_trusted:
+            raise ValueError('apparatus bootstrap differs from HEAD without manifest')
+except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
+    print(str(_boot_error), file=_boot_sys.stderr)
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap hash admission failed"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 import argparse
 import base64
 import binascii
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -29,6 +53,7 @@ import subprocess
 import sys
 import uuid
 
+from apparatus import load_source
 from snapshot import capture
 from common import apparatus_hashes, source_hashes, ClockMonitor, ClockRefused, validate_clock_check
 
@@ -38,30 +63,43 @@ HERE = Path(__file__).resolve().parent
 # Its comparator/scenarios are never invoked here (S3 belongs to the next PR).
 # B1 imports its own `compare` at module load. Isolate that import so loading
 # S1 after S3 (e.g. unittest discovery) cannot bind either comparator incorrectly.
-compare_spec = importlib.util.spec_from_file_location('b1_comparator', ROOT / 'scripts/exp008/compare.py')
-b1_comparator = importlib.util.module_from_spec(compare_spec)
-compare_spec.loader.exec_module(b1_comparator)
-spec = importlib.util.spec_from_file_location('b1_device', ROOT / 'scripts/exp008/run.py')
-b1 = importlib.util.module_from_spec(spec)
+b1_comparator = load_source('b1_comparator', ROOT / 'scripts/exp008/compare.py')
 previous_compare = sys.modules.get('compare')
+previous_path = sys.path[:]
 try:
     sys.modules['compare'] = b1_comparator
-    spec.loader.exec_module(b1)
+    b1 = load_source('b1_device', ROOT / 'scripts/exp008/run.py')
 finally:
+    sys.path[:] = previous_path
     if previous_compare is None:
         sys.modules.pop('compare', None)
     else:
         sys.modules['compare'] = previous_compare
 b1.PORTS = {'rust': 13103, 'ui': 13102, 'enum': 13104, 'gateway': 28990, 'vite': 13105}
 b1.ALL_PORTS = set(b1.PORTS.values()) | {13101}
-BINARY = ROOT / '_build/exp010-target/debug/pdrs-exp008-proxy'
+BINARY = None
 
 
-def build():
+def build(target):
+    """Standalone captures also use a newly created target, never _build artifacts."""
+    global BINARY
+    target.mkdir(exist_ok=False)
     env = dict(os.environ, CARGO_HOME=str(ROOT / '_build/cargo-home'),
-               CARGO_TARGET_DIR=str(ROOT / '_build/exp010-target'))
+               CARGO_TARGET_DIR=str(target))
     subprocess.run(['cargo', 'build', '--locked', '--offline', '--manifest-path',
                     str(ROOT / 'scripts/exp008/proxy/Cargo.toml')], env=env, check=True)
+    BINARY = target / 'debug/pdrs-exp008-proxy'
+
+
+def batch_binary(path):
+    from calibrate import Batch
+    path = path.resolve()
+    state = json.loads((path / 'batch.json').read_text())
+    if state.get('root') != str(ROOT) or state.get('schema') != 1:
+        raise ValueError('build batch belongs to another root/schema')
+    batch = Batch(path, state)
+    batch.guard()
+    return batch.binary
 
 
 def cleanup(out, first):
@@ -103,7 +141,7 @@ def enumerate_routes(out):
         enumeration = json.loads((out / 'router-enumeration.json').read_text())
         if not enumeration['appCaptured'] or enumeration['uniqueRouteCount'] < 100:
             raise RuntimeError('runtime enumeration implausible')
-        subprocess.run([sys.executable, str(ROOT / 'scripts/exp008/reconcile_routes.py'),
+        subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/exp008/reconcile_routes.py'),
                         str(out / 'router-enumeration.json'),
                         str(ROOT / 'docs/research/006_phase-b-ui-server/route-inventory.md'),
                         '--out', str(out / 'route-reconciliation.json')], check=True)
@@ -263,6 +301,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True, help='new directory; existing evidence is never overwritten')
     parser.add_argument('--baseline', type=Path, default=b1.BASELINE)
+    parser.add_argument('--build-batch', type=Path, help='use only this batch’s verified fresh build')
     parser.add_argument('--side', choices=('direct', 'proxy'), help='one fresh side for k=5 calibration/DUT comparison')
     parser.add_argument('--slot', default='direct', choices=('direct', 'proxy'), help='single-side fixture directory; use the SAME slot and --out on every round')
     args = parser.parse_args()
@@ -272,12 +311,16 @@ def main():
     report = {'scope': 'S1/S2 recording plus S3 snapshot inputs; single-side PASS is not calibration', 'status': 'FAIL', 'sides': {}}
     failures, clock_refusals = [], []
     try:
-        build()
+        global BINARY
+        if args.build_batch:
+            BINARY = batch_binary(args.build_batch)
+        else:
+            build(out / 'cargo-target')
         enum = out / 'enumeration'
         enum.mkdir()
         b1.make_home(enum)
         enumerate_routes(enum)
-        subprocess.run([sys.executable, str(HERE / 'check_coverage.py'), '--enumeration',
+        subprocess.run([sys.executable, '-I', str(HERE / 'check_coverage.py'), '--enumeration',
                         str(enum / 'router-enumeration.json'), '--out', str(out / 'coverage-declarations.json')], check=True)
         sides = (args.side,) if args.side else ('direct', 'proxy')
         for side in sides:
@@ -311,7 +354,7 @@ def main():
             evidence.write_text(''.join((out / side / 'cases.jsonl').read_text() if (out / side / 'cases.jsonl').exists() else '' for side in sides))
             coverage_code = 0
             if not failures and not clock_refusals:
-                coverage = subprocess.run([sys.executable, str(HERE / 'check_coverage.py'), '--enumeration',
+                coverage = subprocess.run([sys.executable, '-I', str(HERE / 'check_coverage.py'), '--enumeration',
                             str(enum / 'router-enumeration.json'), '--evidence', str(evidence),
                             '--out', str(out / 'coverage-evidence.json')])
                 coverage_code = coverage.returncode

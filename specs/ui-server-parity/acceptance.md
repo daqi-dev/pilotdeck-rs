@@ -42,7 +42,13 @@ WS **先比较同一连接内全序帧序列，再比较按 type/kind 的结构�
 
 无真实五遍输入时 self_compare=null、PENDING_CALIBRATION；已自比但未评审时 PENDING_REVIEW；这些均退出 2。任一已运行门失败则 FAIL/退出 1。另可提供 --proxy 单独报告 direct/DUT 比较，不用 DUT 结果定阈值。
 
-冻结必须先有人过目，随后人批 manifest 登记四份规约（含 multimodal.md）的 SHA256，`Human-Approved-By: <人名>`。`check_frozen.py` 校验四份规约、scripts/ui-server-parity 全部装置文件（含自身，排除 Python 缓存）及反代 Cargo.toml/Cargo.lock/src/main.rs；未登记、重复或逃逸路径、哈希不一致均 FAIL。缺 manifest 或首行含「待定标」且哈希正确时返回 DRAFT/退出 2；正式 manifest 缺人批返回 FAIL；不自动写冻结文件。负例自检为 `check_frozen.py --self-test`。前端 page.route 回归门、真实 k=5、直连/DUT 比较与独立评审是协调者的后续验收，离线 controls 不代替它们。
+冻结必须先有人过目，随后协调者在 manifest 登记四份规约、B2 与 exp008 两目录的全部 Git 跟踪装置文件 SHA256，并填唯一的 `Approved-By:`、`Approval-Basis:`。审批人接受具名人，或精确的「AI 代批，待人复核（协调者）」；拒绝 TODO、模型名、零宽/不可见字符、占位、空值与重复。依据至少包含三个 realpath 不同、确实存在的文件（定标报告 + 两家评审），且必须位于当前仓库或共享主仓 `_tmp/` 内，链接逃逸也失败。审批清单自身不参与 capture hash。
+
+装置完整性威胁模型（协调者自决，**AI 代批，待人复核**）：防 (a) 意外漂移；(b) worker / 开发者在仓库内对装置的改动，包括未跟踪文件、影子模块和旧构建产物。不防拥有本机写权限、能够同时改装置、清单与审批的恶意者；该模型之外的发现按 P2 跟进。Git 跟踪清单、FROZEN 哈希与审批材料构成本模型的信任依据。
+
+B2 与 exp008 目录实际文件必须恰好等于 Git 跟踪内容；额外文件（包括忽略文件）、缺失跟踪文件、任意链接、Python 缓存与非普通文件一律 FAIL，不得过滤后继续。FROZEN 必须完整登记两目录及四份规约，重复/逃逸路径、漏项或哈希漂移均 FAIL。所有 Python 入口及子进程带 `-I`，预检断言 isolated / ignore_environment / no_user_site 和未启用 pycache prefix；Python 环境变量不生效。装置预检源码及本目录模块须经 hash 校验，显式从绝对路径按源码加载；B1 加载后恢复 sys.path，reconcile 同样使用隔离子进程。
+
+calibrate 开始与续跑要求装置/规约路径 Git status 为空，并将 HEAD 绑定到 batch.json；批次内 HEAD 漂移即拒绝。每批创建新的 CARGO_TARGET_DIR 于批次目录中，已存在 target 不可复用；构建后登记可执行产物 hash，每遍及续跑重新核验，禁止钉住 `_build` 旧产物。缺 manifest 只允许 HEAD 源码且返回 DRAFT/2；首行「待定标」且完整哈希正确也返回 DRAFT/2；正式 manifest 缺有效审批返回 FAIL。负例自检为 `python3 -I scripts/ui-server-parity/check_frozen.py --self-test`。真实 k=5、TS 池、直连/DUT 比较、前端 page.route 与双谱系评审仍是后续验收，离线 controls 不替代它们。
 
 ## 第 3 轮顺序规则补充（DRAFT）
 
