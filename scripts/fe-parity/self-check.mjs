@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat, mkdtemp, writeFile, symlink, link, rm, mkdir } from 'node:fs/promises';
 import { Readable } from 'node:stream';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { createMock, TOKEN } from './mock.mjs';
-import { reconcile, checkInventory } from './accounting.mjs';
-import { oldDist, newDist, ports, ownedPath } from './env.mjs';
+import { reconcile, reconcilePair, loadReportPair, SKIP_REASONS, checkInventory } from './accounting.mjs';
+import { oldDist, newDist, ports, ownedPath, root, baseline, historicalInventory, origin } from './env.mjs';
 import { assetPath } from './serve.mjs';
+import { checkMessageMap } from './message-map.mjs';
 export async function selfCheck() {
   const checks = [];
   async function check(name, run) {
@@ -43,7 +44,13 @@ export async function selfCheck() {
     const make = (status = 'passed', reason = '') => ({ config: { forbidOnly: true }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: reason && index === 1 ? [{ type: 'skip', description: reason }] : [], results: [{ status: index === 1 ? status : 'passed' }] }] })) }] });
     assert.equal(reconcile(inventory, make(), '').status, 'PASS');
     const unguarded = make(); delete unguarded.config; assert.equal(reconcile(inventory, unguarded, '').status, 'FAIL');
-    assert.equal(reconcile(inventory, make('skipped', 'profile not applicable'), '').status, 'PASS');
+    assert.equal(reconcile(inventory, make('skipped', SKIP_REASONS[0]), '').status, 'PASS');
+    for (const reason of ['arbitrary reason', ` ${SKIP_REASONS[0]}`, `${SKIP_REASONS[0]} `, [SKIP_REASONS[0]]]) {
+      assert.equal(reconcile(inventory, make('skipped', reason), '').status, 'FAIL');
+    }
+    const multiSkip = make('skipped', SKIP_REASONS[0]);
+    multiSkip.suites[0].specs[1].tests[0].annotations.push({ type: 'skip', description: SKIP_REASONS[0] });
+    assert.equal(reconcile(inventory, multiSkip, '').status, 'FAIL');
     for (const status of ['skipped', 'interrupted', 'timedOut', 'failed']) assert.equal(reconcile(inventory, make(status), '').status, 'FAIL');
     const missing = make(); missing.suites[0].specs.pop(); assert.equal(reconcile(inventory, missing, '').status, 'FAIL');
     const duplicate = make(); duplicate.suites[0].specs.push(duplicate.suites[0].specs[0]); assert.equal(reconcile(inventory, duplicate, '').status, 'FAIL');
@@ -52,6 +59,55 @@ export async function selfCheck() {
     const xfail = make(); xfail.suites[0].specs[0].tests[0].expectedStatus = 'failed'; assert.equal(reconcile(inventory, xfail, '').status, 'FAIL');
     assert.equal(checkInventory(inventory, { registered: 2, tests: inventory }).length, 0);
     assert(checkInventory(inventory.slice(1), { registered: 2, tests: inventory }).length > 0);
+  });
+  await check('paired reports: 72 PASS vs 72 SKIP, skip identities and provenance', async () => {
+    const inventory = JSON.parse(await readFile(historicalInventory, 'utf8')).tests;
+    assert.equal(inventory.length, 72);
+    const origins = { old: origin('old'), new: origin('new') };
+    const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: SKIP_REASONS[0] }] : [], results: [{ status: skipped.includes(index) ? 'skipped' : 'passed' }] }] })) }] });
+    const pair = (old, next) => reconcilePair(inventory, { old, new: next }, '', origins);
+    assert.equal(pair(make('old'), make('new')).status, 'PASS');
+    assert.equal(pair(make('old', [1]), make('new', [1])).status, 'PASS');
+    const downgrade = pair(make('old'), make('new', inventory.map((_, i) => i)));
+    assert.equal(downgrade.status, 'FAIL');
+    assert.equal(downgrade.errors.filter(error => error.startsWith('skip identity only in new:')).length, 72);
+    assert.equal(pair(make('old', [1]), make('new', [2])).status, 'FAIL');
+    assert.equal(pair(make('old', [1]), make('new')).status, 'FAIL');
+    assert.equal(pair(make('old'), make('old')).status, 'FAIL');
+    assert.equal(pair(make('new'), make('old')).status, 'FAIL');
+    for (const frontend of ['old', 'new']) {
+      for (const field of ['frontend', 'baseURL']) {
+        const reports = { old: make('old'), new: make('new') };
+        delete reports[frontend].config.metadata[field];
+        assert.equal(reconcilePair(inventory, reports, '', origins).status, 'FAIL');
+        reports[frontend].config.metadata[field] = field === 'frontend' ? 'unknown' : 'http://127.0.0.1:28376';
+        assert.equal(reconcilePair(inventory, reports, '', origins).status, 'FAIL');
+      }
+    }
+  });
+  await check('report files must differ: same path, symlink and hardlink rejected', async () => {
+    const directory = resolve(root, '_tmp/fe-parity'); await mkdir(directory, { recursive: true });
+    const fixture = await mkdtemp(resolve(directory, 'report-file-control-'));
+    try {
+      const old = resolve(fixture, 'old.json'), next = resolve(fixture, 'new.json');
+      await writeFile(old, '{"suites":[]}'); await writeFile(next, '{"suites":[]}');
+      await loadReportPair({ old, new: next });
+      await assert.rejects(() => loadReportPair({ old, new: old }), /different files/);
+      await symlink(old, resolve(fixture, 'symlink.json'));
+      await link(old, resolve(fixture, 'hardlink.json'));
+      for (const alias of ['symlink.json', 'hardlink.json']) await assert.rejects(() => loadReportPair({ old, new: resolve(fixture, alias) }), /different files/);
+    } finally { await rm(fixture, { recursive: true }); }
+  });
+  await check('WS message map: every table link matches its identifier or explicit branch', async () => {
+    const markdown = await readFile(resolve(root, 'docs/research/007_frontend/ws-message-map.md'), 'utf8');
+    const checked = await checkMessageMap(markdown, dirname(baseline));
+    assert.deepEqual(checked.errors, []);
+    assert(checked.links > 100);
+    // Original stream_delta regression must fail even though line 864 exists.
+    const drifted = markdown.replaceAll('useChatRealtimeHandlers.ts:847', 'useChatRealtimeHandlers.ts:864').replaceAll('useChatRealtimeHandlers.ts#L847', 'useChatRealtimeHandlers.ts#L864');
+    assert((await checkMessageMap(drifted, dirname(baseline))).errors.some(error => error.includes('stream_delta')));
+    const unmarked = markdown.replace('（分支起点，无字面量；代码：`default:`；字面量：', '（无标注：');
+    assert((await checkMessageMap(unmarked, dirname(baseline))).errors.some(error => error.includes('active-sessions')));
   });
   await check('worktree output and port constraints', () => {
     assert.deepEqual(Object.values(ports), [28376, 28377, 28378]);

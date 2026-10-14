@@ -34,19 +34,38 @@ node scripts/fe-parity/run.mjs --suite skeleton --frontends old,new
 # 当前预期：skeleton.md有3行PASS/FAIL；baseline-parity.md有72行NOT_RUN；总exit 1。
 # 没有浏览器报告时的严格负向对账（预期exit 1）：
 node scripts/fe-parity/run.mjs --reconcile
-# 后续完整基线报告对账：每个JSON须携带config.forbidOnly=true，无重试/重复项目结果。
+# 后续完整基线报告对账：须为不同文件，声明 config.forbidOnly 与 frontend/baseURL 来源，无重试/重复项目结果。
 node scripts/fe-parity/run.mjs --reconcile --old-report <old.json> --new-report <new.json>
 ```
 
 输出默认 `_tmp/fe-parity/run-<随机后缀>/`；可用 `--output _tmp/fe-parity/<本次目录>` 指定，拒绝worktree外路径。含实时注册原件、各侧Playwright JSON/日志、逐例表和result.json。profile单独留 `_tmp/fe-parity/profiles/`。指定的输出目录若已存在立即拒绝（EEXIST），不覆盖/清理人的证据；重跑请用新输出目录。
 
-self-check只验证注册、进程内mock handlers、对账正负例和静态资产存在/路径保护。输出明确72/0 NOT_RUN，但 `PASS_SELF_CHECK_ONLY`/exit 0仅表示这个独立规则检查通过。network-self-check额外检查两侧真实HTTP/WS代理，不启动浏览器，也不计基线执行数。浏览器/对账模式的任何缺口则exit 1。
+self-check验证注册、进程内mock handlers、单端与双端对账正负例、报告文件身份/来源、WS表逐链接字面量或显式分支标注，以及静态资产存在/路径保护。输出明确72/0 NOT_RUN，但 `PASS_SELF_CHECK_ONLY`/exit 0仅表示这个独立规则检查通过。network-self-check额外检查两侧真实HTTP/WS代理，不启动浏览器，也不计基线执行数。浏览器/对账模式的任何缺口则exit 1。
 
 固定端口 mock=28376、old=28377、new=28378（28379保留）。所有监听写死127.0.0.1，不读取PORT/HOST，不启动真实PilotDeck/gateway，不碰3001/18789/用户PILOT_HOME。资源finally关闭；中断仅向本runner创建的Playwright进程组发信号，不全局kill。
 
 ## 对账规则
 
-分母来自本次展开注册数，历史72用于漂移警报而非取代动态清点。逐身份核对完整结果：应执行=注册数−**有显式skip description的实际skipped**；实际执行=passed/failed/timedOut的唯一尝试。每条SKIP打印原因；无理由skip、NOT_RUN、重复/未知身份、interrupted、xfail、behavioral FAIL、report errors、注册漂移、数量不符全部FAIL。报告必须声明forbidOnly；每侧独立核对，两个报告同时漏例也不能绿。
+分母来自本次展开注册数，历史72用于漂移警报而非取代动态清点。逐身份核对完整结果：应执行=注册数−**理由命中固定白名单的实际skipped**；实际执行=passed/failed/timedOut的唯一尝试。每条SKIP打印原因；无理由或白名单外skip、NOT_RUN、重复/未知身份、interrupted、xfail、behavioral FAIL、report errors、注册漂移、数量不符全部FAIL。报告必须声明 `config.forbidOnly=true`；每侧独立核对后再联合核对，两个报告同时漏例也不能绿。
+
+skip 理由固定白名单（精确匹配，只允许一个 `type: "skip"` annotation，不接受空白变体、拼接或自由文本）：
+
+| description | 允许语义 |
+|---|---|
+| `deployment profile not applicable` | 用例只适用于本次未选中的部署/profile；必须在 old/new 同一注册身份上同时不适用。缺环境、功能未实现、下一PR再跑均不得使用此理由。 |
+
+两侧 **SKIP 身份集合（file + 完整展开 title）必须完全相等**；skip 数量相等但身份不同也 FAIL。old 72 PASS / new 72 带白名单理由 SKIP 必须 FAIL。白名单变更需要修改本文件和 `accounting.mjs`，不能由报告自行扩展。
+
+报告来源由执行时的 Playwright config 写入，`browser.config.mjs` 已自动设置；接入完整基线套件时也必须在实际使用的 config 中设置：
+
+```js
+metadata: { frontend: 'old', baseURL: 'http://127.0.0.1:28377' }
+// new 对应 { frontend: 'new', baseURL: 'http://127.0.0.1:28378' }
+```
+
+JSON reporter 将其保存在 `config.metadata.frontend` / `config.metadata.baseURL`。`--reconcile` 要求它们与所标端及固定入口精确一致，缺失/互换/端口不符均 FAIL；不会按命令行标签替报告补写元数据。`--old-report` 和 `--new-report` 必须为不同文件，同路径、相对/绝对别名、符号链接和硬链接复用同一原件均 FAIL；复制 old 报告到另一个文件也会因 new 来源不符而 FAIL。此校验依赖报告如实保留执行配置，不构成对手工篡改 JSON 的密码学认证。
+
+WS 映射 self-check 检查全部45条消息（35主通道＋4历史兼容＋6其他通道/本地事件）的每个行号链接：标签/固定commit目标一致，目标行含声明的字符串字面量；无字面量的共用分支须显式标注分支代码和另一个可验证的字面量链接。历史 `stream_delta` 错指 Thinking 注释的反例必须 FAIL。
 
 ## 下一PR
 

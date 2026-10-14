@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { baseline, root, requireUI, historicalInventory, ownedPath, origin } from './env.mjs';
-import { reportCases, checkInventory, reconcile } from './accounting.mjs';
+import { reportCases, checkInventory, reconcilePair, loadReportPair } from './accounting.mjs';
 import { selfCheck } from './self-check.mjs';
 import { startMock, TOKEN } from './mock.mjs';
 import { startFrontend } from './serve.mjs';
@@ -24,7 +24,7 @@ if (values.help) {
 Always discovers baseline ui/e2e with --list --forbid-only, compares exp007's 72 registrations.
 Skeleton = 3 new auth/transport cases against one mock, actual old Vite / Leptos probe.
 Skeleton cannot cover the 72 baseline cases: full reconciliation remains FAIL (exit 1).
---reconcile also fails without both full reports; skipped tests require explicit skip descriptions.
+--reconcile requires distinct old/new reports with matching frontend/baseURL metadata and identical whitelisted skips.
 --self-check does not listen or launch Chrome, fails if static assets are absent.
 All generated reports/profiles/screenshots live under this worktree _tmp/fe-parity.
 Ports: mock 28376 / old 28377 / new 28378, bind only 127.0.0.1.
@@ -126,7 +126,7 @@ try {
       const skeletonList = await command(['test', '--config', resolve(root, 'scripts/fe-parity/browser.config.mjs'), '--list', '--forbid-only', '--reporter=json'], { FE_FRONTEND: 'old', FE_OUTPUT: output });
       if (skeletonList.code !== 0) throw new Error('Skeleton registration failed');
       const registered = reportCases(JSON.parse(skeletonList.stdout), resolve(root, 'scripts/fe-parity/tests'));
-      result.skeleton = { old: reconcile(registered, reports.old, resolve(root, 'scripts/fe-parity/tests')), new: reconcile(registered, reports.new, resolve(root, 'scripts/fe-parity/tests')) };
+      result.skeleton = reconcilePair(registered, reports, resolve(root, 'scripts/fe-parity/tests'), { old: origin('old'), new: origin('new') });
       if (registered.length !== 3) throw new Error(`Skeleton registration drift: ${registered.length} != 3`);
       const skeletonTable = table(registered, result.skeleton);
       console.log(`骨架逐例对照（独立于基线72）\n${skeletonTable}`);
@@ -135,13 +135,13 @@ try {
       reports.old = { suites: [] }; reports.new = { suites: [] };
       result.skeleton.reported = skeletonInventory.length;
     } else {
-      for (const frontend of ['old', 'new']) reports[frontend] = values[`${frontend}-report`]
-        ? JSON.parse(await readFile(resolve(values[`${frontend}-report`]), 'utf8')) : { suites: [] };
+      Object.assign(reports, await loadReportPair({ old: values['old-report'], new: values['new-report'] }));
     }
-    result.accounting = {};
-    for (const frontend of ['old', 'new']) { result.accounting[frontend] = reconcile(inventory, reports[frontend], resolve(baseline, 'e2e')); printAccount(frontend, result.accounting[frontend]); }
+    result.accounting = reconcilePair(inventory, reports, resolve(baseline, 'e2e'), { old: origin('old'), new: origin('new') });
+    for (const frontend of ['old', 'new']) printAccount(frontend, result.accounting[frontend]);
+    for (const error of result.accounting.errors) console.error(error);
     await writeFile(resolve(output, 'baseline-parity.md'), table(inventory, result.accounting) + '\n');
-    result.status = Object.values(result.accounting).every(account => account.status === 'PASS') ? 'PASS' : 'FAIL';
+    result.status = result.accounting.status;
   }
 } catch (error) { result.error = error.stack; console.error(error.message); }
 finally {
