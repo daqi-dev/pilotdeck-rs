@@ -79,7 +79,10 @@ export async function proveBaselineStale(catalog) {
   for (const row of catalog.tests) {
     if (row.scope === 'B_REPLACEMENT') {
       replacementProof ??= await proveReplacementBaselineStale();
-      proofs.push({ file: row.file, title: row.title, ...replacementProof });
+      proofs.push({ file: row.file, title: row.title, ...replacementProof,
+        ...(row.oldSideNondeterministic ? { oldSideNondeterministic: true,
+          oldSideNondeterminism: row.oldSideNondeterminism,
+          traceEvidenceScope: 'Reviewed historical metadata; reproduce and verify ZIP/report hashes with old-side-timing-proof.py --verify. Source anchors validated separately; no live execution.' } : {}) });
       continue;
     }
     if (row.file === 'real/files.spec.mjs') {

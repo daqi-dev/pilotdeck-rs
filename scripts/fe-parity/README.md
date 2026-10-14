@@ -448,7 +448,7 @@ formal 配置原有两个项目完整保留（`ui/e2e/formal-composition.config.
 
 **防 skip**：先列全局 72 身份（保留历史 undefined route title），再按 `deploy-matrix.mjs` 逐格精确核对原 spec 的文件、具体完整标题、line/column 与 project。只允许**不适用项目实例**以源码对应的唯一 profile 理由实际 skipped，记 `PROFILE_EXCLUDED`；缺 URL/env 理由不获准。应执行实例出现任意 skipped（包括 serial 无 annotation）、缺失、重复、retry、interrupted、xfail、FAIL、来源不符即红。某格 PASS 不掩盖另一格的 skip/失败。`accounting.mjs` 的 `reconcileDeploy*` 输出每格 expected/executed、project 观察原件与源码身份总表；route 的 native/minimal/replacement 标题保留在 observations 中。源码汇总仅按已核对的冻结注册位置关联历史行，**不授权 skip、不改全局 72 注册、原 skip allowlist 或基线 spec**。
 
-完整矩阵的应执行为 9 个身份 / 18 次实例。StaffDeck BLOCKED 保留应执行数与分母；如果其他格实跑全部成功，最多是 **5/9 个身份、11/18 次实例**，完整矩阵仍 FAIL/exit 1。只请求 minimal/replacement 时输出 `PASS_PARTIAL_B_PROFILES_ONLY`（需所有请求实例真的执行通过），全局仍列 72 与 A/C/D NOT_RUN，不宣称 B 9 或黑盒 37 已验收。
+完整矩阵的应执行为 9 个身份 / 18 次实例。StaffDeck BLOCKED 保留应执行数与分母；如果其他格实跑全部成功，最多是 **5/9 个身份、11/18 次实例**，完整矩阵仍 FAIL/exit 1。只请求部分 profile 时输出 `PASS_PARTIAL_B_PROFILES_ONLY`（需所有请求实例真的执行通过且无待人工确认身份；第 4 轮 replacement formal 带旧侧不确定标记，整体继续 FAIL），全局仍列 72 与 A/C/D NOT_RUN，不宣称 B 9 或黑盒 37 已验收。
 
 所有 URL 门控由 `deployExecutionEnv` 设置为 **http://127.0.0.1:28411**，配置与 gateway 也固定本仓端口：server=28410、Vite=28411、gateway=28412、replacement Knowledge=28413、mock LLM=28379。逐格顺序复用端口，运行目录不复用。`assertDeployExecutionEnv` 在 config/launcher/Vite/setup 入口拒绝缺 env、3001/18789、任何其他端口/外部 URL、localhost、路径变体、错误 profile 与越界 runtime/config/evidence 路径。仅 connect 探测固定高位端口空闲，权限/超时/占用即 FAIL，绝不杀占用者。
 
@@ -464,12 +464,12 @@ runtime 目录为本 worktree `_tmp/fe-parity/deploy-run/run-*/<cell>/`。复用
 (
   set -eu
   cd /Users/da/ws/pilotdeck-rs/_build/wt-f2e
-  test ! -e _tmp/fe-parity/coordinator-b-old3
+  test ! -e _tmp/fe-parity/coordinator-b-old4
   mkdir /tmp/pdrs-parity.lock || exit 1
   trap 'rmdir /tmp/pdrs-parity.lock' EXIT
   node scripts/fe-parity/run.mjs --suite blackbox-deploy \
     --profiles staffdeck,minimal,replacement --frontends old \
-    --output _tmp/fe-parity/coordinator-b-old3
+    --output _tmp/fe-parity/coordinator-b-old4
 )
 ```
 
@@ -492,6 +492,19 @@ node --test --test-timeout=8000 scripts/fe-parity/mock-llm.test.mjs
 
 R8 清单新增精确 B 身份 `formal-composition.spec.mjs` 的 replacement 例及 `real-auth-composition.spec.mjs` 的 replacement 例，分别绑定 `64:131` 与 `164:131`、matcher `toBeVisible` 和完整 exact locator。证据含源文件 hash/行/原文、上述完整 commit ID 和独立离线 proof。清单现共 6 身份，canonical SHA-256 为 `b855a582a47ffa3cc6bc8865cf6a7ad36f7a4ab4749e15c3805c38ef2b3c85c6`。`replacement-stale-proof.mjs` 通过 AST 执行冻结 query/citation handler 及真实 copy 验证函数：原 profile 501、仅补身份 501，均在上游调用前拒绝；另执行未编辑 fixture handler，确认其原查询回包确实含 exact 文案。这些都是 **OFFLINE_FROZEN_SOURCE_ONLY**，不写 runtime evidence，不监听、不启动浏览器，不充当真实行为回包。
 
-B 原始行/分区/总体继续 **FAIL**，floor 仍 9 身份 / 18 实例，old2 实际 5 身份 / 11 实例执行（3 身份 / 8 实例 PASS、2 身份 / 3 实例 FAIL，4 身份 / 7 实例 BLOCKED）。B 报告只记录精确 FAIL 的 `matchedFailCondition`，旧侧条件满足仍 `pairedConsistency=UNPAIRED`，不宣称双侧 MATCHED_FAIL；两侧都有有效原件且同位 FAIL 才能确认配对。原 profile 排除规则、端口审计与行为错误诊断不放宽。失效的两个身份行为覆盖记 0；其余 7 身份含 4 个 BLOCKED，当前通过 3。D 仍要求其原有 4 个精确 stale 身份，B 身份不能替代 D 条件，D 原 17 执行 / 11 cascade / 13 PASS 的校准口径保持。
+B 原始行/分区/总体继续 **FAIL**，floor 仍 9 身份 / 18 实例，old2 实际 5 身份 / 11 实例执行（3 身份 / 8 实例 PASS、2 身份 / 3 实例 FAIL，4 身份 / 7 实例 BLOCKED）。B 报告只记录精确 FAIL 的 `matchedFailCondition`，旧侧条件满足仍 `pairedConsistency=UNPAIRED`，不宣称双侧 MATCHED_FAIL；未标记身份两侧都有有效原件且同位 FAIL 才能确认配对；第 4 轮 formal 例外见下文。原 profile 排除规则、端口审计与行为错误诊断不放宽。失效的两个身份行为覆盖记 0；其余 7 身份含 4 个 BLOCKED，当前通过 3。D 仍要求其原有 4 个精确 stale 身份，B 身份不能替代 D 条件，D 原 17 执行 / 11 cascade / 13 PASS 的校准口径保持。
 
-新增离线负控拒绝错误断言行/列、重复 locator、别种错误、PASS 冒充匹配 FAIL、xfail、skip、retry、错误 provenance 和 report error；确切 FAIL 的账目也必须红。此次没有编排修复，所以无需制造“修复旧编排”的 mutation。本轮所有检查及命令详见 `_tmp/RESULT.md` 第 3 轮。按上面的 `coordinator-b-old3` 新目录重跑仍预期 replacement 两格 FAIL、StaffDeck 两格 BLOCKED；该命令用于验证 unchanged spec 与 R8 记录，不能作为 replacement 修复 PASS 的承诺。
+新增离线负控拒绝错误断言行/列、重复 locator、别种错误、PASS 冒充匹配 FAIL、xfail、skip、retry、错误 provenance 和 report error；确切 FAIL 的账目也必须红。此次没有编排修复，所以无需制造“修复旧编排”的 mutation。本轮所有检查及命令详见 `_tmp/RESULT.md` 第 3 轮。第 3 轮曾交接 `coordinator-b-old3`；当前按上面的 `coordinator-b-old4` 新目录重跑仍预期 replacement 两格 FAIL、StaffDeck 两格 BLOCKED；该命令用于验证 unchanged spec 与 R8 记录，不能作为 replacement 修复 PASS 的承诺。
+
+
+## B 第 4 轮：formal 旧侧时序竞争需人工确认（#114 P1）
+
+独立只读复核 old2/old3 的 formal 四份 trace 和 auth 两份 trace：old3 desktop fill 为 **3143.777–3160.368ms**；第二轮 runtime 请求起点 **3164.148/3164.264ms**，完成估计 **3170.254/3170.752ms**。`3164.381ms` 的 after-fill 快照已移除模块页、显示 runtime 验证占位页；Search 在 **3190.193ms** 解析为 disabled，随后不断 not enabled，整例 timedOut 停在 `formal-composition.spec.mjs:63:67`，没有 query 请求。**3164ms 是请求起点，不是回包时刻。** old3 mobile 第二轮完成估计 **48379.657/48381.764ms**，早于 fill **48389.010–48399.423ms**；其 query **48448.622ms** 收到 501，最后在 `:64:131` failed。old2 desktop/mobile 第二轮也先于 fill，二者均在登记断言 failed；auth old2/old3 都在自身 `:164:131` failed / HTTP 501。
+
+源码链（均相对只读冻结 `resources/PilotDeck/`）：`ui/src/components/app-shell/AppShellV2.tsx:165–166` 的项目/加载状态变化发出 runtime-changed；`ui/src/composition/runtime.ts:209,213` 清空 runtime，`:178` 返回空 assembly，`:205` 回包后恢复；`AppShellV2.tsx:85` 失去 modulePage，`MainAreaV2.tsx:429–440` 模块页条件挂载与项目 key 使页面重挂载。`fixture-knowledge-search.tsx:9` 初始化 query 为空，`:25` 以 `disabled={!query.trim()}` 禁用 Search；spec `:62–64` 无 refresh 完成的前置等待。快照和日志直接证明页面失去搜索输入、重现 disabled Search；项目事件触发/重挂载链由冻结源码支持，trace 未直接录 React hook 调用。
+
+`baseline-stale.json` 仅给精确 formal 身份登记 `oldSideNondeterministic=true` 和 `oldSideNondeterminism`，附身份、四份 ZIP/报告路径与 SHA-256、trace member、精确时间、观测状态和源码行/哈希。更新固定清单 digest；标记缺证据、来源漂移、证据借给别的身份均拒绝。常规 preflight 核验固定清单和冻结源码；历史 ZIP 的独立复核命令是 `python3 scripts/fe-parity/old-side-timing-proof.py --verify`，不要求未来 live runner 携带历史 `_tmp` ZIP。
+
+`failureSignature` 和 `matchesStaleFailure` 语义原样：timedOut 不生成签名。`compareStaleRows` 对标记身份始终输出 **NEEDS_HUMAN_CONFIRMATION**、计数 `needsHumanConfirmation`，不加入 matchingIds，也不消费失败诊断；即使双侧恰好都在登记断言 failed，整体仍 FAIL。原始 PASS/FAIL/timeout、provenance/retry/report errors 均保留；没有人工确认的自动开绿入口。未标记身份继续原 MATCHED_FAIL/FAIL 规则，D 的 4 条、17 执行 / 11 cascade / 13 PASS 校准不变。B 单侧 JSON/console/Markdown 也显示待确认及证据，exact `matchedFailCondition` 只说明当前原件是否满足旧侧断言条件，不代表自动配对；formal mobile 条件满足、desktop 不满足是正常结果。
+
+离线自检增加缺证据、借身份、exact failed/timeout/PASS/skip 配对仍红和未标记身份通过正控。old2/old3 原件重新对账均 **FAIL，5/9 身份、11/18 实例，1 个待确认身份**。完整复核、验证记录、更正后的第 3 轮结论及 `coordinator-b-old4` 命令见 `_tmp/RESULT.md`「第 4 轮」。本轮不提交、不改 state/、不启动需要 listen 的部分；P2 esbuild/短命 node env 证据由协调者另记。

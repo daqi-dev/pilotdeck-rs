@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { baseline, realOrigin, origin } from './env.mjs';
-import { BASELINE_STALE, validateStaleManifest, validateStaleEvidence, validateBaselineStale, validateStaleCascade, oldRealGate, compareStaleRows } from './baseline-stale.mjs';
+import { BASELINE_STALE, validateStaleManifest, validateStaleEvidence, validateBaselineStale, validateStaleCascade, oldRealGate, compareStaleRows, failureSignature, HUMAN_CONFIRMATION, staleEntry } from './baseline-stale.mjs';
 import { serialSuccessors, SERIAL_TOPOLOGY, readSerialTopology } from './serial-topology.mjs';
 import { proveBaselineStale } from './baseline-stale-proof.mjs';
 import { PENDING_ORCHESTRATION, reconcileRealPair, reconcilePair, reconcileReal, caseId } from './accounting.mjs';
@@ -122,10 +122,81 @@ export async function baselineStaleSelfCheck(check) {
       suites: [{ specs: inventory.map(row => ({ file: row.file, title: row.title,
         tests: [{ expectedStatus: 'passed', results: [staleControlAttempt(row)] }] })) }],
     }]]));
-    assert.equal(reconcilePair(inventory, pairReports, testDir, { old: origin('old'), new: origin('new') }).status, 'PASS');
+    const paired = reconcilePair(inventory, pairReports, testDir, { old: origin('old'), new: origin('new') });
+    assert.equal(paired.status, 'FAIL');
+    assert.equal(paired.needsHumanConfirmation, 1);
+    assert.equal(paired.baselineStale.filter(row => row.consistency === 'MATCHED_FAIL').length, 5);
+    const unmarked = inventory.filter(row => !row.oldSideNondeterministic);
+    const unmarkedReports = structuredClone(pairReports);
+    for (const side of ['old', 'new']) unmarkedReports[side][0].suites[0].specs = unmarkedReports[side][0].suites[0].specs.filter(row => !staleEntry(row).oldSideNondeterministic);
+    assert.equal(reconcilePair(unmarked, unmarkedReports, testDir, { old: origin('old'), new: origin('new') }).status, 'PASS');
     pairReports.new.push(structuredClone(pairReports.new[0]));
     pairReports.new[1].suites[0].specs[0].tests[0].results = [{ status: 'passed' }];
     assert.equal(reconcilePair(inventory, pairReports, testDir, { old: origin('old'), new: origin('new') }).status, 'FAIL');
+  });
+  await check('old-side nondeterminism: evidence required and identity-bound; exact FAIL/timeouts/PASS cannot green a pair or borrow the flag', () => {
+    const formal = BASELINE_STALE.tests.find(row => row.oldSideNondeterministic);
+    const auth = BASELINE_STALE.tests.find(row => row.scope === 'B_REPLACEMENT' && row !== formal);
+    for (const mutate of [
+      catalog => { delete catalog.tests.find(row => row.oldSideNondeterministic).oldSideNondeterminism; },
+      catalog => { catalog.tests.find(row => row.oldSideNondeterministic).oldSideNondeterminism.sourceAnchors = []; },
+      catalog => { catalog.tests.find(row => row.oldSideNondeterministic).oldSideNondeterminism.observations = []; },
+      catalog => { catalog.tests.find(row => row.file === auth.file).oldSideNondeterministic = true; },
+      catalog => {
+        const row = catalog.tests.find(row => row.file === auth.file);
+        row.oldSideNondeterministic = true; row.oldSideNondeterminism = structuredClone(formal.oldSideNondeterminism);
+      },
+      catalog => { catalog.tests.find(row => row.oldSideNondeterministic).oldSideNondeterminism.observations[0].traceSha256 = 'borrowed'; },
+    ]) {
+      const catalog = structuredClone(BASELINE_STALE); mutate(catalog);
+      assert.throws(() => validateStaleManifest(catalog), /nondeterminism evidence/);
+    }
+    const origins = { old: origin('old'), new: origin('new') }, inventory = [formal, auth];
+    const make = () => Object.fromEntries(['old', 'new'].map(side => [side, [{
+      config: { forbidOnly: true, rootDir: testDir, metadata: { frontend: side, baseURL: origins[side] } },
+      errors: [], suites: [{ specs: inventory.map(row => ({ file: row.file, title: row.title,
+        tests: [{ expectedStatus: 'passed', results: [staleControlAttempt(row)] }] })) }],
+    }]]));
+    const pair = reports => reconcilePair(inventory, reports, testDir, origins);
+    const good = pair(make());
+    assert.equal(good.status, 'FAIL'); assert.equal(good.needsHumanConfirmation, 1);
+    assert.equal(good.baselineStale[0].consistency, HUMAN_CONFIRMATION);
+    assert.equal(good.baselineStale[1].consistency, 'MATCHED_FAIL');
+    for (const side of ['old', 'new']) {
+      assert.equal(good[side].rows[0].status, 'FAIL');
+      assert(good.errors.some(error => error === `${side}: behavioral failure ${caseId(formal)} (failed, expected passed)`));
+    }
+    const timeoutAttempt = staleControlAttempt(formal); timeoutAttempt.status = 'timedOut';
+    assert.equal(failureSignature(timeoutAttempt, testDir), null, 'Even an exact assertion payload cannot match status=timedOut');
+    for (const statuses of [['timedOut', 'failed'], ['failed', 'passed'], ['passed', 'passed'], ['skipped', 'failed'], ['failed', 'failed']]) {
+      const reports = make();
+      for (const [index, side] of ['old', 'new'].entries()) reports[side][0].suites[0].specs[0].tests[0].results[0].status = statuses[index];
+      const result = pair(reports);
+      assert.equal(result.status, 'FAIL'); assert.equal(result.needsHumanConfirmation, 1);
+      assert.equal(result.baselineStale[0].consistency, HUMAN_CONFIRMATION);
+      assert.equal(result.baselineStale[0].behavioralCoverageCredit, 0);
+      assert.equal(result.baselineStale[1].consistency, 'MATCHED_FAIL');
+    }
+    const borrowed = make();
+    const spec = borrowed.new[0].suites[0].specs[1];
+    spec.oldSideNondeterministic = true; spec.oldSideNondeterminism = formal.oldSideNondeterminism;
+    spec.tests[0].results[0] = staleControlAttempt(formal);
+    const result = pair(borrowed);
+    assert.equal(result.status, 'FAIL'); assert.equal(result.needsHumanConfirmation, 1);
+    assert.equal(result.baselineStale[1].consistency, 'FAIL');
+    assert.equal(result.new.rows[1].baselineStale.oldSideNondeterministic, undefined);
+    const borrowedRegistration = [formal, { ...auth, oldSideNondeterministic: true,
+      oldSideNondeterminism: formal.oldSideNondeterminism }];
+    const unchanged = reconcilePair(borrowedRegistration, make(), testDir, origins);
+    assert.equal(unchanged.needsHumanConfirmation, 1);
+    assert.equal(unchanged.baselineStale[1].consistency, 'MATCHED_FAIL', 'Only the immutable reviewed identity supplies pairing policy');
+    assert.equal(staleEntry({ file: formal.file, title: formal.title + ' borrowed', oldSideNondeterministic: true }), undefined);
+    const wrongSource = make(); wrongSource.old[0].config.metadata.frontend = 'new';
+    const invalid = pair(wrongSource);
+    assert.equal(invalid.status, 'FAIL');
+    assert.equal(invalid.baselineStale[0].consistency, HUMAN_CONFIRMATION);
+    assert.equal(invalid.baselineStale[1].consistency, 'FAIL');
+    assert(invalid.errors.some(error => error.includes('report config.metadata')));
   });
   await check('STALE_CASCADE: frozen AST topology, manual non-successor labels, asymmetric sets and PASS predecessor are rejected', async () => {
     assert.equal(SERIAL_TOPOLOGY.length, 28);
