@@ -153,3 +153,176 @@ b5f67c23b55ec827cf4f5f84b514e0d0a24207039cb1c4b0f16d6a83da92bbcb  vendor/tiktoke
 ```
 
 此后改动走本仓提交链。
+
+
+## pilotdeck-yaml：npm yaml 2.9.0 解析与组合移植（第 3 轮）
+
+来源包：`resources/PilotDeck/node_modules/yaml/`（本机只读实路径 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck/node_modules/yaml/`）。基线仓 commit：`cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；package.json 版本 **2.9.0**；Node oracle **v22.22.0**。没有下载额外语料或依赖，生产实现不调用 Node。
+
+移植保留 lexer/parser/composer 的函数、分支及状态机顺序。JS generator 的 yield 用输出队列表示，Rust 所有权通过局部取出/放回处理；节点和转换结果使用索引 arena 保留 alias 身份与环。循环 merge 在 Rust 中显式检测，并返回原版 toJSON 的 RangeError/message，避免无法恢复的原生栈溢出。动态字符串使用 `pilotdeck_protocol::JsString` 的 UTF-16 code units，位置也以 UTF-16 计数。静态 tag/code/version 常量用 Rust 字符串。regex/chrono/ryu-js 和测试 sha2 均复用本 workspace 已锁版本，无新第三方包。
+
+以下表格逐文件登记实际范围；没有用空壳文件冒充未移植的编辑 API。公共 stringify、AST 创建/编辑、reviver、自定义 schema、compat 等留在明确未支持的边界。`cst-scalar` 的读取路径已实现，创建/替换标量是 stringify 后续工作。V8 的栈耗尽点依赖运行时优化与堆栈，未宣称极限栈深度和 Rust 完全相同；固定语料覆盖嵌套深度至 512。`stack.rs` 是 Rust 运行时适配：深集合的组合与较大值图转换使用临时 32 MiB scoped worker 栈，保留递归函数结构；外部 Rc LineCounter 不跨线程。2 MiB 调用线程中的 512 层输入（包括 keepSourceTokens）另行回归。
+
+### 文件对应表
+
+| npm yaml 2.9.0 文件（相对包根） | Rust 对应（相对 `pilotdeck-yaml/src/`） | 范围 |
+|---|---|---|
+| `dist/compose/compose-collection.js` | `compose/compose_collection.rs` | 解析路径移植 |
+| `dist/compose/compose-doc.js` | `compose/compose_doc.rs` | 解析路径移植 |
+| `dist/compose/compose-node.js` | `compose/compose_node.rs` | 解析路径移植 |
+| `dist/compose/compose-scalar.js` | `compose/compose_scalar.rs` | 解析路径移植 |
+| `dist/compose/composer.js` | `compose/composer.rs` | 解析路径移植 |
+| `dist/compose/resolve-block-map.js` | `compose/resolve_block_map.rs` | 解析路径移植 |
+| `dist/compose/resolve-block-scalar.js` | `compose/resolve_block_scalar.rs` | 解析路径移植 |
+| `dist/compose/resolve-block-seq.js` | `compose/resolve_block_seq.rs` | 解析路径移植 |
+| `dist/compose/resolve-end.js` | `compose/resolve_end.rs` | 解析路径移植 |
+| `dist/compose/resolve-flow-collection.js` | `compose/resolve_flow_collection.rs` | 解析路径移植 |
+| `dist/compose/resolve-flow-scalar.js` | `compose/resolve_flow_scalar.rs` | 解析路径移植 |
+| `dist/compose/resolve-props.js` | `compose/resolve_props.rs` | 解析路径移植 |
+| `dist/compose/util-contains-newline.js` | `compose/util_contains_newline.rs` | 解析路径移植 |
+| `dist/compose/util-empty-scalar-position.js` | `compose/util_empty_scalar_position.rs` | 解析路径移植 |
+| `dist/compose/util-flow-indent-check.js` | `—` | compat 专用；基线未使用且选项明确拒绝 |
+| `dist/compose/util-map-includes.js` | `compose/util_map_includes.rs` | 解析路径移植 |
+| `dist/doc/Document.js` | `doc/mod.rs + lib.rs` | 解析构造、directives/schema、toJSON；编辑/clone/toString/reviver 未公开 |
+| `dist/doc/anchors.js` | `doc/anchors.rs` | anchorIsValid；创建节点时自动命名 anchor 不属于解析路径 |
+| `dist/doc/directives.js` | `doc/directives.rs` | add/atDocument/tagName；tagString 在 nodes/stringify_key.rs |
+| `dist/errors.js` | `errors.rs` | YAMLParseError/YAMLWarning 与 UTF-16 prettifyError |
+| `dist/nodes/Alias.js` | `nodes/alias.rs` | resolve/toJSON/getAliasCount；key coercion 的 toString 在 stringify_key.rs |
+| `dist/nodes/Collection.js` | `nodes/mod.rs` | 解析需要的集合类型；路径编辑接口未公开 |
+| `dist/nodes/Node.js` | `nodes/node.rs` | 解析元数据；clone/路径编辑未公开 |
+| `dist/nodes/Pair.js` | `nodes/pair.rs + nodes/add_pair_to_js_map.rs` | Pair 数据与 toJSON；key coercion 在 stringify_key.rs |
+| `dist/nodes/Scalar.js` | `nodes/scalar.rs + nodes/to_js.rs` | Scalar 数据、类型与 toJSON |
+| `dist/nodes/YAMLMap.js` | `nodes/to_js.rs + nodes/stringify_key.rs` | 映射 toJSON / hasAllNullValues；编辑接口未公开 |
+| `dist/nodes/YAMLSeq.js` | `nodes/to_js.rs` | 序列 toJSON；编辑接口未公开 |
+| `dist/nodes/addPairToJSMap.js` | `nodes/add_pair_to_js_map.rs` | 对象/Map/Set 键、合并、复杂键转换 |
+| `dist/nodes/identity.js` | `nodes/mod.rs + nodes/node.rs` | enum 匹配代替 JS identity symbols |
+| `dist/nodes/toJS.js` | `nodes/to_js.rs + doc/anchors.rs` | toJSON 的 keep=false 路径与 alias 身份；原生 Date/Buffer 的 keep=true 未公开 |
+| `dist/parse/cst-scalar.js` | `parse/cst_scalar.rs` | resolveAsScalar；createScalarToken/setScalarValue 随 stringify 后续实现 |
+| `dist/parse/cst-stringify.js` | `parse/cst_stringify.rs` | 解析路径移植 |
+| `dist/parse/cst-visit.js` | `parse/cst_visit.rs` | item 遍历、控制返回、路径查询；Rust 根参数为 CollectionItem |
+| `dist/parse/cst.js` | `parse/cst.rs` | 解析路径移植 |
+| `dist/parse/lexer.js` | `parse/lexer.rs` | 解析路径移植 |
+| `dist/parse/line-counter.js` | `parse/line_counter.rs` | 解析路径移植 |
+| `dist/parse/parser.js` | `parse/parser.rs` | 解析路径移植 |
+| `dist/public-api.js` | `lib.rs` | parseDocument/parseAllDocuments、默认选项与提前停止；parse/stringify 包装未公开 |
+| `dist/schema/Schema.js` | `schema/mod.rs` | 解析 schema；构造/clone/自定义 schema 选项不公开 |
+| `dist/schema/common/map.js` | `schema/tags.rs` | 解析标签，节点构造/修改留到 stringify |
+| `dist/schema/common/null.js` | `schema/common/null.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/common/seq.js` | `schema/tags.rs` | 解析标签，节点构造/修改留到 stringify |
+| `dist/schema/common/string.js` | `schema/common/string.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/core/bool.js` | `schema/core/bool.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/core/float.js` | `schema/core/float.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/core/int.js` | `schema/core/int.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/core/schema.js` | `schema/core/schema.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/json/schema.js` | `schema/json/schema.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/tags.js` | `schema/tags.rs` | core / yaml-1.1 / json / failsafe 标签注册与 knownTags |
+| `dist/schema/yaml-1.1/binary.js` | `schema/yaml_1_1/binary.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/bool.js` | `schema/yaml_1_1/bool.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/float.js` | `schema/yaml_1_1/float.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/int.js` | `schema/yaml_1_1/int.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/merge.js` | `schema/yaml_1_1/merge.rs + schema/tags.rs` | merge 识别、alias 解引用、Map 合并优先级 |
+| `dist/schema/yaml-1.1/omap.js` | `schema/yaml_1_1/omap.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/pairs.js` | `schema/yaml_1_1/pairs.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/schema.js` | `schema/yaml_1_1/schema.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/set.js` | `schema/yaml_1_1/set.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/schema/yaml-1.1/timestamp.js` | `schema/yaml_1_1/timestamp.rs` | 解析标签/resolve；仅 key coercion 所需 stringify 分支 |
+| `dist/stringify/foldFlowLines.js` | `nodes/fold_flow_lines.rs` | 复杂键 flow / quoted 折行 |
+| `dist/stringify/stringify.js` | `nodes/stringify_key.rs` | 仅 toJSON 复杂键所需 flow stringify / props |
+| `dist/stringify/stringifyCollection.js` | `nodes/stringify_key.rs` | 仅复杂键 flow collection 分支 |
+| `dist/stringify/stringifyNumber.js` | `nodes/stringify_key.rs` | 仅复杂键 number 分支 |
+| `dist/stringify/stringifyPair.js` | `nodes/stringify_key.rs` | 仅复杂键 flow pair 分支 |
+| `dist/stringify/stringifyString.js` | `nodes/stringify_key.rs` | 仅复杂键 flow string 分支 |
+| `dist/visit.js` | `doc/anchors.rs` | 仅 Alias.resolve 所需前序遍历；通用 AST 修改 visitor 未公开 |
+
+### 原始来源 sha256
+
+哈希针对本机原始 npm 包字节，而非移植后的 Rust 文件。此处列出所有使用的源码和包元数据/许可证；未修改来源。
+
+```text
+20b8b197cbd10dad245d45e463dfe58e4c8c25a47e24bc4256ad9ab58bf35683  yaml@2.9.0/package.json
+5bba27375d93e9119f76c1015f7672cf9ad5f70952296e0842fb2243d6376869  yaml@2.9.0/LICENSE
+a7db11a1a7987d6412df8adbbb85ccd4370171f82265703b2b6af2d13c45d646  yaml@2.9.0/dist/compose/compose-collection.js
+0f388537747b5c1a241639413f17fc2b5f831451b5017d6902e46db6842a5fe4  yaml@2.9.0/dist/compose/compose-doc.js
+86562c85e4e5737d28b24aae2030b97bc9b672e1f2de5da9e4d25c4571e4345c  yaml@2.9.0/dist/compose/compose-node.js
+37920472755bdaa76399b6d33872f0015ae1fd9ba7faa031c03d501aa8c3e903  yaml@2.9.0/dist/compose/compose-scalar.js
+509c0bdb4cef641cc784c130b6cc2b350752f6841798daa1a13cbcaf4fc74c46  yaml@2.9.0/dist/compose/composer.js
+dcfada448c8fc532ebba96d6788a4b41bb015fc5e697a9544ff429b9c4e4c70a  yaml@2.9.0/dist/compose/resolve-block-map.js
+af562e2e3cd7ee7b3cb9342984177f6b5c77de73121e87695db3ff635e12d152  yaml@2.9.0/dist/compose/resolve-block-scalar.js
+18f54a39d73b600ebbd74a343e6671d0d08423f125bd86963b72dc24d6261911  yaml@2.9.0/dist/compose/resolve-block-seq.js
+532bf56299183e75bb7c20db75321367c28393b66ecb8ffd540faedd9817f116  yaml@2.9.0/dist/compose/resolve-end.js
+242470b54c0deba1507babba2e879f3005ed2ee3bd53a36affb6ecf82fddd375  yaml@2.9.0/dist/compose/resolve-flow-collection.js
+167fa296e6fb75618bb7b315acaa926d4e88b2b63a9ff139f1a7de9c78db4610  yaml@2.9.0/dist/compose/resolve-flow-scalar.js
+0b49c6af0145c309883dbf24d1a00260c0c090412be10aaa301de126dad15983  yaml@2.9.0/dist/compose/resolve-props.js
+60182618fc9fa669e74ab74f4231c15b5d24bc52ab0a419684bb827a00d69be6  yaml@2.9.0/dist/compose/util-contains-newline.js
+460516395ef7e961d5248e047ee6d52084f279b76e8af9f3c2bac92da1c7d656  yaml@2.9.0/dist/compose/util-empty-scalar-position.js
+c7c0c9837a1f828de19eb3ee0947dff39c4f69222c762aed9fa2fe14fc46ee3e  yaml@2.9.0/dist/compose/util-flow-indent-check.js
+0330dc34072cb499493176b293228631ca8ebaaaddcdc0e63b02bf24f6a25c2d  yaml@2.9.0/dist/compose/util-map-includes.js
+9bc1c9a56de3902d554e77193125b6aadcfaec743073b3417b22c95a8f7d7923  yaml@2.9.0/dist/doc/Document.js
+ea9a479b1e98d88235ffa6736d0405e2119e9dde7b5249b72185488ab2527261  yaml@2.9.0/dist/doc/anchors.js
+8f02c3c03571e377e33680b68027d4336234d7a6da3d8c6a8b7f1183c1c428ff  yaml@2.9.0/dist/doc/directives.js
+c389d9c448193ce1bcb9641f5eda62cbe56467b2104357d2fc8dd86df88cb07b  yaml@2.9.0/dist/errors.js
+80a8109b7cb1d0d73eee18463fdd3095d120fa21f49b282444d90d867e291ea1  yaml@2.9.0/dist/nodes/Alias.js
+e2d3ffdc9a997774602e72b296fba641558bc7355c9f12a3ee0502fb1e541306  yaml@2.9.0/dist/nodes/Collection.js
+b57b42071f7ebab633626858656ec5187617f2290c272e87edc57467ef591215  yaml@2.9.0/dist/nodes/Node.js
+d5dad67916ba0e864a892da63265a062c45c15a191349ef50a540f2ddbae93e5  yaml@2.9.0/dist/nodes/Pair.js
+616ac0f6a0a5a6565307a4bb4443691b0dd019c03d6bb8777353750bd3459487  yaml@2.9.0/dist/nodes/Scalar.js
+d140cfc5aa8d28737bd3c993d977d5a10ab81efe221e36708ac45b3cf18f5dce  yaml@2.9.0/dist/nodes/YAMLMap.js
+9f89417f3cba5f22a4436f67a9ff9dce627344b5874d2ed7957ff9acffb030e4  yaml@2.9.0/dist/nodes/YAMLSeq.js
+e4977864d75c1fdbf7fc78c9f4329406e153deccfff090fd812dae2b27e6c2c2  yaml@2.9.0/dist/nodes/addPairToJSMap.js
+1a7cb042ae725ff68d05dc503efbbecbe65281f18b23dfc23f12d1749a440cfe  yaml@2.9.0/dist/nodes/identity.js
+34de93bb4e16abbf317210a7bd1b062ed20acb028cd8395b69b591f433e277b6  yaml@2.9.0/dist/nodes/toJS.js
+2f72b634348b04b395408ac427fb4f8ee67432244c327561d4b755a28a783b34  yaml@2.9.0/dist/parse/cst-scalar.js
+4d14a7a286cff9c1a578ab15839388ea76f77ae79293db25b235394bcc377b51  yaml@2.9.0/dist/parse/cst-stringify.js
+525535fc05841407420be6505804c74d873eb3aaa9319679896f7a24a474ca01  yaml@2.9.0/dist/parse/cst-visit.js
+acc25760d010068844f36f4aefc7fe6f5f6048fd7f8fcc29d4290e154819d1a4  yaml@2.9.0/dist/parse/cst.js
+cb30a2c4628e270ee810530217f3f7bb0f2730ab89f8fbaf1f8a73ccd1883cf5  yaml@2.9.0/dist/parse/lexer.js
+ddfd11ca2cdd42d36bc6c3090a31c21e6bbcc90bf3498bf6aacfbb30c5d79436  yaml@2.9.0/dist/parse/line-counter.js
+0adc5ffa51ffa4c0ceed1f80efa8b188d10f58c7b9389a6d46bc861e6bff34e1  yaml@2.9.0/dist/parse/parser.js
+9b318ac7b3a3751127c74f59dd1dd209230a70ca116000348b82faae189f72f0  yaml@2.9.0/dist/public-api.js
+d3b1bc956a766e2489c36114366f3b3f89762a257ae05ff6271ee3fc8c2a9bf5  yaml@2.9.0/dist/schema/Schema.js
+769207eaa56e34c113da10cdc22da845f92b4080ff2b921a72847a38d3ac03d8  yaml@2.9.0/dist/schema/common/map.js
+f5d5f694ea3a42ef136e0fbcc674dfd7aa0a3da2b8d62183fb750166a12e52bb  yaml@2.9.0/dist/schema/common/null.js
+51fc0e8bfc63d1d9c7c66b0370a069bb33e0dad865080ff76802803597b9909a  yaml@2.9.0/dist/schema/common/seq.js
+51d0b3aafab2ffa4ad9d86656a3b92c4b4824d0a8806423882ea5f92a1bf8d11  yaml@2.9.0/dist/schema/common/string.js
+9fa696b1efc38cf8c73a398f30d9f9841658aa5afd0b7a6b0822947c3991ba7a  yaml@2.9.0/dist/schema/core/bool.js
+139e3964f0e626ad3741500faf51d855ff98eafa2d9e7523cac06260e4515382  yaml@2.9.0/dist/schema/core/float.js
+f0e474254f6877d5dd23bb57017980931ab333a7eaa3d33872247a80d11f754d  yaml@2.9.0/dist/schema/core/int.js
+481d7c64817b40090d519fb65bd83730dadd4c6baec1440b9bf85d29e52c046e  yaml@2.9.0/dist/schema/core/schema.js
+9efdd848455f6e0621feb13f3eb762453cb02b09d5e04b6501163cfb26af27ed  yaml@2.9.0/dist/schema/json/schema.js
+dba2f42d4dbe8cc8b13f662fd97d253da2da5567e71c47115305efede5a888f2  yaml@2.9.0/dist/schema/tags.js
+15d7b0b8516c8190b191ec9a0adaab16808d09751ef534d7829512944072011f  yaml@2.9.0/dist/schema/yaml-1.1/binary.js
+80a0046224dac3437f22e3b27b0180e1aad82277ab2fee4769094c6d12d67b6f  yaml@2.9.0/dist/schema/yaml-1.1/bool.js
+a90c44db83152e4d902d46f667737dac90aa86b401abdefe89371ac3bd03abfe  yaml@2.9.0/dist/schema/yaml-1.1/float.js
+5ff72b08fecc3a924d4a76658a304859db5edb4fadf8893ee837aa06bba60a52  yaml@2.9.0/dist/schema/yaml-1.1/int.js
+9c85b5e026e4369a96f3f7b5bc6c05da102dfa2968950b17986201cfe0be542c  yaml@2.9.0/dist/schema/yaml-1.1/merge.js
+3174270cd59c0f0e3ffd73b3b44c4de679efd5c681325b7aac8e0935d547bee8  yaml@2.9.0/dist/schema/yaml-1.1/omap.js
+46ba76da72ad65a6202358c486c6a3084ab7c48a8eb5be60d241d9e198c5a9b5  yaml@2.9.0/dist/schema/yaml-1.1/pairs.js
+a7320808484dc6d04817b33b2d09b65ead7ffc1c672ab54e068a80972b17702e  yaml@2.9.0/dist/schema/yaml-1.1/schema.js
+e4553b0cbde79090884908f44bb3b4afd04935fc23656a1b87ec1af87f24427a  yaml@2.9.0/dist/schema/yaml-1.1/set.js
+b157c946dc1b8854aadc4e7994b268ec8afe6d916721cb3580e0752c7d15a5f7  yaml@2.9.0/dist/schema/yaml-1.1/timestamp.js
+7819679e80222b80c564ea4a9cf3145fa4d5e28a6cfbac248283ac55b0249761  yaml@2.9.0/dist/stringify/foldFlowLines.js
+38efb5bc5553e98fee58c825a88131c59184368d8689e3e6f43c652a06e9c167  yaml@2.9.0/dist/stringify/stringify.js
+b55fd3b6e3f1346bbcd1fcdc48a59c089b7a4b0e6fac2b46846f7828f9488600  yaml@2.9.0/dist/stringify/stringifyCollection.js
+26a1980d34a21a80704d356d475a0187a24ebcbeb37a2e3b149d4d791bb65598  yaml@2.9.0/dist/stringify/stringifyNumber.js
+bc03ae533d85bf9122e87c0a256c841ae7fbf063499bc3034d49fd9f7b200659  yaml@2.9.0/dist/stringify/stringifyPair.js
+4113b71a9c4c087a197f71452794a6acb9929111f569c973ff4efe7caee8f777  yaml@2.9.0/dist/stringify/stringifyString.js
+a757e3b924af184b25e2386d1678b1fe341805a516ebf9bccee219b47aebd5e7  yaml@2.9.0/dist/visit.js
+```
+
+### ISC 许可原文
+
+```text
+Copyright Eemeli Aro <eemeli@gmail.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+```

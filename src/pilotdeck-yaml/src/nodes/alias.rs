@@ -1,0 +1,83 @@
+// Port of yaml@2.9.0 dist/nodes/Alias.js (ISC); parse/conversion operations.
+use crate::nodes::to_js::Context;
+use crate::{
+    nodes::{NodeId, NodeKind},
+    string::message,
+    value::{ConversionError, Value},
+};
+use pilotdeck_protocol::JsString;
+impl Context<'_> {
+    pub(crate) fn resolve_alias(&self, id: NodeId) -> Option<NodeId> {
+        let NodeKind::Alias(name) = &self.doc.nodes[id].kind else {
+            return Some(id);
+        };
+        let mut found = None;
+        for n in &self.order {
+            if *n == id {
+                break;
+            }
+            if self.doc.nodes[*n].anchor.as_ref() == Some(name) {
+                found = Some(*n);
+            }
+        }
+        found
+    }
+    pub(crate) fn alias(&mut self, id: NodeId, name: &JsString) -> Result<Value, ConversionError> {
+        let Some(source) = self.resolve_alias(id) else {
+            return Err(ConversionError::new(
+                "ReferenceError",
+                message(
+                    "Unresolved alias (the anchor must be set before the alias): ",
+                    name,
+                ),
+            ));
+        };
+        if !self.anchors.contains_key(&source) {
+            self.convert(Some(source))?;
+        }
+        let Some(data) = self.anchors.get_mut(&source) else {
+            return Err(ConversionError::new(
+                "ReferenceError",
+                "This should not happen: Alias anchor was not resolved?",
+            ));
+        };
+        data.count += 1;
+        if data.alias_count == 0 {
+            let count = self.alias_count(source);
+            self.anchors.get_mut(&source).unwrap().alias_count = count;
+        }
+        let data = self.anchors.get(&source).unwrap();
+        if data.count.saturating_mul(data.alias_count) > 100 {
+            return Err(ConversionError::new(
+                "ReferenceError",
+                "Excessive alias count indicates a resource exhaustion attack",
+            ));
+        }
+        Ok(data.res.clone())
+    }
+    pub(crate) fn alias_count(&self, id: NodeId) -> usize {
+        match &self.doc.nodes[id].kind {
+            NodeKind::Alias(_) => self
+                .resolve_alias(id)
+                .and_then(|id| self.anchors.get(&id))
+                .map_or(0, |a| a.count.saturating_mul(a.alias_count)),
+            NodeKind::Seq(items) => items
+                .iter()
+                .map(|n| self.alias_count(*n))
+                .max()
+                .unwrap_or(0),
+            NodeKind::Map(pairs)
+            | NodeKind::Set(pairs)
+            | NodeKind::OMap(pairs)
+            | NodeKind::Pairs(pairs) => pairs
+                .iter()
+                .map(|p| {
+                    self.alias_count(p.key)
+                        .max(p.value.map_or(1, |v| self.alias_count(v)))
+                })
+                .max()
+                .unwrap_or(0),
+            _ => 1,
+        }
+    }
+}
