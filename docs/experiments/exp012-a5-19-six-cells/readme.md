@@ -3,23 +3,27 @@ type: experiment
 number: "012"
 date: 2026-10-14
 title: A5.2 · #19 六格 TS 进程内实测
-status: 实测与记录完成；修法与评分口径待人决定
+status: 第 2 轮 FIFO 装置修正、重测与撤回完成；修法与评分口径待人决定
 related: [plan/005_phase-a-session-domain, research/008_phase-a-session-domain/gap, research/008_phase-a-session-domain/decision]
 ---
 
-# exp012 · #19 六格实测
+# exp012 · #19 六格实测（PR #71 第 2 轮）
 
-**六格已实测；240 次测量，48 个「子例 × 等待阶段」组合均在 5 次重复中得到一致的三面语义观察。** 有 registry / 快写的受控 timeout-first 中，客户端只收到运行前缀；durable status 为 `turn_timeout → gateway_submit_failed`；真实 FileRunRegistry 的 events 包含两套 status/error，最终 result 为 `gateway_submit_failed`。这只是指定交错的基线事实，不是修法、豁免或评分决定。
+**本轮 280 次测量，28 个子例 × model/tool 两阶段 × 5 次；56 组全部稳定。快格与 PR HEAD 的 20 组摘要、100 次完整语义观察一致。** 改用真实 FIFO 后，原有 8 个慢子例均与对应快写结果一致；新增 4 个 G append 慢镜像子例也未倒序。当前 raw 全部为本轮重跑产物。
 
-## 假设与授权边界
+## 撤回上一轮结论
 
-测前假设来自 [gap §四](../../research/008_phase-a-session-domain/gap.md#四19宿主竞态的可定位部分与不可冒认部分)：timeout、unknown catch、队列关闭、外层 complete 是不同边界；三份观察可能不一致。实验没有把任何具体帧、状态次数或 registry result 预设为“应当”。脚本只检查装置完整性、原始读取一致性与注入确已发生；结果表由跑完的 JSON 生成。
+Claude 指出的 P1 成立。**撤回“慢 status 让次序倒转”和“慢 append 时 result 是 T”两条结论。它们是旧装置绕过基线 FIFO 造成的，不能作为生产基线证据。**
 
-已读 [计划 005 A5.2](../../plan/005_phase-a-session-domain.md)、[D4 与人的拍板](../../research/008_phase-a-session-domain/decision.md)、CLAUDE.md 的“仲裁要实测”，以及 [#19 正文及全部 6 条评论](https://github.com/zhengdaqi/pilotdeck-rs/issues/19)。其中 [最新人的两步决定](https://github.com/zhengdaqi/pilotdeck-rs/issues/19#issuecomment-6162244998)要求先交证据再定口径。本轮只做这一步；未改产品、state、resources 或冻结尺子，未提交、未发 issue 评论。
+旧 `recordStatus` 自行写 JSONL，barrier 没有进入 `JsonlTranscriptWriter.writeTail`，因此允许后调用的 G 先落盘。旧 registry 慢注入在调用 `originalAppend` 之前，T 尚未进入 `FileRunRegistry.mutationChain`，G 就能抢先入队。旧报告的 durable `G → T`、慢格客户端 `S(G) → E(G)`（无 registry 时后接 T）及成功慢写下最终 `E(T)` 都来自这一装置错误，本轮不再出现。
 
-## 做法与可复现命令
+修正后，成功写入的 durable status 均为 `T → G`；registry 成功写入的收尾均为 `S(T) → E(T) → S(G) → E(G)`，result 为 `E(G)`。原 8 个慢子例中唯一 result 为 `E(T)` 的仍是 `catch-append-fails-status-slow`：G 的 error snapshot 写入失败，盘上保留 T；这与相应快写失败子例一致，**原因是 G persist 失败，不是慢写超车**。新增镜像也不支持旧结论。
 
-脚本：[scripts/a5-19/six_cells.mts](../../../scripts/a5-19/six_cells.mts)。本次 Node **v22.22.0**；只读基线 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck` @ `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。工作树 HEAD、脚本 hash、524 个实际导入 TS 文件的 SHA-256、执行目录和所有摘要见 [manifest.json](raw/manifest.json)。导入源码的前后 hash 一致；基线 tracked 文件无改动（只读检查见到的既有 untracked 项为 `tools/agent-loop-parity/__pycache__/`）。
+## 授权边界与复现
+
+只测量、修装置和报告；未改产品、state、resources 或冻结尺子，未提交、未发 issue 评论。原任务依据仍为 [计划 005 A5.2](../../plan/005_phase-a-session-domain.md)、[gap §四](../../research/008_phase-a-session-domain/gap.md#四19宿主竞态的可定位部分与不可冒认部分)和 [D4](../../research/008_phase-a-session-domain/decision.md)。本轮根据 PR #71 第 2 轮任务处理装置 P1 和 GLM 的 G append 慢补测，不重新定修法、接受差异或评分口径。
+
+脚本：[six_cells.mts](../../../scripts/a5-19/six_cells.mts)。Node **v22.22.0**；只读基线 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck` @ `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。本轮工作树 HEAD 为 `c5ab36fb2884892366adf7923305fc0fe5130c46`，脚本 hash、524 个实际导入 TS 源文件 hash 和全部摘要见 [manifest.json](raw/manifest.json)。manifest 的每个来源仍采用对象分行写 `path`、`sha256`，保留 gitleaks 误报修法。
 
 ```sh
 cd /Users/da/ws/pilotdeck-rs/_build/wt-a5x
@@ -27,108 +31,105 @@ node --check scripts/a5-19/six_cells.mts
 node scripts/a5-19/six_cells.mts
 ```
 
-两条命令已成功执行，完整运行 exit 0。脚本自己在 `_tmp/20261014-a5-19/run-*/home` 设置 `PILOT_HOME`，发生在导入任何基线模块之前；每次运行新建目录。没有 listen、服务、真实 sidecar 子进程、模型请求、工具执行或二进制下载。只有只读 `git rev-parse` 子进程用于身份记录。Node 的 ExperimentalWarning（TypeScript 转换与依赖图中的 SQLite）原样保留于 `_tmp/20261014-a5-19/run.log`，不是失败。
+两条命令均 exit 0；最终输出 `DONE 280 measurements; 0 unstable variant/phase groups; 524 unchanged baseline source files.` 本轮日志为 `_tmp/20261014-a5-19/check-r2.log`、`run-r2.log`，快格对比记录为该目录的 `fast-comparison-r2.json`。Node 的 TypeScript / SQLite ExperimentalWarning 不算失败。脚本在导入基线前把 `PILOT_HOME` 指向新的 `_tmp/20261014-a5-19/run-*/home`。无 listen、模型请求、实际工具执行、sidecar 子进程或二进制下载；只读 git 子进程用于记录身份。
 
-1. 用 `registerHooks` 将基线内部 `.js` specifier 解析到原 `.ts`；用 Node 内置 `stripTypeScriptTypes(..., {mode: 'transform'})` 在内存加载。纯 strip 不支持基线的 constructor parameter properties，所以用内置 transform；没有复制源码、生成 JS、改源码文本或安装依赖。
-2. 实际构造基线 **InProcessGateway → SessionRouter → AgentSession → TurnRunner → 注入 loop**。loop 在 model 等待标记或 tool_calls_detected 标记后停在手动 Promise；unknown 分支抛基线 `AgentLoopResultUnknownError`，known 分支 yield 已知完成事件并 return。真实 TurnRunner 自己决定 timeout unknown 的重抛和 unknown-first 的失败投影；没有伪造 gateway catch 输出。
-3. “模型等待 / 工具等待”是注入 loop 的两种边界，工具分支多一个 `tool_call_started` 前缀帧。这里没有运行真实模型或工具，也没有运行 Module transport / SessionOperationLedger；loop 的 `result_unknown/DEADLINE_EXCEEDED` 日志是受控输入，**不是从真实 sidecar 录制的 final**。
-4. deadline 用捕获指定 `timeoutMs=123456` 的真实 callback 手动触发；保留其原始 abort、status、publish、close 逻辑。`now` 固定，故不是测量 123456ms 的墙钟等待。其它 timer 不改；15 秒 watchdog 只用于识别装置挂起。没有靠 sleep 猜交错。
-5. `recordAgentStatusMessage` 接到注入的磁盘 JSONL status store，路径经真实 `recordGatewayStatusMessage` / router / session / TurnRunner 到 writer。快=无额外 barrier（同步文件写后 Promise 返回）；慢=只阻塞 timeout status，允许 catch status 先提交；失败=在指定 status 写入前抛 EIO。观察最终必须重读 status 文件，不能拿帧推断。普通 transcript 另存并嵌入 raw。
-6. 有 registry 时始终用基线 **FileRunRegistry**，保留 accept、文件锁、refresh、mutation chain、atomic snapshot、终态判断与 seq/revision/result 语义；符合生产 `createLocalGateway.ts:996` 默认选择的类。慢 append 在调用实际 append 前阻塞 timeout status/error 两帧，catch append 可先完成。append 故障是在该实例的 `persist` 内存变更之后、真正 snapshot 写盘之前抛一次 EIO；没有用 mock events/result 替代它。此故障点有实际“内存已变、盘未变”的差异，raw 保留 `memoryRecordsAtFailure`。最终直接读 JSON 文件，再新建 FileRunRegistry 读 get/events，两路核对。
-7. 客户端通过真实 `submitTurn` async iterator 收帧，收到前缀后暂停消费，维持外层 finally 尚未 complete；因此可把 unknown 放在 queue.close 之后、complete 之前。被动包裹真实 AsyncQueue 的 enqueue/close 和真实 fence 的 isCurrent/complete，只记录并同步委托原实现；不延迟/改写队列方法或 fence 结果。另有 after-complete 子例先消费到 done，再释放 unknown。
-8. 所有子例串行，每个 model/tool 阶段重复 5 次。raw 中保留未归一化帧、文件原文、record/events、错误堆栈和全过程序号。重复比较仅忽略 registry record 的墙钟 `acceptedAt/updatedAt`、`ownerPid`，以及 status detail 的随机 `errorId`；帧顺序、完整 payload、status 顺序、events/seq、state/revision/lastSeq/result 全保留。时间线诊断步骤的微任务交错没有声称逐字节一致；这也不是冻结评分器的归一化规则。
+## 装置与真实串行化边界
 
-## 观察到的结果：六格
+1. 实际构造基线 `InProcessGateway → SessionRouter → AgentSession → TurnRunner → 注入 loop`，以及真实 `JsonlTranscriptWriter → JsonlSessionEventStore → JsonlSessionPersistence` 和可选的 `FileRunRegistry`。通过 `registerHooks` 解析原 `.ts`，只用 Node 内置 transform 加载；不复制、补丁或改写基线源码。
+2. **同一会话的普通 transcript 和 gateway status 共用一个真实 writer。** 外层 `recordAgentStatusMessage` 只记 `status.attempt` 并同步调用原方法。延迟 / EIO 只发生在其底层 `eventStore.append` 内，此时真实 `writeTail` 已入队。未命中注入的操作调用原 `JsonlSessionEventStore.append`，经过真实持久化链落盘。普通 transcript 不再用自制 store。底层 `now/uuid` 是确定性夹具，原始 transcript sequence、entryId、parentEntryId 全保留。
+3. status 慢时，先等 T 的 `status.block`，释放 loop unknown，再等 G 的 `status.attempt`；确认 G 尚未进入底层 store 后才释放 T。**不再等待 G 已发布**，因为 G 必须排在 T 后；沿用旧等待条件会在真实 FIFO 内死锁。
+4. registry 的慢 / EIO **都在真实 `persist` 内、mutationChain 和文件锁内，内存变更之后、atomic snapshot 写盘之前**。外层 append 只记录并立即调用原方法。T 慢或 G 慢都在所选目标的第一个 persist（一般为 S；T status 失败时为 E）持有同一 gate；后续同目标 error persist 经过已释放的 gate。控制器等 G error append 已调用但还未进入 persist，确认没有越过阻塞操作，再释放 gate。失败子例只对指定 error persist 抛一次 EIO，保留失败时内存和磁盘记录。
+5. `status.attempt/store.enter` 和 `registry.append.attempt/persist.enter` 分开记录。装置逐次检查调用顺序与内部进入顺序一致，且底层 append / persist 不并发；慢子例另有 `control.status.fifo.checked` / `control.registry.fifo.checked`。断言约束注入边界及观察完整性，不预设生产应返回哪套帧或 result。
+6. deadline 捕获指定 `timeoutMs=123456` 的原 callback 后手动触发；其 abort/status/publish/close 逻辑不变。loop 在 model 或 tool 标记后停在 Promise，unknown 分支抛真实 `AgentLoopResultUnknownError`。未执行真实模型、工具、Module ledger 或 sidecar；固定时钟和 gate 仅用于构造可复现交错。15 秒 watchdog 用于发现装置挂起，不用 sleep 猜顺序。
+7. 客户端通过真实 async iterator 收帧，前缀后暂停消费以保持外层 completion fence current。enqueue/close、fence 方法都只作同步被动记录；after-complete 另测消费到 done 后再释放 unknown。每个子例串行，model/tool 各 5 次。
+8. durable 原文现在是**完整真实 transcript 文件**，`durableStatus.entries` 从独立读盘结果筛选 `type=agent_status_message`，不再来自额外 status 文件；无 status 只表示没有 status entry，不表示整个 transcript 为空。registry 同时直接读盘并用 fresh instance 的 get/events 复核。重复比较保留完整帧、status entry 和 registry event/record，仅忽略 record 的墙钟时间/PID、status detail 随机 errorId；未改冻结评分器。
 
-以下均为**已经观测到**的值，核心六格采用 timeout-first/current-handle。简称：`T=turn_timeout`、`G=gateway_submit_failed`、`U=result_unknown`、`F=turn_failed`、`I=agent_invalid_state`；`S(x)=agent_status(event=x)`、`E(x)=error(code=x)`、`C(x)=turn_completed(finishReason=x)`。
+## 六格新结果
 
-表中只省略共同运行前缀：model 为 `turn_started → input_accepted → model_request_started`；tool 另加 `tool_call_started`。`∅` 表示没有收到收尾帧，**不是观察器为空**；raw 包含前缀及完整帧内容。
+均为观测值，核心六格为 timeout-first/current-handle。`T=turn_timeout`、`G=gateway_submit_failed`、`U=result_unknown`、`F=turn_failed`、`I=agent_invalid_state`；`S(x)=agent_status`、`E(x)=error`、`C(x)=turn_completed(finishReason=x)`。
 
-| 六格 | 实际客户端收尾帧 | durable status 实际顺序 | registry 实际结果 | 五次重复 |
+只省略正常前缀：model 为 `turn_started → input_accepted → model_request_started`，tool 多一个 `tool_call_started`。`∅` 表示未收到收尾，观察器仍有完整前缀。
+
+| 六格 | 客户端收尾帧 | durable status | registry 磁盘结果 | 重复 |
 |---|---|---|---|---|
-| 无 registry / 快 | S(T) → E(T) | T → G | 不适用 | model、tool 各 5/5 一致 |
-| 无 registry / 慢 | S(G) → E(G) → S(T) → E(T) | G → T | 不适用 | model、tool 各 5/5 一致 |
-| 无 registry / 失败 | timeout status 失败：E(T)；catch status 失败：S(T) → E(T) | 前者仅 G；后者仅 T | 不适用 | 2 子例 × 2 阶段各 5/5 一致 |
-| 有 registry / 快 | ∅，只收到运行前缀 | T → G | events 含 S(T), E(T), S(G), E(G)；state=failed，result=E(G) | model、tool 各 5/5 一致 |
-| 有 registry / 慢 | status 慢：S(G) → E(G)；仅 append 慢：∅；二者均慢：S(G) → E(G) | 分别 G → T、T → G、G → T | 三个子例 events 均为 S(G), E(G), S(T), E(T)；state=failed，result=E(T) | 3 子例 × 2 阶段各 5/5 一致 |
-| 有 registry / 失败 | 随故障点/次序不同：∅、S(G) → E(G)、或 S(G) → E(U) | 仅 G、仅 T、T → G 或 G → T | state 均 failed，result 为 E(G) 或 E(T)；详见逐子例表 | 8 子例 × 2 阶段各 5/5 一致 |
+| 无 registry / 快 | S(T) → E(T) | T → G | 不适用 | 核心两阶段各 5/5 |
+| 无 registry / 慢 | S(T) → E(T) | T → G | 不适用 | 两阶段各 5/5 |
+| 无 registry / 失败 | T status 失败：E(T)；G status 失败：S(T) → E(T) | 前者仅 G；后者仅 T | 不适用 | 2 子例 × 2 阶段，各 5/5 |
+| 有 registry / 快 | ∅（仅前缀） | T → G | S(T) → E(T) → S(G) → E(G)；failed / E(G) | 核心两阶段各 5/5 |
+| 有 registry / 慢 | ∅（仅前缀） | T → G | 5 个子例均 S(T) → E(T) → S(G) → E(G)；failed / E(G) | 5 子例 × 2 阶段，各 5/5 |
+| 有 registry / 失败 | 全部 ∅（仅前缀） | T status 失败仅 G；G status 失败仅 T；append 失败均 T → G | G error append 失败为 failed / E(T)，其余 failed / E(G)；详见逐项表 | 10 子例 × 2 阶段，各 5/5 |
 
-### timeout-first 的每个 writer 子例
+### 每个 writer 子例
 
-本表的 seq/revision/lastSeq 是 model 阶段；tool 因多一个真实投影前缀，所有收尾 seq、revision、lastSeq 均加 1，其余三面顺序与结果相同。每一行的 model 和 tool 都分别 5/5 一致。故障行的 “status 失败” 是 JSONL writer 故障；“append 失败” 是指定 **error 帧**的真实 registry persist 故障。
+以下 seq/revision/lastSeq 为 model；tool 因多一个前缀全部加 1，其余顺序和结果相同。每行两阶段分别 5/5 一致。名称中的 `append-slow` 保留旧名，表示 T 慢；新增 `catch-append-slow` 表示 G 慢，共覆盖正常 status、T status 慢、T status 失败、G status 失败四个镜像。镜像改变阻塞目标，**不绕过 FIFO 强行让 G 先调用**。
 
-| 六格 / 子例（与 raw variant.name 相同） | 实际客户端收尾 | 实际 durable status | 磁盘 registry 收尾 events（seq） | state / result | revision / lastSeq | 重复 |
-|---|---|---|---|---|---|---|
-| 无 registry / 快 / `fast` | S(T) → E(T) | T → G | 不适用 | 不适用 | 不适用 | 两阶段各 5/5 |
-| 无 registry / 慢 / `status-slow` | S(G) → E(G) → S(T) → E(T) | G → T | 不适用 | 不适用 | 不适用 | 两阶段各 5/5 |
-| 无 registry / 失败 / `timeout-status-fails` | E(T) | G | 不适用 | 不适用 | 不适用 | 两阶段各 5/5 |
-| 无 registry / 失败 / `catch-status-fails` | S(T) → E(T) | T | 不适用 | 不适用 | 不适用 | 两阶段各 5/5 |
-| 有 registry / 快 / `fast` | ∅（仅收到前缀） | T → G | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 | 两阶段各 5/5 |
-| 有 registry / 慢 / `status-slow-append-fast` | S(G) → E(G) | G → T | 4:S(G) → 5:E(G) → 6:S(T) → 7:E(T) | failed / E(T) | 8 / 7 | 两阶段各 5/5 |
-| 有 registry / 慢 / `status-fast-append-slow` | ∅（仅收到前缀） | T → G | 4:S(G) → 5:E(G) → 6:S(T) → 7:E(T) | failed / E(T) | 8 / 7 | 两阶段各 5/5 |
-| 有 registry / 慢 / `both-slow` | S(G) → E(G) | G → T | 4:S(G) → 5:E(G) → 6:S(T) → 7:E(T) | failed / E(T) | 8 / 7 | 两阶段各 5/5 |
-| 有 registry / 失败 / `timeout-status-fails-append-fast` | ∅（仅收到前缀） | G | 4:E(T) → 5:S(G) → 6:E(G) | failed / E(G) | 7 / 6 | 两阶段各 5/5 |
-| 有 registry / 失败 / `catch-status-fails-append-fast` | ∅（仅收到前缀） | T | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 | 两阶段各 5/5 |
-| 有 registry / 失败 / `timeout-status-fails-append-slow` | ∅（仅收到前缀） | G | 4:S(G) → 5:E(G) → 6:E(T) | failed / E(T) | 7 / 6 | 两阶段各 5/5 |
-| 有 registry / 失败 / `catch-status-fails-append-slow` | ∅（仅收到前缀） | T | 4:S(G) → 5:E(G) → 6:S(T) → 7:E(T) | failed / E(T) | 8 / 7 | 两阶段各 5/5 |
-| 有 registry / 失败 / `timeout-append-fails-status-fast` | ∅（仅收到前缀） | T → G | 4:S(T) → 5:S(G) → 6:E(G) | failed / E(G) | 7 / 6 | 两阶段各 5/5 |
-| 有 registry / 失败 / `catch-append-fails-status-fast` | ∅（仅收到前缀） | T → G | 4:S(T) → 5:E(T) → 6:S(G) | failed / E(T) | 7 / 6 | 两阶段各 5/5 |
-| 有 registry / 失败 / `timeout-append-fails-status-slow` | S(G) → E(G) | G → T | 4:S(G) → 5:E(G) → 6:S(T) | failed / E(G) | 7 / 6 | 两阶段各 5/5 |
-| 有 registry / 失败 / `catch-append-fails-status-slow` | S(G) → E(U) | G → T | 4:S(G) → 5:S(T) → 6:E(T) | failed / E(T) | 7 / 6 | 两阶段各 5/5 |
+| 六格 / 子例（raw variant.name） | 客户端收尾 | durable status | 磁盘 registry 收尾 events（model seq） | state / result | revision / lastSeq |
+|---|---|---|---|---|---|
+| no-registry-fast / `fast` | S(T) → E(T) | T → G | 不适用 | 不适用 | 不适用 |
+| no-registry-slow / `status-slow` | S(T) → E(T) | T → G | 不适用 | 不适用 | 不适用 |
+| no-registry-failure / `timeout-status-fails` | E(T) | G | 不适用 | 不适用 | 不适用 |
+| no-registry-failure / `catch-status-fails` | S(T) → E(T) | T | 不适用 | 不适用 | 不适用 |
+| registry-fast / `fast` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-slow / `status-slow-append-fast` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-slow / `status-fast-append-slow` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-slow / `both-slow` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-slow / `status-fast-catch-append-slow` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-slow / `status-slow-catch-append-slow` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-failure / `timeout-status-fails-append-fast` | ∅ | G | 4:E(T) → 5:S(G) → 6:E(G) | failed / E(G) | 7 / 6 |
+| registry-failure / `catch-status-fails-append-fast` | ∅ | T | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-failure / `timeout-status-fails-append-slow` | ∅ | G | 4:E(T) → 5:S(G) → 6:E(G) | failed / E(G) | 7 / 6 |
+| registry-failure / `catch-status-fails-append-slow` | ∅ | T | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-failure / `timeout-status-fails-catch-append-slow` | ∅ | G | 4:E(T) → 5:S(G) → 6:E(G) | failed / E(G) | 7 / 6 |
+| registry-failure / `catch-status-fails-catch-append-slow` | ∅ | T | 4:S(T) → 5:E(T) → 6:S(G) → 7:E(G) | failed / E(G) | 8 / 7 |
+| registry-failure / `timeout-append-fails-status-fast` | ∅ | T → G | 4:S(T) → 5:S(G) → 6:E(G) | failed / E(G) | 7 / 6 |
+| registry-failure / `catch-append-fails-status-fast` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) | failed / E(T) | 7 / 6 |
+| registry-failure / `timeout-append-fails-status-slow` | ∅ | T → G | 4:S(T) → 5:S(G) → 6:E(G) | failed / E(G) | 7 / 6 |
+| registry-failure / `catch-append-fails-status-slow` | ∅ | T → G | 4:S(T) → 5:E(T) → 6:S(G) | failed / E(T) | 7 / 6 |
 
 ### 次序与 complete 边界补测
 
-这些子例放在对应 fast 格的 raw 内，分别覆盖两种 registry 拓扑、model/tool 阶段，各重复 5 次；不替代慢/失败格。
+这些子例放在 fast 格，不替代慢 / 失败格；两拓扑、两阶段均各 5/5，与 PR HEAD 的语义结果一致。
 
-| 拓扑 / 实际控制次序 | 实际客户端收尾 | 实际 durable status | registry events（model seq） | state / result | 重复 |
+| 六格 / 子例（raw variant.name） | 客户端收尾 | durable status | 磁盘 registry 收尾 events（model seq） | state / result | revision / lastSeq |
 |---|---|---|---|---|---|
-| 无 registry / `unknown-first` | S(F) → E(I) → C(model_error) | F | 不适用 | 不适用 | 两阶段各 5/5 |
-| 无 registry / `known-final-first` | C(completed) | ∅（文件为空） | 不适用 | 不适用 | 两阶段各 5/5 |
-| 无 registry / `after-complete` | S(T) → E(T) | T | 不适用 | 不适用 | 两阶段各 5/5 |
-| 无 registry / `known-final-before-timeout-pending` | S(T) → E(T) | T | 不适用 | 不适用 | 两阶段各 5/5 |
-| 有 registry / `unknown-first` | S(F) → E(I) → C(model_error) | F | 4:S(F) → 5:E(I) → 6:C(model_error) | completed / C(model_error) | 两阶段各 5/5 |
-| 有 registry / `known-final-first` | C(completed) | ∅（文件为空） | 4:C(completed) | completed / C(completed) | 两阶段各 5/5 |
-| 有 registry / `after-complete` | ∅（仅收到前缀） | T | 4:S(T) → 5:E(T) | failed / E(T) | 两阶段各 5/5 |
-| 有 registry / `known-final-before-timeout-pending` | ∅（仅收到前缀） | T | 4:S(T) → 5:E(T) | failed / E(T) | 两阶段各 5/5 |
+| no-registry-fast / `unknown-first` | S(F) → E(I) → C(model_error) | F | 不适用 | 不适用 | 不适用 |
+| no-registry-fast / `known-final-first` | C(completed) | ∅ | 不适用 | 不适用 | 不适用 |
+| no-registry-fast / `after-complete` | S(T) → E(T) | T | 不适用 | 不适用 | 不适用 |
+| no-registry-fast / `known-final-before-timeout-pending` | S(T) → E(T) | T | 不适用 | 不适用 | 不适用 |
+| registry-fast / `unknown-first` | S(F) → E(I) → C(model_error) | F | 4:S(F) → 5:E(I) → 6:C(model_error) | completed / C(model_error) | 7 / 6 |
+| registry-fast / `known-final-first` | C(completed) | ∅ | 4:C(completed) | completed / C(completed) | 5 / 4 |
+| registry-fast / `after-complete` | ∅ | T | 4:S(T) → 5:E(T) | failed / E(T) | 6 / 5 |
+| registry-fast / `known-final-before-timeout-pending` | ∅ | T | 4:S(T) → 5:E(T) | failed / E(T) | 6 / 5 |
 
-- **unknown-first**：loop 先交 unknown，尚未触发本地 timeout。真实 TurnRunner 记录 `turn_failed`、投影 `agent_invalid_state` 和 `turn_completed(model_error)`；timer 已被清除，后续手动触发请求被跳过。有 registry 的 `state=completed` 是其对 `turn_completed` 的实际分类，**不能解读为该轮成功**；result 的 finishReason 是 model_error。
-- **known-final-first**：loop 的已知结果已 return、AgentSession 已结束，gateway 发布完成帧并清 timer；没有 status 写入，磁盘 status 文件实际为空，raw 显式解释空值。
-- **known-final-before-timeout-pending**：loop 已 yield 已知 `turn_completed`，但受控阻塞其 return；TurnRunner 尚未把完成事件向外发布。这时触发 timeout，最终观察仍为 timeout，不能把“loop 先产生完成事件”直接等同于“gateway 已接受完成终态”。此例不冒充真实 Module known final 仲裁。
-- **after-complete**：先等外层 fence.complete 与客户端 done，再释放 unknown。实际 `isCurrent=false`，没有新增 G status、G 帧或 G registry event。它与核心快写格的 close-before-complete 有明确不同。
+- unknown-first：未 abort 的 unknown 由真实 TurnRunner 投影为 F/I/C(model_error)；timer 已清除，后续触发请求被跳过。registry 的 completed 是其对 turn_completed 的分类，result finishReason 仍为 model_error，不代表成功。
+- known-final-first：已知结果已 return、AgentSession 已结束，gateway 发布完成帧并清 timer；transcript 没有 status entry。
+- known-final-before-timeout-pending：loop 已 yield 已知完成，但其 return 被阻塞，TurnRunner 尚未向外发布完成；timeout 最终仍生效。此例不能冒充真实 Module known final 仲裁。
+- after-complete：客户端已 done 且 fence.complete 后才释放 unknown；current=false，未新增 G status / 帧 / registry event。
 
 ## 独立证据与自检
 
-每个 observation 有 `frames`（客户端实际消费）、`durableStatus.rawText/entries`（独立读文件）、`registry.rawText/record/events`（直接读盘 + 新实例 get/events），以及按发生顺序编号的 `timeline`。每次 append 成功后还直接读盘保存 `diskRecordAfterAppend`；故障点同时保留 `memoryRecordsAtFailure` 和 `diskRecordAtFailure`，可以独立复核中间 result 的覆盖和失败时的内存/磁盘差别。registry 未配置时明确 `applicable=false`；已知完成分支 status 空文件有 `emptyReason`。不会把写入尝试或失败时的内存候选当成 durable 成功。
+六格 raw 分别为 [无 registry 快](raw/no-registry-fast.json) 50 次、[慢](raw/no-registry-slow.json) 10 次、[失败](raw/no-registry-failure.json) 20 次；[有 registry 快](raw/registry-fast.json) 50 次、[慢](raw/registry-slow.json) 50 次、[失败](raw/registry-failure.json) 100 次。raw 嵌入完整 transcript / registry 原文、未归一化 payload、完整 timeline 和错误堆栈，不依赖保留 `_tmp` 才能复核。
 
-- 无 registry 快格：[no-registry-fast.json](raw/no-registry-fast.json)，50 次（核心 + 四种次序补测）。
-- 无 registry 慢格：[no-registry-slow.json](raw/no-registry-slow.json)，10 次。
-- 无 registry 失败格：[no-registry-failure.json](raw/no-registry-failure.json)，20 次。
-- 有 registry 快格：[registry-fast.json](raw/registry-fast.json)，50 次。
-- 有 registry 慢格：[registry-slow.json](raw/registry-slow.json)，30 次。
-- 有 registry 失败格：[registry-failure.json](raw/registry-failure.json)，80 次。
+- 56 组 × 5 全部稳定；各要求的 gate / 故障均触发；读盘 status 与 commit journal、registry 与 fresh reader、客户端帧与真实 open queue 发布逐项一致。
+- 六个观察副本破坏对照均检出：删除 timeout 帧、删除 durable status、漏掉 registry event、隐藏 result 的 T→G 覆盖，以及分别倒置 status.store.enter / registry.persist.enter 顺序。对照不写生产存储。
+- 两个 fast 格全部 20 组摘要与 HEAD 完全一致；100 次完整语义观察逐项比较帧、status payload、registry events/record 也一致。新真实 transcript 的 sequence/entry 元数据没有与旧自制 status 序号混比；两者格式差异不算帧或持久 status 内容变化。
+- `git diff --check` 通过；`gitleaks dir --no-banner --no-color --redact docs/experiments/exp012-a5-19-six-cells` 扫描约 8.62 MB，exit 0 / no leaks found，日志为 `_tmp/20261014-a5-19/gitleaks-r2.log`。
+- 524 个导入基线文件前后 SHA-256 一致；基线 tracked 源码无变化（既有 untracked `tools/agent-loop-parity/__pycache__/`）。脚本和 manifest hash 相符；路径 / hash 分行格式保持。
 
-装置检查均通过：48 组 × 5；三面完整性；所有要求的 barrier / 故障确实触发；status 原文与提交日志一致；registry 原文与 fresh reader 一致；帧与真实 open queue 发布一致；导入基线 hash 前后一致。四个独立破坏对照也均被检出：删除实际 timeout error 帧、删掉一个 durable status、漏读一个 registry event、把已读 result 的 G 覆盖隐藏成 T。对照只破坏观察副本，不写产品或真实存储。
+可直接核查以下本轮 `model/1` timeline：
 
-可直接复核 `registry-fast.json` 的 `fast/model/1`：timeline order 29 为首次 queue.close，33 的 fence.current=true，34–35 写入并提交 G；39–46 四次 append 成功之后才 enqueue，此时 closed=true；50 才 fence.complete。对应盘上 seq 4–7 是 S(T), E(T), S(G), E(G)，result=E(G)。这些顺序号来自本次 raw，不是源码推测。
-
-## 与静态分析的一致处、不一致处及新增边界
-
-| 静态说法 / 待核问题 | 实测关系 |
+| raw / 子例 | 关键 order 与证据 |
 |---|---|
-| handle 在外层 complete 才失效，close 不等于 complete | 一致：close 后/current=true 仍写 G；after-complete/current=false 不写 G。 |
-| 无 registry 直接 enqueue；有 registry append 后才 enqueue，timeout 同步 close 可能丢自身帧 | 一致：核心快格无 registry 收到 S(T),E(T)；有 registry 两帧在盘上存在、客户端缺失。 |
-| FileRunRegistry failed 不拒绝后到 append，后到 error 可覆盖 result | 一致：有 registry 快格 result 从 T 被后到 G 覆盖；timeout append 被阻塞的子例则 G 先落盘、T 后覆盖，说明“最终总是 G”同样不成立。 |
-| 慢 status 可让 catch 与 timeout 次序倒转 | 一致：status 慢时实际 durable 为 G→T，且 catch 收尾帧在关闭前发布。 |
-| “queue 关闭只隐藏帧，所以 registry/result 不变” | 与这种概括不一致；gap §四、D4 已指出其不足。本次实证 events/result 仍变化。并非推翻 gap 当前八步机制。 |
-| “unknown-first 也一定走 gateway_submit_failed” | 不符合本次真实 TurnRunner 观察：未 abort 时 unknown 被普通失败投影为 F/I/C(model_error)。gap 原文已将此列为待测，而非固定结论。 |
-| status 写失败是否还会发布；registry 写失败是否一定看见 result_unknown | 新增实证：catch status 失败后仍尝试发布 S(G),E(G)，registry 可记录 G 而 durable 无 G（本组客户端对应帧在关闭后丢失）；registry 失败的 U 仅在 queue 关闭前出现的子例可见，关闭后的 U 同样丢失。 |
+| registry-fast / fast | 41 首次 close；45 current=true；46–49 G status 调用/落盘；53–66 依次 persist S(T),E(T),S(G),E(G)；71 才 complete。客户端无收尾，盘上 result=E(G)。 |
+| registry-slow / both-slow | 38 T 在 store 内阻塞；43 G 已调用；44 核验 G 未进入 store；45 释放 T，47 T commit，49 G 进入。55 G error append 已调用；58 T persist 阻塞，59 核验 G 未越过；60 释放；71/75 才进入 G status/error persist。 |
+| registry-slow / status-fast-catch-append-slow | 57–58 T error persist 已完成；61–62 G status persist 进入并阻塞；63 核验 G error 仍在队列；64 释放，69 才进入 G error persist；result=E(G)。 |
 
-本次没有发现推翻 gap §四已陈述机制的结果；实际输出补全了它明确留待实测的空白。没有把候选 Rust oracle 当作基线断言，也没有据此回算 #19 或阶段 C 的分数。
+## 与机制分析的关系和边界
 
-## 结论边界与最没把握的三处
+仍支持：close 不等于 complete；close 后 current=true 的 catch 仍可写 G，complete 后旧 catch 被挡住；registry append 后才 enqueue，timeout 的同步 close 可令自身帧丢失；failed record 仍接受后续 append，成功的后到 error 可覆盖 result。这里“后到”是**真实 FIFO 调用次序**，不能用队外 barrier 人造倒序证明。
 
-1. **真实调度比例与端到端归因未测。** 消费暂停、手动 timer 和 loop 结果 barrier 刻意构造可重复交错；5/5 只证明这个交错稳定，不能证明生产帧缺失概率，不能据此说 #19 两条真实 sidecar 场景的所有差异已经定位。需要后续真实 Module/sidecar 和客户端交叉确认；本轮没有这项证据。
-2. **故障模型有明确切面。** status 是注入的文件 store，不是全量生产 transcript writer；registry 使用生产类，但故障只注入在 snapshot 写盘前，不覆盖 write/rename 中途、部分 I/O、进程崩溃、跨进程锁竞争或断电 fsync 保证。重读证明本次可读取持久内容，不证明 crash consistency。known-final-pending 也只测 loop/TurnRunner 边界，不是 Module ledger 对账。
-3. **“bug②”与最终评分仍没有替人定标。** 已复现三面分歧及多个收尾组合；上游 operation-deadline.spec.ts 的简单 fakeSession 没有注入相同 unknown 交错，不能只用本结果宣称它的原测试必失败。精确修复范围、帧/落盘/registry 各面的接受差异和故障评分口径，仍按 D4 第二步由人看结果决定。
+新增修正：本轮真实 FIFO 中，慢 status 不让 durable 倒序，慢 T/G append 不让最终 result 从 G 变 T。status 失败后写队列可继续；G status 写失败仍尝试发布 S(G)/E(G)，因此 registry 可有 G、durable 却无 G。G error persist 失败时最终盘上保留 E(T)，这也说明不能把“总是 G”推广到所有故障。registry 失败触发的 U 在本轮受控 close 后被丢弃，原慢 status 下客户端能见 S(G)/E(U) 的证据随装置错误一并撤回。
 
-本实验完成的是 #67 中授权的 **A5.2 六格先行证据**，不宣称 A5.2 的真实 sidecar、cold-restart、双连接夹具或 A5 全部完成，不关闭 #19。
+1. **未测真实调度比例和端到端归因。** 手动 timer、消费暂停和 loop gate 只能证明指定交错稳定；不能量化生产丢帧概率或宣称 #19 历史 sidecar 差异全部定位。
+2. **故障切面有限。** 现已使用真实 writer / event store / 文件持久化和 registry，但 status EIO 在底层 store append 前，registry EIO 在 snapshot 写入前；未测部分 I/O、rename 中途、进程崩溃、跨进程锁竞争或断电 fsync。独立读盘不等于 crash consistency。
+3. **未定产品修复和最终评分。** 不把候选 Rust oracle 当基线断言，不回算 #19 或阶段 C 分数；真实 sidecar、cold restart、双连接等 A5.2 其余范围未完成，不关闭 #19。
