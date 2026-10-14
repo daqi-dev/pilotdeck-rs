@@ -132,7 +132,7 @@ def collect_refs(node, acc):
 
 
 def valid_local_ref(schema, ref):
-    """Resolve the full local RFC 6901 pointer; external refs are out of contract."""
+    """Accept only the root or a definition, decoding RFC 6901/URI escapes."""
     if not isinstance(ref, str) or not ref.startswith('#'):
         return False
     fragment = ref[1:]
@@ -142,21 +142,19 @@ def valid_local_ref(schema, ref):
         pointer = unquote(fragment, errors='strict')
         if pointer == '':
             return isinstance(schema, (dict, bool))
-        if not pointer.startswith('/'):
+        parts = pointer.split('/')
+        if len(parts) != 3 or parts[:2] != ['', 'definitions'] or not parts[2]:
             return False
-        node = schema
-        for token in pointer[1:].split('/'):
-            if re.search(r'~(?![01])', token):
-                return False
-            token = token.replace('~1', '/').replace('~0', '~')
-            if isinstance(node, dict):
-                node = node[token]
-            elif isinstance(node, list) and re.fullmatch(r'0|[1-9][0-9]*', token):
-                node = node[int(token)]
-            else:
-                return False
+        token = parts[2]
+        if re.search(r'~(?![01])', token):
+            return False
+        token = token.replace('~1', '/').replace('~0', '~')
+        definitions = schema.get('definitions') if isinstance(schema, dict) else None
+        if not isinstance(definitions, dict):
+            return False
+        node = definitions[token]
         return isinstance(node, (dict, bool))
-    except (KeyError, IndexError, UnicodeDecodeError):
+    except (KeyError, UnicodeDecodeError):
         return False
 
 

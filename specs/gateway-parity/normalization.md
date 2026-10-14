@@ -8,7 +8,7 @@
 
 每份输入先扫描实体定义，以稳定实体键配对 UUID，再用同一映射比较帧、HTTP、落盘目录名/内容。请求键为场景/connection/method；连接键为场景/hello_ok 所在 connection；transcript 键为 turnId/sequence；operation 键为启动条目的 turnId/sequence；timeline block 键为 turnId/order；pending 键为事件 type/runId/toolCallId/toolName；cron 键为 projectKey/originSessionKey/message/schedule；普通具名实体仅在含 id/name 且 type 非 request/response/event 时建键，键为 type/scope/name；该键须唯一。缺少稳定消歧锚点的同名异 id 仍拒绝，不按首现序配对。键本身和所有业务内容仍精确比较。重复键对应不同 UUID、同 UUID 对应不同实体键均拒绝，不能按列表位置或首现序配对。无定义锚点的 UUID 保留原文（保守拒绝无法配对的随机 ID），因此纯 UUID 列表换序不会被重新编号抹平。
 
-UUID 后的 timeline 后缀、cron session 名沿用该实体映射，同值引用必须仍为同值，多个不同值不能合并。绑定 generation 按对应 connection 实体归一化，同一个 connectionId 出现不同 generation、不同 connectionId 共用 generation 时均拒绝。固定 runId/sessionKey、非 UUID ID、普通文本和路径不做跨侧对齐，路径中的已锚定 UUID 片段按同一映射替换；其余字符原样保留。当前请求键要求同连接每个 method 至多一个随机请求实体；扩展到重复请求须先定义更细稳定键并重新校准。
+UUID 后的 timeline 后缀、cron session 名沿用该实体映射，同值引用必须仍为同值，多个不同值不能合并。绑定 generation 按对应 connection 实体归一化，同一个 connectionId 出现不同 generation、不同 connectionId 共用 generation 时均拒绝。任意字符串中的已锚定 UUID 片段（含普通文本、路径、runId/sessionKey）均按同一映射替换，匹配采用 compare.py 的 UUID 正则及词边界；未锚定 UUID、非 UUID ID 和其余字符原样保留。当前请求键要求同连接每个 method 至多一个随机请求实体；扩展到重复请求须先定义更细稳定键并重新校准。
 
 原帧 `raw` 与 parsed frame 一致、原始 WS 探针 `wireHex` 与 wire/解码一致才能比较。send/receive 两侧均逐项校验 opcode、FIN、RSV、mask 位、lengthCode、payloadLength，并将原始帧头前缀（含 126/127 扩展长度字节和存在时的四个 mask 字节）作为 wireHeaderHex 跨侧逐字节比较。合法但不同的长度编码形态也视为差异；不会先重编码再比。payload 解码后按上述 UUID/时钟规则比较，`raw`/`wireHex` 全文保留原件。标准官方客户端录完整应用消息（含 notification）；底层帧头/control 由专用原始 TCP 探针录全字节。这不声称 Native WebSocket API 暴露了每个隐式 ping/pong。
 
