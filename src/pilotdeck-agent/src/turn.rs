@@ -2663,7 +2663,15 @@ fn finish_pre_model_abort(
     }
     let capture_cleanup = fresh_capture_cleanup(cleanup);
     let capture = capture_turn_advisory(host, &capture_cleanup, input, &state.messages, false);
-    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline) {
+    // An advisory capture may expire before dispatch when the writer stalls.
+    // Execution Deadline still publishes completion; hard stops propagate.
+    if !matches!(
+        &capture,
+        Err(PortError::AcceptedUnknown { .. }
+            | PortError::Cancelled {
+                cause: CancelCause::Requested(_) | CancelCause::Deadline,
+            }) if deadline
+    ) {
         capture?;
     }
     emit_accepted_event(
@@ -2704,7 +2712,15 @@ fn finish_aborted_after_tools(
         &state.messages,
         false,
     );
-    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline) {
+    // An advisory capture may expire before dispatch when the writer stalls.
+    // Execution Deadline still publishes completion; hard stops propagate.
+    if !matches!(
+        &capture,
+        Err(PortError::AcceptedUnknown { .. }
+            | PortError::Cancelled {
+                cause: CancelCause::Requested(_) | CancelCause::Deadline,
+            }) if deadline
+    ) {
         capture?;
     }
     emit_accepted_event(
@@ -4260,7 +4276,15 @@ fn finish_aborted_stream(
     }
     let capture_cleanup = fresh_capture_cleanup(control);
     let capture = capture_turn_advisory(host, &capture_cleanup, input, &state.messages, false);
-    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline) {
+    // An advisory capture may expire before dispatch when the writer stalls.
+    // Execution Deadline still publishes completion; hard stops propagate.
+    if !matches!(
+        &capture,
+        Err(PortError::AcceptedUnknown { .. }
+            | PortError::Cancelled {
+                cause: CancelCause::Requested(_) | CancelCause::Deadline,
+            }) if deadline
+    ) {
         capture?;
     }
     let result = make_result(
@@ -6767,7 +6791,21 @@ mod pre_model_abort_tests {
             last_applied_sequence: Some(9.0),
         }
     }
+    #[derive(Clone, Copy)]
+    enum AbortPath {
+        PreModel,
+        AfterTools,
+        Stream,
+    }
     fn run(
+        error: PortError,
+        pending: Option<PortError>,
+        capture: Option<PortError>,
+    ) -> (PortResult<TurnOutput>, Vec<&'static str>) {
+        run_path(AbortPath::PreModel, error, pending, capture)
+    }
+    fn run_path(
+        path: AbortPath,
         error: PortError,
         pending: Option<PortError>,
         capture: Option<PortError>,
@@ -6798,19 +6836,113 @@ mod pre_model_abort_tests {
             cancellation: Cancellation::default(),
             deadline: None,
         };
-        let result = finish_pre_model_abort(
-            state,
-            "started".into(),
-            error,
-            &mut host,
-            &mut preparation,
-            &mut events,
-            &clock,
-            &input(),
-            &cleanup,
-        );
+        let input = input();
+        let result = match path {
+            AbortPath::PreModel => finish_pre_model_abort(
+                state,
+                "started".into(),
+                error,
+                &mut host,
+                &mut preparation,
+                &mut events,
+                &clock,
+                &input,
+                &cleanup,
+            ),
+            AbortPath::AfterTools | AbortPath::Stream => {
+                let PortError::Cancelled { cause } = error else {
+                    panic!("abort path requires a cancellation")
+                };
+                if matches!(path, AbortPath::AfterTools) {
+                    finish_aborted_after_tools(
+                        state,
+                        "started".into(),
+                        &clock,
+                        TerminalTurnPorts {
+                            host: &mut host,
+                            events: &mut events,
+                            input: &input,
+                            control: &cleanup,
+                        },
+                        cause == CancelCause::Deadline,
+                    )
+                } else {
+                    finish_aborted_stream(
+                        state,
+                        "started".into(),
+                        BoundarySnapshot::capture(
+                            &pilotdeck_protocol::parse_json(r#"{"toolCalls":[{}]}"#).unwrap(),
+                        ),
+                        cause,
+                        AbortedStreamBranch::StreamThrew,
+                        AbortedTurnPorts {
+                            host: &mut host,
+                            preparation: &preparation,
+                            events: &mut events,
+                            clock: &clock,
+                            input: &input,
+                            control: &cleanup,
+                        },
+                    )
+                }
+            }
+        };
         let observed = log.lock().unwrap().clone();
         (result, observed)
+    }
+    fn assert_capture_cancellation_policy(path: AbortPath) {
+        for deadline in [false, true] {
+            for cause in [
+                CancelCause::Deadline,
+                CancelCause::Requested("local cancel".into()),
+                CancelCause::OwnerRetired,
+                CancelCause::TransportClosed,
+            ] {
+                let hard_stop = matches!(
+                    cause,
+                    CancelCause::OwnerRetired | CancelCause::TransportClosed
+                );
+                let (result, log) = run_path(
+                    path,
+                    PortError::Cancelled {
+                        cause: if deadline {
+                            CancelCause::Deadline
+                        } else {
+                            CancelCause::Requested("user cancel".into())
+                        },
+                    },
+                    None,
+                    Some(PortError::Cancelled {
+                        cause: cause.clone(),
+                    }),
+                );
+                assert!(log.contains(&"capture_false"));
+                if deadline && !hard_stop {
+                    let output = result.unwrap();
+                    assert_eq!(output.result.kind, TurnResultKind::Aborted);
+                    assert_eq!(output.result.stop_reason, TurnStopReason::AbortedStreaming);
+                    assert_eq!(output.messages.len(), 2);
+                    assert_eq!(log.last(), Some(&"completed"));
+                } else {
+                    assert!(
+                        matches!(result, Err(PortError::Cancelled { cause: actual }) if actual == cause)
+                    );
+                    assert!(!log.contains(&"completed"));
+                }
+            }
+        }
+    }
+    #[test]
+    fn pre_model_capture_local_cancel_completes_only_for_execution_deadline() {
+        assert_capture_cancellation_policy(AbortPath::PreModel);
+    }
+    #[test]
+    fn after_tools_capture_local_cancel_completes_only_for_execution_deadline() {
+        assert_capture_cancellation_policy(AbortPath::AfterTools);
+    }
+    #[test]
+    fn stream_capture_local_cancel_completes_only_for_execution_deadline() {
+        assert_capture_cancellation_policy(AbortPath::Stream);
     }
     #[test]
     fn known_pre_model_cancel_retains_messages_and_creates_result_before_status_capture() {
