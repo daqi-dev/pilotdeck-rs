@@ -1,0 +1,590 @@
+use super::*;
+use crate::{
+    dispatch::{Route, parse, route_with_metadata},
+    metadata::{NativeFiles, Stat},
+};
+use serde_json::Value;
+use std::{
+    collections::HashMap,
+    fs,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+struct Snapshot {
+    files: HashMap<PathBuf, Value>,
+}
+impl Snapshot {
+    fn fact(&self, path: &Path) -> io::Result<&Value> {
+        self.files.get(path).ok_or(io::ErrorKind::NotFound.into())
+    }
+}
+impl Files for Snapshot {
+    fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        let mut entries: Vec<(String, bool)> =
+            serde_json::from_value(self.fact(path)?["entries"].clone())
+                .map_err(io::Error::other)?;
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        Ok(entries)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        STANDARD
+            .decode(
+                self.fact(path)?["base64"]
+                    .as_str()
+                    .ok_or(io::ErrorKind::InvalidInput)?,
+            )
+            .map_err(io::Error::other)
+    }
+    fn stat(&self, path: &Path) -> io::Result<Stat> {
+        let canonical = self.canonical(path)?;
+        let f = self.fact(&canonical)?;
+        Ok(Stat {
+            directory: f["directory"].as_bool().unwrap(),
+            size: f["size"].as_u64().unwrap(),
+            birth_ms: f["birth_ms"].as_f64().unwrap(),
+            ctime_ms: f["ctime_ms"].as_f64().unwrap(),
+            mtime_ms: f["mtime_ms"].as_f64().unwrap(),
+        })
+    }
+    fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
+        let mut current = path.to_owned();
+        for _ in 0..40 {
+            let mut prefix = PathBuf::new();
+            let mut replaced = false;
+            for component in current.components() {
+                prefix.push(component);
+                if let Some(link) = self.files.get(&prefix).and_then(|f| f["link"].as_str()) {
+                    let suffix = current.strip_prefix(&prefix).unwrap();
+                    current = resolve(prefix.parent().unwrap(), link).join(suffix);
+                    replaced = true;
+                    break;
+                }
+            }
+            if !replaced {
+                self.fact(&current)?;
+                return Ok(current);
+            }
+        }
+        Err(io::ErrorKind::InvalidInput.into())
+    }
+    fn project_entries(&self, _root: &Path, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        self.entries(path)
+    }
+    fn project_stat(&self, _root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
+        let stat = self.stat(path)?;
+        let is_file = !stat.directory;
+        Ok((stat, is_file))
+    }
+    fn project_read(&self, _root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+        let mut bytes = self.read(path)?;
+        bytes.truncate(limit);
+        Ok(bytes)
+    }
+}
+fn fixture() -> (Metadata<Snapshot>, Value) {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/cases.json"
+    ))
+    .unwrap();
+    let files = fixture["files"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| (PathBuf::from(k), v.clone()))
+        .collect();
+    (
+        Metadata {
+            home: fixture["home"].as_str().unwrap().into(),
+            cwd: fixture["cwd"].as_str().unwrap().into(),
+            files: Snapshot { files },
+        },
+        fixture,
+    )
+}
+#[test]
+fn raw_ts_responses_match_byte_for_byte() {
+    let (metadata, fixture) = fixture();
+    for case in fixture["cases"].as_array().unwrap() {
+        let request = case["request"].as_str().unwrap();
+        let Route::LocalResponse(actual) =
+            route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
+        else {
+            panic!("forwarded: {request}")
+        };
+        assert_eq!(
+            String::from_utf8(actual).unwrap(),
+            case["response"].as_str().unwrap(),
+            "{request}"
+        );
+    }
+}
+#[test]
+fn normalized_paths_accept_inside_and_reject_outside_like_ts() {
+    let (metadata, fixture) = fixture();
+    for case in fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["tag"] == "security-comparison")
+    {
+        let Route::LocalResponse(actual) = route_with_metadata(
+            &parse(case["request"].as_str().unwrap().as_bytes()).unwrap(),
+            Some(&metadata),
+        ) else {
+            panic!("forwarded unsafe path")
+        };
+        assert_eq!(actual, case["response"].as_str().unwrap().as_bytes());
+    }
+}
+#[test]
+fn node_runtime_sort_stat_and_decoding_facts() {
+    let data: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/node-runtime.json"
+    ))
+    .unwrap();
+    let mut entries: Vec<String> = serde_json::from_value(data["readdir"].clone()).unwrap();
+    let collator = Collator::try_new(Default::default(), Default::default()).unwrap();
+    entries.sort_by(|a, b| collator.compare(a, b));
+    assert_eq!(serde_json::to_value(entries).unwrap(), data["localeOrder"]);
+    let bytes = [0, 255, 192, 175, 226, 130, 172, 237, 160, 128];
+    for case in data["binary"].as_array().unwrap() {
+        let n = case["n"].as_u64().unwrap() as usize;
+        assert_eq!(
+            String::from_utf8_lossy(&bytes[..n]),
+            case["utf8"].as_str().unwrap()
+        );
+        assert_eq!(
+            STANDARD.encode(&bytes[..n]),
+            case["base64"].as_str().unwrap()
+        );
+    }
+}
+struct Temp(PathBuf);
+impl Temp {
+    fn new() -> Self {
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "pdrs-files-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap();
+        Self(fs::canonicalize(path).unwrap())
+    }
+}
+impl Drop for Temp {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+fn native_metadata(temp: &Temp) -> Metadata {
+    let home = temp.0.join("home");
+    let root = temp.0.join("project");
+    fs::create_dir_all(home.join("projects/fixture")).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(home.join("projects/fixture/.cwd"), root.to_str().unwrap()).unwrap();
+    Metadata {
+        home,
+        cwd: temp.0.clone(),
+        files: NativeFiles,
+    }
+}
+fn read_native(metadata: &Metadata, path: &str, max: Option<f64>) -> Result<JsValue> {
+    let params = object(max.map(|n| ("maxBytes", JsValue::Number(n))));
+    read(
+        metadata,
+        &params,
+        metadata.cwd.join("project").to_str().unwrap(),
+        path,
+    )
+}
+#[test]
+fn huge_sparse_file_is_bounded_and_binary_is_returned() {
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let path = temp.0.join("project/huge");
+    let file = File::create(&path).unwrap();
+    file.set_len(20_000_000_000).unwrap();
+    let value = read_native(&metadata, "huge", Some(7.0)).unwrap();
+    assert_eq!(text_field(&value, "content").unwrap(), "\0".repeat(7));
+    // Reads exactly maxBytes, without a size-based allocation or a lookahead read.
+    struct Limited(usize);
+    impl Read for Limited {
+        fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
+            assert!(b.len() <= self.0);
+            self.0 -= b.len();
+            b.fill(0xff);
+            Ok(b.len())
+        }
+    }
+    let bytes = read_prefix(&mut Limited(10_000_000), 10_000_000).unwrap();
+    assert_eq!(bytes.len(), 10_000_000);
+    assert_eq!(
+        text_field(
+            &read_native(&metadata, "huge", Some(10_000_001.0)).unwrap(),
+            "content"
+        )
+        .unwrap()
+        .len(),
+        10_000_000
+    );
+}
+#[cfg(unix)]
+#[test]
+fn native_path_and_symlink_boundaries() {
+    use std::os::unix::fs::symlink;
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    fs::write(root.join("ok"), "\u{feff}hello").unwrap();
+    fs::write(temp.0.join("outside"), "SECRET").unwrap();
+    symlink("ok", root.join("internal")).unwrap();
+    symlink("../outside", root.join("escape")).unwrap();
+    symlink("missing", root.join("broken")).unwrap();
+    symlink(&temp.0, root.join("dir-escape")).unwrap();
+    for path in [
+        "internal",
+        "./a/../ok",
+        "../project/ok",
+        root.join("ok").to_str().unwrap(),
+        root.join("a/../ok").to_str().unwrap(),
+    ] {
+        let result = read_native(&metadata, path, None).unwrap();
+        assert_eq!(text_field(&result, "content").unwrap(), "\u{feff}hello");
+        assert_eq!(text_field(&result, "path").unwrap(), path);
+    }
+    for path in [
+        "../outside",
+        "dir-escape/outside",
+        "escape",
+        "broken",
+        "missing",
+        temp.0.join("outside").to_str().unwrap(),
+        "ok/../../outside",
+    ] {
+        assert_eq!(
+            read_native(&metadata, path, None).unwrap_err().0,
+            "PATH_NOT_ALLOWED",
+            "{path}"
+        );
+    }
+    assert!(matches!(
+        read_native(&metadata, ".", None),
+        Ok(JsValue::Null)
+    ));
+    // Simulate a symlink swap between canonicalization and open, at both leaf
+    // and intermediate components. Opening the previously checked path fails.
+    let canonical = fs::canonicalize(root.join("ok")).unwrap();
+    fs::remove_file(root.join("ok")).unwrap();
+    symlink("../outside", root.join("ok")).unwrap();
+    assert!(open_beneath(&root, &canonical).is_err());
+    fs::create_dir(root.join("dir")).unwrap();
+    fs::write(root.join("dir/file"), "inside").unwrap();
+    let canonical = fs::canonicalize(root.join("dir/file")).unwrap();
+    fs::rename(root.join("dir"), root.join("old-dir")).unwrap();
+    symlink(&temp.0, root.join("dir")).unwrap();
+    assert!(open_beneath(&root, &canonical).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn checked_path_replacements_cannot_read_outside_or_fall_back_to_ts() {
+    struct ReplacingFiles {
+        target: PathBuf,
+        outside: PathBuf,
+        parent: bool,
+        after_stat: bool,
+        swapped: std::cell::Cell<bool>,
+    }
+    impl ReplacingFiles {
+        fn swap(&self) -> io::Result<()> {
+            assert!(!self.swapped.replace(true));
+            let (from, to) = if self.parent {
+                (
+                    self.target.parent().unwrap(),
+                    self.outside.parent().unwrap(),
+                )
+            } else {
+                (self.target.as_path(), self.outside.as_path())
+            };
+            fs::rename(from, from.with_extension("saved"))?;
+            std::os::unix::fs::symlink(to, from)
+        }
+    }
+    impl Files for ReplacingFiles {
+        fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+            NativeFiles.entries(path)
+        }
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            NativeFiles.read(path)
+        }
+        fn stat(&self, path: &Path) -> io::Result<Stat> {
+            NativeFiles.stat(path)
+        }
+        fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
+            let result = NativeFiles.canonical(path)?;
+            if path == self.target && !self.after_stat {
+                self.swap()?;
+            }
+            Ok(result)
+        }
+        fn project_stat(&self, root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
+            NativeFiles.project_stat(root, path)
+        }
+        fn project_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+            if self.after_stat {
+                self.swap()?;
+            }
+            NativeFiles.project_read(root, path, limit)
+        }
+    }
+    // Match all four independently measured TS races, using production Rust IO.
+    let probes: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/race-probes.json"
+    ))
+    .unwrap();
+    assert_eq!(probes["races"].as_array().unwrap().len(), 4);
+    for probe in probes["races"].as_array().unwrap() {
+        assert_eq!(probe["result"]["content"], "OUTSIDE_SECRET");
+        let temp = Temp::new();
+        let native = native_metadata(&temp);
+        let root = temp.0.join("project");
+        let target = root.join("dir/file");
+        let outside = temp.0.join("outside/file");
+        fs::create_dir(target.parent().unwrap()).unwrap();
+        fs::create_dir(outside.parent().unwrap()).unwrap();
+        fs::write(&target, "INSIDE").unwrap();
+        fs::write(&outside, "OUTSIDE_SECRET").unwrap();
+        let metadata = Metadata {
+            home: native.home,
+            cwd: native.cwd,
+            files: ReplacingFiles {
+                target,
+                outside,
+                parent: probe["component"] == "parent",
+                after_stat: probe["stage"] == "after-stat",
+                swapped: std::cell::Cell::new(false),
+            },
+        };
+        let request = serde_json::json!({
+            "type": "request", "id": "race", "method": "project_file_read",
+            "params": {"projectKey": root, "path": "dir/file"},
+        })
+        .to_string();
+        let Route::LocalResponse(bytes) =
+            route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
+        else {
+            panic!("raced request forwarded to vulnerable TS: {probe}");
+        };
+        assert!(metadata.files.swapped.get());
+        let response: Value = serde_json::from_slice(&bytes).unwrap();
+        if metadata.files.after_stat {
+            assert_eq!(response["ok"], false, "{probe}: {response}");
+        } else {
+            assert_eq!(response["ok"], true);
+            assert_eq!(response["result"], Value::Null);
+        }
+    }
+}
+#[test]
+fn depth_boundary_and_hidden_filters() {
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    let mut nested = root.clone();
+    for _ in 0..64 {
+        nested = nested.join("d");
+        fs::create_dir(&nested).unwrap();
+    }
+    fs::write(nested.join("visible"), "yes").unwrap();
+    let params = object([]);
+    assert!(list(&metadata, &params, root.to_str().unwrap(), "").is_ok());
+    nested = nested.join("d");
+    fs::create_dir(&nested).unwrap();
+    assert_eq!(
+        list(&metadata, &params, root.to_str().unwrap(), "")
+            .unwrap_err()
+            .0,
+        "FILE_INDEX_LIMIT"
+    );
+}
+#[test]
+fn native_check_against_freshly_recorded_tree_when_requested() {
+    if std::env::var_os("PDRS_FILES_NATIVE_CHECK").is_none() {
+        return;
+    }
+    let (_, fixture) = fixture();
+    let metadata = Metadata {
+        home: fixture["home"].as_str().unwrap().into(),
+        cwd: fixture["cwd"].as_str().unwrap().into(),
+        files: NativeFiles,
+    };
+    for case in fixture["cases"].as_array().unwrap() {
+        let request = parse(case["request"].as_str().unwrap().as_bytes()).unwrap();
+        let Route::LocalResponse(actual) = route_with_metadata(&request, Some(&metadata)) else {
+            panic!("forwarded")
+        };
+        assert_eq!(
+            String::from_utf8(actual).unwrap(),
+            case["response"].as_str().unwrap(),
+            "{}",
+            case["request"]
+        );
+    }
+}
+
+#[test]
+fn node_locale_precedence_collation_and_case_mapping() {
+    let data: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/node-runtime.json"
+    ))
+    .unwrap();
+    for case in data["localeProbe"].as_array().unwrap() {
+        let locale = node_locale(|key| case["env"][key].as_str().map(str::to_owned));
+        assert_eq!(locale.to_string(), case["locale"].as_str().unwrap());
+        let collator = Collator::try_new(locale.clone().into(), Default::default()).unwrap();
+        let mut names = vec!["z", "ä", "Z", "a", "A", "你好", "文件", "😀", "_x"];
+        names.sort_by(|a, b| collator.compare(a, b));
+        assert_eq!(serde_json::to_value(names).unwrap(), case["order"]);
+        let lower: Vec<_> = ["Iİıi", "ΟΣ", "İ", "ẞ"]
+            .into_iter()
+            .map(|s| lowercase(s, &locale.id))
+            .collect();
+        assert_eq!(serde_json::to_value(lower).unwrap(), case["lower"]);
+    }
+}
+#[test]
+fn resource_counter_counts_disappearing_entries_and_deadline_fails_closed() {
+    let (mut metadata, fixture) = fixture();
+    let root = PathBuf::from(fixture["root"].as_str().unwrap());
+    let entries: Vec<_> = (0..100_000)
+        .map(|i| serde_json::json!([format!("gone-{i}"), false]))
+        .collect();
+    metadata.files.files.get_mut(&root).unwrap()["entries"] = Value::Array(entries);
+    let value = list(&metadata, &object([]), root.to_str().unwrap(), "").unwrap();
+    assert_eq!(encode(value.get("items").unwrap()), "[]");
+    metadata.files.files.get_mut(&root).unwrap()["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(["gone-extra", false]));
+    assert_eq!(
+        list(&metadata, &object([]), root.to_str().unwrap(), "")
+            .unwrap_err()
+            .0,
+        "FILE_INDEX_LIMIT"
+    );
+    let mut scan = Scan {
+        metadata: &metadata,
+        root: &root,
+        collator: Collator::try_new(Default::default(), Default::default()).unwrap(),
+        query: "",
+        locale: "und".parse().unwrap(),
+        include_dirs: true,
+        started: Instant::now() - Duration::from_secs(6),
+        count: 0,
+        visited: HashSet::new(),
+        entries: Vec::new(),
+    };
+    assert_eq!(scan.walk(&root, 0).unwrap_err().0, "FILE_INDEX_LIMIT");
+}
+#[cfg(unix)]
+#[test]
+fn special_files_do_not_block_and_unreadable_files_still_list() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(root.join("fifo"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(matches!(
+        read_native(&metadata, "fifo", None),
+        Ok(JsValue::Null)
+    ));
+    fs::write(root.join("unreadable"), "hidden").unwrap();
+    fs::set_permissions(root.join("unreadable"), fs::Permissions::from_mode(0o0)).unwrap();
+    let listed = list(&metadata, &object([]), root.to_str().unwrap(), "").unwrap();
+    let JsValue::Array(items) = listed.get("items").unwrap() else {
+        panic!("items")
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(text_field(&items[0], "name").unwrap(), "unreadable");
+    // Root can read chmod(0) files; check EACCES only when the OS denies access.
+    if File::open(root.join("unreadable")).is_err() {
+        assert_eq!(
+            read_native(&metadata, "unreadable", None).unwrap_err().0,
+            "EACCES"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_only_parent_still_allows_reading_known_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    fs::create_dir(root.join("xonly")).unwrap();
+    fs::write(root.join("xonly/readable"), "readable").unwrap();
+    fs::set_permissions(root.join("xonly"), fs::Permissions::from_mode(0o111)).unwrap();
+    let result = read_native(&metadata, "xonly/readable", None);
+    fs::set_permissions(root.join("xonly"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(text_field(&result.unwrap(), "content").unwrap(), "readable");
+}
+
+#[test]
+fn utf16_paths_use_normalized_containment_and_preserve_response_string() {
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    fs::write(root.join("\u{fffd}"), "inside").unwrap();
+    let probes: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/race-probes.json"
+    ))
+    .unwrap();
+    for probe in probes["utf16"].as_array().unwrap() {
+        let raw = probe["request"].as_str().unwrap();
+        let old_root = text_field(&parse_json(raw).unwrap(), "projectKey").unwrap();
+        // Relocate only the oracle's temporary root; path UTF-16 and all response
+        // bytes otherwise remain untouched.
+        let params = parse_json(&raw.replace(&old_root, root.to_str().unwrap())).unwrap();
+        let result = execute(&metadata, "project_file_read", &params).unwrap();
+        let response = match result {
+            Ok(result) => object([("result", result)]),
+            Err((code, message)) => object([(
+                "error",
+                object([("code", code.into()), ("message", message.as_str().into())]),
+            )]),
+        };
+        assert_eq!(
+            encode(&response),
+            probe["response"]
+                .as_str()
+                .unwrap()
+                .replace(&old_root, root.to_str().unwrap())
+        );
+    }
+}
+
+#[test]
+fn unmeasured_io_diagnostics_are_not_fabricated_locally() {
+    let error = fs_error(
+        io::Error::other("unknown platform error"),
+        "open",
+        Path::new("file"),
+    );
+    assert!(local_result(Err(error)).is_none());
+    assert!(local_result(Err(denied(ESCAPE))).is_some());
+    let raced_link = fs_error(
+        io::Error::from_raw_os_error(libc::ELOOP),
+        "open",
+        Path::new("link"),
+    );
+    assert_eq!(raced_link.0, "PATH_NOT_ALLOWED");
+    assert!(local_result(Err(raced_link)).is_some());
+}

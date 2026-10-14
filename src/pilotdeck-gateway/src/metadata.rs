@@ -46,12 +46,44 @@ pub(crate) trait Files {
             Err(_) => Ok(false),
         }
     }
+    // Project operations carry a canonical root, so native implementations can
+    // pin directory descriptors and reject symlink replacements during opening.
+    fn canonical(&self, _path: &Path) -> io::Result<PathBuf> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    fn project_entries(&self, _root: &Path, _path: &Path) -> io::Result<Vec<(String, bool)>> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    fn project_stat(&self, _root: &Path, _path: &Path) -> io::Result<(Stat, bool)> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    fn project_read(&self, _root: &Path, _path: &Path, _limit: usize) -> io::Result<Vec<u8>> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
     /// stat follows symlinks.
     fn stat(&self, path: &Path) -> io::Result<Stat>;
 }
 
 pub(crate) struct NativeFiles;
 impl Files for NativeFiles {
+    fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
+        fs::canonicalize(path)
+    }
+    fn project_entries(&self, root: &Path, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        crate::project_files::native_entries(root, path)
+    }
+    fn project_stat(&self, root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
+        crate::project_files::native_stat(root, path)
+    }
+
+    fn project_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+        let mut file = crate::project_files::open_beneath(root, path)?;
+        // Verify again on the descriptor used for reading (avoid FIFO/device races).
+        if !file.metadata()?.is_file() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        crate::project_files::read_prefix(&mut file, limit)
+    }
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
         let mut entries = fs::read_dir(path)?
             .map(|entry| {

@@ -1,0 +1,76 @@
+{
+  "node": "v22.22.0",
+  "sourceSha256": "56d52eeb93660b6d442150459067297e49478066b4857e0c3ef370b892b4ce2c",
+  "races": [
+    {
+      "stage": "after-realpath",
+      "component": "leaf",
+      "input": {
+        "projectKey": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project",
+        "path": "race-after-realpath-leaf/file"
+      },
+      "result": {
+        "path": "race-after-realpath-leaf/file",
+        "content": "OUTSIDE_SECRET",
+        "encoding": "utf-8"
+      }
+    },
+    {
+      "stage": "after-realpath",
+      "component": "parent",
+      "input": {
+        "projectKey": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project",
+        "path": "race-after-realpath-parent/file"
+      },
+      "result": {
+        "path": "race-after-realpath-parent/file",
+        "content": "OUTSIDE_SECRET",
+        "encoding": "utf-8"
+      }
+    },
+    {
+      "stage": "after-stat",
+      "component": "leaf",
+      "input": {
+        "projectKey": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project",
+        "path": "race-after-stat-leaf/file"
+      },
+      "result": {
+        "path": "race-after-stat-leaf/file",
+        "content": "OUTSIDE_SECRET",
+        "encoding": "utf-8"
+      }
+    },
+    {
+      "stage": "after-stat",
+      "component": "parent",
+      "input": {
+        "projectKey": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project",
+        "path": "race-after-stat-parent/file"
+      },
+      "result": {
+        "path": "race-after-stat-parent/file",
+        "content": "OUTSIDE_SECRET",
+        "encoding": "utf-8"
+      }
+    }
+  ],
+  "utf16": [
+    {
+      "request": "{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project\",\"path\":\"a/../\\ud800\"}",
+      "response": "{\"result\":{\"path\":\"a/../\\ud800\",\"content\":\"inside\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "request": "{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project\",\"path\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project/\\ud800\"}",
+      "response": "{\"result\":{\"path\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project/\\ud800\",\"content\":\"inside\",\"encoding\":\"utf-8\"}}"
+    },
+    {
+      "request": "{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project\",\"path\":\"../\\ud800\"}",
+      "response": "{\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path is outside the project workspace.\"}}"
+    },
+    {
+      "request": "{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a4m2/_tmp/node-files/files-cwR3bA/project\",\"path\":\"/outside/\\ud800\"}",
+      "response": "{\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path is outside the project workspace.\"}}"
+    }
+  ]
+}
