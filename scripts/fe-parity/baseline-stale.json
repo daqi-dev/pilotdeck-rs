@@ -1,0 +1,584 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "note": "Execute unchanged. Only FAIL observations at each exact reviewed assertion and callsite can match. Never PASS/skip or behavioral coverage. Real serial successors are mechanically derived STALE_CASCADE, with no execution/PASS credit. Files uses frozen default General route; no project or explorer UI precondition.",
+  "tests": [
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-SIDEBAR-003 expands navigation and opens settings/skills",
+      "defectType": "文案已替换；backToApp 翻译键无代码引用",
+      "selectorArguments": [
+        "返回应用",
+        "Back to app"
+      ],
+      "proofScript": "scripts/fe-parity/baseline-stale-proof.mjs",
+      "failure": {
+        "assertion": {
+          "file": "real/fixtures.mjs",
+          "line": 35,
+          "column": 24
+        },
+        "callsite": {
+          "file": "real/session.spec.mjs",
+          "line": 19,
+          "column": 9
+        },
+        "matcher": "toBeVisible",
+        "locator": "getByRole('button', { name: /返回应用|Back to app/i }).first()"
+      },
+      "evidence": [
+        {
+          "file": "ui/e2e/real/session.spec.mjs",
+          "line": 19,
+          "text": "  await clickButton(page, ['返回应用', 'Back to app']);",
+          "sha256": "77c077c0a70dac026b972c6dda2c337b200fb99fb52228068899d94948d680f8"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 33,
+          "text": "  const pattern = names instanceof RegExp ? names : new RegExp(names.map((name) => String(name).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('|'), 'i');",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 35,
+          "text": "  await expect(button).toBeVisible();",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/src/components/settings/view/SettingsSidebar.tsx",
+          "line": 98,
+          "text": "      <button type=\"button\" className=\"back-to-app\" onClick={onClose}>",
+          "sha256": "ee51a552b0bf3374bc204a819c5c275c97567dd4cc7bc0f04dcfdd408ca715af"
+        },
+        {
+          "file": "ui/src/components/settings/view/SettingsSidebar.tsx",
+          "line": 100,
+          "text": "        <span>{t(\"settingsPage.backToProjects\")}</span>",
+          "sha256": "ee51a552b0bf3374bc204a819c5c275c97567dd4cc7bc0f04dcfdd408ca715af"
+        },
+        {
+          "file": "ui/src/components/settings/Settings.tsx",
+          "line": 41,
+          "text": "        onClose={onClose}",
+          "sha256": "1d05dec8136be5caac4423264800ff4360c206831159b0a7b17a7854b0351dcd"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 389,
+          "text": "  const onCloseSettings = useCallback(() => {",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 395,
+          "text": "    navigate(target);",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/i18n/locales/en/settings.json",
+          "line": 59,
+          "text": "    \"backToApp\": \"Back to app\",",
+          "sha256": "e7934929fb67bcdf611ce3b3f78c39cfd3f98a857242af106dd3811ed5739668"
+        },
+        {
+          "file": "ui/src/i18n/locales/en/settings.json",
+          "line": 60,
+          "text": "    \"backToProjects\": \"Back to projects\",",
+          "sha256": "e7934929fb67bcdf611ce3b3f78c39cfd3f98a857242af106dd3811ed5739668"
+        },
+        {
+          "file": "ui/src/i18n/locales/zh-CN/settings.json",
+          "line": 60,
+          "text": "    \"backToProjects\": \"返回项目\",",
+          "sha256": "3d579451e3e2cab24f3da451bed3547954ef17c6451a58534e0340a62cac2de6"
+        }
+      ]
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-ABOUT-001 checks update and returns to app",
+      "defectType": "文案已替换；backToApp 翻译键无代码引用",
+      "selectorArguments": [
+        "返回应用",
+        "Back to app"
+      ],
+      "proofScript": "scripts/fe-parity/baseline-stale-proof.mjs",
+      "failure": {
+        "assertion": {
+          "file": "real/fixtures.mjs",
+          "line": 35,
+          "column": 24
+        },
+        "callsite": {
+          "file": "real/settings.spec.mjs",
+          "line": 92,
+          "column": 9
+        },
+        "matcher": "toBeVisible",
+        "locator": "getByRole('button', { name: /返回应用|Back to app/i }).first()"
+      },
+      "evidence": [
+        {
+          "file": "ui/e2e/real/settings.spec.mjs",
+          "line": 92,
+          "text": "  await clickButton(page, ['返回应用', 'Back to app']);",
+          "sha256": "9a61e9d1387d4b97b322be1410f07306059d26a6d40f56a1ccb433a6282380f2"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 33,
+          "text": "  const pattern = names instanceof RegExp ? names : new RegExp(names.map((name) => String(name).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('|'), 'i');",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 35,
+          "text": "  await expect(button).toBeVisible();",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/src/components/settings/view/SettingsSidebar.tsx",
+          "line": 98,
+          "text": "      <button type=\"button\" className=\"back-to-app\" onClick={onClose}>",
+          "sha256": "ee51a552b0bf3374bc204a819c5c275c97567dd4cc7bc0f04dcfdd408ca715af"
+        },
+        {
+          "file": "ui/src/components/settings/view/SettingsSidebar.tsx",
+          "line": 100,
+          "text": "        <span>{t(\"settingsPage.backToProjects\")}</span>",
+          "sha256": "ee51a552b0bf3374bc204a819c5c275c97567dd4cc7bc0f04dcfdd408ca715af"
+        },
+        {
+          "file": "ui/src/i18n/locales/en/settings.json",
+          "line": 60,
+          "text": "    \"backToProjects\": \"Back to projects\",",
+          "sha256": "e7934929fb67bcdf611ce3b3f78c39cfd3f98a857242af106dd3811ed5739668"
+        },
+        {
+          "file": "ui/src/i18n/locales/zh-CN/settings.json",
+          "line": 60,
+          "text": "    \"backToProjects\": \"返回项目\",",
+          "sha256": "3d579451e3e2cab24f3da451bed3547954ef17c6451a58534e0340a62cac2de6"
+        }
+      ]
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-CREATE-001 opens and cancels create modal",
+      "defectType": "选择器缺陷；数组中的竖线被 helper 转义为字面量",
+      "selectorArguments": [
+        "新建|New",
+        "创建|Create"
+      ],
+      "proofScript": "scripts/fe-parity/baseline-stale-proof.mjs",
+      "failure": {
+        "assertion": {
+          "file": "real/fixtures.mjs",
+          "line": 35,
+          "column": 24
+        },
+        "callsite": {
+          "file": "real/skills.spec.mjs",
+          "line": 25,
+          "column": 9
+        },
+        "matcher": "toBeVisible",
+        "locator": "getByRole('button', { name: /新建\\|New|创建\\|Create/i }).first()"
+      },
+      "evidence": [
+        {
+          "file": "ui/e2e/real/skills.spec.mjs",
+          "line": 25,
+          "text": "  await clickButton(page, ['新建|New', '创建|Create']);",
+          "sha256": "5c9a301ba150257c9664cd56c81b98129452e6978d39b9a96a314327eb2d281d"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 33,
+          "text": "  const pattern = names instanceof RegExp ? names : new RegExp(names.map((name) => String(name).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('|'), 'i');",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 35,
+          "text": "  await expect(button).toBeVisible();",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/src/components/main-content-v2/SkillsV2.tsx",
+          "line": 461,
+          "text": "          className=\"inline-flex h-7 items-center gap-1.5 rounded-md bg-neutral-900 px-2.5 text-[12px] font-medium text-white transition hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300\"",
+          "sha256": "17efe447c2fcaaa9c30ace7edc8a64acdd3162f1231c9730a13681b802cf3572"
+        },
+        {
+          "file": "ui/src/components/main-content-v2/SkillsV2.tsx",
+          "line": 464,
+          "text": "          <span>{t('skillsTab.newSkill', { defaultValue: 'New' })}</span>",
+          "sha256": "17efe447c2fcaaa9c30ace7edc8a64acdd3162f1231c9730a13681b802cf3572"
+        },
+        {
+          "file": "ui/src/i18n/locales/en/common.json",
+          "line": 82,
+          "text": "    \"newSkill\": \"New\",",
+          "sha256": "9051bedf4945fb51d622117d3cf27adbd00cb990f26c3a4308cf740caac7afc0"
+        },
+        {
+          "file": "ui/src/i18n/locales/zh-CN/common.json",
+          "line": 82,
+          "text": "    \"newSkill\": \"新建\",",
+          "sha256": "7201f9f68721a5865bb8fb30ad18ab4faa18ca048f3eceb34a97bb193bb34a9d"
+        }
+      ]
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-TREE-001 opens file workbench and navigates seeded files",
+      "defectType": "默认 General 无文件工作台入口，宽匹配误点添加上下文；普通项目顶部 Files 只切模式、explorer 默认折叠；原 spec 缺少项目选择与面板展开",
+      "selectorArguments": [
+        "文件",
+        "Files"
+      ],
+      "proofScript": "scripts/fe-parity/baseline-stale-proof.mjs",
+      "failure": {
+        "assertion": {
+          "file": "real/files.spec.mjs",
+          "line": 9,
+          "column": 38
+        },
+        "callsite": {
+          "file": "real/files.spec.mjs",
+          "line": 9,
+          "column": 38
+        },
+        "matcher": "toContainText",
+        "locator": "locator('body')"
+      },
+      "evidence": [
+        {
+          "file": "ui/e2e/real/files.spec.mjs",
+          "line": 4,
+          "text": "test.describe.configure({ mode: 'serial' });",
+          "sha256": "6b9c38ef856bd9458d2140c4c071d4ab4c7c267c23b8336f05f55907b25f56e4"
+        },
+        {
+          "file": "ui/e2e/real/files.spec.mjs",
+          "line": 5,
+          "text": "test.beforeEach(async ({ page }) => appReady(page));",
+          "sha256": "6b9c38ef856bd9458d2140c4c071d4ab4c7c267c23b8336f05f55907b25f56e4"
+        },
+        {
+          "file": "ui/e2e/real/files.spec.mjs",
+          "line": 8,
+          "text": "  await clickButton(page, ['文件', 'Files']);",
+          "sha256": "6b9c38ef856bd9458d2140c4c071d4ab4c7c267c23b8336f05f55907b25f56e4"
+        },
+        {
+          "file": "ui/e2e/real/files.spec.mjs",
+          "line": 9,
+          "text": "  await expect(page.locator('body')).toContainText(/README\\.md|sample\\.ts/i, { timeout: 30_000 });",
+          "sha256": "6b9c38ef856bd9458d2140c4c071d4ab4c7c267c23b8336f05f55907b25f56e4"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 33,
+          "text": "  const pattern = names instanceof RegExp ? names : new RegExp(names.map((name) => String(name).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('|'), 'i');",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 34,
+          "text": "  const button = page.getByRole('button', { name: pattern }).first();",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 35,
+          "text": "  await expect(button).toBeVisible();",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 41,
+          "text": "export const appReady = async (page) => {",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/fixtures.mjs",
+          "line": 42,
+          "text": "  await page.goto('/', { waitUntil: 'domcontentloaded' });",
+          "sha256": "9bedc1ceca8926f5c9800a052331c5362cf9a815daf0f3ddb7a927cef3ef2e7b"
+        },
+        {
+          "file": "ui/e2e/real/global-setup.mjs",
+          "line": 11,
+          "text": "  await page.goto(baseURL, { waitUntil: 'domcontentloaded' });",
+          "sha256": "eb56b8d95dcdcb6db29f14d671acdc7ec6e3911f5e6671db4de623cdbf29f381"
+        },
+        {
+          "file": "ui/e2e/real/global-setup.mjs",
+          "line": 33,
+          "text": "  await context.storageState({ path: config.projects[0].use.storageState });",
+          "sha256": "eb56b8d95dcdcb6db29f14d671acdc7ec6e3911f5e6671db4de623cdbf29f381"
+        },
+        {
+          "file": "ui/e2e/real/launch.mjs",
+          "line": 21,
+          "text": "await rm(runDir, { recursive: true, force: true });",
+          "sha256": "1bea70262ab3786aa007afbfcec4abcfc69803b3de657da5a3433e7a26e2e7df"
+        },
+        {
+          "file": "ui/e2e/real/launch.mjs",
+          "line": 22,
+          "text": "await mkdir(join(runDir, 'workspace', 'e2e-project'), { recursive: true });",
+          "sha256": "1bea70262ab3786aa007afbfcec4abcfc69803b3de657da5a3433e7a26e2e7df"
+        },
+        {
+          "file": "ui/e2e/real/launch.mjs",
+          "line": 77,
+          "text": "",
+          "sha256": "1bea70262ab3786aa007afbfcec4abcfc69803b3de657da5a3433e7a26e2e7df"
+        },
+        {
+          "file": "ui/e2e/real/launch.mjs",
+          "line": 78,
+          "text": "const child = spawn(process.execPath, [join(repoRoot, 'ui/server/webRuntimeSupervisor.js'), 'dev'], {",
+          "sha256": "1bea70262ab3786aa007afbfcec4abcfc69803b3de657da5a3433e7a26e2e7df"
+        },
+        {
+          "file": "ui/src/components/app-shell/appShellSelection.ts",
+          "line": 32,
+          "text": "export function chooseDefaultProject(projects: readonly Project[]): Project | null {",
+          "sha256": "f1344f067d8e90c3fc7435cc04be1fde3957d49c257828889e545574efcd4c25"
+        },
+        {
+          "file": "ui/src/components/app-shell/appShellSelection.ts",
+          "line": 33,
+          "text": "  return projects.find(isGeneralProject)",
+          "sha256": "f1344f067d8e90c3fc7435cc04be1fde3957d49c257828889e545574efcd4c25"
+        },
+        {
+          "file": "ui/src/components/app-shell/appShellSelection.ts",
+          "line": 34,
+          "text": "    ?? projects.find((project) => !isGeneralProject(project))",
+          "sha256": "f1344f067d8e90c3fc7435cc04be1fde3957d49c257828889e545574efcd4c25"
+        },
+        {
+          "file": "ui/src/components/app-shell/appShellSelection.ts",
+          "line": 35,
+          "text": "    ?? null;",
+          "sha256": "f1344f067d8e90c3fc7435cc04be1fde3957d49c257828889e545574efcd4c25"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 232,
+          "text": "  // Default selection: use General as the canonical conversation context.",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 245,
+          "text": "    }",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 249,
+          "text": "    const target = restored ?? chooseDefaultProject(sidebarSharedProps.projects);",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 254,
+          "text": "      return;",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/AppShellV2.tsx",
+          "line": 255,
+          "text": "    }",
+          "sha256": "f797f70773c2de35c2b551f0f82f9c686eb50c1009f8749f6992b340c290ba69"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 123,
+          "text": "  const projectFilesEnabled = Boolean(",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 125,
+          "text": "    && !generalConversation",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 126,
+          "text": "    && selectedProject.capabilities?.files !== false,",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 127,
+          "text": "  );",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 336,
+          "text": "          {projectFilesEnabled ? (",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 343,
+          "text": "                setActiveTab(displayActiveTab === 'files' ? 'chat' : 'files');",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/app-shell/MainAreaV2.tsx",
+          "line": 353,
+          "text": "              <span>{t(FILES_TAB.labelKey)}</span>",
+          "sha256": "48d6027b563ffdc6da65e397992286b1fb1ff515ac34f848805b572d30df6f28"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 540,
+          "text": "  const [explorerCollapsed, setExplorerCollapsed] = useState(true);",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 564,
+          "text": "    if (!isFiles) return;",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 565,
+          "text": "    setExplorerCollapsed(true);",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 568,
+          "text": "  }, [isFiles]);",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 876,
+          "text": "  const explorerVisible =",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 881,
+          "text": "    !explorerCollapsed &&",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 1088,
+          "text": "        {isFiles && explorerVisible ? (",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 1135,
+          "text": "              <FilesV2",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 1425,
+          "text": "            aria-pressed={singlePanelMode ? explorerVisible : !explorerCollapsed}",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/main-content/view/MainContent.tsx",
+          "line": 1426,
+          "text": "            onClick={toggleExplorer}",
+          "sha256": "1094429a74093821c16058ab451e2bc7c02533dea665379408d1c7111ca62881"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 567,
+          "text": "  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 1145,
+          "text": "                    <button",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 1148,
+          "text": "                      onClick={() => setIsAddMenuOpen((open) => !open)}",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 1155,
+          "text": "                        t(\"input.addContext\", {",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 1160,
+          "text": "                        t(\"input.addContext\", {",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 1169,
+          "text": "                    {isAddMenuOpen ? createPortal(",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 1182,
+          "text": "                          onClick={() => {",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ComposerV2.tsx",
+          "line": 1189,
+          "text": "                            {t(\"input.files\", { defaultValue: \"Files\" })}",
+          "sha256": "a69c5ba754aa841c3d51948b9e620da111e4d87b1110a2762b42c7705733c5e0"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ChatInterfaceV2.tsx",
+          "line": 734,
+          "text": "  // different parent container. Pulled out so we don't drift between the two.",
+          "sha256": "b6f3c82276750e5a7a2627bd3390dbb29add91a6b53f10dabc10651ab2f92f65"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ChatInterfaceV2.tsx",
+          "line": 736,
+          "text": "    <div className=\"mx-auto w-full max-w-[860px] px-6 pb-6 pt-3\">",
+          "sha256": "b6f3c82276750e5a7a2627bd3390dbb29add91a6b53f10dabc10651ab2f92f65"
+        },
+        {
+          "file": "ui/src/components/chat-v2/ChatInterfaceV2.tsx",
+          "line": 744,
+          "text": "    <ComposerV2",
+          "sha256": "b6f3c82276750e5a7a2627bd3390dbb29add91a6b53f10dabc10651ab2f92f65"
+        },
+        {
+          "file": "ui/src/i18n/locales/en/chat.json",
+          "line": 322,
+          "text": "    \"addContext\": \"Add files or skills\",",
+          "sha256": "29ea5ecafe5ddf84c31cdc8d3e01974ea8fa65f5eb1271ad9b3727ad2e37606e"
+        },
+        {
+          "file": "ui/src/i18n/locales/zh-CN/chat.json",
+          "line": 305,
+          "text": "    \"addContext\": \"添加文件或技能\",",
+          "sha256": "3459e1240c71977818a69e210fcf5f3bd4bfff995e0684e6aace356b774a296f"
+        }
+      ]
+    }
+  ]
+}

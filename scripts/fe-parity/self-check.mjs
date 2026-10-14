@@ -1,5 +1,7 @@
 import { streamSelfCheck } from './stream-self-check.mjs';
 import { orchestrationSelfCheck } from './orchestration-self-check.mjs';
+import { baselineStaleSelfCheck, staleControlAttempt } from './baseline-stale-self-check.mjs';
+import { staleEntry } from './baseline-stale.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { verifyBaseline } from './baseline.mjs';
@@ -8,7 +10,7 @@ import { Readable } from 'node:stream';
 import { resolve, dirname } from 'node:path';
 import { createMock, TOKEN } from './mock.mjs';
 import { reconcile, reconcilePair, loadReportPair, SKIP_ALLOWLIST, caseId, checkInventory } from './accounting.mjs';
-import { oldDist, newDist, ports, ownedPath, root, baseline, historicalInventory, origin } from './env.mjs';
+import { oldDist, newDist, requireUI, ports, ownedPath, root, baseline, historicalInventory, origin } from './env.mjs';
 import { assetPath } from './serve.mjs';
 import { checkMessageMap } from './message-map.mjs';
 export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = {}) {
@@ -89,7 +91,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     const unknown = make(); unknown.suites[0].specs[0].title = 'unknown'; assert.equal(reconcile(inventory, unknown, '').status, 'FAIL');
     const xfail = make(); xfail.suites[0].specs[0].tests[0].expectedStatus = 'failed'; assert.equal(reconcile(inventory, xfail, '').status, 'FAIL');
   });
-  await check('paired reports: 72 PASS vs 72 SKIP, skip identities and provenance', async () => {
+  await check('paired reports: 68 PASS + 4 matched FAIL vs 72 SKIP, skip identities and provenance', async () => {
     const inventory = JSON.parse(await readFile(historicalInventory, 'utf8')).tests;
     assert.equal(inventory.length, 72);
     assert.equal(SKIP_ALLOWLIST.length, 9);
@@ -98,8 +100,9 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     const allowed = inventory.flatMap((row, i) => SKIP_ALLOWLIST.some(entry => caseId(entry) === caseId(row)) ? [i] : []);
     assert.equal(allowed.length, 9);
     const origins = { old: origin('old'), new: origin('new') };
-    const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: (SKIP_ALLOWLIST.find(entry => caseId(entry) === caseId(row)) || SKIP_ALLOWLIST[0]).skipReasons[0].description }] : [], results: [{ status: skipped.includes(index) ? 'skipped' : 'passed' }] }] })) }] });
-    const pair = (old, next) => reconcilePair(inventory, { old, new: next }, '', origins);
+    const testDir = resolve(baseline, 'e2e');
+    const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, rootDir: testDir, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: (SKIP_ALLOWLIST.find(entry => caseId(entry) === caseId(row)) || SKIP_ALLOWLIST[0]).skipReasons[0].description }] : [], results: [skipped.includes(index) ? { status: 'skipped' } : staleEntry(row) ? staleControlAttempt(staleEntry(row)) : { status: 'passed' }] }] })) }] });
+    const pair = (old, next) => reconcilePair(inventory, { old, new: next }, testDir, origins);
     assert.equal(pair(make('old'), make('new')).status, 'PASS');
     for (const skipped of [allowed.slice(0, 1), allowed]) {
       const accepted = pair(make('old', skipped), make('new', skipped));
@@ -107,6 +110,8 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       for (const side of ['old', 'new']) {
         assert.equal(accepted[side].minimumExecuted, 63);
         assert.equal(accepted[side].executed, 72 - skipped.length);
+        assert.equal(accepted[side].behavioralCoverage.eligible, 68 - skipped.length);
+        assert.equal(accepted[side].behavioralCoverage.passed, 68 - skipped.length);
       }
     }
     const downgrade = pair(make('old'), make('new', inventory.map((_, i) => i)));
@@ -120,9 +125,9 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       for (const field of ['frontend', 'baseURL']) {
         const reports = { old: make('old'), new: make('new') };
         delete reports[frontend].config.metadata[field];
-        assert.equal(reconcilePair(inventory, reports, '', origins).status, 'FAIL');
+        assert.equal(reconcilePair(inventory, reports, testDir, origins).status, 'FAIL');
         reports[frontend].config.metadata[field] = field === 'frontend' ? 'unknown' : 'http://127.0.0.1:28376';
-        assert.equal(reconcilePair(inventory, reports, '', origins).status, 'FAIL');
+        assert.equal(reconcilePair(inventory, reports, testDir, origins).status, 'FAIL');
       }
     }
   });
@@ -153,7 +158,8 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       }
       if (scenario !== 'one side all skipped') {
         assert.equal(account.old.status, 'FAIL');
-        assert.deepEqual(account.errors, []); // Matching skip sets cannot mask per-side failures.
+        assert(!account.errors.some(error => error.startsWith('skip identity only')));
+        assert(account.errors.some(error => error.startsWith('old: skip identity not in fixed allowlist'))); // Matching sets cannot mask per-side failures.
       }
     });
   }
@@ -257,6 +263,25 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
   });
   await streamSelfCheck(check);
   await orchestrationSelfCheck(check);
+  await baselineStaleSelfCheck(check);
+  await check('mock LLM + real orchestration unit tests (no listen/Chrome)', () => {
+    execFileSync(process.execPath, ['--test', resolve(root, 'scripts/fe-parity/mock-llm.test.mjs')], { cwd: root, encoding: 'utf8' });
+  });
+  await check('real ready/onboarding configs register the exact disjoint D 28', async () => {
+    const { realExecutionEnv } = await import('./execution-env.mjs');
+    const { validateRealRegistration } = await import('./real-runner.mjs');
+    const { reportCases, PENDING_ORCHESTRATION } = await import('./accounting.mjs');
+    const directory = await mkdtemp(resolve(root, '_tmp/fe-parity/real-list-'));
+    try {
+      for (const mode of ['ready', 'onboarding']) {
+        const env = realExecutionEnv(process.env, { output: directory, runDir: resolve(directory, mode), mode });
+        const raw = execFileSync(process.execPath, [requireUI.resolve('@playwright/test/cli'), 'test', '--config', resolve(root, 'scripts/fe-parity/real.config.mjs'), '--list', '--forbid-only', '--reporter=json'], { cwd: root, env, encoding: 'utf8' });
+        const report = JSON.parse(raw);
+        assert.deepEqual(report.errors || [], []);
+        validateRealRegistration(reportCases(report, resolve(baseline, 'e2e')), PENDING_ORCHESTRATION, mode);
+      }
+    } finally { await rm(directory, { recursive: true }); }
+  });
   if (assets && frontends.includes('old')) await check('baseline full Vite static build exists', async () => {
     const html = await readFile(resolve(oldDist, 'index.html'), 'utf8');
     assert.match(html, /<script[^>]+src=/);

@@ -1,5 +1,7 @@
-import { relative, isAbsolute } from 'node:path';
+import { relative, isAbsolute, resolve } from 'node:path';
 import { readFile, realpath, stat } from 'node:fs/promises';
+import { staleEntry, failureSignature, behavioralCoverage, compareStaleRows, deriveStaleCascade, validateStaleCascade, oldRealGate, CASCADE_STATUS } from './baseline-stale.mjs';
+export { CASCADE_STATUS } from './baseline-stale.mjs';
 
 // Reasons belong to exact identities; there is no global reason whitelist.
 
@@ -28,7 +30,11 @@ export function reportCases(report, testDir) {
   function visit(suite, parents = []) {
     const titles = suite.title && !suite.file ? [...parents, suite.title] : parents;
     for (const spec of suite.specs || []) {
-      const file = isAbsolute(spec.file) ? relative(testDir, spec.file) : spec.file;
+      // JSON reporter paths are relative to config.rootDir, including tests
+      // declared by an imported frozen spec in an owned orchestration wrapper.
+      const sourceFile = isAbsolute(spec.file) ? spec.file
+        : report.config?.rootDir ? resolve(report.config.rootDir, spec.file) : spec.file;
+      const file = isAbsolute(sourceFile) ? relative(testDir, sourceFile) : sourceFile;
       for (const test of spec.tests || []) rows.push({
         file, title: [...titles, spec.title].join(' › '), line: spec.line, column: spec.column,
         project: test.projectName || '', expectedStatus: test.expectedStatus,
@@ -52,7 +58,7 @@ export function checkInventory(rows, historical) {
   for (const id of pendingById.keys()) if (!ids.includes(id)) errors.push(`D orchestration identity not registered ${id}`);
   return errors;
 }
-function reconcileSingle(inventory, report, testDir) {
+function reconcileSingle(inventory, report, testDir, { staleCascade = false } = {}) {
   const received = reportCases(report, testDir), grouped = new Map();
   const errors = (report.errors || []).map(error => error.message || String(error));
   if (report.config?.forbidOnly !== true) errors.push('Report must attest config.forbidOnly=true');
@@ -63,16 +69,28 @@ function reconcileSingle(inventory, report, testDir) {
   }
   const expectedIds = new Set(inventory.map(caseId));
   for (const id of grouped.keys()) if (!expectedIds.has(id)) errors.push(`unknown result ${id}`);
+  const predecessors = inventory.filter(staleEntry).flatMap(registration => {
+    const matches = grouped.get(caseId(registration));
+    if (matches?.length !== 1 || matches[0].results.length !== 1) return [];
+    const row = matches[0], result = row.results[0];
+    if (result.retry !== undefined && result.retry !== 0) return [];
+    return [{ ...registration, status: result.status === 'failed' ? 'FAIL' : 'NOT_RUN', expectedStatus: row.expectedStatus,
+      failureSignature: failureSignature(result, testDir, report.config?.rootDir) }];
+  });
+  const cascade = staleCascade ? deriveStaleCascade(inventory, predecessors) : new Map();
   let executed = 0, skipped = 0;
   const rows = inventory.map(registration => {
     const matches = grouped.get(caseId(registration)) || [];
-    const base = { file: registration.file, title: registration.title };
+    const stale = staleEntry(registration);
+    const base = { file: registration.file, title: registration.title,
+      ...(stale ? { baselineStale: { defectType: stale.defectType, proofScript: stale.proofScript, evidence: stale.evidence,
+        behavioralCoverageCredit: 0 } } : {}) };
     if (matches.length !== 1) {
       errors.push(`${matches.length ? 'duplicate' : 'missing'} result ${caseId(registration)}`);
       return { ...base, status: 'NOT_RUN', reason: matches.length ? 'duplicate results' : 'No execution result' };
     }
     const row = matches[0];
-    if (row.results.length !== 1) {
+    if (row.results.length !== 1 || row.results[0]?.retry !== undefined && row.results[0].retry !== 0) {
       errors.push(`expected one attempt, got ${row.results.length}: ${caseId(row)}`);
       return { ...base, status: 'NOT_RUN', reason: 'No unique execution attempt (retries are not accepted)' };
     }
@@ -81,6 +99,11 @@ function reconcileSingle(inventory, report, testDir) {
       const annotations = row.annotations.filter(a => a.type === 'skip');
       const reason = annotations.map(a => a.description || '').join('; ');
       const pending = pendingById.get(caseId(row));
+      const derived = cascade.get(caseId(row));
+      if (derived && annotations.length === 0 && row.expectedStatus === 'passed') return { ...base, status: CASCADE_STATUS,
+        allowedSkip: false, rawStatus: result.status, rawSkipAnnotations: annotations, staleCascade: derived,
+        source: pending.source, baselineSkipDescription: pending.baselineSkipDescription,
+        reason: '冻结 serial 组内位于已匹配失效断言之后；原始 skipped；不计执行或通过' };
       if (pending) {
         errors.push(`${PENDING_STATUS} ${caseId(row)}: requires mock LLM/deployment orchestration`);
         // These frozen specs contain serial groups, but no test.skip calls.
@@ -110,26 +133,32 @@ function reconcileSingle(inventory, report, testDir) {
     // Expected failures are still behavioral failures in parity; do not green an xfail.
     const status = result.status === 'passed' && row.expectedStatus === 'passed' ? 'PASS' : 'FAIL';
     if (status === 'FAIL') errors.push(`behavioral failure ${caseId(row)} (${result.status}, expected ${row.expectedStatus})`);
-    return { ...base, status, reason: result.error?.message || '' };
+    return { ...base, status, reason: result.error?.message || '',
+      ...(stale ? { failureSignature: failureSignature(result, testDir, report.config?.rootDir),
+        expectedStatus: row.expectedStatus } : {}) };
   });
-  const expected = inventory.length - skipped;
+  const cascaded = rows.filter(row => row.status === CASCADE_STATUS).length;
+  const expected = inventory.length - skipped - cascaded;
   // Only allowlisted identities actually registered in this suite reduce its floor.
   // In particular the three skeleton registrations have no skip allowance.
   const allowedSkips = [...expectedIds].filter(id => allowedSkipIds.has(id)).length;
-  const minimumExecuted = inventory.length - allowedSkips;
-  if (executed < minimumExecuted) errors.push(`实际执行数 ${executed} < 最低执行数 ${minimumExecuted} (注册数 ${inventory.length} − 身份清单数 ${allowedSkips})`);
+  const minimumExecuted = inventory.length - allowedSkips - cascaded;
+  if (executed < minimumExecuted) errors.push(`实际执行数 ${executed} < 最低执行数 ${minimumExecuted} (注册数 ${inventory.length} − 身份清单数 ${allowedSkips} − STALE_CASCADE ${cascaded})`);
   if (executed !== expected) errors.push(`应执行数 ${expected} vs 实际执行数 ${executed}`);
   const pendingOrchestration = rows.filter(row => row.status === PENDING_STATUS).length;
-  return { denominator: inventory.length, allowedSkips, minimumExecuted, expected, executed, explicitSkips: skipped, pendingOrchestration, status: errors.length ? 'FAIL' : 'PASS', rows, errors };
+  return { denominator: inventory.length, allowedSkips, minimumExecuted, expected, executed, explicitSkips: skipped, pendingOrchestration,
+    ...(staleCascade ? { staleCascade: cascaded } : {}),
+    behavioralCoverage: behavioralCoverage(rows), baselineStale: rows.filter(row => row.baselineStale),
+    status: errors.length ? 'FAIL' : 'PASS', rows, errors };
 }
 
 // Merge complete profile runs only after validating every original report. A pass
 // never erases a failed attempt, malformed skip, missing identity or bad provenance.
 const reportList = reports => Array.isArray(reports) ? reports : [reports];
-export function reconcile(inventory, reports, testDir) {
+export function reconcile(inventory, reports, testDir, options) {
   const inputs = reportList(reports);
-  if (inputs.length === 1) return reconcileSingle(inventory, inputs[0], testDir);
-  const profiles = inputs.map(report => reconcileSingle(inventory, report, testDir));
+  if (inputs.length === 1) return reconcileSingle(inventory, inputs[0], testDir, options);
+  const profiles = inputs.map(report => reconcileSingle(inventory, report, testDir, options));
   const errors = profiles.flatMap((profile, index) => profile.errors.map(error => `report ${index + 1}: ${error}`));
   if (!inputs.length) errors.push('No profile reports supplied');
   const rows = inventory.map((registration, index) => {
@@ -147,6 +176,7 @@ export function reconcile(inventory, reports, testDir) {
   const pendingOrchestration = rows.filter(row => row.observations.some(observation => observation.status === PENDING_STATUS)).length;
   return { denominator: inventory.length, allowedSkips, minimumExecuted: inventory.length - allowedSkips,
     expected: inventory.length - skipped, executed, explicitSkips: skipped, pendingOrchestration,
+    behavioralCoverage: behavioralCoverage(rows), baselineStale: rows.filter(row => row.baselineStale),
     status: errors.length ? 'FAIL' : 'PASS', rows, errors, profiles };
 }
 
@@ -166,7 +196,10 @@ export function reconcilePair(inventory, reports, testDir, origins) {
   const oldSkips = skipIds('old'), newSkips = skipIds('new');
   for (const id of oldSkips) if (!newSkips.has(id)) errors.push(`skip identity only in old: ${id}`);
   for (const id of newSkips) if (!oldSkips.has(id)) errors.push(`skip identity only in new: ${id}`);
-  return { ...accounts, errors, status: errors.length || Object.values(accounts).some(a => a.status !== 'PASS') ? 'FAIL' : 'PASS' };
+  const stale = compareStaleRows(inventory, accounts, !errors.some(error => error.includes('report config.metadata')));
+  errors.push(...stale.errors);
+  return { ...accounts, errors, baselineStale: stale.rows,
+    status: errors.length ? 'FAIL' : 'PASS' };
 }
 
 export async function loadReportPair(paths) {
@@ -186,4 +219,64 @@ export async function loadReportPair(paths) {
     reports[frontend] = Array.isArray(paths[frontend]) ? loaded : loaded[0] || { suites: [] };
   }
   return reports;
+}
+
+// Real uses two disjoint native deployments, not overlapping profile reports.
+// Reconcile each original against its fixed partition before assembling D's 28 rows.
+export function reconcileReal(inventory, reports, testDir, origins, modes = ['ready', 'onboarding'], frontend = 'old') {
+  const errors = [], partitions = {}, byId = new Map();
+  const expectedIds = PENDING_ORCHESTRATION.map(caseId).sort();
+  if (JSON.stringify(inventory.map(caseId).sort()) !== JSON.stringify(expectedIds)) errors.push('Real inventory must match the fixed D 28 identities');
+  if (!modes.length || new Set(modes).size !== modes.length || modes.some(mode => !['ready', 'onboarding'].includes(mode))) errors.push('Invalid real deployment modes');
+  for (const mode of modes) {
+    const subset = inventory.filter(row => (row.file === 'real/onboarding.spec.mjs') === (mode === 'onboarding'));
+    const report = reports[mode] || { suites: [] };
+    const metadata = report.config?.metadata;
+    if (!['old', 'new'].includes(frontend) || metadata?.frontend !== frontend || metadata?.baseURL !== origins[mode] || metadata?.mode !== mode
+      || metadata?.suite !== 'real-D' || metadata?.backend !== 'native-with-mock-llm') errors.push(`${mode}: invalid real provenance`);
+    partitions[mode] = reconcile(subset, report, testDir, { staleCascade: true });
+    errors.push(...partitions[mode].errors.map(error => `${mode}: ${error}`));
+    for (const row of partitions[mode].rows) {
+      if (byId.has(caseId(row))) errors.push(`duplicate real partition ${caseId(row)}`);
+      byId.set(caseId(row), row);
+    }
+  }
+  const rows = inventory.map(row => byId.get(caseId(row)) || { file: row.file, title: row.title, status: 'NOT_RUN', reason: 'Deployment mode not requested' });
+  const executed = rows.filter(row => ['PASS', 'FAIL'].includes(row.status)).length;
+  const pendingOrchestration = rows.filter(row => row.status === PENDING_STATUS).length;
+  const staleCascade = rows.filter(row => row.status === CASCADE_STATUS).length;
+  const full = modes.length === 2;
+  if (full && executed !== 28 - staleCascade) errors.push(`D expected ${28 - staleCascade} executions (28 minus ${staleCascade} STALE_CASCADE), received ${executed}`);
+  const requested = rows.filter(row => byId.has(caseId(row)));
+  const account = { denominator: 28, expected: (full ? 28 : requested.length) - staleCascade, minimumExecuted: (full ? 28 : requested.length) - staleCascade,
+    executed, explicitSkips: 0, allowedSkips: 0, pendingOrchestration, staleCascade, rows, partitions,
+    behavioralCoverage: behavioralCoverage(rows), baselineStale: rows.filter(row => row.baselineStale),
+    coverage: full ? 'D_ALL_28' : 'D_PARTIAL_MODE_ONLY', status: errors.length ? 'FAIL' : 'PASS', errors };
+  errors.push(...validateStaleCascade(inventory, account).errors);
+  account.status = errors.length ? 'FAIL' : 'PASS';
+  if (frontend === 'old') account.oldGate = oldRealGate(inventory, account);
+  return account;
+}
+
+// Offline double-side D comparison. Every side supplies two original disjoint
+// reports; this cannot borrow profile executions. Only source-derived stale
+// cascades are excluded from the execution floor and never become PASS.
+export function reconcileRealPair(inventory, reports, testDir, origins) {
+  const accounts = {}, errors = [];
+  for (const side of ['old', 'new']) {
+    const partitions = {};
+    const inputs = reportList(reports[side]);
+    if (inputs.length !== 2) errors.push(`${side}: real pair requires exactly ready/onboarding originals`);
+    for (const report of inputs) {
+      const mode = report?.config?.metadata?.mode;
+      if (!['ready', 'onboarding'].includes(mode) || partitions[mode]) {
+        errors.push(`${side}: duplicate/unknown real report partition ${mode}`);
+      } else partitions[mode] = report;
+    }
+    accounts[side] = reconcileReal(inventory, partitions, testDir, origins[side], ['ready', 'onboarding'], side);
+  }
+  const stale = compareStaleRows(inventory, accounts);
+  errors.push(...stale.errors);
+  return { ...accounts, errors, baselineStale: stale.rows,
+    scope: 'D_28_PAIR_ONLY', status: errors.length ? 'FAIL' : 'PASS' };
 }

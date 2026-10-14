@@ -1,8 +1,8 @@
 # F2：双前端对拍、流式黑盒与基线 72 例 runner
 
-旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。不启动基线 dev server、gateway 或真实 `ui/server`。
+旧入口是固定基线 `ui/` 的完整静态 Vite bundle，新入口仍是 `ui-rs/probe-leptos` 探针。`skeleton` / `streaming-scroll` / `baseline` 两入口代理到一个 mock backend，顺序运行，固定 127.0.0.1:28376（mock）/28377（old）/28378（new）。这三个套件不启动基线 dev server、gateway 或真实 `ui/server`。新增 `real` 套件使用隔离的真实 runtime 和本地 mock LLM，见文末。
 
-本 runner 有三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（legacy / timeline 各 4 例，共 8 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过和 #61 真实报告验收仍须协调者运行后确认。**
+原三个独立套件：`skeleton`（3 例登录/HTTP/WS）、`streaming-scroll`（legacy / timeline 各 4 例，共 8 例聊天黑盒）、`baseline`（直接复用基线 15 spec，循环展开 72 例）。新增用例不冲抵 72 分母。`streaming-scroll` 可以单独作为 F5 前置校准；`skeleton` 保留第一 PR 的完整基线缺口闸门，仍总 exit 1。**本 PR 只做离线构建与自检；旧侧黑盒通过和 #61 真实报告验收仍须协调者运行后确认。**
 
 ## 第二 PR：流式 / 滚动 / 搜索定位
 
@@ -212,3 +212,102 @@ WS 映射 self-check 检查全部45条消息（35主通道＋4历史兼容＋6�
 - B类9例部署/profile矩阵脚本化，接入D类28例mock LLM编排；完整37候选双跑并对账72。
 
 WS施工图见 [ws-message-map](../../docs/research/007_frontend/ws-message-map.md)。#42正式Chrome复跑见exp007 browser.mjs；本runner不会代替其IME/流式/岛门。
+
+
+## D 类真实 runtime + mock LLM（issue #58）
+
+`node scripts/fe-parity/run.mjs --suite real --frontends old` 默认 `--real-mode all`，先 ready 24 例、再 onboarding 4 例。`--real-mode ready` / `onboarding` 可单独诊断，输出 `PASS_PARTIAL_REAL_MODE_ONLY` 时仍明确 D 分母 28 和未请求身份 NOT_RUN，不能据此宣称 D 28 已验收。真实启动目前只支持 old；new 并没有等价的原生 UI/runtime。另支持不启动服务的 `--suite real --reconcile --frontends old,new`，每侧必须提供 ready/onboarding 两份独立原件，配置元数据必须如实声明该端，不能把 old 报告记作 new。
+
+`real.config.mjs` 的 ready 使用自有 `real-tests/` 包装入口 import 只读基线 spec，onboarding 直接加载只读基线；注册按相对 `ui/e2e` 的完整身份及源行号核验 24+4。JSON reporter 的 spec.file 按其 config.rootDir 还原真实源路径，再相对基线 e2e 对账，不重命名注册。没有 import 基线的 Playwright config / webServer / globalSetup，也没有执行或修改 `launch.mjs`。保留基线 viewport=1440×900、timeout=120s、expect=15s、单 worker 和 serial；固定 forbidOnly/retries=0/repeatEach=1。只用本机 `channel: chrome`，关闭 video（避免另需下载 ffmpeg），保留失败 trace/screenshot，浏览器临时 profile 在输出的 browser-tmp 内。
+
+等价启动工作由 `real-launch.mjs` 完成：新建独占目录，写同 schema 的 provider/agent/webui 配置与带 E2E-FILE-SEED 的 README.md/sample.ts、e2e-seed SKILL.md、runtime.json；auth.db / PILOT_HOME / workspace 全在该目录内。JSON 写入 pilotdeck.yaml（合法 YAML）。复用只读 native `createRuntimeSupervisor`，其 server 和 gateway 命令不变；仅用 spawnImpl 将 client 换成 `real-vite.mjs`，Vite 仍加载只读基线配置/源码，但使用 configLoader=runner、worktree cache、strictPort，避免写基线缓存或另找端口。`real-setup.mjs` 用真实 Create Account / Sign in 流程取 storageState，显式等待 auth-token；不伪造登录。原 globalSetup 未指定 Chrome channel，因此不能原样调用。
+
+所有运行数据在本 worktree `_tmp/fe-parity/real-run/run-<随机>/ready|onboarding/`，旧目录不删、不覆盖。启动前通过只连接端口的探测检查 **全部七个**固定端口空闲：ready=3010/5180/18798，onboarding=3011/5181/18799，LLM=28379。占用、权限不足或探测超时均 FAIL；不杀占用者。每次 spawn 前再查本 mode 端口；显式 HOST/PROXY_HOST/GATEWAY_HOST=127.0.0.1。自有 runtime 的预加载保护也拒绝其他 TCP bind 和外部连接，阻止 server/Vite 自动换端口及用户 proxy/env 泄漏。launcher detached 建立一个自有进程组；supervisor 的子进程不 detached；清理只信号本 runner spawn 的进程组，TERM 后最多 5s KILL。不会连接、监听或杀 3001/18789，不碰 ~/.pilotdeck。
+
+固定 `REAL_TEST_KEY='fe-parity-mock-key'` 在 env.mjs 标明是公开测试值，realExecutionEnv 设置 E2E_LLM_CENTER_URL=127.0.0.1:28379。实际 spec 不根据三个 chat 标题切 provider，默认三个都走 OpenAI；Anthropic/Google 配置可显示但不据此声称协议已调用。mock 只实现 OpenAI `/v1/chat/completions`（兼容 `/chat/completions`）的 SSE / 非流式及 `/v1/models` 列表。确定性脚本：最新 user 的 E2E-CHAT marker、metadata.purpose=session_title_generation 的 JSON 标题、连接文字 1、基线随机 solid PNG 的确切颜色。tools 可以出现在请求里，响应不生成 tool_calls。未知请求/脚本显式拒绝并使实跑总体 FAIL。
+
+onboarding 是空 providers，无 gateway。其 OpenAI UI 预设 URL 不读 E2E 环境变量，`real-network.mjs` 仅在自有 runtime 中将 `https://api.openai.com` 的 `/v1/models`、`/models`、`/v1/chat/completions`、`/chat/completions` fetch 改为本地同路径，保持 method/body/headers，写 network.jsonl。其他外部连接阻断留证，更新检查可显示错误；没有外部下载。该注入只替换 LLM 网络目的地，不改 /api 业务响应、DOM、spec 或 provider/config catalog。浏览器用 DNS 隔离参数阻止外部请求。
+
+每次实跑保留 `old-ready.json` / `old-onboarding.json` 原始 reporter、runtime/stdout/stderr 日志、注册 JSON、llm-requests.jsonl（所有请求/脚本/响应/逐帧 SSE；credential 字段只标 fixed-test-key）、network.jsonl（重定向/阻断）、test-results、real-parity.md 和 result.json。`reconcileReal` 对每个原件先用既有 reconcile 核对固定分区及真实配置 provenance，再组装互斥的 D 28 身份；不能把 24/4 当重复 profile 合并，否则会错误报缺例。完整模式注册分母 28、合法 skip=0；真实 passed/failed/timedOut 按既有规则记 PASS/FAIL。第 4 轮起，只有冻结源码和已匹配失效 FAIL 机械推出的 STALE_CASCADE 扣减 expected/minimumExecuted（不计执行/通过/行为覆盖）；其余 serial skipped 仍为 NOT_RUN_PENDING_ORCHESTRATION / FAIL。72 全量规则和 B 九身份理由许可未改，其他 44 例明确 NOT_RUN。
+
+离线：`node --test scripts/fe-parity/mock-llm.test.mjs`（14 组正负控制；冻结 native OpenAI parser 验证流式/非流式，冻结 PNG 编码验证 4 色，stub 网络保护，无 listen/Chrome）；`run.mjs --self-check` 同时核对两个 real 配置的实际注册。默认 self-check 仍要求 old/new 资产齐备；只有 old 资产的现场使用 `--self-check --frontends old`；无资产的规则验证使用既有 `--rules-only`。real 浏览器 preflight 不要求 mock-UI 静态 bundle，因为运行只读 Vite dev 源码，而规则/协议/注册检查全部执行。
+
+协调者在沙箱外运行（output 必须尚不存在；无需再提供真实 API key）：
+
+```sh
+(
+  set -eu
+  mkdir /tmp/pdrs-parity.lock || exit 1
+  trap 'rmdir /tmp/pdrs-parity.lock' EXIT
+  node scripts/fe-parity/run.mjs --suite real --real-mode all --frontends old \
+    --output _tmp/fe-parity/coordinator-real-old5
+)
+```
+
+完整实跑 D 注册分母仍为 28、合法 skip=0。第 5 轮当前规则要求四条清单失效满足 MATCHED_FAIL 的旧侧条件，11 条 serial 级联机械推出，其余 13 条全 PASS、0 待编排；应执行/最低执行为 17（ready 13 + onboarding 4）。原始 FAIL 保留，旧侧校准门只证明单侧；详见末尾第 5 轮及 `_tmp/RESULT.md`。
+
+
+第 2 轮修复针对协调者 old1 的 16/28 执行结果。ready 不再注入显式 gateway TOKEN：原生 gateway 生成 `PILOT_HOME/server-token`，bridge 的 TOKEN_PATH 显式指向同一文件。就绪 gate 要求该文件非空且原生 bridge 已报告 connected；账号 setup 随后读取真实 `/api/projects`，保存 `old-ready.projects.json` 并验证 General 的 workspaceCwd。`WORKSPACES_ROOT` 清理后显式设为本 mode 的 workspace；配置 databasePath 与 env 的 runDir/auth.db 一致，避免规范化配置默认值把它改到 home/auth.db。General 预建目录不替代 RPC 成功；仍使用原始项目/session 状态。
+
+onboarding 自动发现列表会在未填 key 时发无 Authorization 的 OpenAI GET models。mock 仅为这个只读端点接受完全缺失认证头，completion 仍要求固定测试 Bearer，错误 key/Basic/其他协议头继续拒绝。LLM 日志新增 authHeaders 的 absent/fixed-test-key/invalid 三态，不落 credential 原文。网络日志新增每个预加载进程的 entrypoint/executable/ppid。runtime PATH 使用新目录 bin/node（链接本机 Node）及系统路径，避开操作人全局 TaskMaster CLI 的自动更新探测；额外设置 TASKMASTER_SKIP_AUTO_UPDATE=1、npm offline、自有 cache，不下载依赖。
+
+runner 的独立 `real-tcp-audit.mjs` 用 `ps` 递归取本进程树和自有 process group，再以 `lsof -nP -a -p <PIDs> -iTCP -F pftnT` 观察全部 TCP 状态和监听，含 Chrome。实跑前、每 mode 测试前后、runtime 清理后及总清理后均强制采样，期间每轮结束 250ms 后再次采样；原始结果、进程树和解析的 TCP 目标写 `tcp-connections.jsonl`。观察到目标 3001/18789（或本树监听它们）立即 FAIL，TERM 自有组并在 5s 后 KILL，停止整个 real run；观察工具/解析/证据写入失败也 FAIL。没有在这些端口主动连接或清理占用者。轮询会漏掉采样间完整生灭的极短连接，因此它是 net.connect 钩子的独立补充，不等于完整连接历史或 OS 防火墙。离线自检只注入 ps/lsof 文本，不执行这个观察器。
+
+old1 根因、每项证据/源码行号、launch env/目录差异、独立基线失败及 old2 重跑检查点见 `_tmp/triage-r2.md`；第 2 轮验证与交接追加到 `_tmp/RESULT.md`。基线及 28 执行下限未改变，old2 仍需保留真实失败，不能预报 28 PASS。
+
+
+## 第 3 轮：项目注册和基线失效对账（历史；失效级联口径见第 4 轮）
+
+old3 的 workspace/e2e-project 有种子，但 home/projects 中没有注册。冻结 launch.mjs:21-23 只创建 workspace/home，:77-80 只写种子，没有 `.cwd`。原生 src/web/server/listProjects.ts:28、:45、:201-210 以 PILOT_HOME/projects 为目录源，读取有效 `.cwd` 才恢复绝对路径；ui/server/projects.js:131-152、:169-212 会读取并补齐同一注册。real-launch 现在调用冻结 `createProjectId`，写入本轮 home/projects/<id>/.cwd，runtime.json 保存 projectPath/projectId/registrationPath；不写会话。setup 通过真实 /api/projects 验证该项目恰好出现一次且 files 未显式禁用（常规项目不下发 capabilities，UI 默认启用），保留 RPC 原件。
+
+注册仍不足以选项目：AppShellV2.tsx:232-256 与 appShellSelection.ts:32-35 在 `/` 默认选 General；MainAreaV2.tsx:123-134 对 General 关闭项目 Files。仅 Files 的包装入口在冻结 beforeEach/appReady 后通过原生侧栏 `e2e-project` 按钮选择项目，并检查真实 `/p/<id>` URL，写入 real-project-precondition 附件。原 frozen 文件测试、其他三个 ready serial spec 和 onboarding 不改；不拦截请求、不注入 DOM/业务 state、不单例重跑、不绕过 serial。
+
+`baseline-stale.json` 只列三个已证明的精确身份：SES-SIDEBAR-003、SET-ABOUT-001（设置页返回文案已替换）、SKL-CREATE-001（字面竖线选择器）。FIL-TREE 不入表。每条含 defectType、证据路径/行号/原文/文件 SHA-256、可复现 proofScript、失败 assertion 与 spec callsite（文件、行、列）、matcher、完整 locator。清单由代码中的已评审 canonical JSON SHA-256 绑定；改单字/身份借用/增删/证据行号漂移均 FAIL。源码证据也逐行、逐文件 hash 验证，import 或自检即失败，不能通过单独改 JSON 扩大豁免。
+
+离线证明 `node scripts/fe-parity/baseline-stale-proof.mjs` 执行冻结 fixtures.clickButton 声明，渲染冻结 SettingsSidebar 和 Skills Header（真实 react-dom/server；只替代翻译/图标等依赖），读取 en/zh-CN 原翻译，并检查全 ui/src 可执行源码中没有 backToApp 引用。证明的是选择器/文案失效，不是浏览器实跑。设置返回按钮实际使用 backToProjects，仍接 onClose；AppShellV2.tsx:389-396 根据 selectedSession / selectedProject 返回 session / project / `/`。git 历史 f4afc71f3226912d8de6c8bf0a87a926271256d2 也明确把 backToApp 换成 backToProjects。
+
+失效用例照常执行，原始和账目行始终保留真实 FAIL；单侧运行仍 FAIL。双侧只有**全部原件**都在绑定 helper 断言位置、各自 spec 调用位置、matcher 和 locator FAIL 才记 `MATCHED_FAIL` 一致。两侧同在错误位置失败、单侧/两侧 PASS、SKIP、缺失、重复/重试、借用身份、其他业务失败、serial pending、provenance/report errors 均不允许被此规则覆盖。72 多 profile 路径与 D 28 分区路径共用这条规则。侧账目仍显示 FAIL，双侧总状态只表示对账一致，不改用例 PASS/FAIL。
+
+报告新增 baselineStale 独立清单与 behavioralCoverage；D 最多 25 个有效行为守护身份，失效三条覆盖记 0。执行分母/应执行/最低执行仍 28。serial 后继六个 Session、两个 Skills 仍不算执行，不能因已知前序失效自动放行。old4 在 Files 全部成功且无新问题时可能恢复四个 Files 执行，但不预报其通过，更不预报 D 28 放行。
+
+双侧 D 原件离线对账（每端的 JSON metadata 需为该端、原 mode、suite=real-D、backend=native-with-mock-llm，baseURL 固定为 ready 5180 / onboarding 5181；各端分时运行）示例：
+
+```sh
+node scripts/fe-parity/run.mjs --suite real --reconcile --frontends old,new \
+  --old-report <old-ready.json> --old-report <old-onboarding.json> \
+  --new-report <new-ready.json> --new-report <new-onboarding.json> \
+  --output _tmp/fe-parity/coordinator-real-pair1
+```
+
+成功只报 PASS_REAL_PARITY_ONLY（D_28_PAIR_ONLY），不表示全量 72 或真实运行的网络/TCP 审计验收。此命令不启动服务；读取原件并验证不同文件/别名和固定来源。当前没有 new 实跑结果，不能据此宣称双侧通过。第 3 轮源码调查、old3 只读复核、离线验证和 old4 完整命令见 `_tmp/RESULT.md`。
+
+
+第 3 轮保留协调者 lsof exit 1 + 空 stderr 的可用 stdout 修复与原单测，并补上 `!killed && !signal`：execFile 超时后若子进程处理 SIGTERM 并 exit(1)，可能同时报告 code=1 / killed=true / signal=null / 空 stderr，这份部分观察不能接受。已用无 listener 的短进程复现 Node 属性组合，新增独立负控制；正常 exit 1 的非空/空 stdout 路径继续有效。详见 `_tmp/lsof-exit-timeout-proof-r3.json` 与 RESULT 第 3 轮审阅。
+
+
+## 第 4 轮：Files explorer 展开与失效级联（历史；Files 改判见第 5 轮）
+
+old4 的 Files trace 中，顶部 Files 模式已 pressed，但右侧 `navigation[aria-label="Workbench panels"]` 中 Files 为 `aria-pressed=false`，Smart Chat 为 true；全部 56 条 /api 记录里没有文件树请求。冻结 `MainContent.tsx:540,564-568` 默认/进入 Files 时折叠 explorer，`:1088-1135` 只在 explorerVisible 时挂载 FilesV2；冻结 clickButton 的 `.first()` 点到顶部模式按钮，不展开右侧 explorer。因此需要额外真实用户交互，不是空种子/权限/根节点问题，FIL-TREE 不增加失效登记。
+
+`files-precondition.mjs` 在 Files 包装入口的项目选择之后点顶部 Files，再精确定位 Workbench panels 内的 Files 按钮并展开；等待真实 GET `/api/projects/<id>/files`，记录 status/body/按钮状态到 `real-files-explorer-precondition`。该树来自 `useFileTreeData -> api.getFiles -> ui/server/index.js:1944 -> extractProjectDirectory(.cwd) -> getFileTree`；gateway `project_files_list` 的 `/api/projects/files?projectKey=...` 是另一条接口。保持冻结原断言、身份、serial、视口及服务链，原件不改写。
+
+real 的 `STALE_CASCADE` 由 `serial-topology.mjs` 读取冻结五个 spec 的 AST，核对完整文件 hash、serial configure 范围和注册行号，结合固定 28 身份的实际 --list 核验，从失效前驱之后的源码注册顺序推出；没有新增级联身份 JSON 清单。只有前驱在登记 assertion/callsite/matcher/locator 真实 FAIL、expectedStatus=passed，后继原始 skipped 且 skip annotation 为空，才归入级联。失效 PASS、其他断言 FAIL、缺失/重复/重试、其他 serial 组、失效之前、手工状态/skip 理由均不能取得这个排除；缺结果仍 NOT_RUN，非失效的 Files 失败后继仍待编排。
+
+注册分母 28 保留。当前三条失效的 serial 后继机械得出 Session 6 + Settings 0 + Skills 2 = 8；这些行不计执行、不计 PASS、不计行为覆盖，不记合法 skip。满足旧侧校准条件时实际执行/应执行/最低执行均为 20，17 PASS + 3 原始 FAIL，失效覆盖 0，级联覆盖 0，行为守护 17/17；报告单列失效 FAIL 条件满足数、STALE_CASCADE 数、待编排数。old4 离线重账为 17/20 执行、3 失效条件满足、8 级联、3 待编排，旧侧门仍 FAIL。
+
+`oldGate` 是单侧校准门：完整 ready/onboarding 来源正确、三条失效条件满足、级联规则有效、其余全执行 PASS、待编排 0、无其他报告/编排/LLM 错误才 PASS。行仍保留 FAIL，断言 account.status 仍 FAIL；完整 old runner 依 oldGate 选择 PASS_SINGLE_FRONTEND_ONLY 或 FAIL。部分 mode 无法满足完整旧侧门，仍只报局部结果。正常 Playwright exit 1 只在原始 reporter 含 failed/timedOut 且无信号时作为行为失败处理；exit 2/信号/退出码与原始结果不一致仍编排 FAIL，实际退出码仍写入 executions，不改原始 reporter。双侧必须三条 MATCHED_FAIL 全部成立，并重新验证两边级联推导及身份集合完全一致，才可能 PASS_REAL_PARITY_ONLY；失效 PASS 却保留级联、手工标非后继、单侧级联集合不同均 FAIL。
+
+失效清单仍为原三条；本轮只修改 note 并同步已评审 canonical digest，身份、证据、断言/调用点未扩展。72 全量和 mock 多 profile 的待编排/skip 原规则保持；real 的级联排除不借给 mock 测试。离线完整自检包括三组失效/级联正负控制、14 组 mock/native 编排测试，以及真实 --list 的 24+4 注册。old5 命令见上面的运行块；本轮不代跑，不起服务，不提交。详细原件与根因/TCP 复核见 `_tmp/RESULT.md` 第 4 轮及 `_tmp/round4-old4-evidence/`。
+
+
+## 第 5 轮：FIL-TREE 基线失效改判
+
+撤除 `files-precondition.mjs` 及 Files 包装入口的项目选择/附件：冻结 spec 仅通过普通 import 注册，原 beforeEach、serial、断言、视口不变。原生 `.cwd` 注册、种子与账号 setup 的 `/api/projects` 校验保留。冻结 global setup 只保存登录状态；appReady 每例 goto('/')；默认路由选 General。项目可见不等于自动选中，额外侧栏 click 属于补交互，因此也撤除。
+
+离线证明执行冻结 chooseDefaultProject、fixtures.clickButton 和 JSX/状态 AST 片段，用真实 react-dom/server 渲染 en/zh-CN 按钮。General 下工作台 Files 不挂载，宽选择器实际命中 composer 的 Add files or skills / 添加文件或技能并打开上下文菜单，无法显示种子树。普通项目的对照场景中，`.first()` 先命中顶部 Files 模式按钮，进入 Files 再折叠 explorer，FilesV2 不挂载；再点顶部按钮返回 chat，复现 old5 前置与原 spec 的冲突。反向控制展开 explorer 时可挂载。这个脚本不启动浏览器/服务，不把片段渲染当整页实跑。
+
+`baseline-stale.json` 新增 FIL-TREE-001，四条清单的 canonical SHA-256 为 `80b8fa5c1624133e630a00ef717343cf4bc9d648b1044d1c047d1c56565f5d38`。Files 精确失败为 assertion/callsite 同一 `real/files.spec.mjs:9:38`、matcher `toContainText`、locator `locator('body')`。直接 spec 断言的 callsite 取原 stack 首帧，helper 断言继续保留不同文件调用点；错误行列、locator、PASS/skip、重试与来源均拒绝。失败仍真实执行，覆盖记 0。
+
+历史证明：`a5f1d1128bf716ea54f12042cd244bb503f74405`（2026-09-04）把 explorer 初值 false 改 true，并新增进入 Files 时折叠的 effect；`bed6177be...`（2026-09-05）引入顶部 Files ↔ chat 切换与 General 的 Files 隐藏；files.spec 最后修改 `e816fca4fc7e46feb1c550bcd600f4bc194d1be3`（2026-09-29），在 UI 提交之后。因此证据是冻结 spec 与当时已有 UI 契约不符，不能声称 spec 写在 UI 改动之前。有界 git log/blame/show、离线脚本结果及 old5 只读摘要见 `_tmp/round5-old5-evidence/`。
+
+serial AST 自动推出 Files 后三例 FIL-TREE-002 / FIL-EDIT-001 / FIL-PREVIEW-001；加上原 Session 6、Skills 2，共 11 STALE_CASCADE。期望总账为注册 28、执行/应执行/最低执行 17 = 13 PASS + 4 原始 FAIL、合法 skip 0、待编排 0、行为守护 13/13；ready 13 执行 = 9 PASS + 4 FAIL，onboarding 4 PASS。四条旧侧 MATCHED_FAIL 候选仍 UNPAIRED；两侧真实原件同位 FAIL 且级联集合相同才可确认配对。old6 命令把 output 设为 `_tmp/fe-parity/coordinator-real-old6`；唯一锁、原件保存、bridge/LLM/TCP 全审计继续由原 runner 执行。本轮不代跑、不起服务、不提交。
