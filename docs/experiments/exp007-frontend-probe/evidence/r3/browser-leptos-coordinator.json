@@ -1,0 +1,48 @@
+{
+  "candidate": "leptos",
+  "profile": "/Users/da/ws/pilotdeck-rs/_build/wt-f2/_tmp/chrome-profile-leptos",
+  "channel": "chrome",
+  "checks": [
+    {
+      "name": "login/storage/lists",
+      "status": "PASS"
+    },
+    {
+      "name": "compositionstart/end + Enter + isComposing + keyCode229 + Shift guard",
+      "status": "PASS",
+      "handlerMarkers": {
+        "composing": "false -> true -> false",
+        "keydowns": 5
+      },
+      "nativeOSIME": false,
+      "scope": "synthetic composition only, 未测 OS IME"
+    },
+    {
+      "name": "xterm lifetime DOM/buffer/focus/input",
+      "status": "PASS",
+      "cycles": 10
+    },
+    {
+      "name": ">=20Hz 60s count/real frame seq/scroll",
+      "status": "PASS",
+      "received": 1500,
+      "DOMFrames": 1500,
+      "sequenceSource": "data-seq = inbound Frame.seq",
+      "actualHz": 24.419547674124097,
+      "geometry": {
+        "scrollHeight": 2232,
+        "clientHeight": 252
+      },
+      "readingStart": 80,
+      "scrollRange": [
+        80,
+        80
+      ],
+      "maxAnimationFrameGapMs": 16.80000000000291,
+      "jankVerdict": "Frame timings recorded; perceptible smoothness requires human review"
+    }
+  ],
+  "nativeOSIME": false,
+  "compositionScope": "synthetic composition only, 未测 OS IME",
+  "status": "PASS_BROWSER_MACHINE_CHECKS"
+}

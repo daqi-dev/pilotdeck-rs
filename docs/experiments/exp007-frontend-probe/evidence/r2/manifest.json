@@ -58,5 +58,35 @@
     "file": "dioxus-negative-seq.json",
     "bytes": 3139,
     "sha256": "38f2e48242570561c4ada2461e0f796b8ee79664a8aee981cfda4a7f17e780e6"
+  },
+  {
+    "file": "browser-leptos-coordinator-raw.json",
+    "bytes": 535,
+    "sha256": "83685b3cb38a68ef8d2b0afaa8a45b77dbfa4f8d12020b5220d804e66f670f4a"
+  },
+  {
+    "file": "browser-leptos-coordinator-diag.json",
+    "bytes": 1382,
+    "sha256": "91f3257012d978360d4618c69c133ee5a0e7f3efd309d3c17f97a65d6c6e573c"
+  },
+  {
+    "file": "browser-dioxus-coordinator-raw.json",
+    "bytes": 535,
+    "sha256": "f742dcdd8f629cfd335a4aa82453347e6b2b4d6104eed48aebc25f6aaac0c8e0"
+  },
+  {
+    "file": "browser-dioxus-coordinator-diag.json",
+    "bytes": 1383,
+    "sha256": "d59300f2f5808709261d25a6bb728e2b6eb549ed4cfb66a213fa06a3625d69c1"
+  },
+  {
+    "file": "browser-coordinator-diagnostic.patch",
+    "bytes": 691,
+    "sha256": "b93014c02df4a4c28cbcfcd0248ea38f8d5a5d5be65fdca36ce809348926476f"
+  },
+  {
+    "file": "browser-coordinator-diagnostic.md",
+    "bytes": 1261,
+    "sha256": "f84ea26ee8404d46047fa2a1dd81bde8dfeab8a29e0bfc9940e27675e31f14f9"
   }
 ]

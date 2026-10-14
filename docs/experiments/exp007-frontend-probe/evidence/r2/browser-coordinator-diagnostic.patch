@@ -1,0 +1,12 @@
+--- a/scripts/exp007/browser.mjs
++++ b/scripts/exp007/browser.mjs
+@@ -52,7 +52,8 @@
+  await page.locator('#composer').fill('你好');
+  await compose('compositionstart','ni','true');
+  await keydown({});assert.equal(await page.locator('#sent').textContent(),'0');
+- assert.equal(await page.locator('#composer').inputValue(),'你好');
++ result.diagnosticDraftAfterSyntheticEnter=await page.locator('#composer').inputValue();
++ await page.locator('#composer').fill('你好');
+  await compose('compositionend','你好','false');
+  for(const options of [{isComposing:true},{keyCode:229},{shiftKey:true}]) {
+   await keydown(options);assert.equal(await page.locator('#sent').textContent(),'0');
