@@ -162,7 +162,7 @@ try {
             const errors = checkInventory(rows, historical);
             if (errors.length) throw new Error(JSON.stringify(errors));
           } else {
-            const expected = values.suite === 'skeleton' ? 3 : 4;
+            const expected = values.suite === 'skeleton' ? 3 : 8;
             if (rows.length !== expected) throw new Error(`${values.suite} registration drift ${rows.length} != ${expected}`);
             if (registered && JSON.stringify(rows.map(({ file, title }) => ({ file, title }))) !== JSON.stringify(registered.map(({ file, title }) => ({ file, title })))) throw new Error('Frontend registration differs');
           }

@@ -4,14 +4,16 @@ import { execFile } from 'node:child_process';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createStream, frame, marker, history, streamErrors, textErrors, readingErrors, followErrors } from './stream.mjs';
+import { STREAM_PROTOCOLS, createStream, frame, marker, history, streamErrors, textErrors, readingErrors, followErrors } from './stream.mjs';
 import { executionEnv, PROFILES } from './execution-env.mjs';
 import { root, baseline, requireUI, origin, historicalInventory } from './env.mjs';
 import { reportCases, checkInventory } from './accounting.mjs';
 import { createMock, TOKEN } from './mock.mjs';
+import { streamContractSelfCheck } from './stream-contract-self-check.mjs';
 const exec = promisify(execFile);
 export async function streamSelfCheck(check) {
-  await check('final textContent validator: missing any sequence number or the first round must FAIL', () => {
+  await streamContractSelfCheck(check);
+  await check('final textContent and innerText validators: missing, hidden, duplicate or reordered rounds must FAIL', () => {
     // Offline inputs for the same validator used by STREAM-002's textContent poll.
     // This tests completeness, not browser rendering or content-visibility behavior.
     const paragraphs = Array.from({ length: 400 }, (_, index) => `${marker(index)} paragraph.\n`);
@@ -22,77 +24,87 @@ export async function streamSelfCheck(check) {
       assert.deepEqual(textErrors(missing, 400), ['DOM delta loss, duplication or reordering']);
     }
     assert.deepEqual(textErrors(paragraphs.slice(200).join(''), 400), ['DOM delta loss, duplication or reordering']);
+    const rendered = paragraphs.slice(200);
+    assert.deepEqual(textErrors(rendered.join(''), 200, 200), []);
+    // These retain a perfect textContent but must fail the separate innerText gate.
+    for (const bad of ['', paragraphs.join(''), paragraphs.slice(0, 200).join(''),
+      rendered.slice(1).join(''), [...rendered, rendered[0]].join(''),
+      [rendered[1], rendered[0], ...rendered.slice(2)].join('')]) {
+      assert(textErrors(bad, 200, 200).length);
+    }
   });
-  await check('HTTP history retains both completed streaming replies, including at complete; missing first reply must FAIL', async () => {
-    let time = 0, pending;
-    const mock = createMock({ streamClock: {
-      now: () => time,
-      schedule: (callback, delay) => { pending = () => { time += delay; callback(); }; return 1; },
-      cancel: () => { pending = undefined; },
-    } });
-    const request = async (url, method = 'GET') => {
-      const response = { writeHead(status) { this.status = status; }, end(body) { this.body = JSON.parse(body); } };
-      await mock.handleHTTP({ url, method, headers: { authorization: `Bearer ${TOKEN}` } }, response);
-      assert.equal(response.status, method === 'POST' && url.includes('action=start') ? 202 : 200);
-      return response.body;
-    };
-    const endpoint = '/api/sessions/s/messages?projectName=probe&projectPath=%2Fprobe';
-    const sent = [], completionReads = [];
-    const socket = { path: '/ws', readyState: 1, send: raw => {
-      const message = JSON.parse(raw); sent.push(message);
-      // Read synchronously through handleHTTP at the earliest possible refresh.
-      if (message.kind === 'complete') completionReads.push(request(endpoint));
-    } };
-    const validate = (body, runs) => {
-      assert.equal(body.total, body.messages.length);
-      assert.equal(body.hasMore, false);
-      const answers = body.messages.filter(message => message.role === 'assistant' && runs.includes(message.runId));
-      assert.deepEqual(answers.map(message => message.runId), runs);
-      assert.equal(new Set(answers.map(message => message.id)).size, runs.length);
-      for (const answer of answers) {
-        assert.equal(answer.kind, 'text'); assert.equal(answer.sessionId, 's');
-        assert.equal(answer.provider, 'pilotdeck');
-        assert.equal(answer.content, sent.filter(message => message.kind === 'stream_delta' && message.runId === answer.runId)
-          .map(message => message.content).join(''));
-      }
-      assert.deepEqual(textErrors(answers.map(message => message.content).join('\n'), 200 * runs.length), []);
-      if (runs.length === 2) {
-        const first = body.messages.indexOf(answers[0]), second = body.messages.indexOf(answers[1]);
-        assert(body.messages.slice(first + 1, second).some(message => message.role === 'user' && message.runId === runs[1]),
-          'separate user turn must survive the HTTP history projection');
-      }
-    };
-    try {
-      mock.handleMessage(socket, JSON.stringify({ type: 'watch-session', sessionId: 's' }));
-      const runs = [];
-      for (let run = 0; run < 2; run++) {
-        runs.push((await request('/__parity/stream?action=start&scenario=reading', 'POST')).runId);
-        while (pending) { const callback = pending; pending = undefined; callback(); }
-        validate(await completionReads[run], runs);
-        validate(await request(endpoint), runs);
-      }
-      const final = await request(endpoint);
-      assert.equal(final.total, 51); // 48 seed + first answer + second user/answer.
-      const firstReply = final.messages.find(message => message.role === 'assistant' && message.runId === runs[0]);
-      const missing = structuredClone(final);
-      missing.messages = missing.messages.filter(message => message.id !== firstReply.id);
-      missing.total = missing.messages.length;
-      assert.throws(() => validate(missing, runs), assert.AssertionError);
-      const overwritten = structuredClone(final);
-      overwritten.messages.find(message => message.id === firstReply.id).content = '';
-      assert.throws(() => validate(overwritten, runs), assert.AssertionError);
-      const captured = structuredClone(mock.stats.historyResponses);
-      assert.equal(captured.length, 5);
-      assert.deepEqual(captured.at(-1).body, final);
-      for (const response of captured) {
-        assert.equal(mock.stats.requests[response.requestIndex].path, '/api/sessions/s/messages');
-        assert.equal(response.url, endpoint);
-      }
-      await request('/__parity/stream?action=reset', 'POST');
-      assert.deepEqual(mock.stats.historyResponses, captured);
-      assert.deepEqual((await request(endpoint)).messages, history());
-    } finally { mock.close(); }
-  });
+  for (const protocol of STREAM_PROTOCOLS) {
+    await check(`${protocol}: HTTP history retains both completed streaming replies, including at complete; missing first reply must FAIL`, async () => {
+      let time = 0, pending;
+      const mock = createMock({ streamClock: {
+        now: () => time,
+        schedule: (callback, delay) => { pending = () => { time += delay; callback(); }; return 1; },
+        cancel: () => { pending = undefined; },
+      } });
+      const request = async (url, method = 'GET') => {
+        const response = { writeHead(status) { this.status = status; }, end(body) { this.body = JSON.parse(body); } };
+        await mock.handleHTTP({ url, method, headers: { authorization: `Bearer ${TOKEN}` } }, response);
+        assert.equal(response.status, method === 'POST' && url.includes('action=start') ? 202 : 200);
+        return response.body;
+      };
+      const endpoint = '/api/sessions/s/messages?projectName=probe&projectPath=%2Fprobe';
+      const sent = [], completionReads = [];
+      const socket = { path: '/ws', readyState: 1, send: raw => {
+        const message = JSON.parse(raw); sent.push(message);
+        // Read synchronously through handleHTTP at the earliest possible refresh.
+        if (message.kind === 'complete') completionReads.push(request(endpoint));
+      } };
+      const validate = (body, runs) => {
+        assert.equal(body.total, body.messages.length);
+        assert.equal(body.hasMore, false);
+        const answers = body.messages.filter(message => message.role === 'assistant' && runs.includes(message.runId));
+        assert.deepEqual(answers.map(message => message.runId), runs);
+        assert.equal(new Set(answers.map(message => message.id)).size, runs.length);
+        for (const answer of answers) {
+          assert.equal(answer.kind, 'text'); assert.equal(answer.sessionId, 's');
+          assert.equal(answer.provider, 'pilotdeck');
+          assert.equal(answer.content, sent.filter(message => message.kind === 'stream_delta' && message.runId === answer.runId)
+            .map(message => message.content).join(''));
+        }
+        assert.deepEqual(textErrors(answers.map(message => message.content).join('\n'), 200 * runs.length), []);
+        if (runs.length === 2) {
+          const first = body.messages.indexOf(answers[0]), second = body.messages.indexOf(answers[1]);
+          assert(body.messages.slice(first + 1, second).some(message => message.role === 'user' && message.runId === runs[1]),
+            'separate user turn must survive the HTTP history projection');
+        }
+      };
+      try {
+        mock.handleMessage(socket, JSON.stringify({ type: 'watch-session', sessionId: 's' }));
+        const runs = [];
+        for (let run = 0; run < 2; run++) {
+          runs.push((await request(`/__parity/stream?action=start&scenario=reading&protocol=${protocol}`, 'POST')).runId);
+          while (pending) { const callback = pending; pending = undefined; callback(); }
+          validate(await completionReads[run], runs);
+          validate(await request(endpoint), runs);
+        }
+        const final = await request(endpoint);
+        assert.equal(final.total, protocol === 'timeline' ? 52 : 51); // Native first turn also has its own user anchor.
+        const firstReply = final.messages.find(message => message.role === 'assistant' && message.runId === runs[0]);
+        const missing = structuredClone(final);
+        missing.messages = missing.messages.filter(message => message.id !== firstReply.id);
+        missing.total = missing.messages.length;
+        assert.throws(() => validate(missing, runs), assert.AssertionError);
+        const overwritten = structuredClone(final);
+        overwritten.messages.find(message => message.id === firstReply.id).content = '';
+        assert.throws(() => validate(overwritten, runs), assert.AssertionError);
+        const captured = structuredClone(mock.stats.historyResponses);
+        assert.equal(captured.length, 5);
+        assert.deepEqual(captured.at(-1).body, final);
+        for (const response of captured) {
+          assert.equal(mock.stats.requests[response.requestIndex].path, '/api/sessions/s/messages');
+          assert.equal(response.url, endpoint);
+        }
+        await request('/__parity/stream?action=reset', 'POST');
+        assert.deepEqual(mock.stats.historyResponses, captured);
+        assert.deepEqual((await request(endpoint)).messages, history());
+      } finally { mock.close(); }
+    });
+  }
   await check('two runs emit 0000-0399; overlapping run numbering must FAIL the final DOM validator; reset restarts at 0000', () => {
     let time = 0, pending;
     const deltas = [];
@@ -143,7 +155,7 @@ export async function streamSelfCheck(check) {
     };
     const count = items => [...items.map(item => item.message.content).join('\n').matchAll(/F2FRAME\d{4}END/g)].length;
     const searchTarget = fold(history()).find(item => item.message.content?.includes('F2 searchable lighthouse'));
-    assert.equal(searchTarget.message.id, 'answer-10');
+    assert.equal(searchTarget.message.id, 'answer-21');
     assert.equal(searchTarget.turnTrace, undefined);
     let pending;
     const sent = [];
@@ -261,7 +273,7 @@ export async function streamSelfCheck(check) {
       assert(env.TMPDIR.startsWith(root)); assert.equal(env.REAL_COMPOSITION_PROFILE, profile);
     }
   });
-  await check('repository configs discover full 72 in all six side/profile combinations; blackbox 4, skeleton 3', async () => {
+  await check('repository configs discover full 72 in all six side/profile combinations; blackbox 8 (4 per protocol), skeleton 3', async () => {
     const output = await mkdtemp(resolve(root, '_tmp/fe-parity/config-control-'));
     const historical = JSON.parse(await readFile(historicalInventory, 'utf8'));
     try {
@@ -277,7 +289,12 @@ export async function streamSelfCheck(check) {
           assert.equal(report.config.projects.length, 1); assert.equal(report.config.projects[0].repeatEach, 1); assert.equal(report.config.projects[0].retries, 0);
           const rows = reportCases(report, suite === 'baseline' ? resolve(baseline, 'e2e') : resolve(root, 'scripts/fe-parity/tests'));
           if (suite === 'baseline') assert.deepEqual(checkInventory(rows, historical), []);
-          else assert.equal(rows.length, suite === 'skeleton' ? 3 : 4);
+          else {
+            assert.equal(rows.length, suite === 'skeleton' ? 3 : 8);
+            if (suite === 'streaming-scroll') for (const protocol of STREAM_PROTOCOLS) {
+              assert.equal(rows.filter(row => row.title.includes(protocol)).length, 4);
+            }
+          }
         }
       }
     } finally { await rm(output, { recursive: true }); }
