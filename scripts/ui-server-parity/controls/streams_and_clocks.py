@@ -286,21 +286,32 @@ def run_history_clock_controls():
     with tempfile.TemporaryDirectory(prefix='b2-history-clock-') as tmp:
         root = Path(tmp)
         enumeration, matrix, manifest = fixture(root)
-        events = [dict(sequence=i + 1, entryId=f'event-{i}', parentEntryId=f'event-{i-1}' if i else None,
+        events = [dict(sequence=i + 2, entryId=f'event-{i}', parentEntryId=f'event-{i-1}' if i else 'start',
                        turnId='turn', sessionId=SESSION, type=kind, createdAt=stamp)
                   for i, (stamp, kind) in enumerate(zip(STAMPS, ('accepted_input', 'agent_status_message', 'session_metadata')))]
+        events.insert(0, dict(sequence=1, entryId='start', parentEntryId=None, turnId='turn',
+                              sessionId=SESSION, type='turn_started', createdAt='2023-11-14T22:13:20.000Z'))
         events[-1]['metadata'] = {'updatedAt': STAMPS[0]}
         anchor = {k: v for k, v in events[-1].items() if k not in ('metadata', 'sessionId')}
-        projection = dict(sessionId=SESSION, asOfSequence=3, anchor=anchor, projections={
-            'agent-transcript.conversation': {'asOfSequence': 3, 'state': {'entries': [{'entry': events[0]}]}},
-            'web-history.agent-statuses': {'asOfSequence': 3, 'state': [events[1]]},
-            'agent-transcript.metadata': {'asOfSequence': 3, 'state': events[-1]['metadata']}})
-        messages = [dict(kind='text', id=f'm-{i}', sessionId=SESSION, timestamp=stamp) for i, stamp in enumerate(STAMPS)]
+        projection = dict(sessionId=SESSION, asOfSequence=4, anchor=anchor, projections={
+            'agent-transcript.conversation': {'asOfSequence': 4, 'state': {'entries': [{'entry': events[1]}]}},
+            'web-history.agent-statuses': {'asOfSequence': 4, 'state': [events[2]]},
+            'agent-transcript.metadata': {'asOfSequence': 4, 'state': events[-1]['metadata']}})
+        messages = [dict(kind='text', id=f'm-{i}', sessionId=SESSION, sequence=i + 2,
+                         entryId=f'event-{i}', timestamp=stamp) for i, stamp in enumerate(STAMPS)]
+        # Source-injected status has sequence but no entryId; it still needs
+        # the exact event's time, not any timestamp from the same session.
+        messages[1].update(kind='status', text='context_budget')
+        del messages[1]['entryId']
+        other_session = SESSION[:-1] + '1'
+        other_events = [{**e, 'sessionId': other_session, 'entryId': 'other-' + e['entryId'],
+                         'createdAt': f'2023-11-14T22:13:2{5+i}.000Z'} for i, e in enumerate(events)]
         for label in ('left', 'right'):
             side = root / label
             chat = side / CHAT
             chat.parent.mkdir(parents=True)
             chat.write_text(''.join(json.dumps(e) + '\n' for e in events))
+            chat.with_name(other_session + '.jsonl').write_text(''.join(json.dumps(e) + '\n' for e in other_events))
             write_json(Path(str(chat) + '.projections.json'), projection)
             write_json(side / 'snapshot.json', capture(side))
             path = side / 'recording.jsonl'
@@ -318,7 +329,15 @@ def run_history_clock_controls():
 
         contracts = {
             'messages-reverse': 'history timestamps must be nondecreasing',
-            'messages-read-time': 'history timestamp lacks local @chat',
+            'messages-read-time': 'history timestamp differs from local event identity witness',
+            'messages-turn-started': 'history timestamp differs from local event identity witness',
+            'messages-previous-sequence': 'history timestamp differs from local event identity witness',
+            'messages-other-session': 'history timestamp differs from local event identity witness',
+            'messages-entry-id': 'history timestamp differs from local event identity witness',
+            'messages-missing-sequence': 'history timestamp differs from local event identity witness',
+            'messages-bool-sequence': 'history timestamp differs from local event identity witness',
+            'messages-missing-session': 'history timestamp differs from local event identity witness',
+            'messages-unknown-event': 'history timestamp differs from local event identity witness',
             'chat-reverse': '@chat createdAt must be nondecreasing',
             'anchor': 'projection timestamp differs from local event identity',
             'conversation': 'projection timestamp differs from local event identity',
@@ -342,6 +361,22 @@ def run_history_clock_controls():
                     elif name == 'messages-read-time':
                         for message in body['messages']:
                             message['timestamp'] = '2023-11-14T22:13:29.000Z'
+                    elif name in ('messages-turn-started', 'messages-previous-sequence', 'messages-other-session'):
+                        for message in body['messages']:
+                            event = (events[0] if name == 'messages-turn-started' else
+                                     events[message['sequence'] - 2] if name == 'messages-previous-sequence' else
+                                     other_events[message['sequence'] - 1])
+                            message['timestamp'] = event['createdAt']
+                    elif name == 'messages-entry-id':
+                        body['messages'][0]['entryId'] = events[-1]['entryId']
+                    elif name == 'messages-missing-sequence':
+                        del body['messages'][0]['sequence']
+                    elif name == 'messages-bool-sequence':
+                        body['messages'][0]['sequence'] = True
+                    elif name == 'messages-missing-session':
+                        del body['messages'][0]['sessionId']
+                    elif name == 'messages-unknown-event':
+                        body['messages'][0]['sequence'] = 999
                     elif name == 'ties':
                         body['messages'][1]['timestamp'] = STAMPS[0]
                     elif name in ('incomplete', 'fake-incomplete'):
@@ -356,9 +391,18 @@ def run_history_clock_controls():
                         replace_response(rows, 6, body)
                         write_log(path, rows)
                     chat = side / CHAT
+                    if name == 'ties':
+                        # Legal ties require changing the source event and its
+                        # projection copy too; a message-only tie is corruption.
+                        changed = copy.deepcopy(events)
+                        changed[2]['createdAt'] = STAMPS[0]
+                        chat.write_text(''.join(json.dumps(e) + '\n' for e in changed))
+                        tied_projection = copy.deepcopy(projection)
+                        tied_projection['projections']['web-history.agent-statuses']['state'][0]['createdAt'] = STAMPS[0]
+                        write_json(Path(str(chat) + '.projections.json'), tied_projection)
                     if name == 'chat-reverse':
                         changed = copy.deepcopy(events)
-                        for e, stamp in zip(changed, reversed(STAMPS)):
+                        for e, stamp in zip(changed, reversed([e['createdAt'] for e in events])):
                             e['createdAt'] = stamp
                         chat.write_text(''.join(json.dumps(e) + '\n' for e in changed))
                     if name in ('anchor', 'conversation', 'statuses', 'metadata'):
@@ -383,7 +427,7 @@ def run_history_clock_controls():
                 report = compare_sides(test / 'left', test / 'right', enumeration, matrix, manifest)
                 expect = 'REFUSED' if name.startswith('clock-') else 'PASS' if name in ('equivalence', 'ties') or name == 'incomplete' and both else 'FAIL'
                 hits = [d for d in report['differences'] if d['rule'] == 'normalization.field'
-                        and contracts.get(name, 'history timestamp lacks local @chat') in d['message']]
+                        and contracts.get(name, 'history timestamp differs from local event identity witness') in d['message']]
                 if name == 'incomplete':
                     valid = (report['reading_clock_paths']['right'] == ['http[readonly.messages#0].body.messages[3].timestamp']
                              and not any(d['rule'] == 'normalization.field' for d in report['differences']))

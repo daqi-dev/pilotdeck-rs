@@ -60,8 +60,11 @@ def run_identity_controls():
                 for norm, doc in zip((left, right), documents):
                     stamp = '2023-11-14T22:13:20.000Z'
                     norm.wall_bounds = (1700000000000, 1700000010000)
-                    norm.chat_timestamps.add(stamp)
-                    doc['messages'][0]['timestamp'] = stamp
+                    message = doc['messages'][0]
+                    message['timestamp'] = stamp
+                    message.setdefault('sessionId', 'identity-fixture-session')
+                    message.setdefault('sequence', 1)
+                    norm.chat_clocks[message['sessionId'], message['sequence']] = (stamp, message.get('entryId'))
             a = left.value(documents[0], channel, context, location=location)
             b = right.value(documents[1], channel, context, location=location)
             rule = {'http': 'http.body', 'ws': 'ws.structure', 'disk': 'disk.snapshot', 'sse': 'sse.sequence'}[channel]

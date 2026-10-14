@@ -15,7 +15,7 @@ import unittest
 
 from check_frozen import check as frozen
 from check_ruler import check as ruler
-from compare import Normalizer, compare_sides, diff, read_jsonl, sse_events
+from compare import Normalizer, Side, compare_sides, diff, read_jsonl, sse_events
 from policy import (CHAT_FIXTURE_SESSIONS, CLOCK_FORMATS, CLOCK_PAIRS,
                     ISO_MS, SQL_S, EPOCH_MS, MTIME_MS)
 from snapshot import capture
@@ -285,8 +285,8 @@ class ComparatorBoundaries(unittest.TestCase):
         errors = []
         norm = Normalizer('left', errors)
         norm.wall_bounds = (1700000000000, 1700000010000)
-        norm.chat_timestamps.add('2023-11-14T22:13:20.000Z')
-        http = norm.value({'messages': [{'timestamp': '2023-11-14T22:13:20.000Z', 'turnId': uuid, 'blockId': uuid + ':text:0'}]}, 'http', 'readonly.messages')
+        norm.chat_clocks['session', 1] = ('2023-11-14T22:13:20.000Z', None)
+        http = norm.value({'messages': [{'sessionId': 'session', 'sequence': 1, 'timestamp': '2023-11-14T22:13:20.000Z', 'turnId': uuid, 'blockId': uuid + ':text:0'}]}, 'http', 'readonly.messages')
         ws = norm.value({'runId': uuid, 'timeline': {'id': uuid + ':text:0'}}, 'ws', 'text')
         disk = norm.value([{'turnId': uuid, 'message': {'content': [{'blockId': uuid + ':text:0'}]}}], 'disk', '@chat')
         self.assertEqual(http['messages'][0]['turnId'], ws['runId'])
@@ -301,6 +301,50 @@ class ComparatorBoundaries(unittest.TestCase):
         self.assertNotEqual(norm.ref('block', uuid + ':text:1', 'x'), ws['timeline']['id'])
         self.assertNotEqual(norm.ref('timeline', uuid + ':thinking:0', 'x'), ws['timeline']['id'])
         self.assertNotEqual(norm.ref('run', 'status_' + uuid, 'x'), norm.ref('run', 'text_' + uuid, 'x'))
+
+    def test_history_event_can_witness_multiple_flattened_messages(self):
+        errors = []
+        norm = Normalizer('left', errors)
+        norm.wall_bounds = (1700000000000, 1700000010000)
+        stamp = '2023-11-14T22:13:20.000Z'
+        norm.chat_clocks['session', 1] = (stamp, 'entry')
+        messages = [dict(sessionId='session', sequence=1, entryId='entry', timestamp=stamp, id=str(i))
+                    for i in range(2)]
+        # Status/error source branches may omit entryId.
+        messages.append(dict(sessionId='session', sequence=1, timestamp=stamp, kind='status'))
+        norm.history_clocks({'messages': messages}, 'body')
+        self.assertEqual(errors, [])
+
+    def test_history_identity_types_and_entry_id_checked_even_at_equal_times(self):
+        stamp = '2023-11-14T22:13:20.000Z'
+        for patch in ({'sequence': True}, {'sequence': 1.0}, {'sequence': '1'}, {'sequence': []},
+                      {'sessionId': []}, {'sessionId': ''}, {'sequence': 0},
+                      {'entryId': None}, {'entryId': ''}, {'entryId': 'other-entry'}):
+            with self.subTest(patch=patch):
+                errors = []
+                norm = Normalizer('left', errors)
+                norm.wall_bounds = (1700000000000, 1700000010000)
+                norm.chat_clocks['session', 1] = (stamp, 'entry')
+                norm.chat_clocks['session', 2] = (stamp, 'other-entry')
+                norm.history_clocks({'messages': [dict(sessionId='session', sequence=1,
+                    entryId='entry', timestamp=stamp) | patch]}, 'body')
+                self.assertTrue(any('identity witness' in e['message'] for e in errors), errors)
+
+    def test_duplicate_chat_event_identity_cannot_overwrite_witness(self):
+        errors = []
+        side = Side.__new__(Side)
+        side.label, side.out = 'left', errors
+        side.norm = Normalizer('left', errors)
+        side.norm.wall_bounds = (1700000000000, 1700000010000)
+        entry = dict(sessionId='session', sequence=1, createdAt='2023-11-14T22:13:20.000Z', entryId='entry')
+        side.actual_snapshot = {'entries': [dict(path=f'home/projects/exp008-fixture/chats/{name}.jsonl',
+                                               data=[entry.copy()]) for name in ('a', 'b', 'c')]}
+        side.load_chat_clocks()
+        self.assertIsNone(side.norm.chat_clocks['session', 1])
+        self.assertEqual(sum('duplicate @chat' in e['message'] for e in errors), 2)
+        side.norm.history_clocks({'messages': [dict(sessionId='session', sequence=1,
+                                                   entryId='entry', timestamp=entry['createdAt'])]}, 'body')
+        self.assertTrue(any('history timestamp differs' in e['message'] for e in errors))
 
     def test_seed_never_sorts_compared_lists_or_erases_session_aliases(self):
         errors = []
@@ -322,9 +366,9 @@ class ComparatorBoundaries(unittest.TestCase):
                                   (self.right, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')):
             chat = side / f'home/projects/exp008-fixture/chats/{CHAT_FIXTURE_SESSIONS[0]}.jsonl'
             chat.parent.mkdir(parents=True)
-            chat.write_text(json.dumps({'sequence': 1, 'createdAt': '2023-11-14T22:13:20.000Z', 'turnId': uuid, 'entryId': other, 'message': {'content': [
+            chat.write_text(json.dumps({'sessionId': CHAT_FIXTURE_SESSIONS[0], 'sequence': 1, 'createdAt': '2023-11-14T22:13:20.000Z', 'turnId': uuid, 'entryId': other, 'message': {'content': [
                 {'blockId': other + ':text:0', 'timeline': {'id': other + ':text:0', 'turnId': uuid}}]}}) + '\n'
-                + json.dumps({'sequence': 2, 'createdAt': '2023-11-14T22:13:20.000Z', 'turnId': uuid}) + '\n')
+                + json.dumps({'sessionId': CHAT_FIXTURE_SESSIONS[0], 'sequence': 2, 'createdAt': '2023-11-14T22:13:20.000Z', 'turnId': uuid}) + '\n')
             controls.write_json(side / 'snapshot.json', capture(side))
             rows = read_jsonl(side / 'recording.jsonl')
             template = next(r for r in rows if r['kind'] == 'ws_frame' and r['dir'] == 'u2c' and r['opcode'] == 1)
