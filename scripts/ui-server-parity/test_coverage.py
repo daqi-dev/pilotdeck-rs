@@ -95,7 +95,7 @@ class CoverageControls(unittest.TestCase):
         evidence[1]['method'] = 'POST'
         self.assertEqual(check(ENUM, MATRIX, SCENARIOS, evidence)['verdict'], 'FAIL')
 
-    def test_static_rust_waiver_requires_frozen_style_approval_without_cases(self):
+    def test_static_rust_waiver_requires_human_approval_without_cases(self):
         takeover = {'schema': 1, 'routes': [{'method': 'POST', 'path': '/api/b/:id', 'handler': 'rust'}]}
         self.assertEqual(check(ENUM, MATRIX, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,13 +109,22 @@ class CoverageControls(unittest.TestCase):
             waiver = matrix['routes'][1]['exemption']
             waiver['Approval-Basis'] = '; '.join(basis)
             with patch('check_coverage.ROOT', root):
-                for approver in ('张三', 'AI 代批，待人复核（协调者）'):
+                for approver in ('张三', '李四'):
                     waiver['Approved-By'] = approver
                     self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'PASS')
-                for approver in ('Claude', 'AI', 'AI 代批，待人复核', '待批准', 'GPT批准', '张三\u200b'):
+                rejected = ('AI 代批，待人复核（协调者）', 'AI', 'AI 代批，待人复核',
+                            '代批：张三', '协调者', '张三（协调者）', '待批准',
+                            'Claude', 'GPT批准', 'GLM', 'DeepSeek', 'Gemini', 'Qwen',
+                            'Doubao', 'ChatGPT', '模型', '张三\u200b')
+                # Invisible characters must not disguise any forbidden identity.
+                for approver in rejected + tuple(value[:1] + '\u200b' + value[1:]
+                                                  for value in rejected):
                     waiver['Approved-By'] = approver
-                    self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+                    with self.subTest(approver=approver):
+                        self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
                 waiver['Approved-By'] = '张三'
+                del waiver['Approval-Basis']
+                self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
                 waiver['Approval-Basis'] = str(root / 'missing.md')
                 self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
 

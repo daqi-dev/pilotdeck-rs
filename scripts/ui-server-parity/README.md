@@ -54,10 +54,10 @@ B2 Node version probe、枚举器、gateway、UI 与 driver 的环境只允许�
 
 缓存来源说明：calibrate 与独立 run 默认仍从**当前 checkout 根**的 `_build/cargo-home/registry/{index,cache}` 复制，不取 git common dir。此 worktree 的默认路径是 `/Users/da/ws/pilotdeck-rs/_build/wt-b2f/_build/cargo-home`，与协调者预取的 `/Users/da/ws/pilotdeck-rs/_build/cargo-home` 不同。在无额外祖先 selector 的独立 checkout 开批前，将协调者已预取的 registry/index、registry/cache 复制到该 checkout 的 `_build/cargo-home/registry/`（普通目录，不能用符号链接）；不复制 src、git、配置或凭据。干净临时 Batch.build 验证使用该预取来源的副本。
 
-B3 前置改装（#59 / #80 / #53 / #88，#89 P2）：Rust 路由清单固定读取 `specs/ui-server-parity/rust-routes.json`，不提供可替换路径；schema=1，routes 数组元素为 `{method, path, handler:"rust"}`，method 为大写 HTTP verb 或 ALL，path 为 runtime/matrix 的路由模板。空数组表示目前全部由 TS 处理。Rust 侧接管配置/路由表须同步静态导出，审批字段与 FROZEN 共用检查函数；没有用例的豁免也过门。此文件与规约共同进入哈希。
+B3 前置改装（#59 / #80 / #53 / #88，#89 P2）：Rust 路由清单固定读取 `specs/ui-server-parity/rust-routes.json`，不提供可替换路径；schema=1，routes 数组元素为 `{method, path, handler:"rust"}`，method 为大写 HTTP verb 或 ALL，path 为 runtime/matrix 的路由模板。空数组表示目前全部由 TS 处理。Rust 侧接管配置/路由表须同步静态导出，审批字段与 FROZEN 共用检查函数，但 Rust 路由豁免必须具名人批并有三份依据；只有 FROZEN 按 R5 接受精确 AI 代批串。没有用例的豁免也过门。此文件与规约共同进入哈希。
 
 `du` 仅对每行均为 ENOENT 的错误重试三次；耗尽取四次输出总量的最大值，stderr 与 space_check.events 同时记录 approximate、各次字节数。初始 space_estimate 及后续 space_checks 写入 batch.json，不把近似测量冒充精确值。
 
-基线行为出处：`ws/lib/websocket.js` 的 closeTimeout 默认 30000ms；反代只转发实际 Ping/Pong/Close。HOME、五个 XDG 目录、TMPDIR 均指向 fixture，PILOTDECK_SKIP_BROWSER_OPEN=1。
+基线行为出处：`ws/lib/websocket.js` 的 closeTimeout 默认 30000ms；反代只转发实际 Ping/Pong/Close。`ws/lib/websocket-server.js:524` 的 abortHandshake 直接写 socket，不带 Date；反代两种 WS 模式的握手中止 400 均不加 Date，其他本地 400/500/502 仍加 Date。HOME、五个 XDG 目录、TMPDIR 均指向 fixture，PILOTDECK_SKIP_BROWSER_OPEN=1。
 
 回源：[基线 pnpm 10.32.1 workspace 源码](https://github.com/pnpm/pnpm/blob/v10.32.1/workspace/find-packages/src/index.ts#L48-L58) 以 pnpm-workspace.yaml 为成员清单；packages 缺省时沿用 [v10 默认](https://github.com/pnpm/pnpm/blob/v10.32.1/fs/find-packages/src/index.ts#L21-L30) 的全部项目（忽略 node_modules/bower_components）；[rustup 工具链解析源码](https://github.com/rust-lang/rustup/blob/master/src/dist/mod.rs#L130-L168) 允许主.次或精确补丁 release。本次采用 pnpm 优先，不与 package.json workspaces 合并；实际链接目标仍完整绑定。

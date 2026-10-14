@@ -128,9 +128,11 @@ async function pingAndDuplicateKey() {
   badServer.emit('connection', badSocket);
   badSocket.push(request + `Sec-WebSocket-Key: ${Buffer.from('another nonce123').toString('base64')}\r\n\r\n`);
   await new Promise(resolve => setImmediate(resolve));
-  assert.match(Buffer.concat(badSocket.output).toString(), /^HTTP\/1.1 400/);
+  const rejection = Buffer.concat(badSocket.output).toString();
+  assert.match(rejection, /^HTTP\/1.1 400/);
+  assert.ok(!/^date:/im.test(rejection), 'ws abortHandshake has no Date');
   badSocket.destroy(); badWss.close();
-  return { closeTimeout: 30000, onePong: true, duplicateKeyStatus: 400 };
+  return { closeTimeout: 30000, onePong: true, duplicateKeyStatus: 400, duplicateKeyHasDate: false, rejection };
 }
 
 (async () => {
