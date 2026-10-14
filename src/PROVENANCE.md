@@ -2,6 +2,12 @@
 
 ## A4 配置加载与 model_catalog_list（2026-10-14）
 
+第 2 轮 CJK 对拍另见 `pilotdeck-gateway/tests/fixtures/collation/README.md`。
+Node 22.22.0 / ICU 78.2 / CLDR 48.0 与 ICU4X collator/data 2.1.1
+（CLDR 48.0.0 / ICU release-78.1rc）的 root Han 数据变体不同。
+保留全新隔离进程的真实 WS response 与完整码位区段统计；没有下载替换
+排序数据、增加 crate 或将候选登记为 approved。
+
 `pilotdeck-gateway/src/config/` 与 `model_catalog.rs` 按只读 PilotDeck 基线
 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 独立实现。行为依据为
 `src/pilot/config/loadPilotConfig.ts`、同目录各配置节解析器、

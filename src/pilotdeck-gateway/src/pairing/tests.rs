@@ -691,6 +691,138 @@ async fn authenticated_native_requests_match_ts_bytes_and_never_reach_upstream()
 }
 
 #[tokio::test]
+async fn cjk_fallback_reaches_upstream_with_original_frames_and_relays_ts_responses() {
+    use base64::Engine;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/collation/cjk-node22.json"
+    ))
+    .unwrap();
+    let mut count = 0;
+    for row in fixture["rows"].as_array().unwrap() {
+        for case in row["cases"].as_array().unwrap() {
+            let mut metadata = crate::project_files::tests::snapshot_metadata(row);
+            if let Some(group) = case["tag"].as_str().unwrap().strip_prefix("catalog-") {
+                metadata
+                    .files
+                    .files
+                    .get_mut(&metadata.home.join("pilotdeck.yaml"))
+                    .unwrap()["base64"] = base64::engine::general_purpose::STANDARD
+                    .encode(row["yamls"][group].as_str().unwrap())
+                    .into();
+            }
+            let (client, downstream) = tokio::io::duplex(1024 * 1024);
+            let (upstream, server) = tokio::io::duplex(1024 * 1024);
+            let mut pair = Pair {
+                client,
+                server,
+                task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+            };
+            authenticate(&mut pair).await;
+            // Alternate non-minimal lengths. The upstream endpoint acts as an
+            // independent observer: payload, mask and frame encoding must match.
+            let request = client_frame(
+                0x81,
+                if count % 2 == 0 { 126 } else { 127 },
+                case["request"].as_str().unwrap().as_bytes(),
+            );
+            write(&mut pair.client, &request).await;
+            read(&mut pair.server, &request).await;
+            silent(&mut pair.client).await;
+            let response = server_frame(1, case["response"].as_str().unwrap().as_bytes());
+            write(&mut pair.server, &response).await;
+            read(&mut pair.client, &response).await;
+            pair.server.shutdown().await.unwrap();
+            pair.finish().await;
+            count += 1;
+        }
+    }
+    assert_eq!(count, 108);
+}
+
+#[tokio::test]
+async fn same_catalog_method_can_reply_locally_then_forward_on_one_pair() {
+    use crate::metadata::object;
+    use base64::Engine;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/collation/cjk-node22.json"
+    ))
+    .unwrap();
+    let row = &fixture["rows"][0];
+    let case = row["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["tag"] == "catalog-mixed")
+        .unwrap();
+    let mut metadata = crate::project_files::tests::snapshot_metadata(row);
+    metadata
+        .files
+        .files
+        .get_mut(&metadata.home.join("pilotdeck.yaml"))
+        .unwrap()["base64"] = base64::engine::general_purpose::STANDARD
+        .encode(row["yamls"]["mixed"].as_str().unwrap())
+        .into();
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    // Filter the recorded Node oracle, retaining its order and all other fields.
+    let oracle = crate::dispatch::parse(case["response"].as_str().unwrap().as_bytes()).unwrap();
+    let result = oracle.get("result").unwrap();
+    let pilotdeck_protocol::JsValue::Array(items) = result.get("items").unwrap() else {
+        panic!("items")
+    };
+    let items = items
+        .iter()
+        .filter(|item| {
+            crate::metadata::text_field(item, "id")
+                .is_some_and(|id| matches!(id.as_str(), "parity/z" | "parity/Z"))
+        })
+        .cloned()
+        .collect();
+    let expected = object([
+        ("type", "response".into()),
+        ("id", "ascii".into()),
+        ("ok", pilotdeck_protocol::JsValue::Bool(true)),
+        (
+            "result",
+            object([
+                ("items", pilotdeck_protocol::JsValue::Array(items)),
+                (
+                    "defaultSelection",
+                    result.get("defaultSelection").unwrap().clone(),
+                ),
+                ("router", result.get("router").unwrap().clone()),
+            ]),
+        ),
+    ]);
+    let expected = pilotdeck_protocol::stringify_json(&expected)
+        .unwrap()
+        .unwrap();
+    let ascii = client_frame(
+        0x81,
+        127,
+        br#"{"type":"request","id":"ascii","method":"model_catalog_list","params":{"query":"z"}}"#,
+    );
+    write(&mut pair.client, &ascii).await;
+    read(&mut pair.client, &server_frame(1, expected.as_bytes())).await;
+    silent(&mut pair.server).await;
+    let unicode = client_frame(0x81, 126, case["request"].as_str().unwrap().as_bytes());
+    write(&mut pair.client, &unicode).await;
+    read(&mut pair.server, &unicode).await;
+    silent(&mut pair.client).await;
+    let response = server_frame(1, case["response"].as_str().unwrap().as_bytes());
+    write(&mut pair.server, &response).await;
+    read(&mut pair.client, &response).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
+
+#[tokio::test]
 async fn local_method_before_hello_ok_is_forwarded_and_auth_state_is_per_pair() {
     let mut pair = fixture_pair();
     let request = client_frame(
