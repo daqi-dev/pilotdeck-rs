@@ -9,16 +9,17 @@ use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 
 pub(crate) enum Action {
     Text,
-    Pong(Vec<u8>),
-    Close(Vec<u8>),
+    Ping,
+    Close,
     Ignore,
 }
 
 pub(crate) fn action(frame: &Frame) -> Action {
     match frame.opcode {
         1 => Action::Text,
-        9 => Action::Pong(crate::frame::server_frame(10, &frame.payload)),
-        8 => Action::Close(crate::frame::server_frame(8, &1000u16.to_be_bytes())),
+        // TS owns control replies and their order relative to application output.
+        9 => Action::Ping,
+        8 => Action::Close,
         // Includes continuation, binary, pong and reserved opcodes. Neither FIN
         // nor RSV affects TS's opcode-only handling; no fragment reassembly.
         _ => Action::Ignore,
