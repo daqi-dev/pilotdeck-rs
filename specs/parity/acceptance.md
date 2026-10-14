@@ -125,3 +125,18 @@ Issue #35 的方案 B 已由人批准：仅对 [multimodal.md](multimodal.md) �
 [score.py](../../scripts/parity/score.py) 在场景比较前提取每份 trace 的 systemPrompt `now: YYYY-MM-DD` 日期；缺失时记录 null 和说明。普通场景同序号 TS/Rust 日期不同，或多态场景 Rust 遍与参考池日期不同，均判该遍及该场景 **REFUSED**，不能计作 PASS 或 FAIL。一侧日期为 null、另一侧有日期同样拒绝；双方均无日期时保留原 G03 检查，并如实注明无法从该 trace 推断采集日。多个 UTC 日期出现在一个 trace 或同一侧的五遍中，整轮拒绝并重跑；多日期参考池拒绝定标。
 
 一轮只要存在任何 REFUSED，就输出 `valid_score=false`、`verdict=REFUSED`、`score=null`，退出码 2；分母规则不变，不以拒绝场景缩小分母。日期与拒绝理由保留在逐场景/逐遍 JSON 中。上述前提由采集者保证，缺日期不是跨日采集的豁免；满足前提后，原请求体、prompt、G03、oracle、身份、健康与 E 规则仍完整检查。具体证据与两个日期负例见 [exp009](../../docs/experiments/exp009-multimodal-ruler/readme.md) 与 [controls/multimodal.py](../../scripts/parity/controls/multimodal.py)。
+
+## Issue #35 第 2 轮：收紧多态与采集前提
+
+本节覆盖前两节的「至少一遍匹配」和 prompt 日期判采集日表述，前文保留为历史记录。多态每遍 Rust 必须与某一 TS 确认类的全体成员完整 G03 PASS；只命中部分成员即 FAIL，逐类列出命中与未命中遍号。普通场景仍第 i 对第 i，分母规则不变。
+
+采集日改由账本 `started_wall` 的 UTC 日确定。两侧各五遍十份账本跨日整轮 REFUSED，池跨日拒绝定标，池日与回归日不同拒绝多态；账本同日而 prompt 日期不同交给 G03 判 FAIL，作为产品缺陷证据。双方完全无日期仍比较；一侧 null 或部分请求缺 now，且对侧有日期则 REFUSED。外层拒绝时仍保留真实 G03 paired 结果。
+
+池每天独立重采并显式传入，不能使用固定日期默认池。池内及计分 TS 五遍的 expected_sha256、inputs_sha256、driver_sha256、node_sha256 完全一致；池去重只按 trace sha256，池目录或 trace sha256 与计分 TS 重叠拒绝。TS-only 定标先于 Rust，钉住当日 trace 哈希及重算类；登记锁核对见 [multimodal.md](multimodal.md)。不得将历史池的类数或成员当成下一日的定标结果。
+
+
+## 第 3 轮 · 缺 now 与日期集合（PR #49 · 2026-10-14）
+
+本节覆盖第 2 轮「部分/整份请求缺日期拒绝」以及「同日 prompt 日期值不同直接 G03 FAIL」的表述。日期前提仅在以下上下文不一致时 REFUSED：账本 started_wall 的 UTC 日两侧（或 Rust 与参考池）不同；双方 trace 的 observed_dates 都非空且日期值集合不等；两侧各五遍的整轮跨 UTC 午夜。池自身跨账本日仍拒绝定标。多个 prompt 日期不用于推断采集跨日。
+
+某个请求缺 now 不拒绝，保留缺日期 sequence 与说明，完整 systemPrompt 由 G03 比较。双方同样部分缺日期正常计分；单侧某请求缺 now、账本同日且日期集合未形成非空不等时，G03 因 systemPrompt 不同判 FAIL。整份 trace 一侧无日期、另一侧有日期时也只核对账本日，同日交 G03。双方相同的多日期集合正常进入 G03。日期 REFUSED 时仍保留真实 paired G03 结果，分母和无有效分数规则不变。第 3 轮真实 reg5 + flake35 复算和离线对照见 exp009。

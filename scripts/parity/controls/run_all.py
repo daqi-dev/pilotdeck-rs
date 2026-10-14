@@ -146,11 +146,14 @@ def run_controls(source):
     multimodal = multimodal_controls(source)
     cases.update(multimodal)
     negative_names = list(rule_pairs()) + ['semantic_injection', 'missing_scenario', 'truncated_prefix', 'truncated_json']
-    negative_names += [name for name in multimodal if name != 'multimodal_set_positive']
+    positive_names = ('real_self_positive', 'cross_channel_positive', 'multimodal_set_positive',
+                      'pinned_registration_positive', 'both_partial_dates_paired_positive',
+                      'both_partial_dates_multimodal_positive')
+    negative_names += [name for name in multimodal if name not in positive_names]
     return {'ok': all(c['ok'] for c in cases.values()),
             'negative_controls': all(cases[n]['ok'] for n in negative_names),
             'both_broken': all(cases[n]['ok'] for n in ('both_empty_traces', 'both_same_error', 'both_empty_directories')),
-            'positive_controls': all(cases[n]['ok'] for n in ('real_self_positive', 'cross_channel_positive', 'multimodal_set_positive')),
+            'positive_controls': all(cases[n]['ok'] for n in positive_names),
             'source': str(source), 'cases': cases}
 
 

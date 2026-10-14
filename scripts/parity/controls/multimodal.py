@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Issue #35 controls: real G03 calls over offline mutated TS fixtures."""
 from copy import deepcopy
+from datetime import datetime, timezone
+from unittest.mock import patch
 import json
 from pathlib import Path
 import re
@@ -22,12 +24,14 @@ def run_controls(source):
 
         def write(directory, sid, mode='A', side='ts', *, utc_date=None):
             records = deepcopy(originals[sid])
+            # Keep structural missing now lines intact, including child requests.
             proofs = [r for r in records if r.get('kind') == 'harness.proof' and r.get('state') == 'sidecar_identity']
             if not proofs:
                 proofs = [dict(kind='harness.proof', state='sidecar_identity', scenarioId=sid, q='control')]
                 records.append(proofs[0])
             for proof in proofs:
-                proof.update(side=side, sha256='control-binary', expectedSha256='control-binary', spawnObserved=True)
+                proof.update(side=side, sha256='control-binary', expectedSha256='control-binary', spawnObserved=True,
+                             captureNonce=directory.name)
             if mode != 'A':
                 request = next(r for r in records if r['kind'] == 'model.request')
                 request['modelView']['systemPrompt'] += f'\nCONTROL_MODE_{mode}'
@@ -49,7 +53,12 @@ def run_controls(source):
             directory.mkdir()
             (directory / 'run.json').write_text(json.dumps({
                 'side': side, 'valid_round': True, 'identity_ok': True,
-                'expected_sha256': 'control-binary', 'capture': name, 'argv': ['--output', output]}))
+                'expected_sha256': 'control-binary', 'capture': name, 'argv': ['--output', output],
+                'started_wall': datetime(2026, 10, 14, 12, tzinfo=timezone.utc).timestamp(),
+                'inputs_sha256': {'trace.py': 'control-trace', 'run.py': 'control-run',
+                                  'scenarios.json': 'control-scenarios', 'adapters/pilotdeck_gateway_impl.mjs': 'control-adapter'},
+                'driver_sha256': {'round.py': 'control-round', 'bind.mjs': 'control-bind'},
+                'node_sha256': 'control-node'}))
             (directory / 'summary.json').write_text(json.dumps({'blocked': [], 'output': output}))
             for sid in catalog if full else S.MULTIMODAL:
                 write(directory, sid, mode if sid in S.MULTIMODAL else 'A', side)
@@ -106,34 +115,195 @@ def run_controls(source):
                   and other_pair['verdict'] == 'PASS',
             'verdict': verdict(normal, 'pure_text'), 'off_diagonal': other_pair['verdict']}
 
-        # Date context is an admission condition, not a G03 failure or mode.
         write(ts[1], 'pure_text', 'A', 'ts')
         original_date = S.date_context(originals['pure_text'])['date']
         different_date = '2000-01-01' if original_date != '2000-01-01' else '2000-01-02'
-        write(rust[0], 'pure_text', 'A', 'rust', utc_date=different_date)
-        normal_date = S.score(ts, rust, pool)
-        detail = normal_date.get('per_scenario', {}).get('pure_text', {})
-        cases['normal_date_mismatch_refused'] = {
-            'ok': not normal_date['valid_score'] and normal_date['verdict'] == 'REFUSED'
-                  and normal_date['score'] is None and verdict(normal_date, 'pure_text') == 'REFUSED'
-                  and detail['runs'][0]['triggered_rules'] == ['date_context']
-                  and 'paired run 1 TS/Rust: UTC date context differs' in detail.get('reason', ''),
-            'verdict': verdict(normal_date, 'pure_text'), 'valid_score': normal_date['valid_score'],
-            'score': normal_date['score'], 'reason': detail.get('reason')}
-        write(rust[0], 'pure_text', 'A', 'rust')
 
-        write(rust[0], 'cancel_during_tool', 'A', 'rust', utc_date=different_date)
-        multimodal_date = S.score(ts, rust, pool)
-        detail = multimodal_date.get('per_scenario', {}).get('cancel_during_tool', {})
-        cases['multimodal_date_mismatch_refused'] = {
-            'ok': not multimodal_date['valid_score'] and multimodal_date['verdict'] == 'REFUSED'
-                  and multimodal_date['score'] is None and verdict(multimodal_date) == 'REFUSED'
-                  and detail['runs'][0]['comparisons'] == []
-                  and detail['runs'][0]['triggered_rules'] == ['date_context']
-                  and 'Rust run 1 / TS reference 1: UTC date context differs' in detail.get('reason', ''),
-            'verdict': verdict(multimodal_date), 'valid_score': multimodal_date['valid_score'],
-            'score': multimodal_date['score'], 'reason': detail.get('reason')}
+        def ledger_day(directory, day):
+            path = directory / 'run.json'
+            ledger = json.loads(path.read_text())
+            ledger['started_wall'] = datetime.fromisoformat(day).replace(tzinfo=timezone.utc).timestamp()
+            path.write_text(json.dumps(ledger))
+
+        def record_case(name, result, ok, **evidence):
+            cases[name] = {'ok': bool(ok), 'verdict': result['verdict'],
+                           'valid_score': result['valid_score'], 'score': result['score'],
+                           'reason': result.get('reason'), **evidence}
+
+        # Nonempty, unequal date sets are inconsistent context even on one ledger day.
+        for sid in ('pure_text', 'cancel_during_tool'):
+            write(rust[0], sid, 'A', 'rust', utc_date=different_date)
+            result = S.score(ts, rust, pool)
+            run = result['per_scenario'][sid]['runs'][0]
+            record_case(f'{sid}_prompt_date_sets_differ_refused', result,
+                        not result['valid_score'] and result['score'] is None
+                        and result['refused_scenarios'] == [sid]
+                        and run['verdict'] == 'REFUSED' and run['triggered_rules'] == ['date_context']
+                        and 'observed prompt date sets differ' in run['reason']
+                        and run['paired']['verdict'] == 'FAIL'
+                        and (sid not in S.MULTIMODAL or run['comparisons'] == []), run=run)
+            write(rust[0], sid, 'A', 'rust')
+
+        # UTC midnight invalidates all 53 scenarios, even in paired-only mode.
+        ledger_day(rust[4], '2026-10-15')
+        for paired in (False, True):
+            result = S.score(ts, rust, pool if not paired else None, paired_only=paired)
+            record_case(f'cross_utc_midnight_entire_round_{"paired" if paired else "multimodal"}', result,
+                        result['verdict'] == 'REFUSED' and result['score'] is None
+                        and len(result['refused_scenarios']) == 53
+                        and all(r['triggered_rules'] == ['date_context']
+                                for scenario in result['per_scenario'].values() for r in scenario['runs'])
+                        and result['per_scenario']['cancel_during_tool']['runs'][0].get('comparisons', []) == [],
+                        refused_scenarios=result['refused_scenarios'])
+        ledger_day(rust[4], '2026-10-14')
+
+        # Internally same-day regression but pool day differs. Keep true paired FAIL.
+        for directory in ts + rust:
+            ledger_day(directory, '2026-10-15')
+        write(rust[0], 'cancel_during_tool', 'B', 'rust')
+        result = S.score(ts, rust, pool)
+        run = result['per_scenario']['cancel_during_tool']['runs'][0]
+        record_case('pool_date_mismatch_refused_preserves_paired', result,
+                    result['verdict'] == 'REFUSED' and result['score'] is None
+                    and result['refused_scenarios'] == ['cancel_during_tool']
+                    and run['triggered_rules'] == ['date_context'] and run['comparisons'] == []
+                    and run['paired']['verdict'] == 'FAIL', run=run)
+        for directory in ts + rust:
+            ledger_day(directory, '2026-10-14')
         write(rust[0], 'cancel_during_tool', 'A', 'rust')
+        ledger_day(pool[19], '2026-10-15')
+        result = S.score(ts, rust, pool)
+        record_case('pool_cross_day_refuses_calibration', result,
+                    result['verdict'] == 'REFUSED' and result['score'] is None
+                    and 'TS reference pool spans UTC days' in result['reason']
+                    and 'TS_calibration' not in result)
+        ledger_day(pool[19], '2026-10-14')
+
+        # Equal partial date context must score normally, without filling in now.
+        structural_sid = next(sid for sid, records in originals.items()
+                              if S.date_context(records)['observed_dates']
+                              and S.date_context(records)['requests_without_date'])
+        for paired in (False, True):
+            result = S.score(ts, rust, pool if not paired else None, paired_only=paired)
+            run = result['per_scenario'][structural_sid]['runs'][0]
+            record_case(f'both_partial_dates_{"paired" if paired else "multimodal"}_positive', result,
+                        result['valid_score'] and not result['refused_scenarios']
+                        and run['verdict'] == 'PASS' and run['paired']['verdict'] == 'PASS'
+                        and run['date_context']['ts']['observed_dates'] == run['date_context']['rust']['observed_dates']
+                        and bool(run['date_context']['ts']['requests_without_date'])
+                        and run['date_context']['ts']['requests_without_date'] == run['date_context']['rust']['requests_without_date'],
+                        scenario=structural_sid, run=run)
+
+        # One-sided null and partial missing dates are G03 failures, in either direction.
+        partial_sid = next(sid for sid, records in originals.items()
+                           if sum(r.get('kind') == 'model.request' for r in records) > 1
+                           and S.date_context(records)['date']
+                           and not S.date_context(records)['requests_without_date'])
+        for side, directory in (('ts', ts[0]), ('rust', rust[0])):
+            for partial, sid in ((False, 'pure_text'), (True, partial_sid)):
+                path = directory / f'{sid}.pilotdeck-current-sidecar.jsonl'
+                original = path.read_text()
+                rows = [json.loads(line) for line in original.splitlines()]
+                requests = [r for r in rows if r.get('kind') == 'model.request']
+                for request in requests[:1] if partial else requests:
+                    view = request['modelView']
+                    view['systemPrompt'] = re.sub(r'^\s*now:.*$', '', view['systemPrompt'], flags=re.MULTILINE)
+                path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+                result = S.score(ts, rust, pool)
+                run = result['per_scenario'][sid]['runs'][0]
+                context = run['date_context'][side]
+                record_case(f'{side}_{"partial" if partial else "null"}_date_g03_fail', result,
+                            result['valid_score'] and not result['refused_scenarios']
+                            and run['verdict'] == 'FAIL' and run['paired']['verdict'] == 'FAIL'
+                            and 'G03_channels' in run['triggered_rules']
+                            and any('modelView' in p for p in run['difference_paths'])
+                            and run['date_context']['ts']['capture_utc_day'] == run['date_context']['rust']['capture_utc_day']
+                            and bool(context['requests_without_date'])
+                            and (bool(context['observed_dates']) if partial else context['date'] is None), run=run)
+                path.write_text(original)
+
+        # Same raw trace in another directory, with a changed ledger, is one capture.
+        copied = capture('copied-pool', 'ts', full=False)
+        trace = 'cancel_during_tool.pilotdeck-current-sidecar.jsonl'
+        (copied / trace).write_bytes((pool[0] / trace).read_bytes())
+        result = S.score(ts, rust, pool[:19] + [copied])
+        record_case('different_directory_same_trace_refused', result,
+                    result['verdict'] == 'REFUSED' and 'copied TS capture' in result['reason']
+                    and G.sha256(copied / 'run.json') != G.sha256(pool[0] / 'run.json')
+                    and G.sha256(copied / trace) == G.sha256(pool[0] / trace))
+
+        result = S.score(ts, rust, pool[:19] + [ts[0]])
+        record_case('pool_scoring_directory_overlap_refused', result,
+                    result['verdict'] == 'REFUSED' and 'overlaps scoring TS' in result['reason'])
+        original = (ts[0] / trace).read_bytes()
+        (ts[0] / trace).write_bytes((pool[0] / trace).read_bytes())
+        result = S.score(ts, rust, pool)
+        record_case('pool_scoring_trace_overlap_refused', result,
+                    result['verdict'] == 'REFUSED' and 'overlaps scoring TS' in result['reason'])
+        (ts[0] / trace).write_bytes(original)
+
+        # Each provenance field is independently checked across pool and scoring.
+        for directory, scope in ((pool[19], 'pool'), (ts[4], 'scoring')):
+            for key in S.SOURCE_KEYS:
+                path = directory / 'run.json'
+                original = path.read_text()
+                ledger = json.loads(original)
+                if isinstance(ledger[key], dict):
+                    ledger[key][next(iter(ledger[key]))] += '-different'
+                else:
+                    ledger[key] += '-different'
+                trace_backups = {}
+                if key == 'expected_sha256':
+                    for trace_path in directory.glob('*.pilotdeck-current-sidecar.jsonl'):
+                        trace_backups[trace_path] = trace_path.read_text()
+                        rows = [json.loads(line) for line in trace_backups[trace_path].splitlines()]
+                        for row in rows:
+                            if row.get('kind') == 'harness.proof' and row.get('state') == 'sidecar_identity':
+                                row.update(sha256=ledger[key], expectedSha256=ledger[key])
+                        trace_path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+                path.write_text(json.dumps(ledger))
+                result = S.score(ts, rust, pool)
+                record_case(f'{scope}_{key}_different_source_refused', result,
+                            result['verdict'] == 'REFUSED' and result['score'] is None
+                            and 'TS pool/scoring source sha256 differs' in result['reason']
+                            and key in result['reason'])
+                path.write_text(original)
+                for trace_path, data in trace_backups.items():
+                    trace_path.write_text(data)
+
+        # Fault-inject one comparison to exercise a partial class match. All other
+        # comparisons use real G03; this injected result is a real A-vs-B FAIL.
+        compare = G.compare_records
+        failed_comparison = compare('cancel_during_tool', G.load_aligned(pool[10] / trace),
+                                    G.load_aligned(rust[0] / trace), catalog['cancel_during_tool'])
+        def partial_comparison(sid, left, right, scenario=None):
+            left_proof = next((r for r in left if r.get('state') == 'sidecar_identity'), {})
+            right_proof = next((r for r in right if r.get('state') == 'sidecar_identity'), {})
+            if sid == 'cancel_during_tool' and left_proof.get('captureNonce') == 'pool-9' and right_proof.get('side') == 'rust':
+                return deepcopy(failed_comparison)
+            return compare(sid, left, right, scenario)
+        with patch.object(G, 'compare_records', side_effect=partial_comparison):
+            result = S.score(ts, rust, pool)
+        run = result['per_scenario']['cancel_during_tool']['runs'][0]
+        record_case('partial_class_match_fails', result,
+                    result['valid_score'] and run['verdict'] == 'FAIL'
+                    and run['matched_ts_runs'] == list(range(1, 10)) and run['matched_classes'] == []
+                    and run['class_matches'][0]['matched_members'] == list(range(1, 10))
+                    and run['class_matches'][0]['unmatched_members'] == [10],
+                    comparison_fault_injection=True, run=run)
+
+        pinned = root / 'reference-registration.json'
+        pinned.write_text(json.dumps({'TS_calibration': positive['TS_calibration']}))
+        result = S.score(ts, rust, pool, reference_registration=pinned)
+        record_case('pinned_registration_positive', result,
+                    result['valid_score'] and result['verdict'] == 'PASS')
+        changed = deepcopy(positive['TS_calibration'])
+        changed['cancel_during_tool']['classes'][0]['count'] = 9
+        pinned.write_text(json.dumps({'TS_calibration': changed}))
+        result = S.score(ts, rust, pool, reference_registration=pinned)
+        record_case('pinned_classification_mismatch_refused', result,
+                    result['verdict'] == 'REFUSED' and result['score'] is None
+                    and 'differ from pinned reference registration' in result['reason'])
 
         # Conservative admission and provenance checks are part of the rule.
         for directory in pool[11:]:
