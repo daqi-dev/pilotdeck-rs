@@ -12,6 +12,16 @@ export const SKIP_ALLOWLIST = Object.freeze(allowlist.tests.map(row => Object.fr
 const allowedSkipReasons = new Map(SKIP_ALLOWLIST.map(row => [caseId(row), row.skipReasons.map(reason => reason.description)]));
 const allowedSkipIds = new Set(SKIP_ALLOWLIST.map(caseId));
 if (allowedSkipIds.size !== SKIP_ALLOWLIST.length) throw new Error('duplicate skip allowlist identities');
+// D is an execution gap, never an additional skip allowance. Bind diagnostics
+// to reviewed identities rather than accepting every real/* filename/title.
+const pendingCatalog = JSON.parse(await readFile(new URL('./pending-orchestration.json', import.meta.url), 'utf8'));
+export const PENDING_ORCHESTRATION = Object.freeze(pendingCatalog.tests);
+export const PENDING_STATUS = 'NOT_RUN_PENDING_ORCHESTRATION';
+const pendingById = new Map(PENDING_ORCHESTRATION.map(row => [caseId(row), row]));
+if (pendingCatalog.baselineCommit !== BASELINE_COMMIT || pendingById.size !== 28
+  || PENDING_ORCHESTRATION.length !== 28 || [...pendingById.keys()].some(id => allowedSkipIds.has(id))) {
+  throw new Error('Invalid D orchestration catalog (commit, identities or B overlap)');
+}
 // JSON reporter carries loop-expanded tests, unlike a source regex count.
 export function reportCases(report, testDir) {
   const rows = [];
@@ -39,6 +49,7 @@ export function checkInventory(rows, historical) {
   for (const id of prior) if (!ids.includes(id)) errors.push(`missing historical registration ${id}`);
   for (const id of ids) if (!prior.includes(id)) errors.push(`unknown registration ${id}`);
   for (const id of allowedSkipIds) if (!ids.includes(id)) errors.push(`skip allowlist identity not registered ${id}`);
+  for (const id of pendingById.keys()) if (!ids.includes(id)) errors.push(`D orchestration identity not registered ${id}`);
   return errors;
 }
 function reconcileSingle(inventory, report, testDir) {
@@ -58,7 +69,7 @@ function reconcileSingle(inventory, report, testDir) {
     const base = { file: registration.file, title: registration.title };
     if (matches.length !== 1) {
       errors.push(`${matches.length ? 'duplicate' : 'missing'} result ${caseId(registration)}`);
-      return { ...base, status: 'NOT_RUN', reason: matches.length ? 'duplicate results' : 'No execution result; F2 skeleton does not run the baseline suite' };
+      return { ...base, status: 'NOT_RUN', reason: matches.length ? 'duplicate results' : 'No execution result' };
     }
     const row = matches[0];
     if (row.results.length !== 1) {
@@ -69,6 +80,21 @@ function reconcileSingle(inventory, report, testDir) {
     if (result.status === 'skipped') {
       const annotations = row.annotations.filter(a => a.type === 'skip');
       const reason = annotations.map(a => a.description || '').join('; ');
+      const pending = pendingById.get(caseId(row));
+      if (pending) {
+        errors.push(`${PENDING_STATUS} ${caseId(row)}: requires mock LLM/deployment orchestration`);
+        // These frozen specs contain serial groups, but no test.skip calls.
+        // Never invent a baseline reason for Playwright's unannotated skips.
+        if (annotations.length) errors.push(`D skip annotation differs from frozen source ${caseId(row)}: ${reason}`);
+        const predecessor = received.slice(0, received.indexOf(row)).find(candidate => candidate.file === row.file
+          && candidate.results.some(attempt => ['failed', 'timedOut'].includes(attempt.status)));
+        return { ...base, status: PENDING_STATUS, allowedSkip: false,
+          reason: 'D 类待 mock LLM / 部署编排；原始状态 skipped；' + (annotations.length ? `报告 skip 原文：${reason}` : '原始 skip annotation 为空；基线无 test.skip 理由'),
+          source: pending.source, baselineSkipDescription: pending.baselineSkipDescription,
+          rawStatus: result.status, rawSkipAnnotations: annotations,
+          ...(predecessor ? { serialPredecessor: { file: predecessor.file, title: predecessor.title, status: predecessor.results[0].status } } : {}),
+        };
+      }
       const allowedIdentity = allowedSkipIds.has(caseId(row));
       const allowedReason = annotations.length === 1 && typeof annotations[0].description === 'string' && allowedSkipReasons.get(caseId(row))?.includes(reason);
       if (!allowedIdentity) errors.push(`skip identity not in fixed allowlist ${caseId(row)}`);
@@ -93,7 +119,8 @@ function reconcileSingle(inventory, report, testDir) {
   const minimumExecuted = inventory.length - allowedSkips;
   if (executed < minimumExecuted) errors.push(`实际执行数 ${executed} < 最低执行数 ${minimumExecuted} (注册数 ${inventory.length} − 身份清单数 ${allowedSkips})`);
   if (executed !== expected) errors.push(`应执行数 ${expected} vs 实际执行数 ${executed}`);
-  return { denominator: inventory.length, allowedSkips, minimumExecuted, expected, executed, explicitSkips: skipped, status: errors.length ? 'FAIL' : 'PASS', rows, errors };
+  const pendingOrchestration = rows.filter(row => row.status === PENDING_STATUS).length;
+  return { denominator: inventory.length, allowedSkips, minimumExecuted, expected, executed, explicitSkips: skipped, pendingOrchestration, status: errors.length ? 'FAIL' : 'PASS', rows, errors };
 }
 
 // Merge complete profile runs only after validating every original report. A pass
@@ -109,15 +136,17 @@ export function reconcile(inventory, reports, testDir) {
     const observations = profiles.map(profile => profile.rows[index]);
     const selected = observations.find(row => row.status === 'FAIL')
       || observations.find(row => row.status === 'PASS')
-      || observations.find(row => row.status === 'NOT_RUN') || observations[0]
+      || observations.find(row => row.status === 'NOT_RUN')
+      || observations.find(row => row.status === PENDING_STATUS) || observations[0]
       || { file: registration.file, title: registration.title, status: 'NOT_RUN', reason: 'No profile reports' };
     return { ...selected, observations };
   });
   const executed = rows.filter(row => ['PASS', 'FAIL'].includes(row.status)).length;
   const skipped = rows.filter(row => row.status === 'SKIP' && row.observations.every(observation => observation.allowedSkip)).length;
   const allowedSkips = inventory.filter(row => allowedSkipIds.has(caseId(row))).length;
+  const pendingOrchestration = rows.filter(row => row.observations.some(observation => observation.status === PENDING_STATUS)).length;
   return { denominator: inventory.length, allowedSkips, minimumExecuted: inventory.length - allowedSkips,
-    expected: inventory.length - skipped, executed, explicitSkips: skipped,
+    expected: inventory.length - skipped, executed, explicitSkips: skipped, pendingOrchestration,
     status: errors.length ? 'FAIL' : 'PASS', rows, errors, profiles };
 }
 

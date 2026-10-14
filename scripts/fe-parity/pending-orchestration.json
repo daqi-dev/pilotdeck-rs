@@ -1,0 +1,286 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "note": "D-class diagnostic catalog only; never authorizes skip or reduces expected/minimum execution. No test.skip reason exists in these serial specs. Preserve raw reporter annotations separately.",
+  "tests": [
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-TREE-001 opens file workbench and navigates seeded files",
+      "source": {
+        "registration": "ui/e2e/real/files.spec.mjs:7",
+        "serial": "ui/e2e/real/files.spec.mjs:4",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-TREE-002 refresh and search controls update the tree",
+      "source": {
+        "registration": "ui/e2e/real/files.spec.mjs:14",
+        "serial": "ui/e2e/real/files.spec.mjs:4",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-EDIT-001 edits and saves a real file",
+      "source": {
+        "registration": "ui/e2e/real/files.spec.mjs:27",
+        "serial": "ui/e2e/real/files.spec.mjs:4",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/files.spec.mjs",
+      "title": "FIL-PREVIEW-001 closes file preview and assistant panel",
+      "source": {
+        "registration": "ui/e2e/real/files.spec.mjs:40",
+        "serial": "ui/e2e/real/files.spec.mjs:4",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-LANG-001 language selection and navigation",
+      "source": {
+        "registration": "ui/e2e/real/onboarding.spec.mjs:5",
+        "serial": "ui/e2e/real/onboarding.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-PROVIDER-001 selects OpenAI, Anthropic and Gemini providers",
+      "source": {
+        "registration": "ui/e2e/real/onboarding.spec.mjs:14",
+        "serial": "ui/e2e/real/onboarding.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-CONN-001 real connection form controls and model selection",
+      "source": {
+        "registration": "ui/e2e/real/onboarding.spec.mjs:27",
+        "serial": "ui/e2e/real/onboarding.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/onboarding.spec.mjs",
+      "title": "ONB-NAV-002 back and completion controls are real",
+      "source": {
+        "registration": "ui/e2e/real/onboarding.spec.mjs:44",
+        "serial": "ui/e2e/real/onboarding.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-SIDEBAR-001 creates and selects a new conversation",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:7",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-SIDEBAR-003 expands navigation and opens settings/skills",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:12",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-MODEL-001 selects each configured real model",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:24",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-COMPOSER-001 real openai chat",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:40",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-COMPOSER-001 real anthropic chat",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:40",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-COMPOSER-001 real google chat",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:40",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-HEADER-002 opens and closes conversation search",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:52",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/session.spec.mjs",
+      "title": "SES-MSG-003 destructive confirmation can be cancelled",
+      "source": {
+        "registration": "ui/e2e/real/session.spec.mjs:61",
+        "serial": "ui/e2e/real/session.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-NAV-001 visits every settings menu",
+      "source": {
+        "registration": "ui/e2e/real/settings.spec.mjs:17",
+        "serial": "ui/e2e/real/settings.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-GENERAL-001 toggles visible general controls and persists",
+      "source": {
+        "registration": "ui/e2e/real/settings.spec.mjs:27",
+        "serial": "ui/e2e/real/settings.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-MODEL-001 exercises model pool provider controls",
+      "source": {
+        "registration": "ui/e2e/real/settings.spec.mjs:42",
+        "serial": "ui/e2e/real/settings.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-AGENT-001 exercises agent settings controls",
+      "source": {
+        "registration": "ui/e2e/real/settings.spec.mjs:50",
+        "serial": "ui/e2e/real/settings.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-MCP-001 opens MCP extension and exercises modal cancel",
+      "source": {
+        "registration": "ui/e2e/real/settings.spec.mjs:67",
+        "serial": "ui/e2e/real/settings.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-ADV-001 validates raw configuration actions",
+      "source": {
+        "registration": "ui/e2e/real/settings.spec.mjs:80",
+        "serial": "ui/e2e/real/settings.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/settings.spec.mjs",
+      "title": "SET-ABOUT-001 checks update and returns to app",
+      "source": {
+        "registration": "ui/e2e/real/settings.spec.mjs:88",
+        "serial": "ui/e2e/real/settings.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-LIST-001 refreshes and selects a skill",
+      "source": {
+        "registration": "ui/e2e/real/skills.spec.mjs:6",
+        "serial": "ui/e2e/real/skills.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-SCOPE-001 switches user and project scope",
+      "source": {
+        "registration": "ui/e2e/real/skills.spec.mjs:15",
+        "serial": "ui/e2e/real/skills.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-CREATE-001 opens and cancels create modal",
+      "source": {
+        "registration": "ui/e2e/real/skills.spec.mjs:23",
+        "serial": "ui/e2e/real/skills.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-EDIT-001 opens editor and exercises save/cancel controls",
+      "source": {
+        "registration": "ui/e2e/real/skills.spec.mjs:30",
+        "serial": "ui/e2e/real/skills.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    },
+    {
+      "file": "real/skills.spec.mjs",
+      "title": "SKL-IMPORT-001 opens import modal and cancels without writing",
+      "source": {
+        "registration": "ui/e2e/real/skills.spec.mjs:43",
+        "serial": "ui/e2e/real/skills.spec.mjs:3",
+        "orchestration": "ui/e2e/real/launch.mjs:17"
+      },
+      "baselineSkipDescription": null
+    }
+  ]
+}

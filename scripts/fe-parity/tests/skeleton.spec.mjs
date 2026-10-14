@@ -1,41 +1,9 @@
-import { mkdir, mkdtemp } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { root, requireUI, origin, ownedPath } from '../env.mjs';
+import { test, expect, login } from './fixture.mjs';
 import { TOKEN } from '../mock.mjs';
-const { test: base, expect, chromium } = requireUI('@playwright/test');
-const frontend = process.env.FE_FRONTEND;
-const output = ownedPath(process.env.FE_OUTPUT);
-// Override context so Playwright never launches its bundled browser. Profiles are per test.
-const test = base.extend({
-  context: async ({}, use) => {
-    const directory = resolve(root, '_tmp/fe-parity/profiles');
-    await mkdir(directory, { recursive: true });
-    const profile = await mkdtemp(resolve(directory, `${frontend}-`));
-    const context = await chromium.launchPersistentContext(profile, { channel: 'chrome', headless: true, baseURL: origin(frontend) });
-    try { await use(context); } finally { await context.close(); }
-  },
-  page: async ({ context }, use, testInfo) => {
-    const page = await context.newPage();
-    try { await use(page); }
-    finally {
-      if (frontend === 'old') {
-        const directory = resolve(output, 'baseline'); await mkdir(directory, { recursive: true });
-        await page.screenshot({ path: resolve(directory, `${testInfo.testId}.png`), fullPage: true });
-      }
-      await page.close();
-    }
-  },
-});
-async function login(page) {
-  await page.goto(frontend === 'new' ? '/probe/leptos/' : '/');
-  await expect(page.locator('#username')).toBeVisible();
-  await page.locator('#username').fill('probe'); await page.locator('#password').fill('probe-secret');
-  await (frontend === 'new' ? page.locator('#login') : page.locator('form button[type="submit"]')).click();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('auth-token'))).toBe(TOKEN);
-}
 // These are new transport/auth skeleton cases, never registrations in the baseline 72.
 test('F2-SKELETON-001 login persists the shared auth-token', async ({ page }) => {
   await login(page);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('auth-token'))).toBe(TOKEN);
   await expect.poll(async () => {
     const response = await page.request.get('/api/auth/user', { headers: { Authorization: `Bearer ${TOKEN}` } });
     return (await response.json()).user?.username;
