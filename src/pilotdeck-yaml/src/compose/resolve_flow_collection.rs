@@ -5,11 +5,11 @@ use super::{
     resolve_end::resolve_end,
     resolve_props::{PropOptions, resolve_props},
     util_contains_newline::contains_newline,
-    util_map_includes::map_includes,
+    util_map_includes::MapKeys,
 };
 use crate::{
     nodes::{Node, NodeId, NodeKind, Pair},
-    parse::cst::{Token, TokenType::*},
+    parse::cst::{CollectionItem, Token, TokenType::*},
     string::{append, slice},
 };
 const BLOCK_MSG: &str = "Block collections are not allowed within flow collections";
@@ -17,8 +17,18 @@ fn is_block(t: Option<&Token>) -> bool {
     t.is_some_and(|t| matches!(t.kind, BlockMap | BlockSeq))
 }
 pub(super) fn resolve_flow_collection(ctx: &mut Context, fc: &Token) -> NodeId {
+    resolve_flow_collection_items(ctx, fc, fc.items.len(), fc.items.iter().cloned())
+}
+pub(super) fn resolve_flow_collection_items(
+    ctx: &mut Context,
+    fc: &Token,
+    count: usize,
+    items: impl IntoIterator<Item = CollectionItem>,
+) -> NodeId {
+    let mut keys = MapKeys::new(count);
     let is_map = fc.flow_start.as_ref().unwrap().kind == FlowMapStart;
     let fc_name = if is_map { "flow map" } else { "flow sequence" };
+    let mut collection_comment = Vec::new();
     let mut coll = Node::new(NodeKind::Seq(Vec::new()));
     coll.flow = true;
     let mut pairs = Vec::new();
@@ -34,7 +44,7 @@ pub(super) fn resolve_flow_collection(ctx: &mut Context, fc: &Token) -> NodeId {
             .as_ref()
             .unwrap()
             .len_utf16();
-    for (i, it) in fc.items.iter().enumerate() {
+    for (i, it) in items.into_iter().enumerate() {
         let key = it.key.as_ref().and_then(|k| k.as_deref());
         let sep = it.sep.as_deref().unwrap_or_default();
         let value = it.value.as_deref();
@@ -61,7 +71,7 @@ pub(super) fn resolve_flow_collection(ctx: &mut Context, fc: &Token) -> NodeId {
                         "UNEXPECTED_TOKEN",
                         format!("Unexpected , in {fc_name}"),
                     );
-                } else if i < fc.items.len() - 1 {
+                } else if i < count - 1 {
                     ctx.at(
                         props.start,
                         "UNEXPECTED_TOKEN",
@@ -69,10 +79,10 @@ pub(super) fn resolve_flow_collection(ctx: &mut Context, fc: &Token) -> NodeId {
                     );
                 }
                 if !props.comment.is_empty() {
-                    if !coll.comment.is_empty() {
-                        append(&mut coll.comment, &"\n".into());
+                    if !collection_comment.is_empty() {
+                        collection_comment.push(10);
                     }
-                    append(&mut coll.comment, &props.comment);
+                    collection_comment.extend_from_slice(props.comment.units());
                 }
                 offset = props.end;
                 continue;
@@ -227,7 +237,7 @@ pub(super) fn resolve_flow_collection(ctx: &mut Context, fc: &Token) -> NodeId {
                 value: value_node,
             };
             if is_map {
-                if map_includes(ctx, &pairs, key_node) {
+                if keys.includes(ctx, &pairs, key_node) {
                     ctx.at(key_start, "DUPLICATE_KEY", "Map keys must be unique");
                 }
                 pairs.push(pair);
@@ -278,14 +288,17 @@ pub(super) fn resolve_flow_collection(ctx: &mut Context, fc: &Token) -> NodeId {
     if !ee.is_empty() {
         let end = resolve_end(ctx, ee, ce_pos, true);
         if !end.comment.is_empty() {
-            if !coll.comment.is_empty() {
-                append(&mut coll.comment, &"\n".into());
+            if !collection_comment.is_empty() {
+                collection_comment.push(10);
             }
-            append(&mut coll.comment, &end.comment);
+            collection_comment.extend_from_slice(end.comment.units());
         }
         coll.range = [fc.offset, ce_pos, end.offset];
     } else {
         coll.range = [fc.offset, ce_pos, ce_pos];
+    }
+    if !collection_comment.is_empty() {
+        coll.comment = pilotdeck_protocol::JsString::from_utf16(collection_comment);
     }
     coll.kind = if is_map {
         NodeKind::Map(pairs)

@@ -4,21 +4,31 @@ use super::{
     compose_node::{compose_empty_node, compose_node},
     resolve_props::{PropOptions, resolve_props},
     util_contains_newline::contains_newline,
-    util_map_includes::map_includes,
+    util_map_includes::MapKeys,
 };
 use crate::{
     nodes::{Node, NodeId, NodeKind, Pair},
-    parse::cst::{Token, TokenType::*},
-    string::{append, concat},
+    parse::cst::{CollectionItem, Token, TokenType::*},
+    string::concat,
 };
 const START_COL_MSG: &str = "All mapping items must start at the same column";
 pub(super) fn resolve_block_map(ctx: &mut Context, bm: &Token) -> NodeId {
+    resolve_block_map_items(ctx, bm, bm.items.iter().cloned())
+}
+pub(super) fn resolve_block_map_items(
+    ctx: &mut Context,
+    bm: &Token,
+    input: impl IntoIterator<Item = CollectionItem>,
+) -> NodeId {
+    let input = input.into_iter();
+    let mut keys = MapKeys::new(input.size_hint().0);
+    let mut collection_comment = Vec::new();
     let mut map = Node::new(NodeKind::Map(Vec::new()));
     let mut items = Vec::new();
     ctx.at_root = false;
     let mut offset = bm.offset;
     let mut comment_end = None;
-    for it in &bm.items {
+    for it in input {
         let key = it.key.as_ref().and_then(|k| k.as_deref());
         let sep = it.sep.as_deref().unwrap_or_default();
         let value = it.value.as_deref();
@@ -50,10 +60,10 @@ pub(super) fn resolve_block_map(ctx: &mut Context, bm: &Token) -> NodeId {
             if kp.anchor.is_none() && kp.tag.is_none() && it.sep.is_none() {
                 comment_end = Some(kp.end);
                 if !kp.comment.is_empty() {
-                    if !map.comment.is_empty() {
-                        append(&mut map.comment, &"\n".into());
+                    if !collection_comment.is_empty() {
+                        collection_comment.push(10);
                     }
-                    append(&mut map.comment, &kp.comment);
+                    collection_comment.extend_from_slice(kp.comment.units());
                 }
                 continue;
             }
@@ -75,7 +85,7 @@ pub(super) fn resolve_block_map(ctx: &mut Context, bm: &Token) -> NodeId {
             compose_empty_node(ctx, key_start, &it.start, &kp)
         };
         ctx.at_key = false;
-        if map_includes(ctx, &items, key_node) {
+        if keys.includes(ctx, &items, key_node) {
             ctx.at(key_start, "DUPLICATE_KEY", "Map keys must be unique");
         }
         let vp = resolve_props(
@@ -140,6 +150,9 @@ pub(super) fn resolve_block_map(ctx: &mut Context, bm: &Token) -> NodeId {
     }
     if let Some(c) = comment_end.filter(|c| *c > 0 && *c < offset) {
         ctx.at(c, "IMPOSSIBLE", "Map comment with trailing content");
+    }
+    if !collection_comment.is_empty() {
+        map.comment = pilotdeck_protocol::JsString::from_utf16(collection_comment);
     }
     map.kind = NodeKind::Map(items);
     map.range = [bm.offset, offset, comment_end.unwrap_or(offset)];

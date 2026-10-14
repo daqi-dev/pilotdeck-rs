@@ -65,7 +65,7 @@ impl Context<'_> {
         };
         for (key, value) in entries {
             let key = if matches!(self.nodes[index], Container::Object(_)) {
-                Value::String(self.js_string(&key))
+                Value::String(std::sync::Arc::new(self.js_string(&key)))
             } else {
                 key
             };

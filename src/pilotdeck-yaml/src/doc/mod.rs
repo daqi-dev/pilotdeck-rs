@@ -19,7 +19,7 @@ pub struct Document {
     pub range: [usize; 3],
     pub comment: JsString,
     pub comment_before: JsString,
-    pub line_counter: LineCounter,
+    pub line_counter: std::sync::Arc<LineCounter>,
     pub(crate) options: ParseOptions,
     pub(crate) schema: Schema,
 }

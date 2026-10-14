@@ -11,12 +11,13 @@ use pilotdeck_protocol::JsString;
 pub(super) fn stringify_key(
     doc: &Document,
     id: NodeId,
-    anchors: &[NodeId],
+    anchors: &std::collections::HashMap<NodeId, super::to_js::Anchor>,
     depth_limit: usize,
 ) -> Result<JsString, ConversionError> {
     let mut ctx = KeyContext {
         doc,
-        anchors: anchors.to_vec(),
+        anchors,
+        local_anchors: Vec::new(),
         depth: 0,
         depth_limit,
     };
@@ -24,12 +25,69 @@ pub(super) fn stringify_key(
         NodeKind::Scalar(ScalarValue::Binary(data)) => {
             Ok(String::from_utf8_lossy(data).into_owned().into())
         }
-        _ => ctx.node(id, 0, false, false, None),
+        _ => ctx.node(id, 0, false, false, None).map(KeyText::finish),
+    }
+}
+// Keep collection output as pieces until the outermost key is complete.
+// V8 concatenation retains ropes; flattening at every nested collection copied
+// the same large descendants repeatedly in the direct UTF-16 port.
+struct KeyText {
+    parts: KeyParts,
+    len: usize,
+    newline: bool,
+    first: Option<u16>,
+    last: Option<u16>,
+}
+enum KeyParts {
+    Leaf(JsString),
+    Join(Vec<KeyText>),
+}
+impl From<JsString> for KeyText {
+    fn from(value: JsString) -> Self {
+        Self {
+            len: value.len_utf16(),
+            newline: value.units().contains(&10),
+            first: value.units().first().copied(),
+            last: value.units().last().copied(),
+            parts: KeyParts::Leaf(value),
+        }
+    }
+}
+impl KeyText {
+    fn join(parts: Vec<Self>) -> Self {
+        Self {
+            len: parts.iter().map(|part| part.len).sum(),
+            newline: parts.iter().any(|part| part.newline),
+            first: parts.iter().find_map(|part| part.first),
+            last: parts.iter().rev().find_map(|part| part.last),
+            parts: KeyParts::Join(parts),
+        }
+    }
+    fn text(value: &str) -> Self {
+        JsString::from(value).into()
+    }
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    fn len_utf16(&self) -> usize {
+        self.len
+    }
+    fn finish(self) -> JsString {
+        let mut out = Vec::with_capacity(self.len);
+        let mut pending = vec![self];
+        while let Some(part) = pending.pop() {
+            match part.parts {
+                KeyParts::Leaf(value) => out.extend_from_slice(value.units()),
+                KeyParts::Join(parts) => pending.extend(parts.into_iter().rev()),
+            }
+        }
+        JsString::from_utf16(out)
     }
 }
 struct KeyContext<'a> {
     doc: &'a Document,
-    anchors: Vec<NodeId>,
+    anchors: &'a std::collections::HashMap<NodeId, super::to_js::Anchor>,
+    local_anchors: Vec<NodeId>,
     depth: usize,
     depth_limit: usize,
 }
@@ -41,7 +99,7 @@ impl KeyContext<'_> {
         implicit: bool,
         props: bool,
         indent_at_start: Option<usize>,
-    ) -> Result<JsString, ConversionError> {
+    ) -> Result<KeyText, ConversionError> {
         if self.depth >= self.depth_limit {
             return Err(crate::stack::conversion_exhausted());
         }
@@ -57,12 +115,13 @@ impl KeyContext<'_> {
         implicit: bool,
         props: bool,
         mut indent_at_start: Option<usize>,
-    ) -> Result<JsString, ConversionError> {
+    ) -> Result<KeyText, ConversionError> {
         let n = &self.doc.nodes[id];
         if let NodeKind::Alias(source) = &n.kind {
             if !self
                 .anchors
-                .iter()
+                .keys()
+                .chain(self.local_anchors.iter())
                 .any(|id| self.doc.nodes[*id].anchor.as_ref() == Some(source))
             {
                 return Err(ConversionError::new(
@@ -73,17 +132,15 @@ impl KeyContext<'_> {
                     ),
                 ));
             }
-            return Ok(concat(&[
-                &"*".into(),
-                source,
-                &if implicit { " " } else { "" }.into(),
-            ]));
+            return Ok(
+                concat(&[&"*".into(), source, &if implicit { " " } else { "" }.into()]).into(),
+            );
         }
         let mut prefix = JsString::default();
         if props {
             if let Some(anchor) = &n.anchor {
                 crate::doc::anchors::anchor_is_valid(anchor)?;
-                self.anchors.push(id);
+                self.local_anchors.push(id);
                 prefix = concat(&[&"&".into(), anchor]);
             }
             if let Some(tag) = &n.tag {
@@ -97,7 +154,7 @@ impl KeyContext<'_> {
             indent_at_start = Some(indent_at_start.unwrap_or(0) + prefix.len_utf16() + 1);
         }
         let body = match &n.kind {
-            NodeKind::Scalar(v) => self.scalar(id, v, indent, implicit, indent_at_start),
+            NodeKind::Scalar(v) => self.scalar(id, v, indent, implicit, indent_at_start).into(),
             NodeKind::Seq(items) => self.flow_collection(
                 items.iter().copied().map(FlowItem::Node).collect(),
                 ("[", "]"),
@@ -139,11 +196,11 @@ impl KeyContext<'_> {
         Ok(if prefix.is_empty() {
             body
         } else {
-            concat(&[&prefix, &" ".into(), &body])
+            KeyText::join(vec![prefix.into(), KeyText::text(" "), body])
         })
     }
     fn tag_string(&self, tag: &JsString) -> JsString {
-        for (handle, prefix) in &self.doc.directives.tags {
+        for (handle, prefix) in self.doc.directives.tags.iter() {
             if tag.units().starts_with(prefix.units()) {
                 let suffix = slice(tag, prefix.len_utf16(), tag.len_utf16());
                 let mut encoded = Vec::new();
@@ -178,7 +235,7 @@ impl KeyContext<'_> {
         indent: usize,
         all_null: bool,
         indent_at_start: Option<usize>,
-    ) -> Result<JsString, ConversionError> {
+    ) -> Result<KeyText, ConversionError> {
         let key = &self.doc.nodes[pair.key];
         let explicit = !key.is_scalar() && !matches!(key.kind, NodeKind::Alias(_))
             || matches!(key.style, "BLOCK_FOLDED" | "BLOCK_LITERAL");
@@ -191,22 +248,22 @@ impl KeyContext<'_> {
         )?;
         if all_null || pair.value.is_none() {
             return Ok(if k.is_empty() {
-                "?".into()
+                KeyText::text("?")
             } else if explicit {
-                concat(&[&"? ".into(), &k])
+                KeyText::join(vec![KeyText::text("? "), k])
             } else {
                 k
             });
         }
         let value = pair.value.unwrap();
-        let mut out = if explicit {
-            concat(&[
-                &"? ".into(),
-                &k,
-                &format!("\n{}:", " ".repeat(indent)).into(),
+        let out = if explicit {
+            KeyText::join(vec![
+                KeyText::text("? "),
+                k,
+                KeyText::text(&format!("\n{}:", " ".repeat(indent))),
             ])
         } else {
-            concat(&[&k, &":".into()])
+            KeyText::join(vec![k, KeyText::text(":")])
         };
         let at_start = if !explicit && key.comment.is_empty() && self.doc.nodes[value].is_scalar() {
             Some(out.len_utf16() + 1)
@@ -214,16 +271,14 @@ impl KeyContext<'_> {
             indent_at_start
         };
         let v = self.node(value, indent + 2, false, true, at_start)?;
-        let ws = if !explicit && !self.doc.nodes[value].is_scalar() && v.units().contains(&10) {
+        let ws = if !explicit && !self.doc.nodes[value].is_scalar() && v.newline {
             format!("\n{}", " ".repeat(indent + 2))
-        } else if v.is_empty() || v.units().first() == Some(&10) {
+        } else if v.is_empty() || v.first == Some(10) {
             String::new()
         } else {
             " ".into()
         };
-        append(&mut out, &ws.into());
-        append(&mut out, &v);
-        Ok(out)
+        Ok(KeyText::join(vec![out, KeyText::text(&ws), v]))
     }
     fn flow_collection(
         &mut self,
@@ -233,7 +288,7 @@ impl KeyContext<'_> {
         item_indent: usize,
         all_null: bool,
         indent_at_start: Option<usize>,
-    ) -> Result<JsString, ConversionError> {
+    ) -> Result<KeyText, ConversionError> {
         let (start, end) = flow_chars;
         let mut req_newline = false;
         let mut lines_at_value = 0;
@@ -247,11 +302,11 @@ impl KeyContext<'_> {
             if let Some(id) = key {
                 let node = &self.doc.nodes[id];
                 if node.space_before {
-                    lines.push(JsString::default());
+                    lines.push(KeyText::text(""));
                 }
                 if !node.comment_before.is_empty() {
                     let c = indent_comment(&stringify_comment(&node.comment_before), indent);
-                    lines.push(trim_start(&c));
+                    lines.push(trim_start(&c).into());
                 }
                 match item {
                     FlowItem::Node(_) => comment = node.comment.clone(),
@@ -278,43 +333,43 @@ impl KeyContext<'_> {
                 FlowItem::Node(id) => self.node(*id, item_indent, false, true, indent_at_start)?,
                 FlowItem::Pair(pair) => self.pair(pair, item_indent, all_null, indent_at_start)?,
             };
-            req_newline = req_newline || lines.len() > lines_at_value || str.units().contains(&10);
+            req_newline = req_newline || lines.len() > lines_at_value || str.newline;
             if i + 1 < items.len() {
-                append(&mut str, &",".into());
+                str = KeyText::join(vec![str, KeyText::text(",")]);
             }
             if !comment.is_empty() {
                 let suffix = line_comment(&str, item_indent, &stringify_comment(&comment));
-                append(&mut str, &suffix);
+                str = KeyText::join(vec![str, suffix.into()]);
             }
             lines.push(str);
             lines_at_value = lines.len();
         }
         if lines.is_empty() {
-            return Ok(format!("{start}{end}").into());
+            return Ok(KeyText::text(&format!("{start}{end}")));
         }
         req_newline =
             req_newline || lines.iter().map(|s| s.len_utf16() + 2).sum::<usize>() + 2 > 80;
-        let mut out: JsString = start.into();
+        let mut out = vec![KeyText::text(start)];
         if req_newline {
             for line in lines {
-                append(&mut out, &"\n".into());
+                out.push(KeyText::text("\n"));
                 if !line.is_empty() {
-                    append(&mut out, &" ".repeat(indent + 2).into());
-                    append(&mut out, &line);
+                    out.push(KeyText::text(&" ".repeat(indent + 2)));
+                    out.push(line);
                 }
             }
-            append(&mut out, &format!("\n{}{end}", " ".repeat(indent)).into());
+            out.push(KeyText::text(&format!("\n{}{end}", " ".repeat(indent))));
         } else {
-            append(&mut out, &" ".into());
-            for (i, line) in lines.iter().enumerate() {
+            out.push(KeyText::text(" "));
+            for (i, line) in lines.into_iter().enumerate() {
                 if i > 0 {
-                    append(&mut out, &" ".into());
+                    out.push(KeyText::text(" "));
                 }
-                append(&mut out, line);
+                out.push(line);
             }
-            append(&mut out, &format!(" {end}").into());
+            out.push(KeyText::text(&format!(" {end}")));
         }
-        Ok(out)
+        Ok(KeyText::join(out))
     }
     fn scalar(
         &self,
@@ -355,7 +410,7 @@ impl KeyContext<'_> {
                         .iter()
                         .any(|s| n.source.equals_str(s))
                 {
-                    n.source.clone()
+                    n.source.as_ref().clone()
                 } else {
                     "null".into()
                 }
@@ -374,7 +429,7 @@ impl KeyContext<'_> {
                         .any(|s| n.source.equals_str(s))
                 };
                 if valid {
-                    n.source.clone()
+                    n.source.as_ref().clone()
                 } else {
                     if *b { "true" } else { "false" }.into()
                 }
@@ -542,12 +597,14 @@ impl KeyContext<'_> {
             })
             || matches!(s, [45] | [63])
             || (s.len() > 1 && matches!(s[0], 45 | 63) && matches!(s[1], 32 | 9));
-        let typed = self
-            .doc
-            .schema
-            .tags
-            .iter()
-            .any(|t| t.default && t.name != "tag:yaml.org,2002:str" && t.test(value));
+        let text = value.to_utf8().ok();
+        let typed = self.doc.schema.tags.iter().any(|t| {
+            t.default
+                && t.name != "tag:yaml.org,2002:str"
+                && t.pattern.is_some_and(|pattern| {
+                    text.as_deref().is_some_and(|text| pattern.is_match(text))
+                })
+        });
         if style == "QUOTE_SINGLE"
             || style.starts_with("BLOCK_")
             || forbidden
@@ -620,21 +677,13 @@ fn trim_start(s: &JsString) -> JsString {
         .unwrap_or(s.len_utf16());
     slice(s, i, s.len_utf16())
 }
-fn line_comment(s: &JsString, indent: usize, comment: &JsString) -> JsString {
-    if s.units().last() == Some(&10) {
+fn line_comment(s: &KeyText, indent: usize, comment: &JsString) -> JsString {
+    if s.last == Some(10) {
         indent_comment(comment, indent)
     } else if comment.units().contains(&10) {
         concat(&[&"\n".into(), &indent_comment(comment, indent)])
     } else {
-        concat(&[
-            &if s.units().last() == Some(&32) {
-                ""
-            } else {
-                " "
-            }
-            .into(),
-            comment,
-        ])
+        concat(&[&if s.last == Some(32) { "" } else { " " }.into(), comment])
     }
 }
 fn double_quote(

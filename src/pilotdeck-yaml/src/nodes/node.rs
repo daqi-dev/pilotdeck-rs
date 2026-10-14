@@ -6,32 +6,46 @@ use pilotdeck_protocol::JsString;
 pub struct Node {
     pub kind: NodeKind,
     pub range: [usize; 3],
-    pub anchor: Option<JsString>,
-    pub tag: Option<JsString>,
-    pub source: JsString,
+    pub source: std::sync::Arc<JsString>,
     pub style: &'static str,
     pub format: Option<&'static str>,
     pub flow: bool,
     pub space_before: bool,
+    metadata: Option<Box<NodeMetadata>>,
+}
+/// Optional node decoration. Plain nodes do not allocate this storage.
+#[derive(Clone, Debug, Default)]
+pub struct NodeMetadata {
+    pub anchor: Option<JsString>,
+    pub tag: Option<JsString>,
     pub comment: JsString,
     pub comment_before: JsString,
-    pub src_token: Option<Token>,
+    pub src_token: Option<std::sync::Arc<Token>>,
+}
+impl std::ops::Deref for Node {
+    type Target = NodeMetadata;
+    fn deref(&self) -> &NodeMetadata {
+        static EMPTY: std::sync::LazyLock<NodeMetadata> =
+            std::sync::LazyLock::new(NodeMetadata::default);
+        self.metadata.as_deref().unwrap_or(&EMPTY)
+    }
+}
+impl std::ops::DerefMut for Node {
+    fn deref_mut(&mut self) -> &mut NodeMetadata {
+        self.metadata.get_or_insert_with(Default::default)
+    }
 }
 impl Node {
     pub(crate) fn new(kind: NodeKind) -> Self {
         Self {
             kind,
             range: [0; 3],
-            anchor: None,
-            tag: None,
-            source: JsString::default(),
+            source: Default::default(),
             style: "",
             format: None,
             flow: false,
             space_before: false,
-            comment: JsString::default(),
-            comment_before: JsString::default(),
-            src_token: None,
+            metadata: None,
         }
     }
     pub(crate) fn is_scalar(&self) -> bool {

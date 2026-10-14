@@ -73,7 +73,7 @@ pub fn parse_document(src: &JsString, options: Options) -> Document {
             false,
         ));
     }
-    doc.line_counter = collect_lines(&options, parser.line_counter);
+    doc.line_counter = std::sync::Arc::new(collect_lines(&options, parser.line_counter));
     if options.pretty_errors {
         for error in doc.errors.iter_mut().chain(doc.warnings.iter_mut()) {
             errors::prettify_error(src, &doc.line_counter, error);
@@ -83,10 +83,47 @@ pub fn parse_document(src: &JsString, options: Options) -> Document {
 }
 pub fn parse_all_documents(src: &JsString, options: Options) -> Documents {
     let mut parser = parse::parser::Parser::default();
-    let tokens = parser.parse(src, false);
-    let (mut docs, info) =
-        compose::composer::Composer::new(options.clone()).compose(tokens, false, src.len_utf16());
-    let lines = collect_lines(&options, parser.line_counter);
+    let mut composer = compose::composer::Composer::new(options.clone());
+    let mut separators = 0;
+    let mut lines = 1;
+    let mut prelude_capacity = 0;
+    let mut in_prelude = true;
+    for line in src.units().split(|c| *c == 10) {
+        lines += 1;
+        if line.starts_with(&[45, 45, 45]) && line.get(3).is_none_or(|c| matches!(c, 9 | 13 | 32)) {
+            separators += 1;
+        }
+        if in_prelude {
+            if line.first() == Some(&35) {
+                prelude_capacity += line.len().saturating_sub(1).max(1) + 1;
+            } else if !line.iter().all(|c| matches!(c, 9 | 32)) {
+                in_prelude = false;
+            }
+        }
+    }
+    composer.reserve_documents(separators + 1);
+    composer.reserve_prelude(prelude_capacity);
+    if in_prelude && options.line_counter.is_none() {
+        // A stream consisting only of comments/blank lines exposes no Document
+        // line table. A supplied counter still receives the normal parser lines.
+        parser.defer_lines();
+    } else {
+        parser.line_counter.add_new_line(0);
+        parser.line_counter.line_starts.reserve_exact(lines);
+    }
+
+    // Compose each yielded token immediately; retaining the whole CST stream
+    // alongside every output document needlessly doubles peak memory.
+    parse::lexer::Lexer::lex_complete_with(src, |lexeme| {
+        for token in parser.next(lexeme) {
+            composer.next(token);
+        }
+    });
+    for token in parser.end() {
+        composer.next(token);
+    }
+    let (mut docs, info) = composer.compose(Vec::new(), false, src.len_utf16());
+    let lines = std::sync::Arc::new(collect_lines(&options, parser.line_counter));
     for doc in &mut docs {
         doc.line_counter = lines.clone();
         if options.pretty_errors {

@@ -1,6 +1,6 @@
 // Port of yaml@2.9.0 dist/parse/parser.js (ISC).
 // Handler-local ownership replaces JS references; put-back precedes every pop/step.
-use super::cst::{CollectionItem, Token, TokenType, token_type};
+use super::cst::{CollectionItem, SmallVecPush, Token, TokenType, token_type};
 use super::lexer::Lexer;
 use super::line_counter::LineCounter;
 use TokenType::*;
@@ -71,9 +71,9 @@ fn fix_flow_seq_items(fc: &mut Token) {
                     std::sync::Arc::make_mut(it.value.as_mut().unwrap())
                         .end
                         .get_or_insert_with(Vec::new)
-                        .extend(sep);
+                        .extend_small(sep);
                 } else {
-                    it.start.extend(sep);
+                    it.start.extend_small(sep);
                 }
             }
         }
@@ -96,15 +96,16 @@ fn pair(start: Vec<Token>, key: Option<std::sync::Arc<Token>>, sep: Vec<Token>) 
 
 #[derive(Debug)]
 pub struct Parser {
+    record_lines: bool,
     at_new_line: bool,
     at_scalar: bool,
     indent: usize,
     offset: usize,
     on_key_line: bool,
     stack: Vec<Token>,
-    source: JsString,
+    source: std::sync::Arc<JsString>,
     kind: TokenType,
-    lexer: Lexer,
+    lexer: Lexer<'static>,
     pub line_counter: LineCounter,
     output: Vec<Token>,
     stepping: bool,
@@ -113,13 +114,14 @@ pub struct Parser {
 impl Default for Parser {
     fn default() -> Self {
         Self {
+            record_lines: true,
             at_new_line: true,
             at_scalar: false,
             indent: 0,
             offset: 0,
             on_key_line: false,
             stack: Vec::new(),
-            source: JsString::default(),
+            source: Default::default(),
             kind: Error,
             lexer: Lexer::default(),
             line_counter: LineCounter::default(),
@@ -130,6 +132,9 @@ impl Default for Parser {
     }
 }
 impl Parser {
+    pub(crate) fn defer_lines(&mut self) {
+        self.record_lines = false;
+    }
     pub fn parse(&mut self, source: &JsString, incomplete: bool) -> Vec<Token> {
         if self.offset == 0 {
             self.line_counter.add_new_line(0);
@@ -151,7 +156,7 @@ impl Parser {
         std::mem::take(&mut self.output)
     }
     fn advance(&mut self, source: JsString) {
-        self.source = source;
+        self.source = std::sync::Arc::new(source);
         if self.at_scalar {
             self.at_scalar = false;
             self.step();
@@ -178,8 +183,10 @@ impl Parser {
                     Newline => {
                         self.at_new_line = true;
                         self.indent = 0;
-                        self.line_counter
-                            .add_new_line(self.offset + self.source.len_utf16());
+                        if self.record_lines {
+                            self.line_counter
+                                .add_new_line(self.offset + self.source.len_utf16());
+                        }
                     }
                     Space if self.at_new_line && self.source.units().first() == Some(&32) => {
                         self.indent += self.source.len_utf16()
@@ -233,7 +240,7 @@ impl Parser {
             self.finish();
             let mut token = Token::new(DocEnd, self.offset);
             token.source = Some(self.source.clone());
-            self.stack.push(token);
+            self.stack.push_small(token);
             return;
         }
         let Some(top) = self.stack.pop() else {
@@ -249,7 +256,7 @@ impl Parser {
             FlowCollection => self.flow_collection(top),
             DocEnd => self.document_end(top),
             _ => {
-                self.stack.push(top);
+                self.stack.push_small(top);
                 self.pop(None);
             }
         }
@@ -264,12 +271,12 @@ impl Parser {
     fn pop_inner(&mut self, error: Option<Token>, pending: &mut Vec<Option<Token>>) {
         let Some(mut token) = error.or_else(|| self.stack.pop()) else {
             let mut token = self.error("Tried to pop an empty stack".into());
-            token.source = Some(JsString::default());
-            self.output.push(token);
+            token.source = Some(Default::default());
+            self.output.push_small(token);
             return;
         };
         let Some(top) = self.stack.last_mut() else {
-            self.output.push(token);
+            self.output.push_small(token);
             return;
         };
         if token.kind == BlockScalar {
@@ -310,11 +317,11 @@ impl Parser {
         };
         match top.kind {
             Document => top.value = Some(std::sync::Arc::new(token)),
-            BlockScalar => top.props.push(token),
+            BlockScalar => top.props.push_small(token),
             BlockMap => {
                 let it = top.items.last_mut().unwrap();
                 if it.value.is_some() {
-                    top.items.push(pair(
+                    top.items.push_small(pair(
                         Vec::new(),
                         Some(std::sync::Arc::new(token)),
                         Vec::new(),
@@ -333,7 +340,7 @@ impl Parser {
             BlockSeq => {
                 let it = top.items.last_mut().unwrap();
                 if it.value.is_some() {
-                    top.items.push(CollectionItem {
+                    top.items.push_small(CollectionItem {
                         value: Some(std::sync::Arc::new(token)),
                         ..Default::default()
                     });
@@ -343,7 +350,7 @@ impl Parser {
             }
             FlowCollection => {
                 if top.items.last().is_none_or(|it| it.value.is_some()) {
-                    top.items.push(pair(
+                    top.items.push_small(pair(
                         Vec::new(),
                         Some(std::sync::Arc::new(token)),
                         Vec::new(),
@@ -360,8 +367,8 @@ impl Parser {
                 return;
             }
             _ => {
-                pending.push(Some(token));
-                pending.push(None);
+                pending.push_small(Some(token));
+                pending.push_small(None);
                 return;
             }
         }
@@ -369,7 +376,7 @@ impl Parser {
             if top.kind == Document {
                 top.end = Some(start);
             } else {
-                top.items.push(item(start));
+                top.items.push_small(item(start));
             }
         }
     }
@@ -378,18 +385,20 @@ impl Parser {
             DirectiveLine => {
                 let mut t = Token::new(Directive, self.offset);
                 t.source = Some(self.source.clone());
-                self.output.push(t);
+                self.output.push_small(t);
             }
-            ByteOrderMark | Space | Comment | Newline => self.output.push(self.source_token()),
+            ByteOrderMark | Space | Comment | Newline => {
+                self.output.push_small(self.source_token())
+            }
             DocMode | DocStart => {
                 let mut doc = Token::new(Document, self.offset);
                 if self.kind == DocStart {
-                    doc.start.push(self.source_token());
+                    doc.start.push_small(self.source_token());
                 }
-                self.stack.push(doc);
+                self.stack.push_small(doc);
             }
             _ => {
-                self.output.push(self.error(
+                self.output.push_small(self.error(
                     format!("Unexpected {} token in YAML stream", self.kind.as_str()).into(),
                 ))
             }
@@ -403,25 +412,25 @@ impl Parser {
         match self.kind {
             DocStart => {
                 if find_non_empty_index(&doc.start).is_some() {
-                    self.stack.push(doc);
+                    self.stack.push_small(doc);
                     self.pop(None);
                     self.step();
                 } else {
-                    doc.start.push(self.source_token());
-                    self.stack.push(doc);
+                    doc.start.push_small(self.source_token());
+                    self.stack.push_small(doc);
                 }
             }
             Anchor | Tag | Space | Comment | Newline => {
-                doc.start.push(self.source_token());
-                self.stack.push(doc);
+                doc.start.push_small(self.source_token());
+                self.stack.push_small(doc);
             }
             _ => {
                 let bv = self.start_block_value(&mut doc);
-                self.stack.push(doc);
+                self.stack.push_small(doc);
                 if let Some(bv) = bv {
-                    self.stack.push(bv);
+                    self.stack.push_small(bv);
                 } else {
-                    self.output.push(self.error(
+                    self.output.push_small(self.error(
                         format!("Unexpected {} token in YAML document", self.kind.as_str()).into(),
                     ));
                 }
@@ -432,20 +441,20 @@ impl Parser {
         if self.kind == MapValueInd {
             let start = get_first_key_start_props(get_prev_props(self.stack.last_mut().unwrap()));
             let mut sep = scalar.end.take().unwrap_or_default();
-            sep.push(self.source_token());
+            sep.push_small(self.source_token());
             let mut map = Token::new(BlockMap, scalar.offset);
             map.indent = scalar.indent;
             map.items
-                .push(pair(start, Some(std::sync::Arc::new(scalar)), sep));
+                .push_small(pair(start, Some(std::sync::Arc::new(scalar)), sep));
             self.on_key_line = true;
-            self.stack.push(map);
+            self.stack.push_small(map);
         } else {
             self.line_end(scalar);
         }
     }
     fn scalar_newlines(&mut self) {
         for (i, ch) in self.source.units().iter().enumerate() {
-            if *ch == 10 {
+            if *ch == 10 && self.record_lines {
                 self.line_counter.add_new_line(self.offset + i + 1);
             }
         }
@@ -453,19 +462,19 @@ impl Parser {
     fn block_scalar(&mut self, mut scalar: Token) {
         match self.kind {
             Space | Comment | Newline => {
-                scalar.props.push(self.source_token());
-                self.stack.push(scalar);
+                scalar.props.push_small(self.source_token());
+                self.stack.push_small(scalar);
             }
             Scalar => {
                 scalar.source = Some(self.source.clone());
                 self.at_new_line = true;
                 self.indent = 0;
                 self.scalar_newlines();
-                self.stack.push(scalar);
+                self.stack.push_small(scalar);
                 self.pop(None);
             }
             _ => {
-                self.stack.push(scalar);
+                self.stack.push_small(scalar);
                 self.pop(None);
                 self.step();
             }
@@ -489,33 +498,33 @@ impl Parser {
                             .end
                             .as_mut()
                             .unwrap()
-                            .push(st);
+                            .push_small(st);
                     } else {
-                        map.items.push(item(vec![st]));
+                        map.items.push_small(item(vec![st]));
                     }
                 } else if let Some(sep) = &mut it.sep {
-                    sep.push(st);
+                    sep.push_small(st);
                 } else {
-                    it.start.push(st);
+                    it.start.push_small(st);
                 }
-                self.stack.push(map);
+                self.stack.push_small(map);
                 return;
             }
             Space | Comment => {
                 if it.value.is_some() {
-                    map.items.push(item(vec![st]));
+                    map.items.push_small(item(vec![st]));
                 } else if let Some(sep) = &mut it.sep {
-                    sep.push(st);
+                    sep.push_small(st);
                 } else {
                     if self.at_indented_comment(&it.start, map_indent)
                         && Self::append_indented_comment(&mut map, st.clone())
                     {
-                        self.stack.push(map);
+                        self.stack.push_small(map);
                         return;
                     }
-                    map.items.last_mut().unwrap().start.push(st);
+                    map.items.last_mut().unwrap().start.push_small(st);
                 }
-                self.stack.push(map);
+                self.stack.push_small(map);
                 return;
             }
             _ => (),
@@ -533,7 +542,7 @@ impl Parser {
                 let mut nl = Vec::new();
                 for (i, st) in sep.iter().enumerate() {
                     match st.kind {
-                        Newline => nl.push(i),
+                        Newline => nl.push_small(i),
                         Space => (),
                         Comment => {
                             if st.indent.unwrap_or(0) > map_indent {
@@ -551,24 +560,24 @@ impl Parser {
             match self.kind {
                 Anchor | Tag => {
                     if at_next_item || it.value.is_some() {
-                        start.push(st);
-                        map.items.push(item(start));
+                        start.push_small(st);
+                        map.items.push_small(item(start));
                         self.on_key_line = true;
                     } else if let Some(sep) = &mut it.sep {
-                        sep.push(st);
+                        sep.push_small(st);
                     } else {
-                        it.start.push(st);
+                        it.start.push_small(st);
                     }
                 }
                 ExplicitKeyInd => {
                     if it.sep.is_none() && !it.explicit_key {
-                        it.start.push(st);
+                        it.start.push_small(st);
                         it.explicit_key = true;
                     } else if at_next_item || it.value.is_some() {
-                        start.push(st);
+                        start.push_small(st);
                         let mut it = item(start);
                         it.explicit_key = true;
-                        map.items.push(it);
+                        map.items.push_small(it);
                     } else {
                         let mut it = item(vec![st]);
                         it.explicit_key = true;
@@ -587,7 +596,7 @@ impl Parser {
                                 child = Some(self.block_map_token(pair(start, None, vec![st])));
                             }
                         } else if it.value.is_some() {
-                            map.items.push(pair(Vec::new(), None, vec![st]));
+                            map.items.push_small(pair(Vec::new(), None, vec![st]));
                         } else if includes_token(it.sep.as_ref().unwrap(), MapValueInd) {
                             child = Some(self.block_map_token(pair(start, None, vec![st])));
                         } else if is_flow_token(it.key.as_ref().and_then(|k| k.as_deref()))
@@ -596,32 +605,35 @@ impl Parser {
                             let start = get_first_key_start_props(&mut it.start);
                             let key = it.key.take().flatten();
                             let mut sep = it.sep.take().unwrap();
-                            sep.push(st);
+                            sep.push_small(st);
                             child = Some(self.block_map_token(pair(start, key, sep)));
                         } else if !start.is_empty() {
                             let sep = it.sep.as_mut().unwrap();
-                            sep.extend(start);
-                            sep.push(st);
+                            sep.extend_small(start);
+                            sep.push_small(st);
                         } else {
-                            it.sep.as_mut().unwrap().push(st);
+                            it.sep.as_mut().unwrap().push_small(st);
                         }
                     } else if it.sep.is_none() {
                         it.key = Some(None);
                         it.sep = Some(vec![st]);
                     } else if it.value.is_some() || at_next_item {
-                        map.items.push(pair(start, None, vec![st]));
+                        map.items.push_small(pair(start, None, vec![st]));
                     } else if includes_token(it.sep.as_ref().unwrap(), MapValueInd) {
                         child = Some(self.block_map_token(pair(Vec::new(), None, vec![st])));
                     } else {
-                        it.sep.as_mut().unwrap().push(st);
+                        it.sep.as_mut().unwrap().push_small(st);
                     }
                     self.on_key_line = true;
                 }
                 Alias | Scalar | SingleQuotedScalar | DoubleQuotedScalar => {
                     let fs = self.flow_scalar();
                     if at_next_item || it.value.is_some() {
-                        map.items
-                            .push(pair(start, Some(std::sync::Arc::new(fs)), Vec::new()));
+                        map.items.push_small(pair(
+                            start,
+                            Some(std::sync::Arc::new(fs)),
+                            Vec::new(),
+                        ));
                         self.on_key_line = true;
                     } else if it.sep.is_some() {
                         child = Some(fs);
@@ -642,38 +654,38 @@ impl Parser {
                                     .as_ref()
                                     .is_some_and(|sep| !includes_token(sep, Newline))
                             {
-                                self.stack.push(map);
+                                self.stack.push_small(map);
                                 self.pop(Some(self.error(
                                     "Unexpected block-seq-ind on same line with key".into(),
                                 )));
                                 return;
                             }
                         } else if at_map_indent {
-                            map.items.push(item(start));
+                            map.items.push_small(item(start));
                         }
                         child = Some(bv);
                     } else {
-                        self.stack.push(map);
+                        self.stack.push_small(map);
                         self.pop(None);
                         self.step();
                         return;
                     }
                 }
             }
-            self.stack.push(map);
+            self.stack.push_small(map);
             if let Some(child) = child {
-                self.stack.push(child);
+                self.stack.push_small(child);
             }
             return;
         }
-        self.stack.push(map);
+        self.stack.push_small(map);
         self.pop(None);
         self.step();
     }
     fn block_map_token(&self, it: CollectionItem) -> Token {
         let mut token = Token::new(BlockMap, self.offset);
         token.indent = Some(self.indent);
-        token.items.push(it);
+        token.items.push_small(it);
         token
     }
     fn append_indented_comment(collection: &mut Token, st: Token) -> bool {
@@ -692,8 +704,8 @@ impl Parser {
                 .end
                 .as_mut()
                 .unwrap();
-        end.extend(start);
-        end.push(st);
+        end.extend_small(start);
+        end.push_small(st);
         true
     }
     fn block_sequence(&mut self, mut seq: Token) {
@@ -713,43 +725,43 @@ impl Parser {
                             .end
                             .as_mut()
                             .unwrap()
-                            .push(st);
+                            .push_small(st);
                     } else {
-                        seq.items.push(item(vec![st]));
+                        seq.items.push_small(item(vec![st]));
                     }
                 } else {
-                    it.start.push(st);
+                    it.start.push_small(st);
                 }
-                self.stack.push(seq);
+                self.stack.push_small(seq);
                 return;
             }
             Space | Comment => {
                 if it.value.is_some() {
-                    seq.items.push(item(vec![st]));
+                    seq.items.push_small(item(vec![st]));
                 } else {
                     if self.at_indented_comment(&it.start, seq_indent)
                         && Self::append_indented_comment(&mut seq, st.clone())
                     {
-                        self.stack.push(seq);
+                        self.stack.push_small(seq);
                         return;
                     }
-                    seq.items.last_mut().unwrap().start.push(st);
+                    seq.items.last_mut().unwrap().start.push_small(st);
                 }
-                self.stack.push(seq);
+                self.stack.push_small(seq);
                 return;
             }
             Anchor | Tag if it.value.is_none() && self.indent > seq_indent => {
-                it.start.push(st);
-                self.stack.push(seq);
+                it.start.push_small(st);
+                self.stack.push_small(seq);
                 return;
             }
             SeqItemInd if self.indent == seq_indent => {
                 if it.value.is_some() || includes_token(&it.start, SeqItemInd) {
-                    seq.items.push(item(vec![st]));
+                    seq.items.push_small(item(vec![st]));
                 } else {
-                    it.start.push(st);
+                    it.start.push_small(st);
                 }
-                self.stack.push(seq);
+                self.stack.push_small(seq);
                 return;
             }
             _ => (),
@@ -757,17 +769,17 @@ impl Parser {
         if self.indent > seq_indent
             && let Some(bv) = self.start_block_value(&mut seq)
         {
-            self.stack.push(seq);
-            self.stack.push(bv);
+            self.stack.push_small(seq);
+            self.stack.push_small(bv);
             return;
         }
-        self.stack.push(seq);
+        self.stack.push_small(seq);
         self.pop(None);
         self.step();
     }
     fn flow_collection(&mut self, mut fc: Token) {
         if self.kind == FlowErrorEnd {
-            self.stack.push(fc);
+            self.stack.push_small(fc);
             loop {
                 self.pop(None);
                 if self.stack.last().is_none_or(|t| t.kind != FlowCollection) {
@@ -780,18 +792,18 @@ impl Parser {
             match self.kind {
                 Comma | ExplicitKeyInd => {
                     if fc.items.last().is_none_or(|it| it.sep.is_some()) {
-                        fc.items.push(item(vec![st]));
+                        fc.items.push_small(item(vec![st]));
                     } else {
-                        fc.items.last_mut().unwrap().start.push(st);
+                        fc.items.last_mut().unwrap().start.push_small(st);
                     }
                 }
                 MapValueInd => {
                     if fc.items.last().is_none_or(|it| it.value.is_some()) {
-                        fc.items.push(pair(Vec::new(), None, vec![st]));
+                        fc.items.push_small(pair(Vec::new(), None, vec![st]));
                     } else {
                         let it = fc.items.last_mut().unwrap();
                         if let Some(sep) = &mut it.sep {
-                            sep.push(st);
+                            sep.push_small(st);
                         } else {
                             it.key = Some(None);
                             it.sep = Some(vec![st]);
@@ -800,21 +812,24 @@ impl Parser {
                 }
                 Space | Comment | Newline | Anchor | Tag => {
                     if fc.items.last().is_none_or(|it| it.value.is_some()) {
-                        fc.items.push(item(vec![st]));
+                        fc.items.push_small(item(vec![st]));
                     } else {
                         let it = fc.items.last_mut().unwrap();
                         if let Some(sep) = &mut it.sep {
-                            sep.push(st);
+                            sep.push_small(st);
                         } else {
-                            it.start.push(st);
+                            it.start.push_small(st);
                         }
                     }
                 }
                 Alias | Scalar | SingleQuotedScalar | DoubleQuotedScalar => {
                     let fs = self.flow_scalar();
                     if fc.items.last().is_none_or(|it| it.value.is_some()) {
-                        fc.items
-                            .push(pair(Vec::new(), Some(std::sync::Arc::new(fs)), Vec::new()));
+                        fc.items.push_small(pair(
+                            Vec::new(),
+                            Some(std::sync::Arc::new(fs)),
+                            Vec::new(),
+                        ));
                     } else {
                         let it = fc.items.last_mut().unwrap();
                         if it.sep.is_some() {
@@ -825,20 +840,20 @@ impl Parser {
                         }
                     }
                 }
-                FlowMapEnd | FlowSeqEnd => fc.end.as_mut().unwrap().push(st),
+                FlowMapEnd | FlowSeqEnd => fc.end.as_mut().unwrap().push_small(st),
                 _ => {
                     child = self.start_block_value(&mut fc);
                     if child.is_none() {
-                        self.stack.push(fc);
+                        self.stack.push_small(fc);
                         self.pop(None);
                         self.step();
                         return;
                     }
                 }
             }
-            self.stack.push(fc);
+            self.stack.push_small(fc);
             if let Some(child) = child {
-                self.stack.push(child);
+                self.stack.push_small(child);
             }
         } else {
             let parent = self.stack.last_mut().unwrap();
@@ -846,20 +861,20 @@ impl Parser {
                 && ((self.kind == MapValueInd && parent.indent == fc.indent)
                     || (self.kind == Newline && parent.items.last().unwrap().sep.is_none()))
             {
-                self.stack.push(fc);
+                self.stack.push_small(fc);
                 self.pop(None);
                 self.step();
             } else if self.kind == MapValueInd && parent.kind != FlowCollection {
                 let start = get_first_key_start_props(get_prev_props(parent));
                 fix_flow_seq_items(&mut fc);
                 let mut sep = fc.end.as_mut().unwrap().split_off(1);
-                sep.push(self.source_token());
+                sep.push_small(self.source_token());
                 let mut map = Token::new(BlockMap, fc.offset);
                 map.indent = fc.indent;
                 map.items
-                    .push(pair(start, Some(std::sync::Arc::new(fc)), sep));
+                    .push_small(pair(start, Some(std::sync::Arc::new(fc)), sep));
                 self.on_key_line = true;
-                self.stack.push(map);
+                self.stack.push_small(map);
             } else {
                 self.line_end(fc);
             }
@@ -875,8 +890,8 @@ impl Parser {
             BlockScalarHeader => {
                 let mut t = Token::new(BlockScalar, self.offset);
                 t.indent = Some(self.indent);
-                t.props.push(self.source_token());
-                t.source = Some(JsString::default());
+                t.props.push_small(self.source_token());
+                t.source = Some(Default::default());
                 t
             }
             FlowMapStart | FlowSeqStart => {
@@ -889,13 +904,13 @@ impl Parser {
             SeqItemInd => {
                 let mut t = Token::new(BlockSeq, self.offset);
                 t.indent = Some(self.indent);
-                t.items.push(item(vec![self.source_token()]));
+                t.items.push_small(item(vec![self.source_token()]));
                 t
             }
             ExplicitKeyInd => {
                 self.on_key_line = true;
                 let mut start = get_first_key_start_props(get_prev_props(parent));
-                start.push(self.source_token());
+                start.push_small(self.source_token());
                 let mut it = item(start);
                 it.explicit_key = true;
                 self.block_map_token(it)
@@ -918,9 +933,9 @@ impl Parser {
             doc_end
                 .end
                 .get_or_insert_with(Vec::new)
-                .push(self.source_token());
+                .push_small(self.source_token());
         }
-        self.stack.push(doc_end);
+        self.stack.push_small(doc_end);
         if self.kind == Newline {
             self.pop(None);
         }
@@ -928,7 +943,7 @@ impl Parser {
     fn line_end(&mut self, mut token: Token) {
         match self.kind {
             Comma | DocStart | DocEnd | FlowSeqEnd | FlowMapEnd | MapValueInd => {
-                self.stack.push(token);
+                self.stack.push_small(token);
                 self.pop(None);
                 self.step();
             }
@@ -939,8 +954,8 @@ impl Parser {
                 token
                     .end
                     .get_or_insert_with(Vec::new)
-                    .push(self.source_token());
-                self.stack.push(token);
+                    .push_small(self.source_token());
+                self.stack.push_small(token);
                 if self.kind == Newline {
                     self.pop(None);
                 }

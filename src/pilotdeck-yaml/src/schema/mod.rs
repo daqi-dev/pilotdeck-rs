@@ -51,14 +51,20 @@ impl Tag {
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Schema {
-    pub tags: Vec<Tag>,
+    pub tags: std::sync::Arc<Vec<Tag>>,
     pub known_tags: bool,
     pub yaml11: bool,
 }
 impl Schema {
     pub fn new(yaml11: bool) -> Self {
         Self {
-            tags: tags::get_tags(if yaml11 { "yaml-1.1" } else { "core" }),
+            tags: {
+                static CORE: LazyLock<std::sync::Arc<Vec<Tag>>> =
+                    LazyLock::new(|| std::sync::Arc::new(tags::get_tags("core")));
+                static YAML11: LazyLock<std::sync::Arc<Vec<Tag>>> =
+                    LazyLock::new(|| std::sync::Arc::new(tags::get_tags("yaml-1.1")));
+                if yaml11 { YAML11.clone() } else { CORE.clone() }
+            },
             known_tags: !yaml11,
             yaml11,
         }
@@ -66,8 +72,15 @@ impl Schema {
     pub fn scalar(&self) -> Tag {
         common::string::tag()
     }
-    pub fn resolve_value(&self, tag: &Tag, source: &JsString) -> Result<ScalarValue, JsString> {
+    pub fn resolve_value(
+        &self,
+        tag: &Tag,
+        source: &std::sync::Arc<JsString>,
+    ) -> Result<ScalarValue, JsString> {
         use Resolve::*;
+        if tag.resolve == Resolve::String {
+            return Ok(ScalarValue::String(source.clone()));
+        }
         let text = source.to_utf8().unwrap_or_default();
         let number = match tag.resolve {
             String => return Ok(ScalarValue::String(source.clone())),

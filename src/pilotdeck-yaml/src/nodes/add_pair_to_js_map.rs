@@ -23,7 +23,7 @@ impl Context<'_> {
             return Ok(());
         }
         let key = if matches!(self.nodes[index], Container::Object(_)) {
-            Value::String(self.stringify_key(pair.key, &key)?)
+            Value::String(std::sync::Arc::new(self.stringify_key(pair.key, &key)?))
         } else {
             key
         };
@@ -35,7 +35,9 @@ impl Context<'_> {
         match &self.nodes[index] {
             Container::Map(e) => e.iter().any(|(k, _)| same_value_zero(k, key)),
             Container::Set(e) => e.iter().any(|k| same_value_zero(k, key)),
-            Container::Object(e) => matches!(key,Value::String(k)if e.iter().any(|(a,_)|a==k)),
+            Container::Object(e) => {
+                matches!(key,Value::String(k)if e.iter().any(|(a,_)|a==k.as_ref()))
+            }
             _ => false,
         }
     }
@@ -51,12 +53,12 @@ impl Context<'_> {
                 let Value::String(key) = key else {
                     unreachable!()
                 };
-                if let Some((_, v)) = entries.iter_mut().find(|(k, _)| *k == key) {
+                if let Some((_, v)) = entries.iter_mut().find(|(k, _)| k == key.as_ref()) {
                     if !only_missing {
                         *v = value;
                     }
                 } else {
-                    entries.push((key, value));
+                    entries.push((key.as_ref().clone(), value));
                 }
             }
             Container::Map(entries) => {
@@ -99,7 +101,7 @@ impl Context<'_> {
                     Value::Null => "null".into(),
                     Value::Bool(b) => if *b { "true" } else { "false" }.into(),
                     Value::Number(n) => number_string(*n),
-                    Value::String(s) => s.clone(),
+                    Value::String(s) => s.as_ref().clone(),
                     Value::Symbol { description: s, .. } => {
                         concat(&[&"Symbol(".into(), s, &")".into()])
                     }
@@ -141,7 +143,7 @@ impl Context<'_> {
             super::stringify_key::stringify_key(
                 self.doc,
                 key,
-                &self.anchors.keys().copied().collect::<Vec<_>>(),
+                &self.anchors,
                 crate::stack::CONVERSION_DEPTH.saturating_sub(self.depth + self.merge_stack.len()),
             )
         } else {

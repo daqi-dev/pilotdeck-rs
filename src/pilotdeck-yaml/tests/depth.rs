@@ -321,7 +321,7 @@ fn iterative_cst_visitor_preserves_node_controls_and_mutations() {
         cst_visit::visit(&mut root, &mut |item, path| {
             events.borrow_mut().push(event("enter", path));
             if mode == "break" && path.len() == 2 {
-                Arc::make_mut(item.value.as_mut().unwrap()).source = Some("A".into());
+                Arc::make_mut(item.value.as_mut().unwrap()).source = Some(Arc::new("A".into()));
                 return Control::Break;
             }
             if path.len() == 1 && path[0].1 == 0 {

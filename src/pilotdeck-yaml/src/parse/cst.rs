@@ -1,6 +1,29 @@
 // Port of yaml@2.9.0 dist/parse/cst.js (ISC).
 use pilotdeck_protocol::JsString;
 
+// CST property lists usually contain one or two tokens. Vec::push's initial
+// capacity of four multiplied unused token storage across every mapping item.
+pub(crate) trait SmallVecPush<T> {
+    fn push_small(&mut self, value: T);
+    fn extend_small(&mut self, values: impl IntoIterator<Item = T>);
+}
+impl<T> SmallVecPush<T> for Vec<T> {
+    fn push_small(&mut self, value: T) {
+        if self.len() < 4 && self.len() == self.capacity() {
+            self.reserve_exact(1);
+        }
+        self.push(value);
+    }
+    fn extend_small(&mut self, values: impl IntoIterator<Item = T>) {
+        let values = values.into_iter();
+        let (min, max) = values.size_hint();
+        if max == Some(min) && self.len() + min <= 4 && self.len() + min > self.capacity() {
+            self.reserve_exact(min);
+        }
+        self.extend(values);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenType {
     ByteOrderMark,
@@ -107,14 +130,39 @@ pub struct Token {
     pub kind: TokenType,
     pub offset: usize,
     pub indent: Option<usize>,
-    pub source: Option<JsString>,
+    pub source: Option<std::sync::Arc<JsString>>,
+    pub end: Option<Vec<Token>>,
+    data: Option<Box<TokenData>>,
+}
+/// Less common CST fields, allocated only for tokens with children/diagnostics.
+/// Field access on Token is preserved through Deref/DerefMut.
+#[derive(Clone, Default)]
+pub struct TokenData {
     pub start: Vec<Token>,
     pub flow_start: Option<std::sync::Arc<Token>>,
     pub items: Vec<CollectionItem>,
     pub props: Vec<Token>,
-    pub end: Option<Vec<Token>>,
     pub value: Option<std::sync::Arc<Token>>,
     pub message: Option<JsString>,
+}
+impl std::ops::Deref for Token {
+    type Target = TokenData;
+    fn deref(&self) -> &TokenData {
+        static EMPTY: TokenData = TokenData {
+            start: Vec::new(),
+            flow_start: None,
+            items: Vec::new(),
+            props: Vec::new(),
+            value: None,
+            message: None,
+        };
+        self.data.as_deref().unwrap_or(&EMPTY)
+    }
+}
+impl std::ops::DerefMut for Token {
+    fn deref_mut(&mut self) -> &mut TokenData {
+        self.data.get_or_insert_with(Default::default)
+    }
 }
 
 // Derived Eq/Debug would traverse Arc children recursively too. Equality keeps
@@ -220,20 +268,47 @@ pub struct CollectionItem {
     pub explicit_key: bool,
 }
 impl Token {
-    pub(crate) fn new(kind: TokenType, offset: usize) -> Self {
+    pub fn new(kind: TokenType, offset: usize) -> Self {
         Self {
             kind,
             offset,
             indent: None,
             source: None,
-            start: Vec::new(),
-            flow_start: None,
-            items: Vec::new(),
-            props: Vec::new(),
             end: None,
-            value: None,
-            message: None,
+            data: None,
         }
+    }
+    pub(crate) fn node_capacity(&self) -> usize {
+        let mut pending = vec![self];
+        let mut count = 0;
+        while let Some(token) = pending.pop() {
+            count += 1;
+            if let Some(value) = token.value.as_deref() {
+                pending.push(value);
+            }
+            for item in &token.items {
+                if let Some(Some(key)) = &item.key {
+                    pending.push(key);
+                } else if token.kind == BlockMap {
+                    count += 1;
+                }
+                if let Some(value) = item.value.as_deref() {
+                    pending.push(value);
+                } else if token.kind == BlockMap && item.sep.is_some() {
+                    count += 1;
+                }
+                if token.kind == FlowCollection
+                    && item.key.is_some()
+                    && token
+                        .flow_start
+                        .as_ref()
+                        .is_some_and(|start| start.kind == FlowSeqStart)
+                {
+                    count += 1;
+                }
+            }
+        }
+        count
     }
     pub(crate) fn nesting_depth_exceeds(&self, limit: usize) -> bool {
         let mut stack = vec![(self, 0)];
@@ -272,39 +347,66 @@ impl Token {
 // before Rust drops fields, including when a partially built Parser is dropped.
 impl Drop for Token {
     fn drop(&mut self) {
-        fn detach(token: &mut Token, pending: &mut Vec<Token>) {
-            pending.append(&mut token.start);
-            pending.append(&mut token.props);
-            if let Some(mut end) = token.end.take() {
-                pending.append(&mut end);
+        // Keep sibling vectors as iterators instead of moving every token into
+        // another full-width Vec<Token>. The work list grows with depth only.
+        enum Pending {
+            Tokens(std::vec::IntoIter<Token>),
+            Items(std::vec::IntoIter<CollectionItem>),
+            Child(std::sync::Arc<Token>),
+        }
+        fn tokens(list: Vec<Token>, pending: &mut Vec<Pending>) {
+            if !list.is_empty() {
+                pending.push(Pending::Tokens(list.into_iter()));
             }
-            for child in [token.flow_start.take(), token.value.take()]
-                .into_iter()
-                .flatten()
-            {
-                if let Some(child) = std::sync::Arc::into_inner(child) {
-                    pending.push(child);
-                }
+        }
+        fn child(value: Option<std::sync::Arc<Token>>, pending: &mut Vec<Pending>) {
+            if let Some(value) = value {
+                pending.push(Pending::Child(value));
             }
-            for mut item in std::mem::take(&mut token.items) {
-                pending.append(&mut item.start);
-                if let Some(mut sep) = item.sep.take() {
-                    pending.append(&mut sep);
-                }
-                for child in [item.key.take().flatten(), item.value.take()]
-                    .into_iter()
-                    .flatten()
-                {
-                    if let Some(child) = std::sync::Arc::into_inner(child) {
-                        pending.push(child);
-                    }
-                }
+        }
+        fn detach(token: &mut Token, pending: &mut Vec<Pending>) {
+            if let Some(end) = token.end.take() {
+                tokens(end, pending);
+            }
+            let Some(mut data) = token.data.take() else {
+                return;
+            };
+            tokens(std::mem::take(&mut data.start), pending);
+            tokens(std::mem::take(&mut data.props), pending);
+            child(data.flow_start.take(), pending);
+            child(data.value.take(), pending);
+            let items = std::mem::take(&mut data.items);
+            if !items.is_empty() {
+                pending.push(Pending::Items(items.into_iter()));
             }
         }
         let mut pending = Vec::new();
         detach(self, &mut pending);
-        while let Some(mut token) = pending.pop() {
-            detach(&mut token, &mut pending);
+        while let Some(work) = pending.pop() {
+            match work {
+                Pending::Tokens(mut iter) => {
+                    if let Some(mut token) = iter.next() {
+                        pending.push(Pending::Tokens(iter));
+                        detach(&mut token, &mut pending);
+                    }
+                }
+                Pending::Items(mut iter) => {
+                    if let Some(mut item) = iter.next() {
+                        pending.push(Pending::Items(iter));
+                        tokens(std::mem::take(&mut item.start), &mut pending);
+                        if let Some(sep) = item.sep.take() {
+                            tokens(sep, &mut pending);
+                        }
+                        child(item.key.take().flatten(), &mut pending);
+                        child(item.value.take(), &mut pending);
+                    }
+                }
+                Pending::Child(value) => {
+                    if let Some(mut token) = std::sync::Arc::into_inner(value) {
+                        detach(&mut token, &mut pending);
+                    }
+                }
+            }
         }
     }
 }

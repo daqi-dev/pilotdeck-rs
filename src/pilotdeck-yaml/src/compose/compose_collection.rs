@@ -1,21 +1,35 @@
 // Port of yaml@2.9.0 dist/compose/compose-collection.js (ISC).
 use super::{
-    Context, resolve_block_map::resolve_block_map, resolve_block_seq::resolve_block_seq,
-    resolve_flow_collection::resolve_flow_collection, resolve_props::Props,
+    Context,
+    resolve_block_map::{resolve_block_map, resolve_block_map_items},
+    resolve_block_seq::resolve_block_seq,
+    resolve_flow_collection::{resolve_flow_collection, resolve_flow_collection_items},
+    resolve_props::Props,
 };
 use crate::{
     errors::token_pos,
     nodes::NodeId,
-    parse::cst::{Token, TokenType::*},
+    parse::cst::{CollectionItem, Token, TokenType::*},
     schema::{Resolve, tags},
     string::message,
 };
-fn resolve_collection(ctx: &mut Context, token: &Token) -> Result<NodeId, ()> {
+fn resolve_collection(
+    ctx: &mut Context,
+    token: &Token,
+    items: &mut Option<Vec<CollectionItem>>,
+) -> Result<NodeId, ()> {
     let limit = ctx.depth_limit;
     if ctx.depth >= limit.catch_depth
         && token.nesting_depth_exceeds(limit.first_exhausted.saturating_sub(ctx.depth))
     {
         return Err(());
+    }
+    if let Some(items) = items.take() {
+        return Ok(if token.kind == BlockMap {
+            resolve_block_map_items(ctx, token, items)
+        } else {
+            resolve_flow_collection_items(ctx, token, items.len(), items)
+        });
     }
     Ok(match token.kind {
         BlockMap => resolve_block_map(ctx, token),
@@ -27,6 +41,7 @@ pub(super) fn compose_collection(
     ctx: &mut Context,
     token: &Token,
     props: &Props,
+    mut items: Option<Vec<CollectionItem>>,
 ) -> Result<NodeId, ()> {
     let tag_token = props.tag.as_ref();
     let tag_name = tag_token.and_then(|t| {
@@ -71,8 +86,10 @@ pub(super) fn compose_collection(
         .as_ref()
         .is_none_or(|s| s.equals_str("!") || s.equals_str(generic))
     {
-        let id = resolve_collection(ctx, token)?;
-        ctx.nodes[id].tag = tag_name.map(|_| generic.into());
+        let id = resolve_collection(ctx, token, &mut items)?;
+        if tag_name.is_some() {
+            ctx.nodes[id].tag = Some(generic.into());
+        }
         return Ok(id);
     }
     let name = tag_name.as_ref().unwrap();
@@ -92,7 +109,7 @@ pub(super) fn compose_collection(
         if let Some(kt) = known.filter(|t| t.collection == Some(exp_type)) {
             let mut added = kt.clone();
             added.default = false;
-            ctx.schema.tags.push(added);
+            std::sync::Arc::make_mut(&mut ctx.schema.tags).push(added);
             tag = Some(kt);
         } else {
             if let Some(kt) = if ctx.schema.known_tags {
@@ -117,12 +134,14 @@ pub(super) fn compose_collection(
                     message("Unresolved tag: ", name),
                 );
             }
-            let id = resolve_collection(ctx, token)?;
-            ctx.nodes[id].tag = tag_name;
+            let id = resolve_collection(ctx, token, &mut items)?;
+            if tag_name.is_some() {
+                ctx.nodes[id].tag = tag_name;
+            }
             return Ok(id);
         }
     }
-    let id = resolve_collection(ctx, token)?;
+    let id = resolve_collection(ctx, token, &mut items)?;
     let tag = tag.unwrap();
     match tag.resolve {
         Resolve::Set => crate::schema::yaml_1_1::set::resolve(ctx, id, tag_token),
@@ -130,7 +149,9 @@ pub(super) fn compose_collection(
         Resolve::Pairs => crate::schema::yaml_1_1::pairs::resolve(ctx, id, tag_token),
         _ => (),
     }
-    ctx.nodes[id].tag = tag_name;
+    if tag_name.is_some() {
+        ctx.nodes[id].tag = tag_name;
+    }
     ctx.nodes[id].format = tag.format;
     Ok(id)
 }

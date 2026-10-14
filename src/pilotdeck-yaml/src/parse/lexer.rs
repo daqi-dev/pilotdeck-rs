@@ -34,11 +34,11 @@ fn tag_char(ch: u16) -> bool {
 }
 
 #[derive(Debug)]
-pub struct Lexer {
+pub struct Lexer<'a> {
     at_end: bool,
     block_scalar_indent: isize,
     block_scalar_keep: bool,
-    buffer: Vec<u16>,
+    buffer: std::borrow::Cow<'a, [u16]>,
     flow_key: bool,
     flow_level: usize,
     indent_next: usize,
@@ -48,13 +48,13 @@ pub struct Lexer {
     pos: usize,
     output: Vec<JsString>,
 }
-impl Default for Lexer {
+impl Default for Lexer<'_> {
     fn default() -> Self {
         Self {
             at_end: false,
             block_scalar_indent: -1,
             block_scalar_keep: false,
-            buffer: Vec::new(),
+            buffer: std::borrow::Cow::Borrowed(&[]),
             flow_key: false,
             flow_level: 0,
             indent_next: 0,
@@ -66,10 +66,21 @@ impl Default for Lexer {
         }
     }
 }
-impl Lexer {
+impl<'a> Lexer<'a> {
     pub fn lex(&mut self, source: &JsString, incomplete: bool) -> Vec<JsString> {
+        let mut output = Vec::new();
+        self.lex_with(source, incomplete, |lexeme| output.push(lexeme));
+        output
+    }
+    /// Feed lexemes as each state produces them, without buffering the stream.
+    pub(crate) fn lex_with(
+        &mut self,
+        source: &JsString,
+        incomplete: bool,
+        mut emit: impl FnMut(JsString),
+    ) {
         if !source.is_empty() {
-            self.buffer.extend_from_slice(source.units());
+            self.buffer.to_mut().extend_from_slice(source.units());
             self.line_end_pos = None;
         }
         self.at_end = !incomplete;
@@ -79,8 +90,29 @@ impl Lexer {
                 break;
             }
             next = self.parse_next(state);
+            for lexeme in self.output.drain(..) {
+                emit(lexeme);
+            }
         }
-        std::mem::take(&mut self.output)
+    }
+    /// Complete input can borrow the caller's UTF-16 storage. Incremental lex()
+    /// still owns its incomplete tail, as required by the public Lexer API.
+    pub(crate) fn lex_complete_with(source: &'a JsString, mut emit: impl FnMut(JsString)) {
+        let mut lexer = Self {
+            buffer: std::borrow::Cow::Borrowed(source.units()),
+            at_end: true,
+            ..Default::default()
+        };
+        let mut next = Some(Stream);
+        while let Some(state) = next {
+            if !lexer.has_chars(1) {
+                break;
+            }
+            next = lexer.parse_next(state);
+            for lexeme in lexer.output.drain(..) {
+                emit(lexeme);
+            }
+        }
     }
     fn at(&self, i: isize) -> Option<u16> {
         usize::try_from(i)
@@ -162,7 +194,7 @@ impl Lexer {
         self.pos + n <= self.buffer.len()
     }
     fn set_next(&mut self, state: State) -> Option<State> {
-        self.buffer.drain(..self.pos);
+        self.buffer.to_mut().drain(..self.pos);
         self.pos = 0;
         self.line_end_pos = None;
         self.next = Some(state);

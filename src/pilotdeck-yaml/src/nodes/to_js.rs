@@ -11,7 +11,7 @@ pub(crate) fn scalar_string(v: &ScalarValue) -> JsString {
         ScalarValue::Null => "null".into(),
         ScalarValue::Bool(b) => if *b { "true" } else { "false" }.into(),
         ScalarValue::Number(n) => number_string(*n),
-        ScalarValue::String(s) => s.clone(),
+        ScalarValue::String(s) => s.as_ref().clone(),
         ScalarValue::Merge => "Symbol(<<)".into(),
         ScalarValue::Timestamp(ms) => date_string(*ms),
         ScalarValue::Binary(_) => "[object Uint8Array]".into(),
@@ -80,7 +80,8 @@ pub(crate) fn to_js(doc: &Document) -> Result<ValueGraph, ConversionError> {
     Ok(ValueGraph {
         root,
         nodes: ctx.nodes,
-    })
+    }
+    .retain_reachable())
 }
 impl Context<'_> {
     pub(crate) fn allocate(&mut self, c: Container) -> Value {
@@ -111,7 +112,9 @@ impl Context<'_> {
                     ScalarValue::Bool(v) => Value::Bool(v),
                     ScalarValue::Number(v) => Value::Number(v),
                     ScalarValue::String(v) => Value::String(v),
-                    ScalarValue::Timestamp(ms) => Value::String(date_string(ms)),
+                    ScalarValue::Timestamp(ms) => {
+                        Value::String(std::sync::Arc::new(date_string(ms)))
+                    }
                     ScalarValue::Merge => Value::Symbol {
                         id,
                         description: "<<".into(),
@@ -126,7 +129,10 @@ impl Context<'_> {
                             unreachable!()
                         };
                         self.nodes[obj_id] = Container::Object(vec![
-                            ("type".into(), Value::String("Buffer".into())),
+                            (
+                                "type".into(),
+                                Value::String(std::sync::Arc::new("Buffer".into())),
+                            ),
                             ("data".into(), arr),
                         ]);
                         return Ok(obj);
@@ -138,7 +144,7 @@ impl Context<'_> {
             NodeKind::Seq(items) => {
                 let value = self.allocate(Container::Array(Vec::new()));
                 self.anchored(id, &value);
-                let mut out = Vec::new();
+                let mut out = Vec::with_capacity(items.len());
                 for item in items {
                     out.push(self.convert(Some(item))?);
                 }
@@ -150,9 +156,9 @@ impl Context<'_> {
             }
             NodeKind::Map(pairs) | NodeKind::Set(pairs) | NodeKind::OMap(pairs) => {
                 let c = match self.doc.nodes[id].kind {
-                    NodeKind::Set(_) => Container::Set(Vec::new()),
-                    NodeKind::OMap(_) => Container::Map(Vec::new()),
-                    _ => Container::Object(Vec::new()),
+                    NodeKind::Set(_) => Container::Set(Vec::with_capacity(pairs.len())),
+                    NodeKind::OMap(_) => Container::Map(Vec::with_capacity(pairs.len())),
+                    _ => Container::Object(Vec::with_capacity(pairs.len())),
                 };
                 let value = self.allocate(c);
                 self.anchored(id, &value);

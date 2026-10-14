@@ -6,7 +6,7 @@ use crate::{
 };
 use pilotdeck_protocol::JsString;
 pub(crate) struct ResolvedScalar {
-    pub value: JsString,
+    pub value: std::sync::Arc<JsString>,
     pub style: &'static str,
     pub comment: JsString,
     pub range: [usize; 3],
@@ -16,8 +16,14 @@ pub(crate) fn resolve_flow_scalar(ctx: &mut Context, scalar: &Token) -> Resolved
     let source = scalar.source.as_ref().unwrap();
     let (style, value) = match scalar.kind {
         Scalar => ("PLAIN", plain_value(ctx, source, offset)),
-        SingleQuotedScalar => ("QUOTE_SINGLE", single_quoted_value(ctx, source, offset)),
-        DoubleQuotedScalar => ("QUOTE_DOUBLE", double_quoted_value(ctx, source, offset)),
+        SingleQuotedScalar => (
+            "QUOTE_SINGLE",
+            std::sync::Arc::new(single_quoted_value(ctx, source, offset)),
+        ),
+        DoubleQuotedScalar => (
+            "QUOTE_DOUBLE",
+            std::sync::Arc::new(double_quoted_value(ctx, source, offset)),
+        ),
         _ => {
             ctx.token_error(
                 scalar,
@@ -27,7 +33,7 @@ pub(crate) fn resolve_flow_scalar(ctx: &mut Context, scalar: &Token) -> Resolved
                     scalar.kind.as_str()
                 ),
             );
-            ("", JsString::default())
+            ("", Default::default())
         }
     };
     let value_end = offset + source.len_utf16();
@@ -44,7 +50,11 @@ pub(crate) fn resolve_flow_scalar(ctx: &mut Context, scalar: &Token) -> Resolved
         range: [offset, value_end, re.offset],
     }
 }
-fn plain_value(ctx: &mut Context, source: &JsString, offset: usize) -> JsString {
+fn plain_value(
+    ctx: &mut Context,
+    source: &std::sync::Arc<JsString>,
+    offset: usize,
+) -> std::sync::Arc<JsString> {
     let bad = match source.units().first() {
         Some(9) => Some("a tab character".to_owned()),
         Some(44) => Some("flow indicator character ,".into()),
@@ -66,7 +76,11 @@ fn plain_value(ctx: &mut Context, source: &JsString, offset: usize) -> JsString 
             format!("Plain value cannot start with {bad}"),
         );
     }
-    fold_lines(source)
+    if source.units().contains(&10) {
+        std::sync::Arc::new(fold_lines(source))
+    } else {
+        source.clone()
+    }
 }
 fn single_quoted_value(ctx: &mut Context, source: &JsString, offset: usize) -> JsString {
     if source.units().last() != Some(&39) || source.len_utf16() == 1 {

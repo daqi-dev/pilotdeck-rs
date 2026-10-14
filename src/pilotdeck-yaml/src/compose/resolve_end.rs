@@ -1,9 +1,6 @@
 // Port of yaml@2.9.0 dist/compose/resolve-end.js (ISC).
 use super::Context;
-use crate::{
-    parse::cst::{Token, TokenType::*},
-    string::{append, slice},
-};
+use crate::parse::cst::{Token, TokenType::*};
 use pilotdeck_protocol::JsString;
 pub(super) struct End {
     pub comment: JsString,
@@ -15,9 +12,9 @@ pub(super) fn resolve_end(
     mut offset: usize,
     req_space: bool,
 ) -> End {
-    let mut comment = JsString::default();
+    let mut comment = Vec::new();
     let mut has_space = false;
-    let mut sep = JsString::default();
+    let mut sep = Vec::new();
     for token in end {
         let source = token.source.as_ref().unwrap();
         match token.kind {
@@ -30,22 +27,19 @@ pub(super) fn resolve_end(
                         "Comments must be separated from other tokens by white space characters",
                     );
                 }
-                let cb = if source.len_utf16() > 1 {
-                    slice(source, 1, source.len_utf16())
-                } else {
-                    " ".into()
-                };
-                if comment.is_empty() {
-                    comment = cb;
-                } else {
-                    append(&mut comment, &sep);
-                    append(&mut comment, &cb);
+                if !comment.is_empty() {
+                    comment.extend_from_slice(&sep);
                 }
-                sep = JsString::default();
+                if source.len_utf16() > 1 {
+                    comment.extend_from_slice(&source.units()[1..]);
+                } else {
+                    comment.push(32);
+                }
+                sep.clear();
             }
             Newline => {
                 if !comment.is_empty() {
-                    append(&mut sep, source);
+                    sep.extend_from_slice(source.units());
                 }
                 has_space = true;
             }
@@ -57,5 +51,8 @@ pub(super) fn resolve_end(
         }
         offset += source.len_utf16();
     }
-    End { comment, offset }
+    End {
+        comment: JsString::from_utf16(comment),
+        offset,
+    }
 }

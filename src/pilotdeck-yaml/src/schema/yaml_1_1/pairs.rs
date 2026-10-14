@@ -16,8 +16,8 @@ pub(crate) fn resolve(ctx: &mut Context, id: NodeId, tag: &Token) {
     };
     let mut pairs = Vec::new();
     for item in items {
-        let node = ctx.nodes[item].clone();
-        let pair = if let NodeKind::Map(items) = node.kind {
+        let mut node = ctx.nodes[item].clone();
+        let pair = if let NodeKind::Map(items) = &node.kind {
             if items.len() > 1 {
                 ctx.token_error(
                     tag,
@@ -32,7 +32,7 @@ pub(crate) fn resolve(ctx: &mut Context, id: NodeId, tag: &Token) {
             if !node.comment_before.is_empty() {
                 let key = &mut ctx.nodes[pair.key];
                 key.comment_before = if key.comment_before.is_empty() {
-                    node.comment_before
+                    std::mem::take(&mut node.comment_before)
                 } else {
                     concat(&[&node.comment_before, &"\n".into(), &key.comment_before])
                 };
@@ -40,7 +40,7 @@ pub(crate) fn resolve(ctx: &mut Context, id: NodeId, tag: &Token) {
             if !node.comment.is_empty() {
                 let cn = &mut ctx.nodes[pair.value.unwrap_or(pair.key)];
                 cn.comment = if cn.comment.is_empty() {
-                    node.comment
+                    std::mem::take(&mut node.comment)
                 } else {
                     concat(&[&node.comment, &"\n".into(), &cn.comment])
                 };
