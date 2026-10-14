@@ -11,3 +11,4 @@
 | [002](002_phase-a-gateway.md) | 2026-10-14 | 阶段 A：代理先行、装置其次、只读 method 首迁（ready，含 AI 代拍待人复核） |
 | [004](004_frontend.md) | 2026-10-14 | 前端重构（浏览器端 `ui/src` → Rust）：探针先行、按页面渐进（planned） |
 | [003](003_phase-b-ui-server.md) | 2026-10-14 | 阶段 B：Rust 替换 `ui/server`——反代探针先行、对拍装置其次、按共享资源分组逐路由接管（含 AI 代拍待人复核） |
+| [005](005_phase-a-session-domain.md) | 2026-10-14 | 阶段 A 深水区：A5 定标 → Rust 宿主 → 会话域 → TS gateway 退役（draft，issue 内小 PR；D4/D5 待拍板） |

@@ -12,3 +12,4 @@
 | [006](006_phase-b-ui-server/) | 2026-10-14 | 阶段 B：用 Rust 替换 `ui/server`——切法、进程内 `src/`、对拍装置、鉴权、SSE、编排 |
 | [004](004_rust-ts-module-mapping/) | 2026-10-14 | 阶段 C S7：Rust↔TS 模块对应检查与膨胀候选清单 |
 | [005](005_phase-a-gateway/) | 2026-10-14 | 阶段 A：用 Rust 替换 18789 gateway |
+| [008](008_phase-a-session-domain/must-know.md) | 2026-10-14 | 阶段 A 深水区：会话域、状态权威、Rust 宿主与 #19 收尾竞态（附 gap / 决策卡） |
