@@ -5,7 +5,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use icu_casemap::CaseMapper;
-use icu_collator::{Collator, CollatorBorrowed};
+use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use icu_locale_core::{LanguageIdentifier, Locale};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
@@ -112,16 +112,19 @@ pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> 
 }
 
 // Node/ICU's POSIX default locale precedence, measured in node-runtime.json.
-fn node_locale(mut env: impl FnMut(&str) -> Option<String>) -> Locale {
+fn node_locale(env: impl FnMut(&str) -> Option<String>) -> Locale {
     let value = ["LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
-        .find_map(|key| env(key).filter(|value| !value.is_empty()))
+        .find_map(env)
         .unwrap_or_else(|| "en-US".into());
     let language = value
         .split(['.', '@'])
         .next()
         .unwrap_or("")
         .replace('_', "-");
+    if language.is_empty() {
+        return Locale::UNKNOWN;
+    }
     if language == "C" || language == "POSIX" {
         return "en-US".parse().unwrap();
     }
@@ -130,9 +133,35 @@ fn node_locale(mut env: impl FnMut(&str) -> Option<String>) -> Locale {
         .unwrap_or_else(|_| "en-US".parse().unwrap())
 }
 fn lowercase(value: &str, locale: &LanguageIdentifier) -> String {
+    // V8's Latin-1 fast path ignores the default locale (Node v22 probes).
+    let root = LanguageIdentifier::UNKNOWN;
+    let locale = if value.encode_utf16().all(|unit| unit <= 0xff) {
+        &root
+    } else {
+        locale
+    };
     CaseMapper::new()
         .lowercase_to_string(value, locale)
         .into_owned()
+}
+
+// Unsupported collation extensions fall back to the language's default in
+// Node. Keep a final root fallback for unavailable locale data; never panic in
+// dispatch, even if the compiled provider cannot construct either collator.
+fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
+    let mut preferences: CollatorPreferences = locale.clone().into();
+    Collator::try_new(preferences, Default::default())
+        .or_else(|_| {
+            preferences.collation_type = None;
+            Collator::try_new(preferences, Default::default())
+        })
+        .or_else(|_| Collator::try_new(Default::default(), Default::default()))
+        .map_err(|_| {
+            (
+                "gateway_request_failed",
+                "Collation data unavailable.".into(),
+            )
+        })
 }
 
 pub(crate) fn native_entries(root: &Path, path: &Path) -> io::Result<Vec<(String, bool)>> {
@@ -252,9 +281,17 @@ fn read<F: Files>(
     if !within_read(&root, &canonical) {
         return Err(denied(ESCAPE));
     }
-    let Ok((_, true)) = metadata.files.project_stat(&root, &canonical) else {
+    let Ok((stat, true)) = metadata.files.project_stat(&root, &canonical) else {
         return Ok(JsValue::Null);
     };
+    // Node readFile checks this before slicing to maxBytes, even for sparse
+    // files. The code survives hasStructuredErrorCode in the TS WS wrapper.
+    if stat.size > 2_147_483_647 {
+        return Err((
+            "ERR_FS_FILE_TOO_LARGE",
+            format!("File size ({}) is greater than 2 GiB", stat.size),
+        ));
+    }
     let number = match params.get("maxBytes") {
         None | Some(JsValue::Null | JsValue::Undefined) => 1_000_000.0,
         Some(value) => js_number(value),
@@ -375,6 +412,7 @@ fn fs_error(error: io::Error, operation: &str, path: &Path) -> Error {
     if error.raw_os_error() == Some(libc::ELOOP) {
         return denied(ESCAPE);
     }
+    // Node v22 raw fs errors AND their WS responses: node-runtime-round3.json.
     let (code, description) = match error.kind() {
         io::ErrorKind::NotFound => ("ENOENT", "no such file or directory"),
         io::ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
@@ -441,10 +479,14 @@ fn list<F: Files>(
             "cursor is invalid or does not match the query.".into(),
         )
     };
-    let offset = match text_field(params, "cursor").filter(|v| !v.is_empty()) {
+    let offset = match params
+        .get("cursor")
+        .and_then(JsValue::as_string)
+        .filter(|v| !v.is_empty())
+    {
         None => 0.0,
         Some(cursor) => {
-            let bytes = decode_base64(&cursor).ok_or_else(invalid_cursor)?;
+            let bytes = decode_base64(cursor.units()).ok_or_else(invalid_cursor)?;
             let parsed =
                 parse_json(&String::from_utf8_lossy(&bytes)).map_err(|_| invalid_cursor())?;
             let offset = parsed
@@ -464,8 +506,7 @@ fn list<F: Files>(
     let mut scan = Scan {
         metadata,
         root: &root,
-        collator: Collator::try_new(locale.clone().into(), Default::default())
-            .expect("compiled collation data"),
+        collator: node_collator(&locale)?,
         query: &query,
         locale: locale.id,
         include_dirs,
@@ -504,11 +545,13 @@ fn list<F: Files>(
     }
     Ok(object(fields))
 }
-fn decode_base64(value: &str) -> Option<Vec<u8>> {
+fn decode_base64(value: &[u16]) -> Option<Vec<u8>> {
     // Buffer.from(base64url) accepts standard alphabet, whitespace, missing
     // padding, and ignores other characters. A trailing sextet is discarded.
+    // Buffer uses each UTF-16 code unit's low byte, including lone surrogates.
     let mut clean: String = value
-        .chars()
+        .iter()
+        .map(|unit| char::from(*unit as u8))
         .take_while(|c| *c != '=')
         .filter_map(|c| match c {
             '+' => Some('-'),

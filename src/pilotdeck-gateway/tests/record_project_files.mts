@@ -122,3 +122,63 @@ for(const inputPath of ['a/../\ud800',path.join(root,'\ud800'),'../\ud800','/out
 await fs.unlink(path.join(root,'\ufffd'));
 await fs.writeFile(path.join(output,'race-probes.json'),JSON.stringify({node:process.version,sourceSha256:runtime.sourceSha256,races,utf16},null,2)+'\n');
 console.log(JSON.stringify({raceProbes:races.length,utf16Probes:utf16.length,output:path.join(output,'race-probes.json')}));
+
+// Round 3: retain the earlier goldens; record runtime boundaries separately.
+if (process.getuid?.() === 0) throw Error('Round 3 EACCES probe requires a non-root user');
+const round3:any={node:process.version,icu:process.versions.icu,platform:process.platform,uid:process.getuid?.(),sourceSha256:runtime.sourceSha256,root};
+const huge=path.join(root,'huge');
+const handle=await fs.open(huge,'w');await handle.truncate(2**31);await handle.close();
+try {
+ round3.largeFile={size:(await fs.stat(huge)).size,blocks:(await fs.stat(huge)).blocks,
+  response:await capture('project_file_read',{projectKey:root,path:'huge',maxBytes:7},'large-file')};
+} finally {await fs.unlink(huge)}
+const deniedFile=path.join(root,'unreadable');await fs.writeFile(deniedFile,'hidden');await fs.chmod(deniedFile,0);
+round3.fsErrors=[];
+const originalRead=gateway.projectFileRead;
+try {
+ // The real callback masks canonicalization errors as PATH_NOT_ALLOWED.
+ round3.readErrors=[];
+ for(const file of ['unreadable','missing','bom.txt/child'])round3.readErrors.push({path:file,response:await capture('project_file_read',{projectKey:root,path:file})});
+ // Measure Node's actual errno/message, then pass that exact Error through the
+ // production WS wrapper (no invented Error objects or copied wrapper logic).
+ for(const [operation,p,call] of [
+  ['open',deniedFile,()=>fs.readFile(deniedFile)],
+  ['open',path.join(root,'missing'),()=>fs.readFile(path.join(root,'missing'))],
+  ['open',path.join(root,'bom.txt/child'),()=>fs.readFile(path.join(root,'bom.txt/child'))],
+  ['realpath',path.join(root,'missing'),()=>fs.realpath(path.join(root,'missing'))],
+  ['stat',path.join(root,'missing'),()=>fs.stat(path.join(root,'missing'))],
+  ['scandir',deniedFile,()=>fs.readdir(deniedFile)],
+ ] as const) {
+  let observed:any;try {await call();throw Error('expected fs failure')}catch(error:any){if(!error.code)throw error;observed=error}
+  gateway.projectFileRead=async()=>{throw observed};
+  round3.fsErrors.push({operation,path:p,nodeError:{code:observed.code,message:observed.message},response:await capture('project_file_read',{projectKey:root,path:'bom.txt'})});
+ }
+} finally {gateway.projectFileRead=originalRead;await fs.chmod(deniedFile,0o600);await fs.unlink(deniedFile)}
+round3.localeProbe=[];
+for(const vars of [
+ {LANG:'tr_TR.UTF-8'}, {LANG:'lt_LT.UTF-8'},
+ {LANG:'tr_TR.UTF-8',LC_ALL:''}, {LANG:'tr_TR.UTF-8',LC_MESSAGES:''}, {LANG:''},
+ {LANG:'sv_SE.UTF-8',LC_ALL:'',LC_MESSAGES:'tr_TR.UTF-8'},
+ {LANG:'en-US-u-co-xxx'}, {LANG:'sv-SE-u-co-xxx'}, {LANG:'tr-TR-u-co-xxx'},
+ {LANG:'en-US-u-co-search'}, {LANG:'de-DE-u-co-phonebk'},
+ {LANG:'lt-LT-u-co-xxx'}, {LANG:'vi-VN-u-co-xxx'}, {LANG:'ee-u-co-xxx'},
+ {LANG:'vi-VN-u-co-phonebk'}, {LANG:'ee-u-co-phonebk'},
+]) {
+ const env={...process.env};for(const k of Object.keys(env))if(k.startsWith('LC_')||k==='LANG')delete env[k];Object.assign(env,vars);
+ const code=`const names=['z','ä','Z','a','A','你好','文件','😀','_x'];const lowerInputs=['FILE.txt','FILE😀','Ì','Ì😀','I','Iİıi'];console.log(JSON.stringify({locale:new Intl.Collator().resolvedOptions().locale,order:names.sort((a,b)=>a.localeCompare(b)),lower:lowerInputs.map(input=>({input,output:input.toLocaleLowerCase()}))}));`;
+ const child=spawnSync(process.execPath,['-e',code],{env,encoding:'utf8'});if(child.status!==0)throw Error(child.stderr);
+ round3.localeProbe.push({env:vars,...JSON.parse(child.stdout)});
+}
+round3.base64Probe=['QUJD','őUJD','\ud800','QUJD\ud800','\u013dQUJD','\ud851UJD','Q😀UJD'].map(input=>({input:JSON.stringify(input),hex:Buffer.from(input,'base64url').toString('hex')}));
+const cursorPage=await capture('project_files_list',{projectKey:root,limit:2});
+const validCursor=cursorPage.result.nextCursor;
+round3.cursorProbe=[];
+for(const [variant,cursor] of [
+ ['lone-surrogate','\ud800'], ['suffix-surrogate',validCursor+'\ud800'],
+ ['wide-low-byte',String.fromCharCode(validCursor.charCodeAt(0)+256)+validCursor.slice(1)],
+ ['surrogate-low-byte',String.fromCharCode(0xd800+validCursor.charCodeAt(0))+validCursor.slice(1)],
+] as const) {
+ round3.cursorProbe.push({variant,cursor:JSON.stringify(cursor),decoded:Buffer.from(cursor,'base64url').toString('utf8'),response:await capture('project_files_list',{projectKey:root,limit:2,cursor})});
+}
+await fs.writeFile(path.join(output,'node-runtime-round3.json'),JSON.stringify(round3,null,2)+'\n');
+console.log(JSON.stringify({round3:path.join(output,'node-runtime-round3.json'),largeFile:round3.largeFile,fsErrors:round3.fsErrors.map((p:any)=>p.nodeError),localeProbes:round3.localeProbe.length,cursorProbes:round3.cursorProbe.length}));

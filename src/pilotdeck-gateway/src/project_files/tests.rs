@@ -198,16 +198,47 @@ fn read_native(metadata: &Metadata, path: &str, max: Option<f64>) -> Result<JsVa
         path,
     )
 }
+fn round3() -> Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/project-files/node-runtime-round3.json"
+    ))
+    .unwrap()
+}
+fn dispatch_read(metadata: &Metadata, path: &str, id: &Value) -> Value {
+    let request = serde_json::json!({
+        "type": "request", "id": id, "method": "project_file_read",
+        "params": {"projectKey": metadata.cwd.join("project"), "path": path, "maxBytes": 7},
+    });
+    let Route::LocalResponse(response) = route_with_metadata(
+        &parse(request.to_string().as_bytes()).unwrap(),
+        Some(metadata),
+    ) else {
+        panic!("measured read must stay local")
+    };
+    serde_json::from_slice(&response).unwrap()
+}
 #[test]
-fn huge_sparse_file_is_bounded_and_binary_is_returned() {
+fn huge_sparse_file_matches_node_size_error_before_prefix_read() {
+    let probe = &round3()["largeFile"];
     let temp = Temp::new();
     let metadata = native_metadata(&temp);
-    let path = temp.0.join("project/huge");
-    let file = File::create(&path).unwrap();
-    file.set_len(20_000_000_000).unwrap();
-    let value = read_native(&metadata, "huge", Some(7.0)).unwrap();
-    assert_eq!(text_field(&value, "content").unwrap(), "\0".repeat(7));
-    // Reads exactly maxBytes, without a size-based allocation or a lookahead read.
+    let file = File::create(temp.0.join("project/huge")).unwrap();
+    file.set_len(probe["size"].as_u64().unwrap()).unwrap();
+    assert_eq!(
+        dispatch_read(&metadata, "huge", &probe["response"]["id"]),
+        probe["response"]
+    );
+    // The adjacent accepted boundary remains bounded in Rust: no 2 GiB buffer.
+    file.set_len(2_147_483_647).unwrap();
+    assert_eq!(
+        text_field(
+            &read_native(&metadata, "huge", Some(7.0)).unwrap(),
+            "content"
+        )
+        .unwrap(),
+        "\0".repeat(7)
+    );
+    // Independently retain the maximum-prefix resource guard.
     struct Limited(usize);
     impl Read for Limited {
         fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
@@ -219,15 +250,6 @@ fn huge_sparse_file_is_bounded_and_binary_is_returned() {
     }
     let bytes = read_prefix(&mut Limited(10_000_000), 10_000_000).unwrap();
     assert_eq!(bytes.len(), 10_000_000);
-    assert_eq!(
-        text_field(
-            &read_native(&metadata, "huge", Some(10_000_001.0)).unwrap(),
-            "content"
-        )
-        .unwrap()
-        .len(),
-        10_000_000
-    );
 }
 #[cfg(unix)]
 #[test]
@@ -587,4 +609,150 @@ fn unmeasured_io_diagnostics_are_not_fabricated_locally() {
     );
     assert_eq!(raced_link.0, "PATH_NOT_ALLOWED");
     assert!(local_result(Err(raced_link)).is_some());
+}
+
+#[test]
+fn node_round3_fs_error_codes_and_messages() {
+    for probe in round3()["fsErrors"].as_array().unwrap() {
+        let errno = match probe["nodeError"]["code"].as_str().unwrap() {
+            "ENOENT" => libc::ENOENT,
+            "EACCES" => libc::EACCES,
+            "ENOTDIR" => libc::ENOTDIR,
+            other => panic!("unhandled recorded errno: {other}"),
+        };
+        let (code, message) = fs_error(
+            io::Error::from_raw_os_error(errno),
+            probe["operation"].as_str().unwrap(),
+            Path::new(probe["path"].as_str().unwrap()),
+        );
+        assert_eq!(
+            serde_json::json!({"code": code, "message": message}),
+            probe["response"]["error"]
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_read_errors_match_node_ws_responses() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    let root = temp.0.join("project");
+    fs::write(root.join("bom.txt"), "data").unwrap();
+    fs::write(root.join("unreadable"), "hidden").unwrap();
+    fs::set_permissions(root.join("unreadable"), fs::Permissions::from_mode(0o0)).unwrap();
+    let probes = round3();
+    for probe in probes["readErrors"].as_array().unwrap() {
+        let path = probe["path"].as_str().unwrap();
+        // Root CI cannot exercise EACCES; the checked-in Node record is non-root.
+        if path == "unreadable" && File::open(root.join(path)).is_ok() {
+            continue;
+        }
+        let expected: Value = serde_json::from_str(
+            &probe["response"]
+                .to_string()
+                .replace(probes["root"].as_str().unwrap(), root.to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(dispatch_read(&metadata, path, &expected["id"]), expected);
+    }
+    fs::set_permissions(root.join("unreadable"), fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+#[test]
+fn node_round3_locale_fallback_and_latin1_case_mapping() {
+    for probe in round3()["localeProbe"].as_array().unwrap() {
+        let locale = node_locale(|key| probe["env"][key].as_str().map(str::to_owned));
+        if !probe["env"]["LANG"].as_str().unwrap().contains("-u-") {
+            assert_eq!(locale.to_string(), probe["locale"].as_str().unwrap());
+        }
+        if matches!(
+            locale.to_string().as_str(),
+            "vi-VN-u-co-phonebk" | "ee-u-co-phonebk"
+        ) {
+            // Reproduce the old expect panic's actual failing constructor.
+            assert!(Collator::try_new(locale.clone().into(), Default::default()).is_err());
+        }
+        let collator = node_collator(&locale).unwrap();
+        let mut names = vec!["z", "ä", "Z", "a", "A", "你好", "文件", "😀", "_x"];
+        names.sort_by(|a, b| collator.compare(a, b));
+        assert_eq!(
+            serde_json::to_value(names).unwrap(),
+            probe["order"],
+            "{locale}"
+        );
+        for lower in probe["lower"].as_array().unwrap() {
+            assert_eq!(
+                lowercase(lower["input"].as_str().unwrap(), &locale.id),
+                lower["output"].as_str().unwrap(),
+                "{locale}: {lower}"
+            );
+        }
+    }
+}
+
+#[test]
+fn node_round3_base64_uses_utf16_low_bytes() {
+    for probe in round3()["base64Probe"].as_array().unwrap() {
+        let input = parse_json(probe["input"].as_str().unwrap()).unwrap();
+        let bytes = decode_base64(input.as_string().unwrap().units()).unwrap();
+        let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(hex, probe["hex"].as_str().unwrap(), "{probe}");
+    }
+}
+
+#[test]
+fn node_round3_cursor_dispatch_preserves_surrogates_and_offset() {
+    let probes = round3();
+    // Relocate the original tree snapshot to the new oracle root. Keep the
+    // recorded cursor/signature and complete Node response unchanged.
+    let (mut metadata, fixture) = fixture();
+    let old_cwd = fixture["cwd"].as_str().unwrap();
+    let new_cwd = Path::new(probes["root"].as_str().unwrap())
+        .parent()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    metadata.cwd = new_cwd.into();
+    metadata.home = metadata.cwd.join("home");
+    metadata.files.files = metadata
+        .files
+        .files
+        .into_iter()
+        .map(|(path, mut value)| {
+            if let Some(link) = value["link"].as_str() {
+                value["link"] = link.replace(old_cwd, new_cwd).into();
+            }
+            if path.file_name().is_some_and(|name| name == ".cwd") {
+                let content = STANDARD.decode(value["base64"].as_str().unwrap()).unwrap();
+                value["base64"] = STANDARD
+                    .encode(
+                        String::from_utf8(content)
+                            .unwrap()
+                            .replace(old_cwd, new_cwd),
+                    )
+                    .into();
+            }
+            (
+                PathBuf::from(path.to_str().unwrap().replace(old_cwd, new_cwd)),
+                value,
+            )
+        })
+        .collect();
+    for probe in probes["cursorProbe"].as_array().unwrap() {
+        let request = format!(
+            r#"{{"type":"request","id":{},"method":"project_files_list","params":{{"projectKey":{},"limit":2,"cursor":{}}}}}"#,
+            probe["response"]["id"],
+            probes["root"],
+            probe["cursor"].as_str().unwrap(),
+        );
+        let Route::LocalResponse(response) =
+            route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
+        else {
+            panic!("cursor forwarded")
+        };
+        let actual: Value = serde_json::from_slice(&response).unwrap();
+        assert_eq!(actual, probe["response"], "{}", probe["variant"]);
+    }
 }
