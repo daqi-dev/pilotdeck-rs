@@ -1,0 +1,62 @@
+[
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-no-params\",\"method\":\"describe_project\"}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-no-params\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'projectKey')\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-null-params\",\"method\":\"describe_project\",\"params\":null}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-null-params\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of null (reading 'projectKey')\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-no-key\",\"method\":\"describe_project\",\"params\":{}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-no-key\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received undefined\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-null-key\",\"method\":\"describe_project\",\"params\":{\"projectKey\":null}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-null-key\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received null\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-number-key\",\"method\":\"describe_project\",\"params\":{\"projectKey\":7}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-number-key\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received type number (7)\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-array-key\",\"method\":\"describe_project\",\"params\":{\"projectKey\":[]}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-array-key\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received an instance of Array\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-object-key\",\"method\":\"describe_project\",\"params\":{\"projectKey\":{}}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-object-key\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received an instance of Object\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-constructor-null\",\"method\":\"describe_project\",\"params\":{\"projectKey\":{\"constructor\":null}}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-constructor-null\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received [Object]\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-constructor-name\",\"method\":\"describe_project\",\"params\":{\"projectKey\":{\"constructor\":{\"name\":\"custom\"}}}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-constructor-name\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received an instance of custom\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-surrogate\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/missing/\\ud800\"}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-surrogate\",\"ok\":true,\"result\":{\"projectKey\":\"/missing/\\ud800\",\"name\":\"\\ud800\",\"fullPath\":\"/missing/\\ud800\",\"sessionCount\":0}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-unknown\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/does/not/exist\"}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-unknown\",\"ok\":true,\"result\":{\"projectKey\":\"/does/not/exist\",\"name\":\"exist\",\"fullPath\":\"/does/not/exist\",\"sessionCount\":0}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"list-empty\",\"method\":\"list_projects\"}",
+    "response": "{\"type\":\"response\",\"id\":\"list-empty\",\"ok\":true,\"result\":{\"projects\":[]}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-infinite-key\",\"method\":\"describe_project\",\"params\":{\"projectKey\":1e400}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-infinite-key\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received type number (Infinity)\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-constructor-infinite\",\"method\":\"describe_project\",\"params\":{\"projectKey\":{\"constructor\":{\"name\":1e400}}}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-constructor-infinite\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received an instance of Infinity\"}}"
+  },
+  {
+    "request": "{\"type\":\"request\",\"id\":\"describe-negative-zero-key\",\"method\":\"describe_project\",\"params\":{\"projectKey\":-0}}",
+    "response": "{\"type\":\"response\",\"id\":\"describe-negative-zero-key\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_TYPE\",\"message\":\"The \\\"paths[0]\\\" argument must be of type string. Received type number (-0)\"}}"
+  }
+]

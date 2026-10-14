@@ -1,0 +1,4 @@
+{
+  "request": "{\"type\":\"request\",\"id\":\"5fa915c4-dede-4bda-9423-a452b9e50a80\",\"method\":\"session_model_get\",\"params\":{\"sessionKey\":\"web:gateway-parity-text\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\"}}",
+  "response": "{\"type\":\"response\",\"id\":\"5fa915c4-dede-4bda-9423-a452b9e50a80\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\",\"sessionKey\":\"web:gateway-parity-text\",\"effective\":{\"provider\":\"parity\",\"model\":\"deterministic\",\"source\":\"default\"}}}"
+}

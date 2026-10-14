@@ -460,6 +460,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "pilotdeck-protocol",
+ "regex",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
