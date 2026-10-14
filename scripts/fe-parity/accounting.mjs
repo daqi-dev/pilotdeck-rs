@@ -1,10 +1,13 @@
 import { relative, isAbsolute } from 'node:path';
 import { readFile, realpath, stat } from 'node:fs/promises';
 
-// Exact descriptions only; keep the public policy in README.md in sync.
+// Both identity and description must be approved; reports cannot extend either list.
 export const SKIP_REASONS = Object.freeze(['deployment profile not applicable']);
 
 export const caseId = row => JSON.stringify([row.file.replaceAll('\\', '/'), row.title]);
+export const SKIP_ALLOWLIST = Object.freeze(JSON.parse(await readFile(new URL('./skip-allowlist.json', import.meta.url), 'utf8')).tests.map(row => Object.freeze(row)));
+const allowedSkipIds = new Set(SKIP_ALLOWLIST.map(caseId));
+if (allowedSkipIds.size !== SKIP_ALLOWLIST.length) throw new Error('duplicate skip allowlist identities');
 // JSON reporter carries loop-expanded tests, unlike a source regex count.
 export function reportCases(report, testDir) {
   const rows = [];
@@ -31,6 +34,7 @@ export function checkInventory(rows, historical) {
   if (new Set(prior).size !== prior.length) errors.push('duplicate historical identities');
   for (const id of prior) if (!ids.includes(id)) errors.push(`missing historical registration ${id}`);
   for (const id of ids) if (!prior.includes(id)) errors.push(`unknown registration ${id}`);
+  for (const id of allowedSkipIds) if (!ids.includes(id)) errors.push(`skip allowlist identity not registered ${id}`);
   return errors;
 }
 export function reconcile(inventory, report, testDir) {
@@ -61,8 +65,11 @@ export function reconcile(inventory, report, testDir) {
     if (result.status === 'skipped') {
       const annotations = row.annotations.filter(a => a.type === 'skip');
       const reason = annotations.map(a => a.description || '').join('; ');
-      if (annotations.length !== 1 || typeof annotations[0].description !== 'string' || !SKIP_REASONS.includes(reason)) errors.push(`skip reason not in fixed whitelist ${caseId(row)}: ${reason}`);
-      else skipped++;
+      const allowedIdentity = allowedSkipIds.has(caseId(row));
+      const allowedReason = annotations.length === 1 && typeof annotations[0].description === 'string' && SKIP_REASONS.includes(reason);
+      if (!allowedIdentity) errors.push(`skip identity not in fixed allowlist ${caseId(row)}`);
+      if (!allowedReason) errors.push(`skip reason not in fixed whitelist ${caseId(row)}: ${reason}`);
+      if (allowedIdentity && allowedReason) skipped++;
       return { ...base, status: 'SKIP', reason: reason || 'FAIL: skip has no whitelisted reason' };
     }
     if (!['passed', 'failed', 'timedOut'].includes(result.status)) {
@@ -76,8 +83,13 @@ export function reconcile(inventory, report, testDir) {
     return { ...base, status, reason: result.error?.message || '' };
   });
   const expected = inventory.length - skipped;
+  // Only allowlisted identities actually registered in this suite reduce its floor.
+  // In particular the three skeleton registrations have no skip allowance.
+  const allowedSkips = [...expectedIds].filter(id => allowedSkipIds.has(id)).length;
+  const minimumExecuted = inventory.length - allowedSkips;
+  if (executed < minimumExecuted) errors.push(`实际执行数 ${executed} < 最低执行数 ${minimumExecuted} (注册数 ${inventory.length} − 身份清单数 ${allowedSkips})`);
   if (executed !== expected) errors.push(`应执行数 ${expected} vs 实际执行数 ${executed}`);
-  return { denominator: inventory.length, expected, executed, explicitSkips: skipped, status: errors.length ? 'FAIL' : 'PASS', rows, errors };
+  return { denominator: inventory.length, allowedSkips, minimumExecuted, expected, executed, explicitSkips: skipped, status: errors.length ? 'FAIL' : 'PASS', rows, errors };
 }
 
 // Metadata is emitted by the executing Playwright config, never assigned from CLI labels.
