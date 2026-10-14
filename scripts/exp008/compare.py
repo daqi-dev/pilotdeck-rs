@@ -16,30 +16,15 @@ the Rust relay (13001). Both recordings are produced by `run.py` from the SAME
 isolated home and the SAME project path (`specs/parity/normalization.md`: the two
 sides must run the same output path).
 
-Normalisation is scoped to a field path, never global. A key is only touched
-where its name marks it as session identity or a clock:
+Normalisation is restricted to explicit channel/event/field paths. Unknown
+payloads and all unlisted fields are literal. Only session-activity revisions
+with an independently recorded, validated pre-command activity snapshot are
+relative; no first observed value may establish its own baseline.
 
-  * identity keys (`runId`, `sessionId`, `id`, `blockId`, `timeline.turnId`, ...)
-    get every embedded UUID replaced by a per-side first-occurrence reference, so
-    equal references stay equal and a changed reference still shows as a
-    difference while any non-UUID prefix (`status_`, `text_`, `web:`) is kept;
-  * clock keys (`timestamp`, `startedAt`, ...) and process keys (`pid`, ...)
-    collapse to `<VOLATILE>`;
-  * counters that are session/ordering dependent (`revision`, `generation`) are
-    compared as deltas from their first value in the same case, so a proxy that
-    skips or doubles a bump still shows up;
-  * everything else -- `used`, `displayUsed`, `ratio`, token budgets, arbitrary
-    strings and any UUID inside them -- is compared literally.
-
-Response headers: only the recomputable / hop-by-hop whitelist is dropped
-(`date`, `content-length`, `connection`, `keep-alive`, `transfer-encoding`,
-`x-pilotdeck-handler`). `set-cookie`, `etag`, `x-refreshed-token` and every
-other end-to-end header must be present and equal. `etag` is value-checked
-against the body it is supposed to summarise (`<ETAG-VALID>` when it is a real
-weak strong-hash of that body), so dropping or rewriting it is a difference
-rather than a pass. `x-projects-revision` is a wall-clock revision minted per
-request (`projects.js`); it is recorded as `<REVISION>` only when it is a
-positive integer, so a dropped or mangled revision is still a difference.
+ETags preserve strength and match literally for identical wire bodies. For
+bodies differing only in allowed volatile fields, each ETag must validate its
+own body. X-Projects-Revision is a wall clock only on successful GET /api/projects:
+ASCII decimal, bounded by recorded request times, and proxy >= direct.
 
 Everything else is compared structurally, with a precise location for every
 difference:
@@ -53,12 +38,14 @@ Exit code: 0 = PASS, 1 = FAIL, 2 = usage error.
 
 Positive controls (`--controls LEFT RIGHT`): inject one known difference at a
 time into a copy of RIGHT and require the comparator to FAIL while naming the
-exact location. Equivalence controls (a side compared with itself) must PASS.
+exact location. Equivalence controls (valid evidence compared with itself) must PASS.
 """
 import argparse
 import base64
+from datetime import datetime
 import hashlib
 import json
+import math
 import re
 import shutil
 import sys
@@ -69,31 +56,52 @@ CHANNELS = ('http', 'handshake', 'ws', 'sse', 'close')
 # HTTP-style channels match records by case name; the rest are ordered sequences.
 HTTP_STYLE = ('http', 'handshake')
 
-# Truly wall-clock / process values. Collapsed to a placeholder, never indexed.
-CLOCK_KEYS = {
-    'timestamp', 'startedAt', 'completedAt', 'createdAt', 'updatedAt',
-    'durationMs', 'mtimeMs', 'lastActivity', 'expiresAt',
+# Exact event/path policy. No wildcard paths or recursive key-name matching.
+CLOCK_KEYS = {'timestamp', 'startedAt'}  # Used only by control mutation selection.
+PROCESS_KEYS = {'pid'}
+IDENTITY_KEYS = {'id', 'runId', 'sessionId', 'turnId', 'blockId', 'completedRunId'}
+RELATIVE_KEYS = {'revision'}
+FRAME_KINDS = {'status', 'stream_delta', 'text', 'complete'}
+FRAME_IDENTITIES = {('id',), ('sessionId',), ('runId',)}
+TIMELINE_IDENTITIES = {('timeline', 'id'), ('timeline', 'turnId'), ('blockId',)}
+EVENT_IDENTITIES = {
+    'pilotdeck-command': {('options', 'sessionId')},
+    'session-activity': {('activity', 'sessionId'), ('activity', 'runId'),
+                         ('activity', 'completedRunId')},
+    'session-input-accepted': {('sessionId',), ('runId',)},
+    'model-selection-changed': {('sessionId',), ('runId',)},
 }
-PROCESS_KEYS = {'processId', 'pid'}
-# Session identity. UUIDs embedded in these values are mapped per side; the rest
-# of the string is compared as-is.
-IDENTITY_KEYS = {
-    'id', 'runId', 'sessionId', 'messageId', 'requestId', 'streamId', 'turnId',
-    'blockId', 'toolCallId', 'completedRunId', 'entryId', 'moduleInstanceId',
-    'instanceId', 'operationId', 'idempotencyKey',
-}
-# Counters whose absolute value depends on how many runs preceded this side.
-# Compared as deltas from the first value seen for the same (case, path).
-RELATIVE_KEYS = {'revision', 'generation', 'connectionGeneration'}
-
-# Headers a proxy may legitimately recompute or that are hop-by-hop. Everything
-# else is an end-to-end header and must participate in the comparison.
 HEADER_EXCLUDE = {
     'date', 'content-length', 'connection', 'keep-alive', 'transfer-encoding',
     'x-pilotdeck-handler',
 }
-# Per-request wall-clock revision header; validated by form, not by equality.
 CLOCK_HEADER = 'x-projects-revision'
+ASCII_REVISION = re.compile(r'[1-9][0-9]*', re.ASCII)
+# projects.js uses max(Date.now(), previous + 1). Allow at most one second of
+# counter lead, explicitly bounded rather than accepting any positive number.
+REVISION_COUNTER_LEAD_MS = 1000
+
+
+def projects_clock_route(record):
+    return (record.get('method') == 'GET' and record.get('path') == '/api/projects'
+            and record.get('status') == 200)
+
+
+def revision_number(value):
+    value = str(value)
+    return int(value) if ASCII_REVISION.fullmatch(value) and len(value) <= 16 else None
+
+
+def valid_clock_revision(record, value):
+    number = revision_number(value)
+    bounds = record.get('requestTimeMs')
+    if number is None or not isinstance(bounds, list) or len(bounds) != 2:
+        return False
+    start, end = bounds
+    return (all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                and 0 < v <= 2**53 and math.isfinite(v) for v in bounds)
+            and 0 < start <= end and start <= number <= end + REVISION_COUNTER_LEAD_MS)
+
 
 UUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
                      r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
@@ -106,23 +114,59 @@ def valid_etag(value, body):
     return value in (f'"{len(raw):x}-{digest}"', f'W/"{len(raw):x}-{digest}"')
 
 
-def normalise_header(name, value, body, normalizer):
-    if name == 'etag':
-        return '<ETAG-VALID>' if valid_etag(str(value), body) else normalizer.text(str(value))
-    if name == CLOCK_HEADER:
-        text = str(value)
-        return '<REVISION>' if text.isdigit() and int(text) > 0 else normalizer.text(text)
-    return normalizer.text(str(value))
+def normalise_header(name, value, body, normalizer, record=None):
+    value = str(value)
+    if name == 'etag' and valid_etag(value, body):
+        return '<ETAG-WEAK>' if value.startswith('W/') else '<ETAG-STRONG>'
+    if (name == CLOCK_HEADER and record is not None and projects_clock_route(record)
+            and valid_clock_revision(record, value)):
+        return '<REVISION>'
+    return normalizer.text(value)
+
+
+def activity_anchor(snapshot):
+    """Derive the counter from a separately observed pre-command snapshot.
+
+    The isolated B1 fixture has one user, so its latest activity is the global
+    registry counter. A missing or malformed snapshot provides no exemption.
+    """
+    if not isinstance(snapshot, dict) or snapshot.get('type') != 'session-activity-snapshot':
+        return None
+    activities = snapshot.get('activities')
+    if not isinstance(activities, list):
+        return None
+    revisions = []
+    sessions = set()
+    for item in activities:
+        if not isinstance(item, dict):
+            return None
+        revision = item.get('revision')
+        session = item.get('sessionId')
+        if (type(revision) is not int or revision <= 0 or not isinstance(session, str)
+                or not session or session in sessions or revision in revisions
+                or item.get('processing') is not False):
+            return None
+        revisions.append(revision)
+        sessions.add(session)
+    return max(revisions, default=0)
+
+
+def clock_value(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).tzinfo is not None
+    except ValueError:
+        return False
 
 
 class Normalizer:
-    """Per-side normaliser; one instance per recorded side so the first-seen
-    ordering of generated ids is independent, exactly like the frozen trace
-    comparator."""
+    """Per-side UUID references with explicit event and complete-path policy."""
 
     def __init__(self, paths=()):
         self.ids = {}
-        self.bases = {}
+        self.activity_bases = {}
+        self.errors = []
         self.paths = sorted([str(p) for p in paths if p], key=len, reverse=True)
 
     def ref(self, category, value):
@@ -137,35 +181,28 @@ class Normalizer:
         return value
 
     def identity(self, value):
-        """Identity value: keep non-UUID content, map embedded UUIDs per side."""
-        if value is None:
-            return None
         if isinstance(value, str):
             return UUID_RE.sub(lambda match: self.ref('uuid', match.group(0)), self.text(value))
-        return self.value(value)
+        return value
 
-    def relative(self, case, path, value):
-        key = (case, path)
-        base = self.bases.setdefault(key, value)
-        return value - base
-
-    def value(self, value, case=None, path=()):
+    def value(self, value, case=None, path=(), *, identities=frozenset(),
+              volatile=frozenset(), relative_base=None):
+        if path in identities:
+            return self.identity(value)
+        if path in volatile and (clock_value(value) or (path == ('pid',)
+                                                       and type(value) is int and value > 0)):
+            return '<VOLATILE>'
+        if (path == ('activity', 'revision') and relative_base is not None
+                and type(value) is int and value > relative_base):
+            return value - relative_base
         if isinstance(value, dict):
-            out = {}
-            for name in sorted(value):
-                item = value[name]
-                if name in CLOCK_KEYS or name in PROCESS_KEYS:
-                    out[name] = None if item is None else '<VOLATILE>'
-                elif name in IDENTITY_KEYS:
-                    out[name] = self.identity(item)
-                elif name in RELATIVE_KEYS and isinstance(item, (int, float)) \
-                        and not isinstance(item, bool):
-                    out[name] = self.relative(case, path + (name,), item)
-                else:
-                    out[name] = self.value(item, case, path + (name,))
-            return out
+            return {name: self.value(item, case, path + (name,), identities=identities,
+                                     volatile=volatile, relative_base=relative_base)
+                    for name, item in sorted(value.items())}
         if isinstance(value, list):
-            return [self.value(item, case, path) for item in value]
+            return [self.value(item, case, path + (index,), identities=identities,
+                               volatile=volatile, relative_base=relative_base)
+                    for index, item in enumerate(value)]
         if isinstance(value, str):
             return self.text(value)
         return value
@@ -201,19 +238,60 @@ def normalise_http(record, normalizer):
     headers = {k.lower(): v for k, v in record.get('headers', {}).items()
                if k.lower() not in HEADER_EXCLUDE}
     parsed = parse_json(body)
+    health = (record.get('method') == 'GET' and record.get('path') == '/health'
+              and record.get('status') == 200)
+    normalized = normalizer.value(
+        parsed, record['case'], identities={('instanceId',)} if health else set(),
+        volatile={('timestamp',), ('startedAt',), ('pid',)} if health else set())
     return {'case': record['case'], 'method': record.get('method'),
             'path': record.get('path'), 'status': record.get('status'),
-            'headers': {k: normalise_header(k, v, body, normalizer)
+            'headers': {k: normalise_header(k, v, body, normalizer, record)
                         for k, v in sorted(headers.items())},
-            'body': normalizer.value(parsed, record['case']) if parsed is not None
-            else normalizer.text(body)}
+            '_wireBody': body, '_wireEtag': headers.get('etag'),
+            '_etagValid': valid_etag(str(headers.get('etag', '')), body),
+            '_clockRoute': projects_clock_route(record),
+            '_revision': revision_number(headers.get(CLOCK_HEADER, '')),
+            '_clockValid': valid_clock_revision(record, headers.get(CLOCK_HEADER, '')),
+            'body': normalized if parsed is not None else normalizer.text(body)}
 
 
 def normalise_ws(record, normalizer):
     raw = record.get('raw')
     case = record.get('case', 'ws')
     parsed = parse_json(raw) if isinstance(raw, str) else None
-    body = normalizer.value(parsed, case) if parsed is not None else normalizer.text(str(raw))
+    identities, volatile, base = set(), set(), None
+    if isinstance(parsed, dict) and record.get('opcode', 'text') == 'text':
+        event = parsed.get('type')
+        direction = record.get('dir', 'u2c')
+        if direction == 'c2u' and event == 'pilotdeck-command':
+            identities = EVENT_IDENTITIES[event]
+            # Anchor is separate evidence, never the first revision under test.
+            anchor = activity_anchor(record.get('activityBaseline'))
+            options = parsed.get('options')
+            session = options.get('sessionId') if isinstance(options, dict) else None
+            if 'activityBaseline' in record and anchor is None:
+                normalizer.errors.append({'location': f'ws[{case}] activityBaseline',
+                                          'message': 'invalid or unsettled pre-command snapshot'})
+            if anchor is not None and isinstance(session, str):
+                normalizer.activity_bases[(case, session)] = anchor
+        elif direction == 'u2c':
+            identities = EVENT_IDENTITIES.get(event, set()) if isinstance(event, str) else set()
+            kind = parsed.get('kind')
+            if event is None and isinstance(kind, str) and kind in FRAME_KINDS:
+                identities = FRAME_IDENTITIES
+                volatile = {('timestamp',)}
+                if parsed['kind'] in {'stream_delta', 'text'}:
+                    identities = identities | TIMELINE_IDENTITIES
+            if event == 'session-activity' and isinstance(parsed.get('activity'), dict):
+                session = parsed['activity'].get('sessionId')
+                base = normalizer.activity_bases.get((case, session)) if isinstance(session, str) else None
+                revision = parsed['activity'].get('revision')
+                if base is not None and (type(revision) is not int or revision <= base):
+                    normalizer.errors.append({'location': f'ws[{case}] body.activity.revision',
+                                              'message': 'activity revision must advance the snapshot',
+                                              'revision': revision, 'baseline': base})
+    body = normalizer.value(parsed, case, identities=identities, volatile=volatile,
+                            relative_base=base) if parsed is not None else normalizer.text(str(raw))
     return {'case': case, 'opcode': record.get('opcode', 'text'),
             'dir': record.get('dir', 'u2c'), 'body': body}
 
@@ -327,14 +405,39 @@ def diff_http_style(channel, left_records, right_records):
                 diffs.append({'location': f'{channel}[{case}]', 'left': entry_left,
                               'right': entry_right, 'message': 'record count differs'})
                 continue
+            for field in ('method', 'path'):
+                diff_value(f'{channel}[{case}] {field}', entry_left[field], entry_right[field], diffs)
+            for label, entry in (('left', entry_left), ('right', entry_right)):
+                if entry['_clockRoute'] and not entry['_clockValid']:
+                    diffs.append({'location': f'{channel}[{case}] header.{CLOCK_HEADER}',
+                                  'message': f'{label} revision outside recorded request time range',
+                                  'left': entry_left['_revision'], 'right': entry_right['_revision']})
+            if (entry_left['_clockRoute'] and entry_right['_clockRoute']
+                    and entry_left['_clockValid'] and entry_right['_clockValid']
+                    and entry_right['_revision'] < entry_left['_revision']):
+                diffs.append({'location': f'{channel}[{case}] header.{CLOCK_HEADER}',
+                              'message': 'proxy revision precedes direct revision (stale replay)',
+                              'left': entry_left['_revision'], 'right': entry_right['_revision']})
             if entry_left['status'] != entry_right['status']:
                 diffs.append({'location': f'{channel}[{case}] status', 'left': entry_left['status'],
                               'right': entry_right['status'], 'message': 'status differs'})
-            for header in sorted(set(entry_left['headers']) | set(entry_right['headers'])):
-                if entry_left['headers'].get(header) != entry_right['headers'].get(header):
+            headers_left, headers_right = dict(entry_left['headers']), dict(entry_right['headers'])
+            if entry_left['_wireBody'] == entry_right['_wireBody']:
+                if entry_left['_wireEtag'] is not None:
+                    headers_left['etag'] = entry_left['_wireEtag']
+                if entry_right['_wireEtag'] is not None:
+                    headers_right['etag'] = entry_right['_wireEtag']
+            else:
+                for label, entry in (('left', entry_left), ('right', entry_right)):
+                    if entry['_wireEtag'] is not None and not entry['_etagValid']:
+                        diffs.append({'location': f'{channel}[{case}] header.etag',
+                                      'message': f'{label} ETag does not validate differing wire body',
+                                      'left': entry_left['_wireEtag'], 'right': entry_right['_wireEtag']})
+            for header in sorted(set(headers_left) | set(headers_right)):
+                if headers_left.get(header) != headers_right.get(header):
                     diffs.append({'location': f'{channel}[{case}] header.{header}',
-                                  'left': entry_left['headers'].get(header),
-                                  'right': entry_right['headers'].get(header),
+                                  'left': headers_left.get(header),
+                                  'right': headers_right.get(header),
                                   'message': 'header differs'})
             diff_value(f'{channel}[{case}] body', entry_left['body'], entry_right['body'], diffs)
     return diffs
@@ -345,14 +448,16 @@ def compare_sides(left_dir, right_dir, paths=()):
     right_norm = {channel: [] for channel in CHANNELS}
     loaders = {'http': normalise_http, 'handshake': normalise_http,
                'ws': normalise_ws, 'sse': normalise_sse, 'close': normalise_close}
+    validation_errors = []
     for side, directory in (('left', left_dir), ('right', right_dir)):
         normalizer = Normalizer(paths)
         for channel in CHANNELS:
             target = left_norm if side == 'left' else right_norm
             for record in load_jsonl(Path(directory) / f'{channel}.jsonl'):
                 target[channel].append(loaders[channel](record, normalizer))
+        validation_errors.extend({**error, 'side': side} for error in normalizer.errors)
 
-    diffs = []
+    diffs = validation_errors
     for channel in HTTP_STYLE:
         diffs.extend(diff_http_style(channel, left_norm[channel], right_norm[channel]))
     diffs.extend(diff_sequences('ws', left_norm['ws'], right_norm['ws'], 'ws'))
@@ -366,11 +471,13 @@ def compare_sides(left_dir, right_dir, paths=()):
               # was required to match literally.
               'normalisation': {
                   'headerExclude': sorted(HEADER_EXCLUDE),
-                  'etag': 'validated against the response body (weak sha1)',
-                  'clockHeader': CLOCK_HEADER + ' (positive integer -> <REVISION>)',
-                  'collapseKeys': sorted(CLOCK_KEYS | PROCESS_KEYS),
-                  'identityKeys': sorted(IDENTITY_KEYS),
-                  'relativeKeys': sorted(RELATIVE_KEYS),
+                  'etag': 'same wire body: literal; otherwise body-valid sha1, preserving strength',
+                  'clockHeader': CLOCK_HEADER + ' (GET /api/projects, ASCII, requestTimeMs, proxy >= direct)',
+                  'httpHealthVolatilePaths': ['timestamp', 'startedAt', 'pid'],
+                  'wsKinds': sorted(FRAME_KINDS),
+                  'wsEventIdentityPaths': {k: sorted('.'.join(p) for p in v)
+                                           for k, v in EVENT_IDENTITIES.items()},
+                  'relative': 'session-activity.activity.revision with pre-command snapshot only',
                   'literal': 'every other key and end-to-end header',
               },
               'differences': diffs}
@@ -495,13 +602,14 @@ MUTATIONS = (
 
 
 def run_controls(left_dir, right_dir, paths=()):
-    controls = []
+    from controls import run_regressions
+    controls = run_regressions(include_rust=True)
     baseline = compare_sides(left_dir, right_dir, paths)
     controls.append({'name': 'equivalence:left-vs-right', 'expect': 'PASS',
                      'mutated': None, 'actual': 'PASS' if baseline['verdict'] == 'PASS' else 'FAIL',
                      'differences': baseline['differences'][:3],
                      'passed': baseline['verdict'] == 'PASS'})
-    # A side compared with itself must always PASS, independent of the baseline.
+    # Valid evidence compared with itself must PASS; invalid anchors/clocks still FAIL.
     for label, directory in (('left', left_dir), ('right', right_dir)):
         temp, copied = _copy_side(directory)
         try:

@@ -57,34 +57,62 @@ type HttpClient = Client<HttpConnector, Incoming>;
 // Match the A1 bounds: buffer at most a complete (possibly fragmented) message.
 const MAX_WS_MESSAGE: usize = 16 * 1024 * 1024;
 const MAX_WS_FRAME: usize = 4 * 1024 * 1024;
+// Bound memory even when the writer is slower than the relay.
+const LOG_QUEUE_CAPACITY: usize = 8;
 
 struct FrameLog {
-    sender: std::sync::mpsc::Sender<serde_json::Value>,
+    sender: tokio::sync::mpsc::Sender<serde_json::Value>,
 }
 
 impl FrameLog {
-    /// One writer thread owns the file *and* the sequence counter, so `seq` is
-    /// always monotonic in on-disk order no matter how the relay tasks
-    /// interleave. Recording a frame never blocks a relay task on disk I/O: it
-    /// only enqueues.
+    /// One writer owns sequence order. A bounded async queue applies relay
+    /// backpressure without blocking Tokio workers on disk I/O. Each drained
+    /// batch is flushed once; write failure closes the queue and fails relay.
     fn open(path: &str) -> std::io::Result<Arc<FrameLog>> {
         let mut file = std::fs::File::create(path)?;
-        let (sender, receiver) = std::sync::mpsc::channel::<serde_json::Value>();
+        let (sender, mut receiver) =
+            tokio::sync::mpsc::channel::<serde_json::Value>(LOG_QUEUE_CAPACITY);
         std::thread::Builder::new()
             .name("exp008-ws-log".into())
             .spawn(move || {
                 let mut seq: u64 = 0;
-                while let Ok(mut entry) = receiver.recv() {
-                    seq += 1;
-                    entry["seq"] = serde_json::json!(seq);
-                    let _ = writeln!(file, "{entry}");
-                    let _ = file.flush();
+                while let Some(entry) = receiver.blocking_recv() {
+                    let mut batch = vec![entry];
+                    while batch.len() < LOG_QUEUE_CAPACITY {
+                        match receiver.try_recv() {
+                            Ok(entry) => batch.push(entry),
+                            Err(_) => break,
+                        }
+                    }
+                    let written = (|| -> std::io::Result<()> {
+                        for mut entry in batch {
+                            seq += 1;
+                            entry["seq"] = serde_json::json!(seq);
+                            writeln!(file, "{entry}")?;
+                        }
+                        file.flush()
+                    })();
+                    if let Err(error) = written {
+                        eprintln!("WS frame log: {error}");
+                        break;
+                    }
                 }
             })?;
         Ok(Arc::new(FrameLog { sender }))
     }
 
-    fn tee(&self, dir: &str, payload: &[u8], opcode: &str, close: Option<(u16, &str)>) {
+    async fn tee(
+        &self,
+        dir: &str,
+        payload: &[u8],
+        opcode: &str,
+        close: Option<(u16, &str)>,
+    ) -> Result<(), ProxyError> {
+        let permit = self
+            .sender
+            .reserve()
+            .await
+            .map_err(|_| -> ProxyError { "WS frame log writer closed".into() })?;
         let raw = match std::str::from_utf8(payload) {
             Ok(text) if opcode == "text" => serde_json::Value::String(text.to_owned()),
             _ => serde_json::Value::String(STANDARD.encode(payload)),
@@ -98,7 +126,8 @@ impl FrameLog {
         if let Some((code, reason)) = close {
             entry["close"] = serde_json::json!({ "code": code, "reason": reason });
         }
-        let _ = self.sender.send(entry);
+        permit.send(entry);
+        Ok(())
     }
 }
 
@@ -246,24 +275,7 @@ impl Proxy {
         // are skipped, and `Sec-WebSocket-Extensions` is not forwarded because
         // this probe terminates WS framing on both legs and cannot honour a
         // negotiated extension.
-        let mut builder = ClientRequestBuilder::new(url);
-        for (name, value) in request.headers() {
-            if matches!(
-                name.as_str(),
-                "host"
-                    | "connection"
-                    | "upgrade"
-                    | "sec-websocket-key"
-                    | "sec-websocket-version"
-                    | "sec-websocket-extensions"
-            ) {
-                continue;
-            }
-            builder = builder.with_header(
-                name.as_str().to_owned(),
-                String::from_utf8_lossy(value.as_bytes()).into_owned(),
-            );
-        }
+        let builder = websocket_request(url, request.headers());
         let config = websocket_config();
         let (mut upstream, upstream_response) = tokio::time::timeout(
             Duration::from_secs(10),
@@ -323,24 +335,29 @@ impl Proxy {
     }
 }
 
-fn tee_message(frames: Option<&FrameLog>, dir: &str, message: &Message) {
+async fn tee_message(
+    frames: Option<&FrameLog>,
+    dir: &str,
+    message: &Message,
+) -> Result<(), ProxyError> {
     let Some(frames) = frames else {
-        return;
+        return Ok(());
     };
     match message {
-        Message::Text(text) => frames.tee(dir, text.as_bytes(), "text", None),
-        Message::Binary(data) => frames.tee(dir, data, "binary", None),
-        Message::Ping(data) => frames.tee(dir, data, "ping", None),
-        Message::Pong(data) => frames.tee(dir, data, "pong", None),
+        Message::Text(text) => frames.tee(dir, text.as_bytes(), "text", None).await?,
+        Message::Binary(data) => frames.tee(dir, data, "binary", None).await?,
+        Message::Ping(data) => frames.tee(dir, data, "ping", None).await?,
+        Message::Pong(data) => frames.tee(dir, data, "pong", None).await?,
         Message::Close(close) => {
             let (code, reason) = close
                 .as_ref()
                 .map(|frame| (u16::from(frame.code), frame.reason.as_ref()))
                 .unwrap_or((1005, ""));
-            frames.tee(dir, &[], "close", Some((code, reason)));
+            frames.tee(dir, &[], "close", Some((code, reason))).await?;
         }
         Message::Frame(_) => {}
     }
+    Ok(())
 }
 
 async fn relay_close_reply<U, D>(
@@ -355,7 +372,7 @@ where
     tokio::time::timeout(Duration::from_secs(1), async {
         while let Some(frame) = upstream.next().await {
             let frame = frame?;
-            tee_message(frames, "u2c", &frame);
+            tee_message(frames, "u2c", &frame).await?;
             let closing = frame.is_close();
             let frame = match frame {
                 Message::Text(data) => Frame::message(data, OpCode::Data(Data::Text), true),
@@ -412,6 +429,25 @@ fn websocket_accept(method: &hyper::Method, headers: &hyper::HeaderMap) -> Optio
     Some(derive_accept_key(key.as_bytes()))
 }
 
+fn websocket_request(url: hyper::Uri, headers: &hyper::HeaderMap) -> ClientRequestBuilder {
+    let mut headers = headers.clone();
+    strip_hop_headers(&mut headers);
+    let mut builder = ClientRequestBuilder::new(url);
+    for (name, value) in &headers {
+        if matches!(
+            name.as_str(),
+            "host" | "sec-websocket-key" | "sec-websocket-version" | "sec-websocket-extensions"
+        ) {
+            continue;
+        }
+        builder = builder.with_header(
+            name.as_str().to_owned(),
+            String::from_utf8_lossy(value.as_bytes()).into_owned(),
+        );
+    }
+    builder
+}
+
 fn websocket_response(mut headers: hyper::HeaderMap, accept: &str) -> Response<Body> {
     strip_hop_headers(&mut headers);
     headers.insert(
@@ -445,7 +481,7 @@ where
         return Ok(false);
     };
     let frame = frame?;
-    tee_message(frames, dir, &frame);
+    tee_message(frames, dir, &frame).await?;
     let closing = frame.is_close();
     target.send(frame).await?;
     Ok(!closing)
@@ -488,4 +524,132 @@ fn plain(status: StatusCode, message: &'static str) -> Response<Body> {
     );
     *response.status_mut() = status;
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    fn forbidden_headers(headers: &hyper::HeaderMap) -> Vec<&str> {
+        [
+            "x-private-hop",
+            "x-second-hop",
+            "proxy-authorization",
+            "keep-alive",
+            "te",
+            "trailer",
+            "transfer-encoding",
+        ]
+        .into_iter()
+        .filter(|name| headers.contains_key(*name))
+        .collect()
+    }
+
+    #[test]
+    fn positive_controls_ws_hop_headers() {
+        let mut headers = hyper::HeaderMap::new();
+        headers.append(
+            header::CONNECTION,
+            "Upgrade, X-Private-Hop".parse().unwrap(),
+        );
+        headers.append(
+            header::CONNECTION,
+            "x-SECOND-hop, keep-alive".parse().unwrap(),
+        );
+        for name in [
+            "x-private-hop",
+            "x-second-hop",
+            "proxy-authorization",
+            "keep-alive",
+            "te",
+            "trailer",
+            "transfer-encoding",
+        ] {
+            headers.insert(name, "must-not-reach-upstream".parse().unwrap());
+        }
+        headers.insert(header::AUTHORIZATION, "Bearer end-to-end".parse().unwrap());
+        headers.insert(header::SEC_WEBSOCKET_PROTOCOL, "probe".parse().unwrap());
+        headers.insert(header::SEC_WEBSOCKET_KEY, "downstream-key".parse().unwrap());
+        headers.insert(
+            header::SEC_WEBSOCKET_EXTENSIONS,
+            "permessage-deflate".parse().unwrap(),
+        );
+        headers.insert(header::HOST, "downstream.invalid".parse().unwrap());
+        // Reproduce the former request builder. Its static skip list accepts
+        // Connection-nominated headers and Proxy-Authorization as end-to-end.
+        let mut legacy = ClientRequestBuilder::new("ws://127.0.0.1:13002/ws".parse().unwrap());
+        for (name, value) in &headers {
+            if !matches!(
+                name.as_str(),
+                "host"
+                    | "connection"
+                    | "upgrade"
+                    | "sec-websocket-key"
+                    | "sec-websocket-version"
+                    | "sec-websocket-extensions"
+            ) {
+                legacy = legacy
+                    .with_header(name.as_str().to_owned(), value.to_str().unwrap().to_owned());
+            }
+        }
+        let legacy = legacy.into_client_request().unwrap();
+        assert!(
+            !forbidden_headers(legacy.headers()).is_empty(),
+            "injected leak must FAIL"
+        );
+        let request = websocket_request("ws://127.0.0.1:13002/ws".parse().unwrap(), &headers)
+            .into_client_request()
+            .unwrap();
+        assert!(forbidden_headers(request.headers()).is_empty());
+        assert_eq!(request.headers()[header::HOST], "127.0.0.1:13002");
+        assert_eq!(
+            request.headers()[header::AUTHORIZATION],
+            "Bearer end-to-end"
+        );
+        assert_eq!(request.headers()[header::SEC_WEBSOCKET_PROTOCOL], "probe");
+        assert_eq!(request.headers()[header::CONNECTION], "Upgrade");
+        assert_eq!(request.headers()[header::UPGRADE], "websocket");
+        assert_ne!(
+            request.headers()[header::SEC_WEBSOCKET_KEY],
+            "downstream-key"
+        );
+        assert!(!request
+            .headers()
+            .contains_key(header::SEC_WEBSOCKET_EXTENSIONS));
+        println!("CONTROL inject:ws-hop-headers before=PASS after=FAIL safe=PASS");
+        // Request cloning must leave downstream handshake validation intact.
+        assert_eq!(headers.get_all(header::CONNECTION).iter().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn positive_controls_log_backpressure() {
+        let (unbounded, _receiver) = std::sync::mpsc::channel();
+        for _ in 0..=LOG_QUEUE_CAPACITY {
+            assert!(unbounded.send("frame").is_ok());
+        }
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(LOG_QUEUE_CAPACITY);
+        let log = FrameLog { sender };
+        for _ in 0..LOG_QUEUE_CAPACITY {
+            log.tee("u2c", b"frame", "text", None).await.unwrap();
+        }
+        assert_eq!(log.sender.capacity(), 0);
+        // Former unbounded send accepts this injection immediately. A stopped
+        // disk writer must now leave the extra frame pending, not grow memory.
+        assert!(tokio::time::timeout(
+            Duration::from_millis(20),
+            log.tee("u2c", b"overflow", "text", None)
+        )
+        .await
+        .is_err());
+        assert_eq!(receiver.len(), LOG_QUEUE_CAPACITY);
+        receiver.recv().await.unwrap();
+        log.tee("u2c", b"resumed", "text", None).await.unwrap();
+        println!("CONTROL inject:log-queue-overflow before=PASS after=FAIL safe=PASS");
+        drop(receiver);
+        assert!(log
+            .tee("u2c", b"writer-failed", "text", None)
+            .await
+            .is_err());
+    }
 }
