@@ -37,7 +37,7 @@ pub(crate) struct Stat {
 }
 
 pub(crate) trait Files {
-    /// OS readdir order, without sorting; Dirent.isDirectory does not follow symlinks.
+    /// UTF-8 byte order, like Node readdir; Dirent.isDirectory does not follow symlinks.
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>>;
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
     fn session_summary(&self, path: &Path, _size: u64) -> Result<bool, ()> {
@@ -53,7 +53,7 @@ pub(crate) trait Files {
 pub(crate) struct NativeFiles;
 impl Files for NativeFiles {
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
-        fs::read_dir(path)?
+        let mut entries = fs::read_dir(path)?
             .map(|entry| {
                 let entry = entry?;
                 Ok((
@@ -61,7 +61,13 @@ impl Files for NativeFiles {
                     entry.file_type()?.is_dir(),
                 ))
             })
-            .collect()
+            .collect::<io::Result<Vec<_>>>()?;
+        // 对齐 Node readdir（libuv uv_fs_scandir 的 strcmp 排序）。
+        // 协调者实测（Node v22，APFS），同一目录：
+        // ls -f: Beta ä middle zebra 10 _x alpha 2
+        // readdirSync / fs/promises.readdir(withFileTypes): 10 2 Beta _x alpha middle zebra ä
+        entries.sort_by(|l, r| l.0.as_bytes().cmp(r.0.as_bytes()));
+        Ok(entries)
     }
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         fs::read(path)
@@ -263,7 +269,7 @@ impl<F: Files> Metadata<F> {
             }
             projects.push(self.summary(&root, Some(&dir), JsString::from(root.as_str())));
         }
-        // Stable, like JS Array.sort: activity ties retain directory order.
+        // Stable, like JS Array.sort: activity ties retain UTF-8 byte directory order.
         projects.sort_by(|left, right| {
             let activity = |project: &JsValue| {
                 project

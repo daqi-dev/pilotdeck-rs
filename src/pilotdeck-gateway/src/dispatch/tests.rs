@@ -14,7 +14,10 @@ pub(crate) struct FixtureFiles {
 }
 impl Files for FixtureFiles {
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
-        self.directories.get(path).cloned().ok_or_else(missing)
+        let mut entries = self.directories.get(path).cloned().ok_or_else(missing)?;
+        // Injected filesystem facts obey the same Node readdir contract as NativeFiles.
+        entries.sort_by(|l, r| l.0.as_bytes().cmp(r.0.as_bytes()));
+        Ok(entries)
     }
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         self.data.get(path).cloned().ok_or_else(missing)
@@ -205,87 +208,135 @@ fn ordered_projects(entries: &[(&str, &str)]) -> Metadata<FixtureFiles> {
 }
 
 #[test]
-fn native_entries_preserve_os_read_dir_order() {
+fn native_entries_are_sorted_by_utf8_bytes() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let expected: Vec<_> = std::fs::read_dir(&path)
-        .unwrap()
-        .map(|entry| {
-            let entry = entry.unwrap();
-            (
-                entry.file_name().to_string_lossy().into_owned(),
-                entry.file_type().unwrap().is_dir(),
-            )
-        })
-        .collect();
-    assert_eq!(NativeFiles.entries(&path).unwrap(), expected);
+    let entries = NativeFiles.entries(&path).unwrap();
+    assert!(entries.len() > 1);
+    assert!(
+        entries
+            .windows(2)
+            .all(|pair| { pair[0].0.as_bytes() < pair[1].0.as_bytes() })
+    );
 }
 
 #[test]
-fn tied_projects_preserve_injected_readdir_order_instead_of_name_order() {
-    let metadata = ordered_projects(&[
+fn native_entries_match_node_mixed_name_byte_order() {
+    let path = std::env::temp_dir().join(format!(
+        "pilotdeck-readdir-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&path).unwrap();
+    for name in ["Beta", "ä", "middle", "zebra", "10", "_x", "alpha", "2"] {
+        if name == "_x" {
+            std::fs::create_dir(path.join(name)).unwrap();
+        } else {
+            std::fs::write(path.join(name), []).unwrap();
+        }
+    }
+    let entries = NativeFiles.entries(&path).unwrap();
+    std::fs::remove_dir_all(&path).unwrap();
+    // Hard-coded Node v22 / APFS readdirSync and promises.readdir oracle.
+    assert_eq!(
+        entries,
+        [
+            ("10", false),
+            ("2", false),
+            ("Beta", false),
+            ("_x", true),
+            ("alpha", false),
+            ("middle", false),
+            ("zebra", false),
+            ("ä", false),
+        ]
+        .map(|(name, directory)| (name.to_owned(), directory))
+    );
+}
+
+#[test]
+fn tied_projects_use_byte_order_regardless_of_injected_order() {
+    let entries = [
         ("z-storage", "/projects/zebra"),
         ("a-storage", "/projects/alpha"),
         ("m-storage", "/projects/middle"),
-    ]);
-    let result = metadata.list_projects();
-    let JsValue::Array(projects) = result.get("projects").unwrap() else {
-        panic!("projects array")
-    };
-    assert!(projects.iter().all(|project| {
-        project.get("sessionCount").and_then(JsValue::as_number) == Some(0.0)
-            && project.get("lastActivity").unwrap().is_undefined()
-    }));
-    let roots: Vec<_> = projects
-        .iter()
-        .map(|project| text_field(project, "fullPath").unwrap())
-        .collect();
-    assert_eq!(
-        roots,
-        ["/projects/zebra", "/projects/alpha", "/projects/middle"]
-    );
+    ];
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let metadata = ordered_projects(&order.map(|index| entries[index]));
+        let result = metadata.list_projects();
+        let JsValue::Array(projects) = result.get("projects").unwrap() else {
+            panic!("projects array")
+        };
+        assert!(projects.iter().all(|project| {
+            project.get("sessionCount").and_then(JsValue::as_number) == Some(0.0)
+                && project.get("lastActivity").unwrap().is_undefined()
+        }));
+        let roots: Vec<_> = projects
+            .iter()
+            .map(|project| text_field(project, "fullPath").unwrap())
+            .collect();
+        assert_eq!(
+            roots,
+            ["/projects/alpha", "/projects/middle", "/projects/zebra"]
+        );
+    }
 }
 
 #[test]
-fn duplicate_markers_use_first_readdir_match_for_storage_and_chats() {
-    let mut metadata = ordered_projects(&[
+fn duplicate_markers_use_first_byte_order_match_for_storage_and_chats() {
+    let entries = [
         ("z-collision", "/projects/shared"),
         ("a-collision", "/projects/shared"),
-    ]);
-    // Only the first entry has a visible session. Both storage birthtime and
-    // the chat catalog must select it, even though its name sorts last.
-    let chat = metadata.home.join("projects/z-collision/chats");
-    let transcript = br#"{"type":"session_metadata","metadata":{"title":"first"}}"#;
-    metadata
-        .files
-        .directories
-        .insert(chat.clone(), vec![("visible.jsonl".into(), false)]);
-    metadata
-        .files
-        .data
-        .insert(chat.join("visible.jsonl"), transcript.to_vec());
-    metadata.files.stats.insert(
-        chat.join("visible.jsonl"),
-        Stat {
-            directory: false,
-            size: transcript.len() as u64,
-            birth_ms: 0.0,
-            ctime_ms: 0.0,
-            mtime_ms: 1234.0,
-        },
-    );
-    let summary = metadata.describe_project(&"/projects/shared".into());
-    assert_eq!(
-        summary.get("createdAt").and_then(JsValue::as_number),
-        Some(1.0)
-    );
-    assert_eq!(
-        summary.get("sessionCount").and_then(JsValue::as_number),
-        Some(1.0)
-    );
-    assert_eq!(
-        summary.get("lastActivity").and_then(JsValue::as_number),
-        Some(1234.0)
-    );
+    ];
+    for order in [[0, 1], [1, 0]] {
+        let mut metadata = ordered_projects(&order.map(|index| entries[index]));
+        let storage = metadata.home.join("projects/a-collision");
+        metadata.files.stats.get_mut(&storage).unwrap().birth_ms = 42.0;
+        // Only the byte-order first entry has a visible session. Both storage
+        // birthtime and the chat catalog must select it in either injected order.
+        let chat = storage.join("chats");
+        let transcript = br#"{"type":"session_metadata","metadata":{"title":"first"}}"#;
+        metadata
+            .files
+            .directories
+            .insert(chat.clone(), vec![("visible.jsonl".into(), false)]);
+        metadata
+            .files
+            .data
+            .insert(chat.join("visible.jsonl"), transcript.to_vec());
+        metadata.files.stats.insert(
+            chat.join("visible.jsonl"),
+            Stat {
+                directory: false,
+                size: transcript.len() as u64,
+                birth_ms: 0.0,
+                ctime_ms: 0.0,
+                mtime_ms: 1234.0,
+            },
+        );
+        let summary = metadata.describe_project(&"/projects/shared".into());
+        assert_eq!(
+            summary.get("createdAt").and_then(JsValue::as_number),
+            Some(42.0)
+        );
+        assert_eq!(
+            summary.get("sessionCount").and_then(JsValue::as_number),
+            Some(1.0)
+        );
+        assert_eq!(
+            summary.get("lastActivity").and_then(JsValue::as_number),
+            Some(1234.0)
+        );
+    }
 }
 
 fn files_from_case(case: &JsValue) -> FixtureFiles {
