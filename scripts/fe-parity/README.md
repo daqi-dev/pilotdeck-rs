@@ -6,7 +6,7 @@
 
 ## 依赖与源码构建
 
-从worktree根运行。`BASELINE_UI`可指向只读基线ui目录；默认向祖先搜索ui/或resources/PilotDeck/ui。本PR复用基线**现有**node_modules中的Vite、ws、Playwright、xterm；未装新JS包。缺依赖时先由协调者准备有lockfile的worktree源码副本，采用 `npm ci --ignore-scripts --prefix <目录>`，不能写只读基线、伪造lockfile或下载Playwright浏览器。
+从worktree根运行。`BASELINE_UI`可指向只读基线ui目录；默认向祖先搜索ui/或resources/PilotDeck/ui。runner 在用例发现、self-check、报告对账和服务启动之前，要求该目录为 Git 仓库的实际 `ui/`，HEAD 精确等于清单中的 `baselineCommit`（`cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`）；不匹配、无法读取 Git、tracked 源码相对 HEAD 有改动、e2e 下有未跟踪源码均拒绝。校验结果写入 `result.json.baseline`。不能用父仓库 HEAD 为随意复制的 ui 背书。本PR复用基线**现有**node_modules中的Vite、ws、Playwright、xterm；未装新JS包。缺依赖时先由协调者准备有lockfile的worktree源码副本，采用 `npm ci --ignore-scripts --prefix <目录>`，不能写只读基线、伪造lockfile或下载Playwright浏览器。
 
 旧构建不调用会生成源码的npm prebuild；使用已经生成的基线composition源码，Vite configLoader=runner，构建/缓存只写本worktree。输出包含原版业务模块，未使用exp007的孤立React测试页；mock明确构建OSS模式并启用本地认证（PILOTDECK_DISABLE_LOCAL_AUTH=0 / VITE_IS_PLATFORM=false），不继承平台.env。
 
@@ -36,6 +36,10 @@ node scripts/fe-parity/run.mjs --suite skeleton --frontends old,new
 node scripts/fe-parity/run.mjs --reconcile
 # 后续完整基线报告对账：须为不同文件，声明 config.forbidOnly 与 frontend/baseURL 来源，无重试/重复项目结果。
 node scripts/fe-parity/run.mjs --reconcile --old-report <old.json> --new-report <new.json>
+# 合并多个 profile 的完整报告，再核对两侧最终 skip 集合：
+node scripts/fe-parity/run.mjs --reconcile \
+  --old-report <old-staffdeck.json> --old-report <old-minimal.json> --old-report <old-replacement.json> \
+  --new-report <new-staffdeck.json> --new-report <new-minimal.json> --new-report <new-replacement.json>
 ```
 
 输出默认 `_tmp/fe-parity/run-<随机后缀>/`；可用 `--output _tmp/fe-parity/<本次目录>` 指定，拒绝worktree外路径。含实时注册原件、各侧Playwright JSON/日志、逐例表和result.json。profile单独留 `_tmp/fe-parity/profiles/`。指定的输出目录若已存在立即拒绝（EEXIST），不覆盖/清理人的证据；重跑请用新输出目录。
@@ -52,13 +56,25 @@ self-check验证注册、进程内mock handlers、单端与双端对账正负例
 
 **实际执行数必须 ≥ 注册数 − 本次注册中命中身份清单的数量**：当前72−9=63。三例 skeleton 与清单无交集，因此最低执行数仍是3。清单内用例允许正常执行，不要求skip；全执行时应执行72，9例合法skip时应执行63。缺失报告/NOT_RUN不算显式skip，仍需72例。身份清单不由报告、环境变量或CLI扩展；任何增删/更名都必须提交清单diff与逐条基线源码依据，经评审后才能生效。
 
-skip 理由仍需满足固定白名单（**理由命中不能替代身份许可**；精确匹配，只允许一个 `type: "skip"` annotation，不接受空白变体、拼接或自由文本）：
+skip 必须只有一个 `type: "skip"` annotation，其字符串 description **逐字等于该身份 `skipReasons[].description` 中的一项**；理由命中不能替代身份许可，也不能借用另一个已获准身份的理由。每条理由的 `source` 回指基线 `test.skip` 的路径:行号。以下全部是冻结源码中的字符串字面量，无理由模板；formal-route 的 `${profile}` 是**标题**模板，不是理由模板。`beforeEach` 的 URL 门控先执行，缺环境时中断后续 profile 检查；文件级 skip 同样阻止进入测试体，所以这些原文理由是备选值，不拼接。其他 annotation 类型不影响匹配，多条 skip annotation、空白变体、改一个字或旧的人造理由 `deployment profile not applicable` 均 FAIL。
 
-| description | 允许语义 |
+| 绑定身份（缩写，完整身份见 JSON） | 原文 description 与基线来源 |
 |---|---|
-| `deployment profile not applicable` | 用例只适用于本次未选中的部署/profile；必须在 old/new 同一注册身份上同时不适用。缺环境、功能未实现、下一PR再跑均不得使用此理由。 |
+| formal Knowledge / SOP lifecycle / SOP+Skills（三例分别绑定） | `Set FORMAL_COMPOSITION_URL to run against a formal Web+StaffDeck deployment.`（`ui/e2e/formal-composition.spec.mjs:6`）；`Replacement profile only runs its conformance workflow.`（`:8`） |
+| formal replacement Knowledge | 同文件 `:6` 的 URL 理由；`Replacement conformance requires FORMAL_REPLACEMENT=1.`（`:9`） |
+| formal undefined routes | `Set FORMAL_ROUTE_PROFILE and FORMAL_COMPOSITION_URL for a formal route-matrix run.`（`ui/e2e/formal-route-matrix.spec.mjs:5`） |
+| authenticated StaffDeck | `Set REAL_COMPOSITION_URL and REAL_COMPOSITION_PROFILE for an authenticated composition run.`（`ui/e2e/real-auth-composition.spec.mjs:7`）；`StaffDeck acceptance only.`（`:53`） |
+| authenticated minimal | 同文件 `:7` 的 URL/profile 理由；`Minimal-profile acceptance only.`（`:135`） |
+| authenticated replacement | 同文件 `:7` 的 URL/profile 理由；`Replacement-profile acceptance only.`（`:151`） |
+| native Settings | `Set REAL_NATIVE_URL for the local authenticated native-profile acceptance run.`（`ui/e2e/real-auth-native.spec.mjs:4`） |
 
-两侧 **SKIP 身份集合（file + 完整展开 title）必须完全相等**；skip 数量相等但身份不同也 FAIL。两侧72例全SKIP、单侧72例全SKIP、两侧同一清单外身份SKIP，即便全部使用获准理由，也必须FAIL；self-check分别覆盖这三条反例。身份清单内用例在两侧均执行可以PASS，原有双侧skip身份一致要求继续生效。理由政策变更同样需要评审，并同步本文件和 `accounting.mjs`。
+缺环境触发的**基线原文** skip 允许对账通过，但只代表未执行该用例，结果仍显式列 SKIP；不能据此宣称该部署行为已验收。清单与理由变更须提交源码依据并评审。
+
+两侧 **合并后 SKIP 身份集合（file + 完整展开 title）必须完全相等**；skip 数量相等但身份不同也 FAIL。两侧72例全SKIP、单侧72例全SKIP、两侧同一清单外身份使用原文理由SKIP均 FAIL。self-check 对16条身份/理由绑定逐条验证原文正例、改单字反例、清单外身份与跨身份借用理由反例。
+
+**多 profile 合并规则已实现**：重复 `--old-report` / `--new-report`，每份必须是同一注册清单的**完整报告**（当前72例）；每份内仍只允许每个身份一个结果和一次尝试，不接受分片、重试、重复项目。先逐份验证注册身份、理由、状态、forbidOnly 与来源，再按身份合并：任一 profile 执行就计一次执行；所有 profile 都合法 skip 才扣除一次。跨 profile 多次执行不增加分母或执行数。任一报告的失败、超时、xfail、interrupted、缺例、非法 skip 或 report errors 都保留为 FAIL，其他 profile 的 PASS 不能掩盖。`result.json` 保存各份 `profiles` 账目及各身份 `observations`，两侧在合并后比较 skip 集合。每份原件（含同侧）必须不同，别名/硬链接重复输入也拒绝。
+
+合并不会重命名身份：`FORMAL_ROUTE_PROFILE` 非空会把历史 `formal undefined ...` 标题改为具体 profile，仍触发注册漂移/未知身份拒绝。合并支持当前固定身份的互斥用例；正式 route 矩阵的注册口径与部署编排仍按下一 PR 的独立评审处理，不能为了合并自动归一化标题。
 
 报告来源由执行时的 Playwright config 写入，`browser.config.mjs` 已自动设置；接入完整基线套件时也必须在实际使用的 config 中设置：
 

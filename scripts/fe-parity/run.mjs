@@ -5,13 +5,14 @@ import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { baseline, root, requireUI, historicalInventory, ownedPath, origin } from './env.mjs';
 import { reportCases, checkInventory, reconcilePair, loadReportPair } from './accounting.mjs';
+import { verifyBaseline } from './baseline.mjs';
 import { selfCheck } from './self-check.mjs';
 import { startMock, TOKEN } from './mock.mjs';
 import { startFrontend } from './serve.mjs';
 const { values } = parseArgs({ options: {
   help: { type: 'boolean' }, 'self-check': { type: 'boolean' }, 'network-self-check': { type: 'boolean' },
   reconcile: { type: 'boolean' }, suite: { type: 'string', default: 'skeleton' },
-  frontends: { type: 'string', default: 'old,new' }, 'old-report': { type: 'string' }, 'new-report': { type: 'string' },
+  frontends: { type: 'string', default: 'old,new' }, 'old-report': { type: 'string', multiple: true }, 'new-report': { type: 'string', multiple: true },
   output: { type: 'string' },
 } });
 if (values.help) {
@@ -24,7 +25,7 @@ if (values.help) {
 Always discovers baseline ui/e2e with --list --forbid-only, compares exp007's 72 registrations.
 Skeleton = 3 new auth/transport cases against one mock, actual old Vite / Leptos probe.
 Skeleton cannot cover the 72 baseline cases: full reconciliation remains FAIL (exit 1).
---reconcile requires distinct old/new reports with matching frontend/baseURL metadata and identical whitelisted skips.
+--reconcile requires distinct old/new reports with matching frontend/baseURL metadata and identical merged skip sets. Repeat report flags for complete profile runs.
 --self-check does not listen or launch Chrome, fails if static assets are absent.
 All generated reports/profiles/screenshots live under this worktree _tmp/fe-parity.
 Ports: mock 28376 / old 28377 / new 28378, bind only 127.0.0.1.
@@ -69,6 +70,8 @@ function table(inventory, accounts) {
 }
 const result = { scope: values['self-check'] ? 'offline-self-check' : values['network-self-check'] ? 'network-self-check' : values.reconcile ? 'baseline-reconcile' : 'skeleton-double-run', output, startedAt: new Date().toISOString(), status: 'FAIL' };
 try {
+  result.baseline = await verifyBaseline(baseline);
+  console.log(`基线 commit: ${result.baseline.head}; clean tracked source`);
   const listed = await command(['test', '--config', resolve(root, 'scripts/fe-parity/inventory.config.mjs'), '--list', '--forbid-only', '--reporter=json']);
   await writeFile(resolve(output, 'inventory.raw.json'), listed.stdout);
   await writeFile(resolve(output, 'inventory.stderr.log'), listed.stderr);
