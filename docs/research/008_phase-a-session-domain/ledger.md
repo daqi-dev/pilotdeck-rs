@@ -13,6 +13,8 @@ status: 静态账本完成；未闭合依赖显式 BLOCKED
 
 **口径（自决·待复核）**：账本是**规划索引**。下游 A6/A7/A8 每个 PR 动手前必须复核所涉 method 的 provider/state/guard/error，并回写账本。校验器负责结构完整（集合、行号、领域码扫描、默认构造点）；单项语义细节由下游复核兜底，后续同类细节漏写按 P2 处理。
 
+**校验器防护边界（协调者裁定，自决·待复核）**：校验器防诚实的错误，包括遗漏、锚点过时、归属错误、解析错位导致漏码；不防刻意构造的绕过，例如故意伪造 origin 的虚构码。构造型绕过记 P2；本轮之后，若评审只剩构造型绕过，则按此边界收敛。真实漏码或观察到非法产码值仍须 FAIL，不因这条边界降级。
+
 **「默认」的唯一定义**：`B/src/cli/pilotdeck.ts:107`–`B/src/cli/pilotdeck.ts:116` 的 `createLocalGateway` 调用，只传 projectRoot/pilotHome/env/fallbackProjectRoot/initialAutomation/telemetry/sessionCatalog/sessionDataPlane。userDialogStore、alwaysOnStorageProvider、executionWorldBundleFactory 等宿主可选注入不算默认。provider 的默认声明必须有从此根追到的装配证据；仅有接口或测试构造不能作默认构造点。
 
 ## 分母与状态
@@ -195,7 +197,7 @@ python3 scripts/gateway-coverage/check_ledger.py
 
 ## 第 5 轮：校验器剩余结构缺口（2026-10-14）
 
-动态分支现在同时核验 **code 形态和 origin**。`dynamic:true` 仅接受非空、无空白的 `<…>` 占位、`N/A`、`ERR_[A-Z0-9]+(?:_[A-Z0-9]+)*`；普通大写常量必须走静态字面量核验，不能借 dynamic 逃逸。`origin.expression` 必须逐字等于所引源码行去首尾空白后的全文，或等于同一个已扫描范围中实际产码 AST 节点的源码，且 origin 行落在该节点跨度内。AST 节点来自 code 属性/字段/getter/赋值、带 code 的 Error 构造参数、继承 super 参数及已解析工厂的 code 参数；单字符子串、任意括号与不在 origin 行的表达式均 FAIL。
+动态分支现在同时核验 **code 形态和 origin**。`dynamic:true` 仅接受非空、无空白的 `<…>` 占位、`N/A`、`ERR_[A-Z0-9]+(?:_[A-Z0-9]+)*`；普通大写常量必须走静态字面量核验，不能借 dynamic 逃逸。`origin.expression` 必须逐字等于所引源码行去首尾空白后的全文，或等于同一个已扫描范围中实际产码 AST 节点的源码，且 origin 行落在该节点跨度内。第6轮进一步要求整行 origin 必须包含产码 AST 节点，ERR_* 必须有 Node constants 或该 method 源码字面量证据。AST 节点来自 code 属性/字段/getter/赋值、带 code 的 Error 构造参数、继承 super 参数及已解析工厂的 code 参数；单字符子串、任意括号与不在 origin 行的表达式均 FAIL。
 
 默认装配根严格取 `B/src/cli/pilotdeck.ts:107`–`B/src/cli/pilotdeck.ts:116`，不取该文件稍后的其他 `createLocalGateway` 调用。旧 `default_boot` 误取 `B/src/cli/pilotdeck.ts:347` 的 fallback，本轮修正。装配分析沿真实调用、传入/返回的具体回调、已构造实例的构造函数/字段初始化，保守展开条件分支；CLI 构造并返回的 InProcessGateway RPC handler 是运行时入口，继续追其懒创建路径。构造 site 与函数绑定迭代到有限图的不动点；构造参数只解引用已从此根发现的 sites。全 src 存在 `new`、其他 factory 的注入或没有被调用的函数中的 `new` 均不能成为默认构造证据。默认可达范围禁止 `optional:true`；默认图外的 provider 范围须标 `optional_host` + `optional:true`，保留其补充证据。
 
@@ -278,3 +280,52 @@ python3 scripts/gateway-coverage/check_ledger.py
 | `set_session_thinking` | 15 | 15, 16 |
 
 本轮账本仍为 101 项、46 READY / 55 BLOCKED，method–范围关联仍 16,816；仅必要的默认 metadata、optional 标记、消息误记及失去引用的 source_files 改动。完整逐项差异、对第3轮的严格展开对照与验证命令见 `_tmp/RESULT.md`「第5轮」及其 JSON 附件。GLM 第3轮已给出「无 P0/P1」，其三项 P2 留作下游复核。
+
+## 第 6 轮：按回源形参定位错误码（2026-10-14）
+
+第5轮按工厂函数名固定取参数存在真实漏码：`failure` 在 `B/src/composition/publicApprovalBridge.ts:20` 的签名为 `(status, code)`，但在 `B/src/pilot/staffdeck/projectBinding.ts:20` 为 `(code, message, status)`。旧逻辑把后者 `B/src/pilot/staffdeck/projectBinding.ts:49`、`:51` 的 message 当作码，再经形态过滤丢弃，导致缺失 `PROJECT_BINDING_STORE_INVALID` 仍 PASS。第5轮仅删除消息误记记录，未修正这一漏码；本轮予以更正。
+
+现在回源到被调函数的声明，按 `code` / `errorCode` / `error_code` 形参名确定位置，同时核定其函数体是否将该参数写到 code 属性、赋值给 code 字段、传给带码 Error 构造函数或继续传给已发现的产码工厂。包装工厂迭代到不动点；消费者如 `isErrno(error, code)` 不作为工厂。码提取与动态 origin 共用同一参数位置，不再维护按名字固定下标的名单。同名 `controlError` 的 code 位于第1或第3参数、`makeError(message, code)`、`parseError(status, code, message)` 也按真实声明处理。生产调用图源码发现40个带码参数的声明（含构造函数、诊断/结果工厂及 process status 回调），清单见 `_tmp/round6-factory-inventory.json`。另用同一形参定位规则扫描图外 UI/skills 的 668 个源码文件，发现28个额外声明，包括 failure(status, code, message)、fail(message, status, code)、previewError(message, statusCode, code) 和 spreadsheets 的 blocked/unsupported；均在 RPC 调用图外，不增加8跳必需范围或 method 错误码。补充排查清单见 `_tmp/round6-full-factory-audit.json`。
+
+产码位置观察到的字符串、数字、布尔或 null 字面量都经过同一规则：符合码形态的字符串登记为码；其余写入 `invalid_code_literals`，在 method 的默认8跳、补充范围或共同 WS 边界内即报 `invalid_produced_code`，不再静默过滤。动态表达式只记录产码节点，不臆造其运行时值。必需参数缺失同样 FAIL；可选参数未提供表示未观察到产码值。豁免是校验器中的精确文件/行/值清单，账本不能自行追加：
+
+| 文件与行 | 精确值 | 理由 |
+|---|---|---|
+| `B/src/cli/ProjectMemoryMaintenanceController.ts:94` | `UnknownError` | maintenance catch 将 Error.name / UnknownError 记入遥测标签，不产生 RPC/领域码 |
+| `B/src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts:184` | `null` | ExitStatus.code 是进程退出状态；启动失败时为 null |
+| `B/src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs:127` | `127` | FunASR launcher status.code 是进程退出状态 |
+
+第一项位于 submit_turn 的已扫描范围，另外两项是全仓排查发现的非领域 code 字段。换值或换位置不能继承豁免。数字 JSON-RPC code 等图外观察仍在源码图中保留诊断，不冒充已扫描 method 的错误。
+
+`dynamic:true` 的 `ERR_*` 除形态外，还必须在 Node `os.constants.errno` / `require('constants')` 中存在，或在该 method 的独立源码字面量池（含共同 WS 边界）中出现。整行 origin 也必须包含实际产码 AST 节点，任意 return/call 行不再足以作产码证据。由此将 session_model_clear 的 `ERR_INVALID_ARG_TYPE` 改为 `<error.code>` 占位，保留缺 projectKey 时 path.resolve(undefined) 的说明，origin 改到 WS `B/src/gateway/server/GatewayWsConnection.ts:233` 的 `error.code` 节点；user_dialog_release 的宿主 store 异常也锚定此实际输出节点。五条 `N/A` 不是产码，移除 dynamic 标记，按 `no_domain_error` 注释核验原始 return AST 及所在函数无直接领域码。
+
+### 补登的真实漏码
+
+共补登 **137种码、1,768条 method–error 记录**；46个 method 有错误记录或注释修订，其中40项补码。均来自原有独立范围，不扩大8跳或增加扫描范围；记录 `observed:lexical`，捕获、转换及最终传播仍交下游复核。`PROJECT_BINDING_STORE_INVALID` 补到9项：submit_turn、memory_list、memory_wipe、model_catalog_list、session_model_get、session_model_set、update_settings、reload_config、reload_extensions。九项逐一删码均必须 FAIL。
+
+下表逐项列出137种码，按首个产码锚点的源文件分组；一个码有多处来源时完整锚点仍以账本为准。
+
+| 产码来源 | 新增码（逐项） |
+|---|---|
+| `B/src/agent/loop/AgentLoop.ts` | `agent_context_recovery_failed`、`agent_max_turns_reached`、`agent_model_error`、`agent_prompt_too_long`、`agent_tool_error_loop`、`agent_unsupported_feature` |
+| `B/src/agent/modules/protocol.ts` | `INVALID_ACK_REQUEST`、`INVALID_CANCEL_REQUEST`、`INVALID_ERROR`、`INVALID_EVENT_FIELD`、`INVALID_EXECUTE_FIELD`、`INVALID_HANDSHAKE_REQUEST`、`INVALID_KIND`、`INVALID_MESSAGE`、`INVALID_METHOD`、`INVALID_MODULE`、`INVALID_MODULE_CALL_FIELD`、`INVALID_OUTCOME`、`INVALID_RESPONSE`、`INVALID_RESUME_REQUEST`、`INVALID_STATUS_REQUEST`、`MISSING_EVENT_FIELD`、`MISSING_EXECUTE_FIELD`、`MISSING_MESSAGE_ID`、`MISSING_MODULE_CALL_FIELD`、`MISSING_OUTCOME`、`UNSUPPORTED_FIELD` |
+| `B/src/agent/turn/TurnRunner.ts` | `agent_transcript_error` |
+| `B/src/extension/hooks/execution/HookRuntime.ts` | `hook_cancelled`、`hook_non_blocking_error` |
+| `B/src/extension/skills/SkillManager.ts` | `contains_symlink`、`description_long`、`description_short`、`file_large`、`file_too_large`、`frontmatter_compat_fallback`、`frontmatter_missing`、`frontmatter_missing_description`、`frontmatter_missing_name`、`no_skill_md`、`risky_extension`、`source_missing`、`source_not_directory`、`too_many_files`、`total_too_large`、`unsafe_path` |
+| `B/src/gateway/client/GatewayManualCompactionCoordinator.ts` | `manual_compaction_failed` |
+| `B/src/pilot/config/parseModulesConfig.ts` | `MODULES_INVALID`、`MODULES_UNKNOWN_FIELD`、`MODULE_ARGS_INVALID`、`MODULE_AUTHENTICATED_KNOWLEDGE_BINDING_INVALID`、`MODULE_BINDING_CONFLICT`、`MODULE_CALL_PATH_INVALID`、`MODULE_COMMAND_INVALID`、`MODULE_CONTRACT_INVALID`、`MODULE_CONTRACT_UNSUPPORTED`、`MODULE_CORE_BINDING_REQUIRED`、`MODULE_CREDENTIAL_ENV_INVALID`、`MODULE_DEPLOYMENT_CONTEXT_INVALID`、`MODULE_DEPLOYMENT_DOCKERFILE_INVALID`、`MODULE_DEPLOYMENT_HEALTH_PATH_INVALID`、`MODULE_DEPLOYMENT_IMAGE_INVALID`、`MODULE_DEPLOYMENT_INVALID`、`MODULE_DEPLOYMENT_MODE_INVALID`、`MODULE_DEPLOYMENT_PORT_INVALID`、`MODULE_ENABLED_INVALID`、`MODULE_ENDPOINT_INVALID`、`MODULE_ENV_INVALID`、`MODULE_HOST_INVALID`、`MODULE_IMPLEMENTATION_ID_INVALID`、`MODULE_INVALID`、`MODULE_MANIFEST_PATH_INVALID`、`MODULE_METHODS_INVALID`、`MODULE_PORT_INVALID`、`MODULE_PROVIDER_UNSUPPORTED`、`MODULE_STATE_MODE_UNSUPPORTED`、`MODULE_TIMEOUT_INVALID`、`MODULE_TOOL_CATALOG_INVALID`、`MODULE_TOOL_CATALOG_REQUIRED`、`MODULE_TRANSPORT_INVALID`、`MODULE_UNKNOWN_FIELD`、`SOP_DISCOVERY_AGENT_ID_INVALID`、`SOP_DISCOVERY_API_KEY_INVALID`、`SOP_DISCOVERY_ENDPOINT_INVALID`、`SOP_DISCOVERY_TIMEOUT_INVALID`、`SOP_MODULE_BINDING_CONFLICT`、`SOP_MODULE_CONTEXT_MODE_INVALID`、`SOP_MODULE_CONTRACT_UNSUPPORTED`、`SOP_MODULE_DEFAULT_ID_INVALID`、`SOP_MODULE_DEFINITIONS_PATH_INVALID`、`SOP_MODULE_ENABLED_INVALID`、`SOP_MODULE_ENDPOINT_INVALID`、`SOP_MODULE_IMPLEMENTATION_ID_INVALID`、`SOP_MODULE_INVALID`、`SOP_MODULE_MANIFEST_PATH_INVALID`、`SOP_MODULE_PROVIDER_INVALID`、`SOP_MODULE_TIMEOUT_INVALID`、`SOP_MODULE_TRANSPORT_UNSUPPORTED` |
+| `B/src/pilot/config/parseRunPolicyConfig.ts` | `RUN_POLICY_FAILURE_GUARD_ENABLED_INVALID`、`RUN_POLICY_FAILURE_GUARD_INVALID`、`RUN_POLICY_FAILURE_GUARD_MODEL_LIMIT_INVALID`、`RUN_POLICY_FAILURE_GUARD_TOOL_LABELS_INVALID`、`RUN_POLICY_FAILURE_GUARD_TOOL_LABEL_INVALID`、`RUN_POLICY_FAILURE_GUARD_TOOL_LABEL_KEY_INVALID`、`RUN_POLICY_FAILURE_GUARD_TOOL_LIMITS_INVALID`、`RUN_POLICY_FAILURE_GUARD_TOOL_LIMIT_INVALID`、`RUN_POLICY_FAILURE_GUARD_TOOL_LIMIT_KEY_INVALID`、`RUN_POLICY_INVALID` |
+| `B/src/pilot/config/parseToolsConfig.ts` | `TOOLS_WEB_SEARCH_CUSTOM_AUTH_INVALID`、`TOOLS_WEB_SEARCH_CUSTOM_METHOD_INVALID`、`TOOLS_WEB_SEARCH_ENGINE_INVALID` |
+| `B/src/pilot/staffdeck/projectBinding.ts` | `PROJECT_BINDING_STORE_INVALID` |
+| `B/src/session/events/SessionDomainValidation.ts` | `context_after_model_request`、`duplicate_context_snapshot`、`duplicate_model_request`、`duplicate_tool_call`、`duplicate_turn_start`、`event_outside_turn`、`instructions_after_model_request`、`invalid_compaction`、`invalid_goal`、`invalid_inbox_mutation`、`invalid_permission`、`invalid_plan_todo`、`invalid_question`、`invalid_step`、`model_request_missing`、`step_already_open`、`step_has_open_tool_calls`、`step_not_open`、`tool_result_without_call`、`turn_has_open_step`、`turn_has_pending_compaction`、`turn_has_pending_inbox`、`turn_has_pending_permission`、`turn_has_pending_question` |
+| `B/src/tool/builtin/filesystem/pathSafety.ts` | `path_not_allowed` |
+
+逐 method 新增码、所有产码锚点、七条注释修订及数量见 `_tmp/round6-ledger-changes.json`；全量验证、独立CLI负例和展开差异证明见 `_tmp/RESULT.md`「第6轮」。默认根、route/provider/构造点、函数边界/调用边、状态、owner、场景与全部非错误字段保持一致。账本仍101项、46 READY / 55 BLOCKED、16,816个 method–范围关联、2,608个不同范围；错误记录变为6,352条，文件1,498,284字节，compact往返逐字节一致。
+
+### 第7轮：unconfigured 分支同规则核验
+
+`branches.error` 与 `branches.unconfigured` 现在共用字面量、dynamic 形态/origin、`N/A` 返回 AST 核验；失败路径精确到分支索引。未配置分支的虚构码或英文消息同样 FAIL。整行 dynamic origin 拒绝 `//`、`/*`、`*` 开头的注释，即使其文字包含产码表达式。
+
+WS 可选 method 的拒绝码也必须有独立来源：源码图仅提取当前 RPC 对应 case 的合法字面量，加入该 method 的字面量池；不把其他 case 的码或调用边并入 provider 扫描。默认构造、范围、8跳边界及 error 覆盖要求不变。permission_list、hook_async_result、supported_agents、user_dialog_list/claim/release 的 CAPABILITY_UNAVAILABLE 确在各自 WS case 中产生，因此保留；未用虚构替代码或放宽动态规则。
+
+回源修正15条 unconfigured 结果注释：10条既有 N/A 补返回证据；list_sessions 的 fallback、record_agent_status_message 的 recorded:false、active_turn_snapshot 的 active:false 改为有返回 AST 的 N/A；set_permission_mode 的 applied:true 改为 WS 缺 method 时实际返回的 CAPABILITY_UNAVAILABLE；user_dialog_respond 的无配置 N/A 改为缺 live dialog 时恢复/确认返回的 gateway_restarted。逐条旧值、新值与源码锚点见本轮 `_tmp/RESULT.md` 和 `_tmp/round7-ledger-changes.json`。N/A 只证明所引返回所在函数无直接领域码，不宣称所有下游调用无错。

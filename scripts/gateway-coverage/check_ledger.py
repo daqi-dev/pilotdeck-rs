@@ -29,6 +29,17 @@ SOURCE_MENTION = re.compile(r'(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:tsx?|mts|
                             r'(?::[^\s，。；、）)\]}`]+)?')
 UNCONFIGURED = {'CAPABILITY_UNAVAILABLE', 'not_configured', 'SKILL_MODULE_DISABLED', 'unsupported'}
 DYNAMIC_CODE = re.compile(r'(?:<[^<>\s]+>|N/A|ERR_[A-Z0-9]+(?:_[A-Z0-9]+)*)')
+# Exact source/value exceptions, reviewed independently of ledger authors.
+# This field is a telemetry label (Error.name), not an RPC/domain code.
+CODE_LITERAL_EXEMPTIONS = {
+    ('src/cli/ProjectMemoryMaintenanceController.ts', 94, 'UnknownError'):
+        'Memory maintenance catch reports Error.name / UnknownError to telemetry; it does not emit a domain code.',
+    ('src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts', 184, 'null'):
+        'ExitStatus.code is a process exit number or null on startup failure, not a domain error code.',
+    ('src/extension/plugins/builtin/funasr/funasr-local-mcp.mjs', 127, '127'):
+        'FunASR launcher status.code is a process exit number, not a domain error code.',
+}
+
 
 
 def beyond_depth(entries, graph):
@@ -127,6 +138,13 @@ def string_list(value, nonempty=False):
     return (isinstance(value, list) and (bool(value) or not nonempty)
             and all(isinstance(x, str) and x.strip() for x in value)
             and len(value) == len(set(value)))
+
+
+def producing_line_origin(expression, source_line, node, number):
+    return (not expression.lstrip().startswith(('//', '/*', '*'))
+            and expression == source_line.strip()
+            and node['start'] == node['end'] == number
+            and node['expression'] in expression)
 
 
 def load_inputs():
@@ -444,13 +462,23 @@ def validate(data, baseline, inputs, graph=None):
             for function in scanned.values():
                 scanned_codes.update(x['code'] for x in function['errors'])
                 literals.update(x['value'] for x in function['literals'])
+                for invalid in function.get('invalid_code_literals', []):
+                    key = (function['file'], invalid['line'], invalid['code'])
+                    if key not in CODE_LITERAL_EXEMPTIONS:
+                        fail('invalid_produced_code', where, dict(invalid, file=function['file']))
                 if function['unknown_errors']:
                     fail('unknown_error_class', where, function['unknown_errors'])
             # The common, independently bounded WS response boundary supplies
             # transport literals/origins, without attributing every WS switch
             # branch to every method's provider domain errors.
             scanned[transport['id']] = transport
+            for invalid in transport.get('invalid_code_literals', []):
+                if (transport['file'], invalid['line'], invalid['code']) not in CODE_LITERAL_EXEMPTIONS:
+                    fail('invalid_produced_code', where, dict(invalid, file=transport['file']))
             literals.update(x['value'] for x in transport['literals'])
+            # Only this RPC's independently parsed WS case, never another
+            # method's switch branch, supplies optional-method result literals.
+            literals.update(graph['ws_branch_literals'].get(method, []))
             domain = scanned_codes - UNCONFIGURED
             if domain and recorded_codes.issubset(UNCONFIGURED | {'N/A', 'gateway_request_failed'}):
                 fail('provider_domain_errors', where, {'missing_domain_codes': sorted(domain - recorded_codes)})
@@ -458,29 +486,48 @@ def validate(data, baseline, inputs, graph=None):
                 fail('error_code_coverage', where, {'missing_scanned_codes': sorted(scanned_codes - recorded_codes)})
             # Reverse inclusion rejects invented codes. Nonliteral codes/results
             # require a precise producing expression inside a scanned function.
-            for j, branch in enumerate(branches.get('error', [])):
-                code = branch.get('code')
-                if branch.get('dynamic') is True:
-                    if not isinstance(code, str) or not DYNAMIC_CODE.fullmatch(code):
-                        fail('dynamic_code_shape', f'{where}.branches.error[{j}]',
-                             'dynamic code must be <placeholder>, N/A or ERR_*')
-                    origin = branch.get('origin', {})
-                    refs = origin.get('refs', [])
-                    if not string_list(refs, True) or not isinstance(origin.get('expression'), str) or not origin['expression'].strip():
-                        fail('dynamic_code_origin', where, 'dynamic code requires producing refs and expression')
-                    else:
-                        for ref in refs:
-                            match = REF.fullmatch(ref)
-                            if not match or not any(f['file'] == match[1] and f['start'] <= int(match[2]) <= f['end'] for f in scanned.values()):
-                                fail('dynamic_code_origin', where, 'origin outside independently scanned functions: ' + str(ref))
-                            elif not (origin['expression'] == lines(match[1])[int(match[2]) - 1].strip() or
-                                      any(p['expression'] == origin['expression'] and
-                                          p['start'] <= int(match[2]) <= p['end']
-                                          for f in scanned.values() if f['file'] == match[1]
-                                          for p in f.get('code_expressions', []))):
-                                fail('dynamic_code_origin', where, 'expression must equal the whole origin line or producing AST node: ' + ref)
-                elif code not in literals:
-                    fail('invented_error_code', f'{where}.branches.error[{j}]', {'code': code})
+            for kind in ('error', 'unconfigured'):
+                for j, branch in enumerate(branches.get(kind, [])):
+                    location = f'{where}.branches.{kind}[{j}]'
+                    code = branch.get('code')
+                    if branch.get('dynamic') is True:
+                        if (not isinstance(code, str) or not DYNAMIC_CODE.fullmatch(code) or
+                                code.startswith('ERR_') and code not in graph['node_errno'] and code not in literals):
+                            fail('dynamic_code_shape', location,
+                                 'dynamic code must be <placeholder>, N/A, or a source literal / Node constants ERR_* key')
+                        origin = branch.get('origin', {})
+                        refs = origin.get('refs', [])
+                        if not string_list(refs, True) or not isinstance(origin.get('expression'), str) or not origin['expression'].strip():
+                            fail('dynamic_code_origin', location, 'dynamic code requires producing refs and expression')
+                        else:
+                            for ref in refs:
+                                match = REF.fullmatch(ref)
+                                if not match or not any(f['file'] == match[1] and f['start'] <= int(match[2]) <= f['end'] for f in scanned.values()):
+                                    fail('dynamic_code_origin', location, 'origin outside independently scanned functions: ' + str(ref))
+                                elif not any(p['start'] <= int(match[2]) <= p['end'] and
+                                             (p['expression'] == origin['expression'] or
+                                              producing_line_origin(origin['expression'],
+                                                                    lines(match[1])[int(match[2]) - 1],
+                                                                    p, int(match[2])))
+                                             for f in scanned.values() if f['file'] == match[1]
+                                             for p in f.get('code_expressions', [])):
+                                    fail('dynamic_code_origin', location, 'expression must equal a producing AST node or a whole line containing that node: ' + ref)
+                    elif code == 'N/A':
+                        # Absence of a domain error is a result annotation, never a
+                        # dynamic code production. Verify its original return AST.
+                        origin = branch.get('origin', {})
+                        refs = origin.get('refs', [])
+                        if (origin.get('kind') != 'no_domain_error' or not string_list(refs, True) or
+                                not all(REF.fullmatch(ref) and any(
+                                    f['file'] == REF.fullmatch(ref)[1] and not f['errors'] and
+                                    any(p['start'] == int(REF.fullmatch(ref)[2]) and
+                                        (p['expression'] == origin.get('expression') or
+                                         lines(f['file'])[p['start'] - 1].strip() == origin.get('expression'))
+                                        for p in f.get('result_expressions', []))
+                                    for f in scanned.values()) for ref in refs)):
+                            fail('non_error_result', location, 'N/A requires an independently scanned return without direct domain errors')
+                    elif code not in literals:
+                        fail('invented_error_code', location, {'code': code})
             tags = set()
             if any(f['class'] == 'InProcessGateway' and f['symbol'] == 'closeSession' for f in reached):
                 tags.update(('session_permissions_removed', 'permission_mode_cleared', 'reconnect_owner_disposed', 'dialog_project_key_deleted'))
@@ -563,6 +610,9 @@ def validate(data, baseline, inputs, graph=None):
         fail('input_drift', '$.input_files', 'schema/snapshot/inventory/driver changed since audit')
     summary = {
         'parser': graph['parser'], 'callee_depth': graph['depth'],
+        'code_factory_declarations': len(graph['factory_inventory']),
+        'code_literal_exemptions': [{'file': p, 'line': n, 'value': v, 'reason': reason}
+                                    for (p, n, v), reason in CODE_LITERAL_EXEMPTIONS.items()],
         'automatic_function_associations': automatic_count, 'automatic_provider_methods': provider_count,
         'provider_exception_methods': len(PROVIDER_EXCEPTIONS),
         'method_count': len(entries), 'expected_count': len(expected),
@@ -742,6 +792,46 @@ def self_test(data, baseline, inputs):
         wrong_hash = copy.deepcopy(compact_data)
         next(iter(next(iter(wrong_hash['ranges'].values())).values()))['sha256'] = '0' * 64
         cases.append(('changed_shared_range_hash', wrong_hash, 'source_audit'))
+    binding_methods = [e['method'] for e in data['methods']
+                       if any(b['code'] == 'PROJECT_BINDING_STORE_INVALID' for b in e['branches']['error'])]
+    for method in binding_methods:
+        omitted = copy.deepcopy(data)
+        entry = next(e for e in omitted['methods'] if e['method'] == method)
+        entry['branches']['error'] = [b for b in entry['branches']['error'] if b['code'] != 'PROJECT_BINDING_STORE_INVALID']
+        cases.append(('omit_binding_factory_code_' + method, omitted, 'error_code_coverage'))
+    for code in ('RUN_POLICY_INVALID', 'agent_model_error', 'INVALID_MESSAGE', 'path_not_allowed', 'frontmatter_missing'):
+        omitted = copy.deepcopy(data)
+        entry = next(e for e in omitted['methods'] if any(b['code'] == code for b in e['branches']['error']))
+        entry['branches']['error'] = [b for b in entry['branches']['error'] if b['code'] != code]
+        cases.append(('omit_discovered_factory_code_' + code, omitted, 'error_code_coverage'))
+    for label, code, ref in (
+        ('invented_ERR_with_real_code_node', 'ERR_TOTALLY_FAKE_CODE', 'B/src/gateway/server/GatewayWsConnection.ts:233'),
+        ('whole_line_without_production', '<error.code>', 'B/src/gateway/server/GatewayWsConnection.ts:130'),
+    ):
+        mutated = copy.deepcopy(data)
+        relative, number = REF.fullmatch(ref).groups()
+        expression = (baseline / relative).read_text().splitlines()[int(number) - 1].strip()
+        next(e for e in mutated['methods'] if e['method'] == 'memory_list')['branches']['error'].append(
+            {'code': code, 'summary': 'round 6 dynamic negative control', 'refs': [ref], 'dynamic': True,
+             'origin': {'refs': [ref], 'expression': expression}})
+        cases.append((label, mutated, 'dynamic_code_shape' if label.startswith('invented') else 'dynamic_code_origin'))
+    for label, code, dynamic, expression, expected in (
+        ('unconfigured_invented_code', 'TOTALLY_FAKE_CODE', False, None, 'invented_error_code'),
+        ('unconfigured_english_string', 'ordinary English message', False, None, 'invented_error_code'),
+        ('unconfigured_dynamic_fake_ERR', 'ERR_TOTALLY_FAKE_CODE', True, 'error.code', 'dynamic_code_shape'),
+        ('unconfigured_dynamic_missing_origin', '<error.code>', True, None, 'dynamic_code_origin'),
+        ('unconfigured_dynamic_nonproducing_line', '<error.code>', True, 'e', 'dynamic_code_origin'),
+        ('unconfigured_NA_missing_origin', 'N/A', False, None, 'non_error_result'),
+    ):
+        mutated = copy.deepcopy(data)
+        ref = 'B/src/gateway/server/GatewayWsConnection.ts:233'
+        branch = {'code': code, 'summary': 'round 7 unconfigured control', 'refs': [ref]}
+        if dynamic:
+            branch['dynamic'] = True
+        if expression is not None:
+            branch['origin'] = {'refs': [ref], 'expression': expression}
+        next(e for e in mutated['methods'] if e['method'] == 'memory_list')['branches']['unconfigured'].append(branch)
+        cases.append((label, mutated, expected))
     results = []
     for name, mutated, expected_code in cases:
         errors, _ = validate(mutated, baseline, inputs)
@@ -792,6 +882,51 @@ def self_test(data, baseline, inputs):
         detected = any(e['code'] == expected_code for e in errors)
         results.append({'name': label, 'expected': 'FAIL', 'observed': 'FAIL' if errors else 'PASS',
                         'required_error': expected_code, 'result': 'PASS' if detected else 'FAIL'})
+    for label, file, value, expected in (
+        ('invalid_factory_message_is_fatal', None, 'ordinary message', 'invalid_produced_code'),
+        ('telemetry_exemption_cannot_hide_other_value', 'src/cli/ProjectMemoryMaintenanceController.ts', 'OtherError', 'invalid_produced_code'),
+    ):
+        altered = copy.deepcopy(graph)
+        target = (next(f for f in altered['functions'] if f['file'] == file and f['start'] <= 94 <= f['end'])
+                  if file else altered['functions'][altered['routes']['memory_list']['handler']])
+        target['invalid_code_literals'].append({'code': value, 'line': 94 if file else target['start'], 'class': 'factory'})
+        errors, _ = validate(data, baseline, inputs, altered)
+        detected = any(e['code'] == expected for e in errors)
+        results.append({'name': label, 'expected': 'FAIL', 'observed': 'FAIL' if errors else 'PASS',
+                        'required_error': expected, 'result': 'PASS' if detected else 'FAIL'})
+    for label, code, expression in (
+        ('positive_dynamic_exact_production_node', '<error.code>', 'error.code'),
+        ('positive_dynamic_whole_line_containing_node', '<error.code>',
+         (baseline / 'src/gateway/server/GatewayWsConnection.ts').read_text().splitlines()[232].strip()),
+        ('positive_dynamic_source_ERR_literal', 'ERR_SOURCE_FIXTURE', 'error.code'),
+    ):
+        altered = copy.deepcopy(graph)
+        mutated = copy.deepcopy(data)
+        ref = 'B/src/gateway/server/GatewayWsConnection.ts:233'
+        next(e for e in mutated['methods'] if e['method'] == 'memory_list')['branches']['error'].append(
+            {'code': code, 'summary': 'round 6 positive control', 'refs': [ref], 'dynamic': True,
+             'origin': {'refs': [ref], 'expression': expression}})
+        if code.startswith('ERR_'):
+            altered['functions'][altered['routes']['memory_list']['handler']]['literals'].append(
+                {'value': code, 'line': altered['functions'][altered['routes']['memory_list']['handler']]['start']})
+        errors, _ = validate(mutated, baseline, inputs, altered)
+        results.append({'name': label, 'expected': 'PASS', 'observed': 'FAIL' if errors else 'PASS',
+                        'result': 'FAIL' if errors else 'PASS'})
+    for expression in ('error.code', (baseline / 'src/gateway/server/GatewayWsConnection.ts').read_text().splitlines()[232].strip()):
+        mutated = copy.deepcopy(data)
+        ref = 'B/src/gateway/server/GatewayWsConnection.ts:233'
+        next(e for e in mutated['methods'] if e['method'] == 'memory_list')['branches']['unconfigured'].append(
+            {'code': '<error.code>', 'summary': 'round 7 unconfigured positive control', 'refs': [ref],
+             'dynamic': True, 'origin': {'refs': [ref], 'expression': expression}})
+        errors, _ = validate(mutated, baseline, inputs)
+        results.append({'name': 'positive_unconfigured_' + ('exact_node' if expression == 'error.code' else 'whole_line'),
+                        'expected': 'PASS', 'observed': 'FAIL' if errors else 'PASS', 'result': 'FAIL' if errors else 'PASS'})
+    # Exercise the production whole-line predicate: these otherwise have an
+    # exact line match, single-line span and contained producing expression.
+    for label, expression in (('slash', '// error.code'), ('block', '/* error.code */'), ('star', '* error.code')):
+        accepted = producing_line_origin(expression, '  ' + expression, {'start': 1, 'end': 1, 'expression': 'error.code'}, 1)
+        results.append({'name': 'dynamic_whole_line_comment_' + label, 'expected': 'FAIL',
+                        'observed': 'PASS' if accepted else 'FAIL', 'result': 'FAIL' if accepted else 'PASS'})
     return results
 
 

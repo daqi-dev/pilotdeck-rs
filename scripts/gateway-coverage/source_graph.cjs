@@ -185,7 +185,22 @@ for(const [nm,c] of classes)if(/Error$/.test(nm)) {
   errorClasses[nm]=rules.errorClassInfo(ts,c,rel(c),line(c));
 }
 for(let i=0;i<10;i++)for(const c of Object.values(errorClasses))if(errorClasses[c.parent]?.code)c.code=true;
-const factoryArgs={sopStateError:0,controlError:0,transportError:0,failure:1,reject:1,authorityError:0};
+// Discover code-producing factories from their bodies, then propagate through
+// wrappers to a fixed point. No callee spelling or fixed argument offset.
+const factoryPositions=new Map();
+let factoriesChanged;
+do {
+  factoriesChanged=false;
+  for(const node of byNode.keys())if(callable(node)) {
+    const positions=rules.factoryCodePositions(ts,node,errorClasses,call=>
+      [...new Set(value(call.expression).flatMap(target=>factoryPositions.get(target)||[]))]);
+    if(JSON.stringify(positions)!==JSON.stringify(factoryPositions.get(node)||[])) {
+      factoryPositions.set(node,positions);factoriesChanged=true;
+    }
+  }
+} while(factoriesChanged);
+const factoryInventory=[...factoryPositions].filter(([,positions])=>positions.length).map(([n,positions])=>
+  ({file:rel(n),line:line(n),symbol:name(n)||name(n.parent),parameters:n.parameters.map(p=>name(p)),code_positions:positions}));
 // Whole code-bearing class declarations are independent supplementary scopes,
 // including fixed code fields and inherited super-constructor codes.
 for(const [nm,c] of classes)if(errorClasses[nm]?.code) {
@@ -194,19 +209,28 @@ for(const [nm,c] of classes)if(errorClasses[nm]?.code) {
 }
 const resolvedCalls=new Map();
 for(const [n,f] of byNode) {
-  f.code_expressions=[];
+  f.code_expressions=[];f.result_expressions=[];f.invalid_code_literals=[];
   function production(a){if(a)f.code_expressions.push({expression:a.getText(),start:line(a),end:line(a,a.end)});}
+  function observeCode(a,kind) {
+    production(a);
+    for(const observation of rules.codeObservations(ts,a)) {
+      const row={code:observation.code,line:line(observation.node),class:kind};
+      if(observation.valid)f.errors.push(row);
+      else f.invalid_code_literals.push(row);
+    }
+  }
   function scan(a) {
     // Nested callbacks execute within this function; their bodies are scanned,
     // but declarations of nested named functions are reached via call edges.
     if(a!==n.body&&(ts.isFunctionDeclaration(a)||ts.isMethodDeclaration(a)))return;
     // Literal membership is collected over the entire independently bounded
     // declaration below, including nested declarations and return type literals.
+    if(ts.isReturnStatement(a))f.result_expressions.push({expression:a.getText(),start:line(a),end:line(a,a.end)});
     if(ts.isNewExpression(a)) {
       const nm=a.expression.getText();f.constructs.push({class:nm,file:rel(a),line:line(a)});
       if(rules.unknownError(nm,errorClasses))f.unknown_errors.push({class:nm,line:line(a)});
       if(errorClasses[nm]?.code) {
-        production(a.arguments?.[errorClasses[nm].code_argument]);
+        observeCode(a.arguments?.[errorClasses[nm].code_argument],nm);
         const declaration=classes.get(nm);
         const ctor=declaration.members.find(x=>ts.isConstructorDeclaration(x)&&x.body);
         let ancestor=nm;
@@ -216,48 +240,49 @@ for(const [n,f] of byNode) {
           ancestor=errorClasses[ancestor].parent;
         }
         if(ctor&&byNode.has(ctor))f.calls.push({expression:'new '+nm,line:line(a),targets:[byNode.get(ctor).id]});
-        for(const literal of rules.constructorLiterals(ts,a,errorClasses))f.errors.push({code:literal.text,line:line(literal),class:nm});
       }
     }
     if(ts.isGetAccessor(a)&&a.name?.text==='code'&&a.body) {
-      function returns(r){if(ts.isReturnStatement(r)&&r.expression){production(r.expression);for(const literal of rules.codeLiterals(ts,r.expression))f.errors.push({code:literal.text,line:line(literal),class:f.class});}ts.forEachChild(r,returns);}
+      function returns(r){if(ts.isReturnStatement(r)&&r.expression){observeCode(r.expression,f.class);}ts.forEachChild(r,returns);}
       returns(a.body);
     }
-    if(ts.isPropertyDeclaration(a)&&name(a)==='code'&&a.initializer&&ts.isStringLiteralLike(a.initializer))f.errors.push({code:a.initializer.text,line:line(a.initializer),class:f.class});
-    if(ts.isBinaryExpression(a)&&a.operatorToken.kind===ts.SyntaxKind.EqualsToken&&a.left.getText()==='this.code')for(const literal of rules.codeLiterals(ts,a.right))f.errors.push({code:literal.text,line:line(literal),class:f.class});
     if(ts.isCallExpression(a)&&a.expression.kind===ts.SyntaxKind.SuperKeyword) {
       const parent=errorClasses[f.class]?.parent;
-      if(errorClasses[parent]?.code)production(a.arguments[errorClasses[parent].code_argument]);
-      if(errorClasses[parent]?.code&&ts.isStringLiteralLike(a.arguments[0]))f.errors.push({code:a.arguments[0].text,line:line(a.arguments[0]),class:parent});
+      if(errorClasses[parent]?.code)observeCode(a.arguments[errorClasses[parent].code_argument],parent);
     }
-    if(ts.isPropertyAssignment(a)&&name(a)==='code'&&ts.isStringLiteralLike(a.initializer))f.errors.push({code:a.initializer.text,line:line(a.initializer),class:'code'});
-    if((ts.isPropertyAssignment(a)||ts.isPropertyDeclaration(a))&&name(a)==='code')production(a.initializer);
-    if(ts.isBinaryExpression(a)&&a.operatorToken.kind===ts.SyntaxKind.EqualsToken&&a.left.getText()==='this.code')production(a.right);
-    if(ts.isGetAccessor(n)&&name(n)==='code'&&ts.isReturnStatement(a))production(a.expression);
+    if((ts.isPropertyAssignment(a)||ts.isPropertyDeclaration(a))&&name(a)==='code')observeCode(a.initializer,'code');
+    if(ts.isBinaryExpression(a)&&a.operatorToken.kind===ts.SyntaxKind.EqualsToken&&
+      ((ts.isPropertyAccessExpression(a.left)&&a.left.name.text==='code')||
+       (ts.isElementAccessExpression(a.left)&&a.left.argumentExpression?.text==='code')))observeCode(a.right,f.class);
+    if(ts.isGetAccessor(n)&&name(n)==='code'&&ts.isReturnStatement(a))observeCode(a.expression,f.class);
     if(ts.isCallExpression(a)) {
       const expr=a.expression.getText();const targets=value(a.expression).map(x=>byNode.get(x)?.id).filter(x=>x!==undefined);
       const call={expression:expr,line:line(a),targets:[...new Set(targets)]};
       f.calls.push(call);resolvedCalls.set(call,a);
-      const arg=a.arguments[factoryArgs[expr]];
-      if(Object.hasOwn(factoryArgs,expr))for(const target of value(a.expression))if(callable(target)) {
-        const position=target.parameters.findIndex(p=>name(p)==='code');
-        if(position>=0)production(a.arguments[position]);
+      for(const target of value(a.expression))for(const position of factoryPositions.get(target)||[]) {
+        const argument=a.arguments[position]||target.parameters[position].initializer;
+        if(argument)observeCode(argument,expr);
+        else if(!target.parameters[position].questionToken)f.invalid_code_literals.push({code:'<missing argument>',line:line(a),class:expr});
       }
-      if(Object.hasOwn(factoryArgs,expr)&&arg&&ts.isStringLiteralLike(arg))f.errors.push({code:arg.text,line:line(arg),class:expr});
     }
     ts.forEachChild(a,scan);
   }
   scan(n.body||n);
-  f.errors=f.errors.filter(e=>rules.errorCodeLiteral(e.code));
+
   function literals(a){if(ts.isStringLiteralLike(a)&&rules.errorCodeLiteral(a.text))f.literals.push({value:a.text,line:line(a)});ts.forEachChild(a,literals);}
   literals(n);
 }
 const ws=sources.find(s=>rel(s)==='src/gateway/server/GatewayWsConnection.ts');
-const methods={submit_turn:'submitTurn'};
+const methods={submit_turn:'submitTurn'}, wsBranchLiterals={};
 function wsMethods(n) {
   if(ts.isCaseClause(n)&&ts.isStringLiteral(n.expression)) {
     const body=n.getText();const m=body.match(/this\.options\.gateway\.(\w+)/)||body.match(/this\.requireCapability\("[^"]+", "(\w+)"/);
-    if(m)methods[n.expression.text]=m[1];
+    if(m) {
+      methods[n.expression.text]=m[1];
+      const literals=new Set();
+      function collect(a){if(ts.isStringLiteralLike(a)&&rules.errorCodeLiteral(a.text))literals.add(a.text);ts.forEachChild(a,collect);}
+      for(const statement of n.statements)collect(statement);wsBranchLiterals[n.expression.text]=[...literals];
+    }
   }ts.forEachChild(n,wsMethods);
 }
 wsMethods(ws);
@@ -336,5 +361,5 @@ for(const [method,member] of Object.entries(methods)) {
   const constructors=defaultPoints.filter(p=>routeClasses.has(p.class)&&p.ref.startsWith('B/src/'));
   routes[method]={handler:handler.id,providers:[...new Set(providers)],functions:[...reached].map(([id,depth])=>({id,depth})),construction_points:constructors.sort((a,b)=>(a.class+'|'+a.ref).localeCompare(b.class+'|'+b.ref,'en'))};
 }
-process.stdout.write(JSON.stringify({parser_controls:rules.controls(ts),parser:ts.version,depth:DEPTH,boot,errorClasses,functions,routes,
+process.stdout.write(JSON.stringify({parser_controls:rules.controls(ts),parser:ts.version,depth:DEPTH,boot,errorClasses,factory_inventory:factoryInventory,node_errno:[...new Set([...Object.keys(require("node:os").constants.errno),...Object.keys(require("node:constants"))])],functions,routes,ws_branch_literals:wsBranchLiterals,
   default_functions:[...defaultFunctions].sort((a,b)=>a-b),default_construction_points:defaultPoints}));
