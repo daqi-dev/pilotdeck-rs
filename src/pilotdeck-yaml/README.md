@@ -105,7 +105,7 @@ python3 src/pilotdeck-yaml/tests/check_mutations.py
 
 `check_mutations.py` 只改 `_tmp/review-yaml/mutations` 的副本，15 个 mutant 必须能编译并由新增 42 条 Node oracle 报 FAIL，恢复后必须 PASS。覆盖 `\a\b\e\f\v\r\t`、反斜杠接真实 TAB、`\/`、`\U0010FFFF` 的接受上界及 `\U00110000` 超界、block/flow-seq 的 1024/1025 键长判定；不修改生产源码或 oracle。17 个差分分片共 26,078,817 字节，最大 1,799,945 字节；原有 16 个分片逐字节不变。新增 visitor 控制 oracle 还覆盖 Skip/Remove/Index/Break/Next（含 after-key 返回符号后仍访问 value 的顺序）。
 
-## 资源缩放回归（第 6 轮）
+## 资源缩放回归（第 7 轮）
 
 常规 `cargo test --all` 不运行耗时/峰值内存测试。单独运行 release 测试：
 
@@ -120,14 +120,14 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-yaml --release \
 
 ```sh
 python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
-  --baseline /path/to/baseline --output _tmp/review-yaml/resources-round6.json
+  --baseline /path/to/baseline --output _tmp/review-yaml/resources-round7.json
 ```
 
-脚本检查 Node v22 和基线 yaml 2.9.0，使用同一个生成文件测试双方。10 个族覆盖多文档、注释、plain、双引号与转义、宽 flow seq、宽 block map、固定 500 层混合嵌套、anchor+alias、块标量、复杂 `? ` 键。N 仅由 Node 耗时校准到约 0.2–1 秒，4N 增长长度/宽度/重复数量；固定深度族不增加深度。复杂键固定 200 层，通过增加文档数校准；单个 700 层键的 Node 转换已约 25 秒，不能作为 0.2–1 秒校准的最小单位。
+脚本检查 Node v22 和基线 yaml 2.9.0，使用同一个生成文件测试双方。11 个族覆盖多文档、注释、plain、双引号与转义、宽 flow seq、宽 block map、固定 500 层混合嵌套、anchor+alias、块标量、复杂 `? ` 键、大量 `%TAG` 指令与逐 handle 使用。N 仅由 Node 耗时校准到约 0.2–1 秒，4N 增长长度/宽度/重复数量；固定深度族不增加深度。复杂键固定 200 层，通过增加文档数校准；单个 700 层键的 Node 转换已约 25 秒，不能作为 0.2–1 秒校准的最小单位。
 
 每个规模、每个实现分别启动三个新进程，交错执行顺序；耗时取中位数，RSS 取三次最大值。计时覆盖默认 `parseAllDocuments` 和所有文档的 `toJSON`，保留文档与转换结果；输入读取、进程启动和释放不计入耗时，均计入进程峰值 RSS。Node 的 collection-key 提示不计终端 IO。独立 Python wrapper 只启动一个子进程，使用内核 `getrusage(RUSAGE_CHILDREN).ru_maxrss`；macOS 单位为 bytes，Linux 为 KiB。没有在同一进程连续测多个输入，没有用父进程 RSS、退出后 current RSS 或上一样本的高水位替代峰值。超时/非零退出会保留失败行并让脚本退出非零。
 
-判定同时检查耗时和 RSS：两个规模的 Rust/Node 耗时与绝对 RSS 均不得超过 3；耗时的 (Rust 4N/N) / (Node 4N/N) 不得超过 1.5；增量 RSS 满足 (Rust RSS@4N − Rust RSS@N) ≤ 1.5 × (Node RSS@4N − Node RSS@N)。RSS 不用原始增长比判定，以避免 Node 固定运行时内存影响缩放结论。`--sizes <previous.json>` 可以复用已记录的 Node 校准值，`--families` 可定位单个族，`--rust-bin` 供 ignore 测试复用已编译二进制；默认所有族都运行。JSON 保存每次原始测量、输入字节数、N、所有比值和通过/失败结果。
+判定同时检查耗时和 RSS：两个规模的 Rust/Node 耗时与绝对 RSS 均不得超过 3；耗时的 (Rust 4N/N) / (Node 4N/N) 不得超过 1.5；增量 RSS 满足 (Rust RSS@4N − Rust RSS@N) ≤ 1.5 × (Node RSS@4N − Node RSS@N)。RSS 不用原始增长比判定，以避免 Node 固定运行时内存影响缩放结论。`--sizes <previous.json>` 可以复用已记录的 Node 校准值，`--families` 可定位单个族，`--rust-bin` 供 ignore 测试复用已编译二进制；默认所有族都运行。JSON 保存每次原始测量、输入字节数/SHA、N、所有比值和通过/失败结果；同时核对两个规模全部样本的文档数、error/warning 数和转换错误数，双方不一致也判失败。
 
 内存表示的调整保持 UTF-16 值与位置：每个流的 `Document::line_counter` 是同一个 `Arc<LineCounter>`；schema 与 directive 标签表共享，实际扩展时采用 copy-on-write。CST 的常见字段保留在 Token，其他字段通过 `TokenData` 的 Deref/DerefMut 按需分配；构造 CST 使用 `Token::new`。Node 的可选装饰通过 `NodeMetadata` 按需分配，`src_token` 为 `Arc<Token>`。读字段和查询位置的方法保持原语义；外部源代码若用 Token struct literal，应改用构造函数。
 
@@ -138,3 +138,7 @@ python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
 这些 YAML 字段/变体的 Rust 构造调用方需使用 `Arc::new(js_string)`，读取可通过 Deref 或 `.as_ref()`，修改共享字符串可用 `Arc::make_mut` 保留 copy-on-write。`resolve_as_scalar` 的公开返回值仍为 `JsString`。80,000 码元和 99 个 alias 的回归验证内容、长度和 YAML 内共享；plain scalar 回归还验证 CST/AST/图的同一实例及释放文档后的输出。
 
 多文档入口对仅含注释/空白且没有外部 LineCounter 的空流不分配不可观察的行表；其他输入继续使用原 parser 逐 token 登记位置，外部 counter 保留原行为。全部 3099 例的 parseAllDocuments 行表另与原 Node parser lineStarts 逐项比较，所有文档仍共享同一 Arc。
+
+`Directives::tags` 是 `Arc<TagTable>`：内部 Vec 保存声明顺序，HashMap 按原始 UTF-16 handle 定位。重复声明覆盖原槽位的 prefix，不移动顺序；1.1 继承/重置、1.2 文档重置时整个表与索引一起共享或切换。读取仍支持 `.iter()`、`.len()` 与下标；修改使用 `Arc::make_mut(&mut directives.tags).insert(handle, prefix)`，不直接修改内部 Vec，以保证索引同步。
+
+转换 Object/Map/Set 的 Vec 保留顺序，达到 16 项后建立私有索引；小表扫描最多 16 项。数值键使用 SameValueZero（NaN 等价、±0 合并），Ref/Symbol 按身份区分；merge 的 only-missing 与覆盖顺序不变。`!!omap` 标量去重也使用索引。alias 按 arena 前序遍历预先记录最近的前置同名 anchor，转换时按 NodeId 直接查找；集合键中已注册/局部 anchor 使用名称集合。Schema 只含有限的内置 tags，按默认匹配优先级扫描；未知 `%TAG` 不扩展 schema。tag 输出的 prefix 匹配仍按声明顺序遍历，属于有序前缀匹配而非按 key 查表。

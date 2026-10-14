@@ -8,19 +8,11 @@ use crate::{
 use pilotdeck_protocol::JsString;
 impl Context<'_> {
     pub(crate) fn resolve_alias(&self, id: NodeId) -> Option<NodeId> {
-        let NodeKind::Alias(name) = &self.doc.nodes[id].kind else {
-            return Some(id);
-        };
-        let mut found = None;
-        for n in &self.order {
-            if *n == id {
-                break;
-            }
-            if self.doc.nodes[*n].anchor.as_ref() == Some(name) {
-                found = Some(*n);
-            }
+        if matches!(self.doc.nodes[id].kind, NodeKind::Alias(_)) {
+            self.alias_sources.get(&id).copied()
+        } else {
+            Some(id)
         }
-        found
     }
     pub(crate) fn alias(&mut self, id: NodeId, name: &JsString) -> Result<Value, ConversionError> {
         let Some(source) = self.resolve_alias(id) else {

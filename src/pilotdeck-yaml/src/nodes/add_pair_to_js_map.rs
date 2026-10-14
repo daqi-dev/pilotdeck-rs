@@ -1,5 +1,8 @@
 // Port of yaml@2.9.0 dist/nodes/addPairToJSMap.js (ISC); parse/conversion operations.
-use super::to_js::{number_string, same_value_zero};
+use super::{
+    key::Key,
+    to_js::{number_string, same_value_zero},
+};
 use crate::nodes::to_js::Context;
 use crate::{
     nodes::{NodeId, NodeKind, Pair, ScalarValue},
@@ -32,6 +35,9 @@ impl Context<'_> {
         Ok(())
     }
     pub(crate) fn has_key(&self, index: usize, key: &Value) -> bool {
+        if let Some(keys) = self.key_indices.get(&index) {
+            return keys.contains_key(&Key::from(key));
+        }
         match &self.nodes[index] {
             Container::Map(e) => e.iter().any(|(k, _)| same_value_zero(k, key)),
             Container::Set(e) => e.iter().any(|k| same_value_zero(k, key)),
@@ -48,12 +54,48 @@ impl Context<'_> {
         } else {
             key
         };
+        // Tiny tables keep the cheap scan; after 16 entries all subsequent
+        // lookups use a hash index, while the Vec preserves insertion order.
+        let len = match &self.nodes[index] {
+            Container::Object(e) => e.len(),
+            Container::Map(e) => e.len(),
+            Container::Set(e) => e.len(),
+            _ => unreachable!(),
+        };
+        if len >= 16 && !self.key_indices.contains_key(&index) {
+            let keys = match &self.nodes[index] {
+                Container::Object(e) => e
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (k, _))| (Key::String(std::sync::Arc::new(k.clone())), i))
+                    .collect(),
+                Container::Map(e) => e
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (k, _))| (Key::from(k), i))
+                    .collect(),
+                Container::Set(e) => e
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| (Key::from(k), i))
+                    .collect(),
+                _ => unreachable!(),
+            };
+            self.key_indices.insert(index, keys);
+        }
+        let indexed = self.key_indices.get_mut(&index).map(|keys| {
+            let slot = *keys.entry(Key::from(&key)).or_insert(len);
+            (slot < len).then_some(slot)
+        });
         match &mut self.nodes[index] {
             Container::Object(entries) => {
                 let Value::String(key) = key else {
                     unreachable!()
                 };
-                if let Some((_, v)) = entries.iter_mut().find(|(k, _)| k == key.as_ref()) {
+                if let Some(slot) =
+                    indexed.unwrap_or_else(|| entries.iter().position(|(k, _)| k == key.as_ref()))
+                {
+                    let v = &mut entries[slot].1;
                     if !only_missing {
                         *v = value;
                     }
@@ -62,7 +104,10 @@ impl Context<'_> {
                 }
             }
             Container::Map(entries) => {
-                if let Some((_, v)) = entries.iter_mut().find(|(k, _)| same_value_zero(k, &key)) {
+                if let Some(slot) = indexed
+                    .unwrap_or_else(|| entries.iter().position(|(k, _)| same_value_zero(k, &key)))
+                {
+                    let v = &mut entries[slot].1;
                     if !only_missing {
                         *v = value;
                     }
@@ -71,7 +116,10 @@ impl Context<'_> {
                 }
             }
             Container::Set(entries) => {
-                if !entries.iter().any(|k| same_value_zero(k, &key)) {
+                if indexed
+                    .unwrap_or_else(|| entries.iter().position(|k| same_value_zero(k, &key)))
+                    .is_none()
+                {
                     entries.push(key);
                 }
             }
@@ -143,11 +191,85 @@ impl Context<'_> {
             super::stringify_key::stringify_key(
                 self.doc,
                 key,
-                &self.anchors,
+                &self.anchor_names,
                 crate::stack::CONVERSION_DEPTH.saturating_sub(self.depth + self.merge_stack.len()),
             )
         } else {
             Ok(self.js_string(value))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordered_indices_preserve_same_value_zero_identity_and_merge_precedence() {
+        let doc = crate::parse_document(&"null".into(), Default::default());
+        let mut ctx = Context {
+            doc: &doc,
+            nodes: vec![
+                Container::Map(vec![]),
+                Container::Set(vec![]),
+                Container::Object(vec![]),
+            ],
+            anchors: Default::default(),
+            alias_sources: Default::default(),
+            anchor_names: Default::default(),
+            key_indices: Default::default(),
+            merge_stack: vec![],
+            depth: 0,
+        };
+        for i in 0..32 {
+            ctx.insert(0, Value::Number(i as f64), Value::Number(i as f64), false);
+            ctx.insert(1, Value::Number(i as f64), Value::Null, false);
+            ctx.insert(
+                2,
+                Value::String(std::sync::Arc::new(format!("k{i}").into())),
+                Value::Number(i as f64),
+                false,
+            );
+        }
+        ctx.insert(0, Value::Number(-0.0), Value::Bool(true), false);
+        ctx.insert(0, Value::Number(0.0), Value::Bool(false), true);
+        for n in [f64::NAN, f64::from_bits(0x7ff8000000000001)] {
+            ctx.insert(0, Value::Number(n), Value::Bool(true), false);
+            ctx.insert(1, Value::Number(n), Value::Null, false);
+        }
+        ctx.insert(1, Value::Number(-0.0), Value::Null, false);
+        for id in [100, 101, 100] {
+            ctx.insert(
+                0,
+                Value::Symbol {
+                    id,
+                    description: "same".into(),
+                },
+                Value::Null,
+                false,
+            );
+            ctx.insert(1, Value::Ref(id), Value::Null, false);
+        }
+        let key = Value::String(std::sync::Arc::new("k0".into()));
+        ctx.insert(2, key.clone(), Value::Bool(true), false);
+        ctx.insert(2, key, Value::Bool(false), true);
+        let Container::Map(entries) = &ctx.nodes[0] else {
+            panic!()
+        };
+        assert_eq!(entries.len(), 35);
+        assert!(matches!(entries[0], (Value::Number(n), Value::Bool(true)) if n.to_bits() == 0));
+        assert!(matches!(entries[32].0, Value::Number(n) if n.is_nan()));
+        assert!(ctx.has_key(0, &Value::Number(f64::NAN)));
+        let Container::Set(entries) = &ctx.nodes[1] else {
+            panic!()
+        };
+        assert_eq!(entries.len(), 35);
+        let Container::Object(entries) = &ctx.nodes[2] else {
+            panic!()
+        };
+        assert_eq!(entries.len(), 32);
+        assert_eq!(entries[0], ("k0".into(), Value::Bool(true)));
+        assert_eq!(entries[31].0, JsString::from("k31"));
+        assert_eq!(ctx.key_indices.len(), 3);
     }
 }

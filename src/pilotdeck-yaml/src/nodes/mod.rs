@@ -26,3 +26,5 @@ mod scalar;
 pub use node::Node;
 pub use pair::Pair;
 pub use scalar::ScalarValue;
+
+pub(crate) mod key;

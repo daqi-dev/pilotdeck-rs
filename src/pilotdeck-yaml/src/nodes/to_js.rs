@@ -60,7 +60,9 @@ pub(crate) struct Context<'a> {
     pub(crate) doc: &'a Document,
     pub(crate) nodes: Vec<Container>,
     pub(crate) anchors: HashMap<NodeId, Anchor>,
-    pub(crate) order: Vec<NodeId>,
+    pub(crate) alias_sources: HashMap<NodeId, NodeId>,
+    pub(crate) anchor_names: std::collections::HashSet<JsString>,
+    pub(crate) key_indices: HashMap<usize, HashMap<super::key::Key, usize>>,
     pub(crate) merge_stack: Vec<NodeId>,
     pub(crate) depth: usize,
 }
@@ -69,7 +71,9 @@ pub(crate) fn to_js(doc: &Document) -> Result<ValueGraph, ConversionError> {
         doc,
         nodes: Vec::new(),
         anchors: HashMap::new(),
-        order: Vec::new(),
+        alias_sources: HashMap::new(),
+        anchor_names: std::collections::HashSet::new(),
+        key_indices: HashMap::new(),
         merge_stack: Vec::new(),
         depth: 0,
     };

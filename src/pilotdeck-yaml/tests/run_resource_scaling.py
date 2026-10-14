@@ -29,9 +29,9 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 FAMILIES = ['documents', 'comments', 'plain', 'quoted', 'flow_seq', 'block_map',
-            'mixed_500', 'anchors_aliases', 'block_scalar', 'complex_keys']
+            'mixed_500', 'anchors_aliases', 'block_scalar', 'complex_keys', 'tags_directives']
 SEEDS = dict(zip(FAMILIES, [50000, 100000, 2000000, 200000, 100000, 3000,
-                           100, 10000, 100000, 1]))
+                           100, 10000, 100000, 1, 40000]))
 
 
 def source(family, n):
@@ -59,6 +59,9 @@ def source(family, n):
     if family == 'complex_keys':
         # Fixed-depth complex block keys; scale repetitions, not extreme depth.
         return ('---\n' + '? ' * 200 + '0\n') * n
+    if family == 'tags_directives':
+        return (''.join(f'%TAG !t{i}! tag:x{i}:\n' for i in range(n)) + '---\n'
+                + ''.join(f'- !t{i}!value a\n' for i in range(n)))
     raise ValueError(family)
 
 
@@ -177,7 +180,11 @@ def main():
                     'same_size_time': all(limits[f'seconds_rust_node_{scale}n'] <= 3 for scale in [1, 4]),
                     'same_size_rss': all(limits[f'rss_bytes_rust_node_{scale}n'] <= 3 for scale in [1, 4]),
                     'time_growth': limits['seconds_relative_growth'] <= 1.5,
-                    'rss_increment': row['rss_increment']['pass']}
+                    'rss_increment': row['rss_increment']['pass'],
+                    'semantic_counts': all(
+                        len({tuple(s[key] for key in ['documents', 'errors', 'warnings', 'conversion_errors'])
+                             for samples in row['samples'][str(scale)].values() for s in samples}) == 1
+                        for scale in [1, 4])}
                 row['pass'] = all(row['checks'].values())
                 result['rows'].append(row)
                 if not row['pass']:

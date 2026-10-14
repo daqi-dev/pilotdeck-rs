@@ -44,11 +44,12 @@ fn resource_worker() {
     let values: Vec<_> = docs.iter().map(|doc| doc.to_json()).collect();
     let elapsed = start.elapsed().as_secs_f64();
     let errors: usize = docs.iter().map(|doc| doc.errors.len()).sum();
+    let warnings: usize = docs.iter().map(|doc| doc.warnings.len()).sum();
     let conversion_errors = values.iter().filter(|value| value.is_err()).count();
     println!(
         "RESOURCE_SAMPLE {}",
         serde_json::json!({"seconds": elapsed, "parse_seconds": parsed,
-            "documents": docs.len(), "errors": errors, "conversion_errors": conversion_errors})
+            "documents": docs.len(), "errors": errors, "warnings": warnings, "conversion_errors": conversion_errors})
     );
     black_box((&docs, &values));
 }
