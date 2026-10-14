@@ -1,0 +1,504 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "syscallInjected": true,
+  "cases": [
+    {
+      "text": "",
+      "number": "0",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": " \n\t ",
+      "number": "0",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "﻿  0\n",
+      "number": "0",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0",
+      "number": "0",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "-0",
+      "number": "0",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "+0",
+      "number": "0",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "-1",
+      "number": "-1",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "+1",
+      "number": "1",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1,
+      "syscallCalls": [
+        {
+          "pid": 1,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "001",
+      "number": "1",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1,
+      "syscallCalls": [
+        {
+          "pid": 1,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "1.0",
+      "number": "1",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1,
+      "syscallCalls": [
+        {
+          "pid": 1,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "1.5",
+      "number": "1.5",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": ".5",
+      "number": "0.5",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "1.",
+      "number": "1",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1,
+      "syscallCalls": [
+        {
+          "pid": 1,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "1e0",
+      "number": "1",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1,
+      "syscallCalls": [
+        {
+          "pid": 1,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "1e+3",
+      "number": "1000",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1000,
+      "syscallCalls": [
+        {
+          "pid": 1000,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "1E-3",
+      "number": "0.001",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0x1",
+      "number": "1",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1,
+      "syscallCalls": [
+        {
+          "pid": 1,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "0X7fffffff",
+      "number": "2147483647",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 2147483647,
+      "syscallCalls": [
+        {
+          "pid": 2147483647,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "0o17",
+      "number": "15",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 15,
+      "syscallCalls": [
+        {
+          "pid": 15,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "0O17",
+      "number": "15",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 15,
+      "syscallCalls": [
+        {
+          "pid": 15,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "0b101",
+      "number": "5",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 5,
+      "syscallCalls": [
+        {
+          "pid": 5,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "0B101",
+      "number": "5",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 5,
+      "syscallCalls": [
+        {
+          "pid": 5,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "0x",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0o",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0b",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0xgg",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0o8",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0b2",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "+0x1",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "-0b1",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "Infinity",
+      "number": "Infinity",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "+Infinity",
+      "number": "Infinity",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "-Infinity",
+      "number": "-Infinity",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "infinity",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "inf",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "NaN",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "1e309",
+      "number": "Infinity",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "1e-324",
+      "number": "0",
+      "safeInteger": true,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "9007199254740991",
+      "number": "9007199254740991",
+      "safeInteger": true,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": [],
+      "killError": "ERR_INVALID_ARG_TYPE"
+    },
+    {
+      "text": "9007199254740992",
+      "number": "9007199254740992",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "2147483647",
+      "number": "2147483647",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 2147483647,
+      "syscallCalls": [
+        {
+          "pid": 2147483647,
+          "signal": 0
+        }
+      ]
+    },
+    {
+      "text": "2147483648",
+      "number": "2147483648",
+      "safeInteger": true,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": [],
+      "killError": "ERR_INVALID_ARG_TYPE"
+    },
+    {
+      "text": "4294967296",
+      "number": "4294967296",
+      "safeInteger": true,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": [],
+      "killError": "ERR_INVALID_ARG_TYPE"
+    },
+    {
+      "text": "1",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "1",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "１",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "1 2",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "1_000",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0x1p0",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "null",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "undefined",
+      "number": "NaN",
+      "safeInteger": false,
+      "positive": false,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "0x10000000000000000",
+      "number": "18446744073709552000",
+      "safeInteger": false,
+      "positive": true,
+      "pid": null,
+      "syscallCalls": []
+    },
+    {
+      "text": "  +0001e0\n",
+      "number": "1",
+      "safeInteger": true,
+      "positive": true,
+      "pid": 1,
+      "syscallCalls": [
+        {
+          "pid": 1,
+          "signal": 0
+        }
+      ]
+    }
+  ]
+}

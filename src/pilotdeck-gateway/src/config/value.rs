@@ -154,7 +154,7 @@ pub(super) fn builtin_property(s: &JsString) -> bool {
     .iter()
     .any(|v| s.equals_str(v))
 }
-pub(super) fn string_coercible(v: &JsValue) -> bool {
+pub(crate) fn string_coercible(v: &JsValue) -> bool {
     match v {
         JsValue::Object(o) => o.get_property("toString").is_none(),
         JsValue::Array(a) => a.iter().all(string_coercible),

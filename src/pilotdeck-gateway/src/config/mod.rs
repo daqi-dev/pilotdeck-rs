@@ -1,5 +1,6 @@
-//! Global PilotConfig loading for the native read-only gateway. Every section
+//! Global/project PilotConfig loading for the native read-only gateway. Every section
 //! participates in validation, even when catalog projection does not use it.
+pub(crate) mod binding;
 mod graph;
 mod host;
 mod model;
@@ -11,6 +12,7 @@ use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_yaml::{Options, parse_document};
 use std::collections::HashMap;
+pub(crate) use value::string_coercible;
 use value::*;
 pub(crate) type Env = HashMap<String, String>;
 pub(crate) struct Config {
@@ -102,6 +104,13 @@ fn merge(left: &mut JsValue, right: JsValue) {
     *left = JsValue::Object(output);
 }
 pub(crate) fn load<F: Files>(metadata: &Metadata<F>, env: &Env) -> Result<Config, Error> {
+    load_project(metadata, env, None)
+}
+pub(crate) fn load_project<F: Files>(
+    metadata: &Metadata<F>,
+    env: &Env,
+    project: Option<&str>,
+) -> Result<Config, Error> {
     let path = env
         .get("PILOTDECK_CONFIG_PATH")
         .map(|s| crate::metadata::js_trim(s).to_owned())
@@ -114,75 +123,28 @@ pub(crate) fn load<F: Files>(metadata: &Metadata<F>, env: &Env) -> Result<Config
         });
     let mut d = Diagnostics(vec![]);
     let mut raw = object([]);
-    let mut source_graph = None;
-    // existsSync('') is false, whereas path.resolve('') denotes cwd.
-    if !path.is_empty() {
-        let absolute = crate::metadata::resolve(&metadata.cwd, &path);
-        if metadata.files.stat(&absolute).is_ok() {
-            match metadata.files.read(&absolute) {
-                Ok(bytes) => {
-                    let content = JsString::from(String::from_utf8_lossy(&bytes).into_owned());
-                    let document = parse_document(
-                        &content,
-                        Options {
-                            pretty_errors: false,
-                            ..Default::default()
-                        },
-                    );
-                    if !document.errors.is_empty() {
-                        source_error(
-                            &mut d,
-                            "CONFIG_YAML_INVALID",
-                            "Failed to parse default config YAML.",
-                            &path,
-                            Some(
-                                DiagnosticText::from(
-                                    document
-                                        .errors
-                                        .iter()
-                                        .map(|e| js_string(&JsValue::String(e.message.clone())))
-                                        .collect::<Vec<_>>()
-                                        .join("; "),
-                                )
-                                .0,
-                            ),
-                        );
-                    } else {
-                        match document.to_json().map(|g| {
-                            let value = graph::inspect(&g);
-                            source_graph = Some(g);
-                            value
-                        }) {
-                            Ok(value) if nullish(&value) => {}
-                            Ok(value) if record(&value) => merge(&mut raw, value),
-                            Ok(_) => source_error(
-                                &mut d,
-                                "CONFIG_ROOT_INVALID",
-                                "default config root must be an object.",
-                                &path,
-                                None,
-                            ),
-                            Err(e) => source_error(
-                                &mut d,
-                                "CONFIG_YAML_INVALID",
-                                "Failed to parse default config YAML.",
-                                &path,
-                                Some(e.message),
-                            ),
-                        }
-                    }
-                }
-                Err(e) => source_error(
-                    &mut d,
-                    "CONFIG_READ_FAILED",
-                    "Failed to read default config.",
-                    &path,
-                    Some(JsString::from(read_hint(&e, &path))),
-                ),
-            }
-        }
+    let mut source_graphs = vec![];
+    read_source(
+        metadata,
+        &path,
+        "default",
+        &mut raw,
+        &mut d,
+        &mut source_graphs,
+    );
+    if let Some(project) = project.filter(|p| !p.is_empty()) {
+        let path =
+            crate::metadata::resolve(&metadata.cwd, project).join(".pilotdeck/pilotdeck.yaml");
+        read_source(
+            metadata,
+            &path.to_string_lossy(),
+            "project",
+            &mut raw,
+            &mut d,
+            &mut source_graphs,
+        );
     }
-    if source_graph.as_ref().is_some_and(graph::merge_cycle) {
+    if source_graphs.iter().any(graph::merge_cycle) {
         let mut e = Error::new("gateway_request_failed", "Maximum call stack size exceeded");
         e.name = "RangeError";
         return Err(e);
@@ -193,42 +155,7 @@ pub(crate) fn load<F: Files>(metadata: &Metadata<F>, env: &Env) -> Result<Config
             object([("agent", object([("model", v.as_str().into())]))]),
         );
     }
-    if env
-        .get("STAFFDECK_PROJECT_BINDING_ENABLED")
-        .is_some_and(|s| s == "true")
-    {
-        raw = structured_clone(&raw);
-        let mut m = field(&raw, "modules").clone();
-        if nullish(&m) {
-            m = object([]);
-        }
-        if !record(&m) && !matches!(m, JsValue::Array(_)) {
-            let kind = match m {
-                JsValue::Number(_) => "number",
-                JsValue::Bool(_) => "boolean",
-                _ => "string",
-            };
-            let mut e = Error::new(
-                "gateway_request_failed",
-                format!(
-                    "Cannot create property 'knowledge' on {kind} '{}'",
-                    js_string(&m)
-                ),
-            );
-            e.name = "TypeError";
-            return Err(e);
-        }
-        if let JsValue::Object(ref mut m) = m {
-            m.insert(
-                "knowledge".into(),
-                object([("enabled", JsValue::Bool(false))]),
-            );
-            m.insert("sop".into(), object([("enabled", JsValue::Bool(false))]));
-        }
-        if let JsValue::Object(ref mut raw) = raw {
-            raw.insert("modules".into(), m);
-        }
-    }
+    raw = binding::apply(metadata, raw, project, env)?;
     if !field(&raw, "pilot").is_undefined() {
         d.fatal(
             "CONFIG_PILOT_SECTION_FORBIDDEN",
@@ -317,9 +244,9 @@ pub(crate) fn load<F: Files>(metadata: &Metadata<F>, env: &Env) -> Result<Config
     sections::run_policy(field(&raw, "runPolicy"), &mut d);
     sections::proxy(&raw, &mut d);
     d.check()?;
-    if source_graph
-        .as_ref()
-        .is_some_and(|g| graph::retained_cycle(g, &providers, &raw))
+    if source_graphs
+        .iter()
+        .any(|g| graph::retained_cycle(g, &providers, &raw))
     {
         let mut error = Error::new("gateway_request_failed", "Maximum call stack size exceeded");
         error.name = "RangeError";
@@ -332,7 +259,94 @@ pub(crate) fn load<F: Files>(metadata: &Metadata<F>, env: &Env) -> Result<Config
         diagnostics: d.0,
     })
 }
-fn source_error(d: &mut Diagnostics, code: &str, msg: &str, path: &str, hint: Option<JsString>) {
+fn read_source<F: Files>(
+    metadata: &Metadata<F>,
+    path: &str,
+    kind: &str,
+    raw: &mut JsValue,
+    d: &mut Diagnostics,
+    source_graphs: &mut Vec<pilotdeck_yaml::value::ValueGraph>,
+) {
+    // existsSync('') is false, whereas path.resolve('') denotes cwd.
+    if !path.is_empty() {
+        let absolute = crate::metadata::resolve(&metadata.cwd, path);
+        if metadata.files.stat(&absolute).is_ok() {
+            match metadata.files.read(&absolute) {
+                Ok(bytes) => {
+                    let content = JsString::from(String::from_utf8_lossy(&bytes).into_owned());
+                    let document = parse_document(
+                        &content,
+                        Options {
+                            pretty_errors: false,
+                            ..Default::default()
+                        },
+                    );
+                    if !document.errors.is_empty() {
+                        source_error(
+                            kind,
+                            d,
+                            "CONFIG_YAML_INVALID",
+                            &format!("Failed to parse {kind} config YAML."),
+                            path,
+                            Some(
+                                DiagnosticText::from(
+                                    document
+                                        .errors
+                                        .iter()
+                                        .map(|e| js_string(&JsValue::String(e.message.clone())))
+                                        .collect::<Vec<_>>()
+                                        .join("; "),
+                                )
+                                .0,
+                            ),
+                        );
+                    } else {
+                        match document.to_json().map(|g| {
+                            let value = graph::inspect(&g);
+                            source_graphs.push(g);
+                            value
+                        }) {
+                            Ok(value) if nullish(&value) => {}
+                            Ok(value) if record(&value) => merge(raw, value),
+                            Ok(_) => source_error(
+                                kind,
+                                d,
+                                "CONFIG_ROOT_INVALID",
+                                &format!("{kind} config root must be an object."),
+                                path,
+                                None,
+                            ),
+                            Err(e) => source_error(
+                                kind,
+                                d,
+                                "CONFIG_YAML_INVALID",
+                                &format!("Failed to parse {kind} config YAML."),
+                                path,
+                                Some(e.message),
+                            ),
+                        }
+                    }
+                }
+                Err(e) => source_error(
+                    kind,
+                    d,
+                    "CONFIG_READ_FAILED",
+                    &format!("Failed to read {kind} config."),
+                    path,
+                    Some(JsString::from(read_hint(&e, path))),
+                ),
+            }
+        }
+    }
+}
+fn source_error(
+    kind: &str,
+    d: &mut Diagnostics,
+    code: &str,
+    msg: &str,
+    path: &str,
+    hint: Option<JsString>,
+) {
     let mut fields = JsObject::new();
     fields.insert("code".into(), code.into());
     fields.insert("severity".into(), "fatal".into());
@@ -340,7 +354,7 @@ fn source_error(d: &mut Diagnostics, code: &str, msg: &str, path: &str, hint: Op
     fields.insert("path".into(), path.into());
     fields.insert(
         "source".into(),
-        object([("kind", "default".into()), ("path", path.into())]),
+        object([("kind", kind.into()), ("path", path.into())]),
     );
     if let Some(h) = hint {
         fields.insert("hint".into(), JsValue::String(h));

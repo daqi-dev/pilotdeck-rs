@@ -4832,14 +4832,14 @@
 "configuration": ["boot","project_config"],
 "delivery_package": "A4",
 "frozen_category": "(a)",
-"guard": {"refs":["B/src/gateway/client/InProcessGateway.ts:2186","B/src/cli/createLocalGateway.ts:1095","B/src/cli/GatewaySessionModelBundle.ts:40","B/src/model/session/NativeSessionModelSelectionPort.ts:51","B/src/model/session/NativeSessionModelSelectionPolicy.ts:29","B/src/model/session/NativeSessionModelSelectionPolicy.ts:41","B/src/gateway/dialog/projectRegistry.ts:41","B/src/gateway/dialog/modelCatalog.ts:103"],"summary":"读取不 reserveTranscriptWrite；历史 reasoning 过期由恢复策略规范化，不把 set 的校验全套应用到 get。"},
+"guard": {"refs":["B/src/cli/GatewaySessionModelBundle.ts:40","B/src/gateway/dialog/modelCatalog.ts:103"],"summary":"get无Router写锁；reasoning恢复用全局catalog；无显式saved才加载项目配置。"},
 "handler": {"refs":["B/src/gateway/server/GatewayWsConnection.ts:369","B/src/gateway/client/InProcessGateway.ts:2186"],"summary":"GatewayWsConnection → InProcessGateway.sessionModelGet"},
 "lifecycle": {"effects":[],"refs":["B/src/cli/LocalGatewayLifecycleBundle.ts:42","B/src/cli/LocalGatewayLifecycleBundle.ts:61"],"summary":"按所列 owner 释放；通用宿主退出先 gateway/subagents/router，再 session MCP/project generations。仅指默认装配，不替代外部 provider 释放证据。"},
 "method": "session_model_get",
 "notifications": {"names":[],"refs":["B/src/gateway/client/InProcessGateway.ts:2186"],"scope":"direct_handler","summary":"该 handler 无直接 notification 调用；provider、bus 或会话副作用的通知另列；未闭合者以 BLOCKED 为准。","unresolved":"下游外部 provider/生命周期的完整通知集合未闭合；按本项 blockers 取得实现并采集 handler→provider→notification/event 证据。"},
 "owner": "A4",
 "proposed_scenarios": ["a51.session_model_get.success","a51.session_model_get.error","a51.session_model_get.unconfigured","a51.session_model_get.provider_invalid_session_key","a51.session_model_get.provider_project_not_found"],
-"provider": {"default_refs":["x7zRUQ","KdUiYQ"],"refs":["B/src/gateway/client/InProcessGateway.ts:2186","B/src/cli/createLocalGateway.ts:1095","B/src/cli/GatewaySessionModelBundle.ts:40","B/src/model/session/NativeSessionModelSelectionPort.ts:51","B/src/model/session/NativeSessionModelSelectionPolicy.ts:29","B/src/model/session/NativeSessionModelSelectionPolicy.ts:41","B/src/gateway/dialog/projectRegistry.ts:41","B/src/gateway/dialog/modelCatalog.ts:103"],"summary":"GatewaySessionModelBundle 解析项目，通过 selectionPort.read 读选择并由 policy.restoreSelection/result 合成默认值。"},
+"provider": {"default_refs":["x7zRUQ","KdUiYQ"],"refs":["B/src/cli/createLocalGateway.ts:1095","B/src/model/session/NativeSessionModelSelectionPort.ts:51"],"summary":"默认原生 persistence/replay、saved恢复及项目配置链已由第2轮 Node wire/A2 验证。"},
 "scenario_ids": ["readonly"],
 "source_audit": {
 "automatic_providers": ["x7zRUQ","KdUiYQ"],
@@ -4866,7 +4866,7 @@
 {"assembly":"automatic_default","ranges":["dZl9pA","aAPuKw","kRvHxQ","luBD2Q","QQR4yg","FMZ_pg","Ox_8WA","qSua9w","5mX6Jg","ucZU9g","DZu4nQ","51WbVw","QKXjAw","I1f2LA","azpH2A","kDtiVQ","LZb1bA","qsSiuw","3XVMlg","VetW8A","1uIycg","eMrp5w","XgNjlw","yPyi5g","qpPipg","s0Kz4g","Fhw6UA","f_21UA","QQu_ig","d9wrcQ","qII95A","sBbi6A","CHzHnA","NhDqqQ","2C93BA","IH-FDw"],"role":"callee"}
 ]
 },
-"state": {"effects":[],"kinds":["storage","memory"],"refs":["B/src/gateway/client/InProcessGateway.ts:2186","B/src/cli/createLocalGateway.ts:1095","B/src/cli/GatewaySessionModelBundle.ts:40","B/src/model/session/NativeSessionModelSelectionPort.ts:51","B/src/model/session/NativeSessionModelSelectionPolicy.ts:29","B/src/model/session/NativeSessionModelSelectionPolicy.ts:41","B/src/gateway/dialog/projectRegistry.ts:41","B/src/gateway/dialog/modelCatalog.ts:103"],"summary":"NativeSessionModelSelectionPort 读取 transcript metadata；默认 selection 依项目配置策略计算。"},
+"state": {"effects":[],"kinds":["storage","memory","external"],"refs":["B/src/pilot/staffdeck/projectBinding.ts:65","B/src/pilot/staffdeck/projectBinding.ts:69","B/src/pilot/staffdeck/projectBinding.ts:73","B/src/pilot/staffdeck/projectBinding.ts:121"],"summary":"新建JSONL/replay不读运行会话；external仅锁PID的OS存活，无网络。R15仍(a)；任意kill错误均false。"},
 "status": "BLOCKED",
 "work_package": "A4"
 },

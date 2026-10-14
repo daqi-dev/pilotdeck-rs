@@ -133,7 +133,7 @@ fn missing_params_and_unknown_project_match_ts_error_and_success_bytes() {
 #[test]
 fn deferred_methods_and_invalid_frames_keep_upstream_ownership() {
     for raw in [
-        r#"{"type":"request","id":"x","method":"session_model_get"}"#,
+        r#"{"type":"request","id":"x","method":"session_model_set"}"#,
         r#"{"type":"request","id":"x","method":"describe_server"}"#,
         r#"{"type":"hello","method":"supported_agents"}"#,
         r#"{"type":"request","method":"supported_agents"}"#,

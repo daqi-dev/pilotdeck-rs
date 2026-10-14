@@ -9,6 +9,7 @@ const LOCAL_METHODS: &[&str] = &[
     "project_files_list",
     "project_file_read",
     "model_catalog_list",
+    "session_model_get",
 ];
 
 pub(crate) enum Route {
@@ -41,7 +42,13 @@ pub(crate) fn is_local(request: &JsValue) -> bool {
 pub(crate) fn needs_files(request: &JsValue) -> bool {
     matches!(
         text_field(request, "method").as_deref(),
-        Some("list_projects" | "project_files_list" | "project_file_read" | "model_catalog_list")
+        Some(
+            "list_projects"
+                | "project_files_list"
+                | "project_file_read"
+                | "model_catalog_list"
+                | "session_model_get"
+        )
     ) || (text_field(request, "method").as_deref() == Some("describe_project")
         && request
             .get("params")
@@ -63,7 +70,7 @@ pub(crate) fn route_with_metadata<F: Files>(
     if !LOCAL_METHODS.contains(&method.as_str()) {
         return Route::Forward;
     }
-    if method == "model_catalog_list" {
+    if method == "model_catalog_list" || method == "session_model_get" {
         let env = std::env::vars_os()
             .map(|(k, v)| {
                 (
@@ -72,6 +79,15 @@ pub(crate) fn route_with_metadata<F: Files>(
                 )
             })
             .collect();
+        if method == "session_model_get" {
+            if let Some(metadata) = metadata {
+                return crate::session_model::response(request, metadata, &env)
+                    .map_or(Route::Forward, Route::LocalResponse);
+            }
+            return crate::model_catalog::native_metadata(&env)
+                .and_then(|m| crate::session_model::response(request, &m, &env))
+                .map_or(Route::Forward, Route::LocalResponse);
+        }
         return route_catalog(request, metadata, &env);
     }
     let result = match method.as_str() {
@@ -187,7 +203,7 @@ pub(crate) fn route_with_metadata<F: Files>(
     }
 }
 
-fn error_number(number: f64) -> String {
+pub(crate) fn error_number(number: f64) -> String {
     if number.is_nan() {
         "NaN".into()
     } else if number == f64::INFINITY {

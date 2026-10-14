@@ -1138,3 +1138,53 @@ async fn pending_local_disk_read_does_not_block_client_close_or_reply_after_clos
     pair.server.shutdown().await.unwrap();
     pair.finish().await;
 }
+
+#[tokio::test]
+async fn session_selection_requests_match_node_frames_with_an_independent_upstream_observer() {
+    let fixture = crate::session_model::tests::fixture();
+    let mut count = 0;
+    for row in fixture["cases"].as_array().unwrap().iter().filter(|row| {
+        row["env"].as_object().unwrap().len() == 1
+            && row["request"]
+                .as_str()
+                .unwrap()
+                .contains("session_model_get")
+    }) {
+        let metadata = crate::session_model::tests::snapshot(row);
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        let request = client_frame(
+            0x81,
+            if count % 2 == 0 { 126 } else { 127 },
+            row["request"].as_str().unwrap().as_bytes(),
+        );
+        let expected = server_frame(1, row["response"].as_str().unwrap().as_bytes());
+        write(&mut pair.client, &request).await;
+        if row["forward"].as_bool() == Some(true) {
+            // D6 fallback must preserve the complete original request frame.
+            read(&mut pair.server, &request).await;
+            write(&mut pair.server, &expected).await;
+        }
+        read(&mut pair.client, &expected).await;
+        silent(&mut pair.server).await;
+        // A sentinel makes the negative observation causal: all preceding bytes
+        // have been consumed when this unrelated forwarded request arrives.
+        let sentinel = client_frame(
+            0x81,
+            127,
+            br#"{"type":"request","id":"observer-fence","method":"describe_server"}"#,
+        );
+        write(&mut pair.client, &sentinel).await;
+        read(&mut pair.server, &sentinel).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+        count += 1;
+    }
+    assert!(count > 50);
+}
