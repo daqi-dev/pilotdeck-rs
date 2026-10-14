@@ -768,6 +768,9 @@ pub fn run_admitted_turn(
             && matches!(error.as_ref(), PortError::AcceptedUnknown { .. })
         {
             if is_deadline_unknown(error, control) {
+                // TS :861 assembles before capture/completion. If assembly
+                // itself throws (e.g. rawId.trim), no aborted fact follows;
+                // preserve the accepted call's original uncertainty here.
                 if let Ok(raw) = invocation.assembled {
                     // Aborted is a turn fact, not proof that the accepted model
                     // call settled. Publish the source catch's cleanup/events,
@@ -2629,6 +2632,7 @@ fn finish_pre_model_abort(
         TurnResultKind::Aborted,
         TurnStopReason::AbortedStreaming,
     );
+    let deadline = matches!(cause, CancelCause::Deadline);
     if let CancelCause::Requested(reason) = cause {
         let lower = reason
             .units()
@@ -2658,7 +2662,10 @@ fn finish_pre_model_abort(
         }
     }
     let capture_cleanup = fresh_capture_cleanup(cleanup);
-    capture_turn_advisory(host, &capture_cleanup, input, &state.messages, false)?;
+    let capture = capture_turn_advisory(host, &capture_cleanup, input, &state.messages, false);
+    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline) {
+        capture?;
+    }
     emit_accepted_event(
         events,
         &mut state.timeline,
@@ -2678,7 +2685,7 @@ fn finish_aborted_after_tools(
     started_at: JsString,
     clock: &dyn TurnClock,
     ports: TerminalTurnPorts<'_>,
-    deadline_unknown: bool,
+    deadline: bool,
 ) -> PortResult<TurnOutput> {
     // AgentLoop's post-execute abort path creates the result before capture,
     // retains the admitted assistant, and publishes no tool results/status.
@@ -2697,7 +2704,7 @@ fn finish_aborted_after_tools(
         &state.messages,
         false,
     );
-    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline_unknown) {
+    if !matches!(&capture, Err(PortError::AcceptedUnknown { .. }) if deadline) {
         capture?;
     }
     emit_accepted_event(
@@ -4845,6 +4852,7 @@ mod owning_cancel_branch_tests {
         CompleteThenAbort,
         /// A pre-stream abort must never reach the model host at all.
         Unreached,
+        DeadlineUnknownBadAssembly,
     }
     struct Host {
         log: Log,
@@ -4871,7 +4879,13 @@ mod owning_cancel_branch_tests {
                     push(&self.log, format!("host:stream_next:{}", self.pulls));
                     if self.pulls == 1 {
                         return Ok(HostReply::ModelChunk(StreamChunk {
-                            events: text_batch(),
+                            events: if matches!(self.plan, StreamPlan::DeadlineUnknownBadAssembly) {
+                                vec![raw_event(
+                                    r#"{"type":"tool_call_end","toolCall":{"id":true,"name":"owned_tool","input":{}}}"#,
+                                )]
+                            } else {
+                                text_batch()
+                            },
                             done: false,
                         }));
                     }
@@ -4890,6 +4904,22 @@ mod owning_cancel_branch_tests {
                                 events: vec![raw_event(r#"{"type":"message_end"}"#)],
                                 done: true,
                             }))
+                        }
+                        StreamPlan::DeadlineUnknownBadAssembly => {
+                            assert!(self.cancellation.cancel(CancelCause::Deadline));
+                            Err(PortError::AcceptedUnknown {
+                                identity: Box::new(crate::ports::ExecutionIdentity {
+                                    session_id: "session".into(),
+                                    turn_id: "turn".into(),
+                                    run_id: "run".into(),
+                                    operation_id: "op".into(),
+                                    request_id: "accepted-model".into(),
+                                    idempotency_key: None,
+                                    module_instance_id: "module".into(),
+                                    connection_generation: "generation".into(),
+                                }),
+                                last_applied_sequence: Some(7.0),
+                            })
                         }
                         StreamPlan::Unreached => panic!("pre-stream abort reached the model host"),
                     }
@@ -5107,8 +5137,9 @@ mod owning_cancel_branch_tests {
         StreamThrow,
         /// `stream_eos`: the abort fires and the iterator completes normally.
         StreamEos,
+        DeadlineUnknownBadAssembly,
     }
-    fn run(trigger: Trigger, reason: &'static str) -> (TurnOutput, Vec<String>) {
+    fn run_result(trigger: Trigger, reason: &'static str) -> (PortResult<TurnOutput>, Vec<String>) {
         let log: Log = Arc::default();
         let cancellation = Cancellation::default();
         let plan = match trigger {
@@ -5119,6 +5150,7 @@ mod owning_cancel_branch_tests {
             Trigger::InPrepare => StreamPlan::Unreached,
             Trigger::StreamThrow => StreamPlan::ThrowWhileAborted,
             Trigger::StreamEos => StreamPlan::CompleteThenAbort,
+            Trigger::DeadlineUnknownBadAssembly => StreamPlan::DeadlineUnknownBadAssembly,
         };
         let mut host = Host {
             log: log.clone(),
@@ -5155,12 +5187,39 @@ mod owning_cancel_branch_tests {
             &control,
             &cleanup,
             &mut hints,
-        )
-        .expect("owning cancellation completes as a known aborted turn");
-        assert_eq!(output.result.kind, TurnResultKind::Aborted);
-        assert_eq!(output.result.stop_reason, TurnStopReason::AbortedStreaming);
+        );
         let observed = log.lock().unwrap().clone();
         (output, observed)
+    }
+    fn run(trigger: Trigger, reason: &'static str) -> (TurnOutput, Vec<String>) {
+        let (result, log) = run_result(trigger, reason);
+        let output = result.expect("owning cancellation completes as a known aborted turn");
+        assert_eq!(output.result.kind, TurnResultKind::Aborted);
+        assert_eq!(output.result.stop_reason, TurnStopReason::AbortedStreaming);
+        (output, log)
+    }
+    #[test]
+    fn deadline_unknown_with_assembly_type_error_preserves_ts_no_completion_boundary() {
+        let (result, log) = run_result(Trigger::DeadlineUnknownBadAssembly, "unused");
+        let Err(PortError::AcceptedUnknown {
+            identity,
+            last_applied_sequence,
+        }) = result
+        else {
+            panic!("assembly failure must retain the original accepted model uncertainty");
+        };
+        assert!(identity.request_id.equals_str("accepted-model"));
+        assert_eq!(last_applied_sequence, Some(7.0));
+        assert_eq!(
+            log,
+            vec![
+                "prepare",
+                "model_request_started",
+                "host:stream_next:1",
+                "model_event",
+                "host:stream_next:2"
+            ]
+        );
     }
     fn status_count(log: &[String]) -> usize {
         log.iter()
@@ -6816,6 +6875,29 @@ mod pre_model_abort_tests {
             })
         ));
         assert_eq!(log, vec!["pending_fence"]);
+    }
+    #[test]
+    fn pre_model_deadline_capture_unknown_still_emits_aborted_completion() {
+        let (result, log) = run(
+            PortError::Cancelled {
+                cause: CancelCause::Deadline,
+            },
+            None,
+            Some(unknown()),
+        );
+        let output = result.unwrap();
+        assert_eq!(output.result.kind, TurnResultKind::Aborted);
+        assert_eq!(output.messages.len(), 2);
+        assert!(output.result.final_message.is_some());
+        assert_eq!(
+            log,
+            vec![
+                "pending_fence",
+                "result_clock",
+                "capture_false",
+                "completed"
+            ]
+        );
     }
     #[test]
     fn capture_unknown_prevents_known_completion() {

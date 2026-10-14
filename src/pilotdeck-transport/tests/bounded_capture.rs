@@ -348,6 +348,10 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
                         CancelCause::Requested("user cancel".into()),
                         Instant::now(),
                     );
+                } else if !matches!(capture, Capture::UncancelledUnknown) {
+                    // The execution deadline listener sets the owning cause;
+                    // a local CallControl bound alone must not freeze late ACKs.
+                    cancellation.cancel(CancelCause::Deadline);
                 }
                 if matches!(capture, Capture::RetiredBefore) {
                     assert!(!cancellation.cancel(CancelCause::OwnerRetired));
@@ -360,6 +364,8 @@ fn run_pending(capture: Capture, requested: bool, tool: bool) {
                         CancelCause::Requested("user cancel".into()),
                         Instant::now(),
                     );
+                } else {
+                    cancellation.cancel(CancelCause::Deadline);
                 }
                 continue;
             }
@@ -637,4 +643,124 @@ fn bounded_capture_requested_then_retired_during_capture() {
 #[test]
 fn bounded_capture_uncancelled_unknown_stays_closed() {
     run_pending(Capture::UncancelledUnknown, false, false);
+}
+
+fn run_loop_top_without_capture_ack(deadline: bool) {
+    let owner = ConnectionOwner::new(
+        SidecarBinding {
+            module_id: "pilotdeck-agent-loop".into(),
+            module_instance_id: "instance".into(),
+            connection_generation: "generation".into(),
+            capabilities_version: "1".into(),
+        },
+        8,
+    );
+    let identity = ExecutionIdentity {
+        session_id: "session".into(),
+        turn_id: "turn".into(),
+        run_id: "run".into(),
+        operation_id: "op".into(),
+        request_id: "initial".into(),
+        idempotency_key: None,
+        module_instance_id: "instance".into(),
+        connection_generation: "generation".into(),
+    };
+    let cancellation = Cancellation::default();
+    cancellation.cancel(if deadline {
+        CancelCause::Deadline
+    } else {
+        CancelCause::Requested("user cancel".into())
+    });
+    let control = CallControl {
+        cancellation: cancellation.clone(),
+        deadline: None,
+    };
+    let cleanup = CallControl {
+        cancellation: cancellation.cleanup_scope(),
+        deadline: None,
+    };
+    let (sent, received) = mpsc::channel();
+    let writer_owner = owner.clone();
+    let writer = std::thread::spawn(move || writer_owner.drive_writer(Wire(sent, vec![])));
+    let mut host = RemoteHost::new(
+        owner.bound_exchange(identity.clone()).unwrap(),
+        AdvertisedMethods {
+            modules: vec![("context".into(), vec!["capture_turn".into()])],
+        },
+    );
+    let log: Log = Arc::default();
+    let start = Instant::now();
+    let result = run_admitted_turn(
+        &mut config(),
+        &input(),
+        vec![message("prompt")],
+        &mut host,
+        &mut Preparation {
+            log: log.clone(),
+            arm_in_prepare: None,
+        },
+        &mut Events(log.clone()),
+        &Clock,
+        &control,
+        &cleanup,
+        &mut tool_hints(),
+    );
+    assert!(
+        start.elapsed() < Duration::from_secs(6),
+        "loop-top capture exceeded its local bound"
+    );
+    let bytes = received.recv_timeout(Duration::from_secs(1)).unwrap();
+    let request = json(std::str::from_utf8(&bytes).unwrap());
+    assert_eq!(
+        request.get("operation"),
+        Some(&JsValue::from("capture_turn"))
+    );
+    let id = request.get("messageId").unwrap().as_string().unwrap();
+    let record = owner.call_record(id).unwrap();
+    assert_eq!(record.phase, DispatchPhase::Unresolved);
+    assert_eq!(
+        request
+            .get("payload")
+            .unwrap()
+            .get("input")
+            .unwrap()
+            .get("errored"),
+        Some(&JsValue::Bool(false))
+    );
+    if deadline {
+        let output = result.unwrap();
+        assert_eq!(output.result.kind, TurnResultKind::Aborted);
+        assert_eq!(output.result.stop_reason, TurnStopReason::AbortedStreaming);
+        assert_eq!(output.messages.len(), 1);
+        assert_eq!(*log.lock().unwrap(), vec!["turn_completed"]);
+    } else {
+        assert!(
+            matches!(result, Err(PortError::AcceptedUnknown { identity, .. }) if *identity == record.identity)
+        );
+        assert_eq!(*log.lock().unwrap(), vec!["agent_status:turn_aborted"]);
+    }
+    assert!(
+        received.try_recv().is_err(),
+        "loop-top abort issued another host call"
+    );
+    // Even informational Completed cannot settle the unanswered capture.
+    let fresh = CallControl {
+        cancellation: Cancellation::default(),
+        deadline: None,
+    };
+    assert!(
+        matches!(host.into_exchange().exchange(&fresh, "model", "prepare", CallEffect::SideEffect, JsObject::new()), Err(PortError::AcceptedUnknown { identity, .. }) if *identity == record.identity)
+    );
+    owner.close();
+    assert!(writer.join().unwrap().is_ok());
+}
+
+#[test]
+fn loop_top_deadline_without_capture_ack_still_publishes_aborted_completed() {
+    run_loop_top_without_capture_ack(true);
+}
+
+#[test]
+fn loop_top_requested_without_capture_ack_retains_unknown_and_omits_completed() {
+    run_loop_top_without_capture_ack(false);
 }

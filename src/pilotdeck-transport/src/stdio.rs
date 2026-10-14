@@ -306,10 +306,8 @@ impl ConnectionOwner {
                 || (record.cancelled_before_response
                     && !is_abort_cleanup(record)
                     && matches!(
-                        record.response_control.check(),
-                        Err(PortError::Cancelled {
-                            cause: pilotdeck_agent::ports::CancelCause::Deadline,
-                        })
+                        record.response_control.cancellation.cause(),
+                        Some(pilotdeck_agent::ports::CancelCause::Deadline)
                     ));
             record.response = Some(BoundarySnapshot::capture(value));
             record.phase = if record.deadline_rejected {
@@ -609,34 +607,9 @@ impl PendingExchange {
                 owner.0.wake.notify();
                 return Err(error);
             }
-            // TS sends its advisory capture even though the global abort
-            // listener rejects its Promise. Preserve send-before-final order,
-            // waiting only for the writer, never for the host's ACK.
-            let deadline_cleanup = deadline_cleanup(&state, record);
-            if deadline_cleanup {
-                if matches!(
-                    record.phase,
-                    DispatchPhase::Queued | DispatchPhase::Dispatching
-                ) && !state.closed
-                    && control.check().is_ok()
-                {
-                    drop(state);
-                    owner.0.wake.wait(generation, control.deadline);
-                    continue;
-                }
-                let original =
-                    known_uncertainty(&state, &identity).unwrap_or_else(|| unknown(&identity));
-                let record = state.calls.get_mut(&message_id).unwrap();
-                record.deadline_rejected = true;
-                record.phase = DispatchPhase::Unresolved;
-                drop(state);
-                owner.0.wake.notify();
-                return Err(original);
-            }
-            if record.deadline_rejected {
-                return Err(unknown(&identity));
-            }
-            if let Some(response) = &record.response {
+            if let Some(response) = &record.response
+                && !record.deadline_rejected
+            {
                 let boundary = response.clone();
                 let cancelled_before_response = record.cancelled_before_response;
                 drop(state);
@@ -661,6 +634,47 @@ impl PendingExchange {
                     boundary,
                     cancelled_before_response,
                 });
+            }
+            // TS sends its advisory capture even though the global abort
+            // listener rejects its Promise. Preserve send-before-final order,
+            // waiting only for the writer, never for the host's ACK.
+            let deadline_cleanup = deadline_cleanup(&state, record);
+            if deadline_cleanup {
+                if matches!(
+                    record.phase,
+                    DispatchPhase::Queued | DispatchPhase::Dispatching
+                ) && !state.closed
+                    && control.check().is_ok()
+                {
+                    drop(state);
+                    owner.0.wake.wait(generation, control.deadline);
+                    continue;
+                }
+                let original = known_uncertainty(&state, &identity).unwrap_or_else(|| {
+                    if record.phase == DispatchPhase::Queued {
+                        control.check().err().unwrap_or_else(|| before(closed()))
+                    } else {
+                        unknown(&identity)
+                    }
+                });
+                if record.phase == DispatchPhase::Queued {
+                    // No acceptance occurred. Remove both the responsibility
+                    // record and the packet, just as for normal queued expiry.
+                    state.calls.remove(&message_id);
+                    state
+                        .data
+                        .retain(|packet| packet.pending.as_ref() != Some(&message_id));
+                } else {
+                    let record = state.calls.get_mut(&message_id).unwrap();
+                    record.deadline_rejected = true;
+                    record.phase = DispatchPhase::Unresolved;
+                }
+                drop(state);
+                owner.0.wake.notify();
+                return Err(original);
+            }
+            if record.deadline_rejected {
+                return Err(unknown(&identity));
             }
             let dispatched = record.phase != DispatchPhase::Queued;
             let invalid = record.phase == DispatchPhase::InvalidReply;
@@ -716,8 +730,12 @@ impl PendingExchange {
                         .get_mut(&message_id)
                         .expect("accepted responsibility retained");
                     record.phase = DispatchPhase::Unresolved;
-                    // A cleanup's own bound is not an execution deadline abort.
-                    record.deadline_rejected = deadline_exceeded && !is_abort_cleanup(record);
+                    // A local wait/cleanup bound is not the execution's abort cause.
+                    record.deadline_rejected |= !is_abort_cleanup(record)
+                        && matches!(
+                            record.response_control.cancellation.cause(),
+                            Some(pilotdeck_agent::ports::CancelCause::Deadline)
+                        );
                 }
                 drop(state);
                 owner.0.wake.notify();
@@ -764,12 +782,11 @@ fn deadline_cleanup(state: &State, record: &CallRecord) -> bool {
                 && (call.deadline_rejected
                     || (matches!(
                         (call.module, call.operation),
-                        ("model", "stream_next" | "stream") | ("capability", "execute_batch")
+                        ("model", "stream_next" | "stream")
+                            | ("capability", "execute_batch" | "plan_todo")
                     ) && matches!(
-                        call.response_control.check(),
-                        Err(PortError::Cancelled {
-                            cause: pilotdeck_agent::ports::CancelCause::Deadline,
-                        })
+                        call.response_control.cancellation.cause(),
+                        Some(pilotdeck_agent::ports::CancelCause::Deadline)
                     )))
         })
 }
@@ -945,6 +962,324 @@ mod reconciliation_tests {
             Ok(())
         }
     }
+    fn ack(id: &JsString) -> JsValue {
+        let mut reply = JsObject::new();
+        reply.insert("kind".into(), "response".into());
+        reply.insert("messageId".into(), "ack".into());
+        reply.insert("inReplyTo".into(), JsValue::String(id.clone()));
+        reply.insert("ok".into(), JsValue::Bool(true));
+        JsValue::Object(reply)
+    }
+    fn abort_capture_payload() -> JsObject {
+        let mut payload = JsObject::new();
+        payload.insert(
+            "input".into(),
+            pilotdeck_protocol::parse_json(
+                r#"{"sessionId":"s","turnId":"t","errored":false,"messages":[]}"#,
+            )
+            .unwrap(),
+        );
+        payload
+    }
+    // These state-machine tests set Sent under the owner lock to select ACK
+    // ordering without scheduling or a wall-clock sleep. Writer admission is
+    // exercised separately by the late local-bound regression below.
+    fn mark_sent(pending: &PendingExchange) {
+        let mut state = pending.owner.0.state.lock().unwrap();
+        state.calls.get_mut(&pending.message_id).unwrap().phase = DispatchPhase::Sent;
+        state
+            .data
+            .retain(|packet| packet.pending.as_ref() != Some(&pending.message_id));
+    }
+
+    #[test]
+    fn late_local_five_second_ack_settles_normal_and_requested_notifications() {
+        for requested in [false, true] {
+            for module in ["lifecycle", "event"] {
+                for wait_first in [false, true] {
+                    let (owner, execution, mut exchange) = fixture();
+                    let identity = exchange.identity.clone();
+                    if requested {
+                        execution
+                            .cancellation
+                            .cancel(CancelCause::Requested("stop".into()));
+                    }
+                    // InstructionsLoaded/terminal notification scopes ignore
+                    // Requested, while retaining hard-stop propagation.
+                    let mut local = CallControl {
+                        cancellation: execution.cancellation.cleanup_scope(),
+                        deadline: Some(Instant::now() + Duration::from_secs(5)),
+                    };
+                    let pending = exchange
+                        .start(
+                            &local,
+                            module,
+                            "dispatch",
+                            CallEffect::SideEffect,
+                            JsObject::new(),
+                        )
+                        .unwrap();
+                    let id = pending.message_id.clone();
+                    let mut pending = Some(pending);
+                    let (sent, received) = mpsc::channel();
+                    let writer_owner = owner.clone();
+                    let writer = std::thread::spawn(move || {
+                        writer_owner.drive_writer(Recorder {
+                            bytes: Vec::new(),
+                            sent,
+                        })
+                    });
+                    received.recv_timeout(Duration::from_secs(2)).unwrap();
+                    // Advance only the stored local bound past expiry. This is
+                    // the exact 5s-expired branch without a 5s sleep per case.
+                    local.deadline = Some(Instant::now() - Duration::from_secs(1));
+                    owner
+                        .0
+                        .state
+                        .lock()
+                        .unwrap()
+                        .calls
+                        .get_mut(&id)
+                        .unwrap()
+                        .response_control
+                        .deadline = local.deadline;
+                    if wait_first {
+                        assert!(matches!(
+                            pending.take().unwrap().wait(&local),
+                            Err(PortError::AcceptedUnknown { .. })
+                        ));
+                        assert_eq!(
+                            owner.call_record(&id).unwrap().phase,
+                            DispatchPhase::Unresolved
+                        );
+                    }
+                    assert_eq!(
+                        owner.receive_response(&ack(&id)),
+                        ResponseDisposition::Completed
+                    );
+                    let record = owner.call_record(&id).unwrap();
+                    assert_eq!(record.phase, DispatchPhase::Replied);
+                    assert!(!record.deadline_rejected);
+                    assert!(owner.check_known_uncertainty(&identity).is_ok());
+                    if !wait_first {
+                        let response = pending.take().unwrap().wait(&local).unwrap();
+                        assert!(response.cancelled_before_response);
+                    }
+                    let fresh = CallControl {
+                        cancellation: Cancellation::default(),
+                        deadline: None,
+                    };
+                    let next = exchange
+                        .start(
+                            &fresh,
+                            "model",
+                            "prepare",
+                            CallEffect::SideEffect,
+                            JsObject::new(),
+                        )
+                        .unwrap();
+                    received.recv_timeout(Duration::from_secs(2)).unwrap();
+                    assert_eq!(
+                        owner.receive_response(&ack(&next.message_id)),
+                        ResponseDisposition::Completed
+                    );
+                    assert!(
+                        next.wait(&fresh).is_ok(),
+                        "late notification ACK fenced the next model call"
+                    );
+                    owner.close();
+                    assert!(writer.join().unwrap().is_ok());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cleanup_ack_first_remains_replied_after_execution_deadline() {
+        for operation in ["capture_turn", "close_stream"] {
+            let (owner, execution, mut exchange) = fixture();
+            let identity = exchange.identity.clone();
+            let mut handle_payload = JsObject::new();
+            handle_payload.insert("preparationId".into(), "owned".into());
+            let original = exchange
+                .start(
+                    &execution,
+                    "model",
+                    "stream_next",
+                    CallEffect::SideEffect,
+                    handle_payload.clone(),
+                )
+                .unwrap();
+            mark_sent(&original);
+            assert_eq!(
+                owner.receive_response(&ack(&original.message_id)),
+                ResponseDisposition::Completed
+            );
+            assert!(original.wait(&execution).is_ok());
+            let cleanup = CallControl {
+                cancellation: execution.cancellation.cleanup_scope(),
+                deadline: Some(Instant::now() + Duration::from_secs(5)),
+            };
+            let (module, payload) = if operation == "capture_turn" {
+                ("context", abort_capture_payload())
+            } else {
+                ("model", handle_payload)
+            };
+            let pending = exchange
+                .start(&cleanup, module, operation, CallEffect::SideEffect, payload)
+                .unwrap();
+            let id = pending.message_id.clone();
+            mark_sent(&pending);
+            assert_eq!(
+                owner.receive_response(&ack(&id)),
+                ResponseDisposition::Completed
+            );
+            execution.cancellation.cancel(CancelCause::Deadline);
+            assert!(pending.wait(&cleanup).is_ok());
+            assert_eq!(
+                owner.call_record(&id).unwrap().phase,
+                DispatchPhase::Replied
+            );
+            assert!(owner.check_known_uncertainty(&identity).is_ok());
+        }
+    }
+
+    #[test]
+    fn acknowledged_plan_todo_still_gives_deadline_capture_send_only_cleanup() {
+        let (owner, execution, mut exchange) = fixture();
+        let original = exchange
+            .start(
+                &execution,
+                "capability",
+                "plan_todo",
+                CallEffect::SideEffect,
+                JsObject::new(),
+            )
+            .unwrap();
+        mark_sent(&original);
+        assert_eq!(
+            owner.receive_response(&ack(&original.message_id)),
+            ResponseDisposition::Completed
+        );
+        assert!(original.wait(&execution).is_ok());
+        execution.cancellation.cancel(CancelCause::Deadline);
+        let cleanup = CallControl {
+            cancellation: execution.cancellation.cleanup_scope(),
+            deadline: Some(Instant::now() + Duration::from_secs(5)),
+        };
+        let capture = exchange
+            .start(
+                &cleanup,
+                "context",
+                "capture_turn",
+                CallEffect::SideEffect,
+                abort_capture_payload(),
+            )
+            .unwrap();
+        let id = capture.message_id.clone();
+        mark_sent(&capture);
+        let start = Instant::now();
+        assert!(matches!(
+            capture.wait(&cleanup),
+            Err(PortError::AcceptedUnknown { .. })
+        ));
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "plan_todo deadline capture waited for ACK"
+        );
+        assert_eq!(
+            owner.call_record(&id).unwrap().phase,
+            DispatchPhase::Unresolved
+        );
+    }
+
+    #[test]
+    fn queued_deadline_cleanup_is_removed_on_local_expiry_or_hard_stop() {
+        for original_replied in [false, true] {
+            for hard_stop in [false, true] {
+                for operation in ["capture_turn", "close_stream"] {
+                    let (owner, execution, mut exchange) = fixture();
+                    let mut handle_payload = JsObject::new();
+                    handle_payload.insert("preparationId".into(), "owned".into());
+                    let original = exchange
+                        .start(
+                            &execution,
+                            "model",
+                            "stream_next",
+                            CallEffect::SideEffect,
+                            handle_payload.clone(),
+                        )
+                        .unwrap();
+                    let original_id = original.message_id.clone();
+                    mark_sent(&original);
+                    if original_replied {
+                        assert_eq!(
+                            owner.receive_response(&ack(&original_id)),
+                            ResponseDisposition::Completed
+                        );
+                        assert!(original.wait(&execution).is_ok());
+                        execution.cancellation.cancel(CancelCause::Deadline);
+                    } else {
+                        execution.cancellation.cancel(CancelCause::Deadline);
+                        assert!(matches!(
+                            original.wait(&execution),
+                            Err(PortError::AcceptedUnknown { .. })
+                        ));
+                    }
+                    let mut cleanup = CallControl {
+                        cancellation: execution.cancellation.cleanup_scope(),
+                        deadline: Some(Instant::now() + Duration::from_secs(5)),
+                    };
+                    let (module, payload) = if operation == "capture_turn" {
+                        ("context", abort_capture_payload())
+                    } else {
+                        ("model", handle_payload)
+                    };
+                    let pending = exchange
+                        .start(&cleanup, module, operation, CallEffect::SideEffect, payload)
+                        .unwrap();
+                    let id = pending.message_id.clone();
+                    if hard_stop {
+                        execution.cancellation.cancel(CancelCause::OwnerRetired);
+                    } else {
+                        cleanup.deadline = Some(Instant::now() - Duration::from_secs(1));
+                    }
+                    let result = pending.wait(&cleanup);
+                    if original_replied {
+                        // A queued cleanup has no accepted responsibility. Without
+                        // prior uncertainty, return its pre-dispatch cancellation.
+                        assert!(matches!(result, Err(PortError::Cancelled { cause })
+                        if cause == if hard_stop { CancelCause::OwnerRetired } else { CancelCause::Deadline }));
+                    } else {
+                        assert!(
+                            matches!(result, Err(PortError::AcceptedUnknown { identity, .. })
+                        if *identity == owner.call_record(&original_id).unwrap().identity)
+                        );
+                    }
+                    assert!(owner.call_record(&id).is_none());
+                    assert!(
+                        owner
+                            .0
+                            .state
+                            .lock()
+                            .unwrap()
+                            .data
+                            .iter()
+                            .all(|packet| packet.pending.as_ref() != Some(&id))
+                    );
+                    assert_eq!(
+                        owner.call_record(&original_id).unwrap().phase,
+                        if original_replied {
+                            DispatchPhase::Replied
+                        } else {
+                            DispatchPhase::Unresolved
+                        }
+                    );
+                }
+            }
+        }
+    }
+
     fn check_expired_wait(acknowledged: bool) {
         let owner = ConnectionOwner::new(
             SidecarBinding {
