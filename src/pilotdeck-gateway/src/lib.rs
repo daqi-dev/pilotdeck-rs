@@ -1,8 +1,9 @@
-//! Parsed WebSocket proxy. TS still owns authentication and all gateway methods.
+//! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
 mod dispatch;
 mod frame;
 pub mod http_proxy;
+mod metadata;
 mod pairing;
 mod upstream;
 

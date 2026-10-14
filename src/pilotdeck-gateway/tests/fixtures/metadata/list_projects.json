@@ -1,0 +1,4 @@
+{
+  "request": "{\"type\":\"request\",\"id\":\"fa5e4576-5e90-4d30-8570-0cef71343678\",\"method\":\"list_projects\",\"params\":{}}",
+  "response": "{\"type\":\"response\",\"id\":\"fa5e4576-5e90-4d30-8570-0cef71343678\",\"ok\":true,\"result\":{\"projects\":[{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\",\"sessionCount\":1,\"lastActivity\":1791944437924,\"createdAt\":1791944435037.8774}]}}"
+}

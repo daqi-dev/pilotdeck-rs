@@ -1,0 +1,4 @@
+{
+  "request": "{\"type\":\"request\",\"id\":\"b720a89d-d2df-4b10-99f7-3ac54c145eb6\",\"method\":\"model_catalog_list\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\"}}",
+  "response": "{\"type\":\"response\",\"id\":\"b720a89d-d2df-4b10-99f7-3ac54c145eb6\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+}

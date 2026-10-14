@@ -1,101 +1,224 @@
-//! Local gateway method whitelist. Empty until a separately verified migration.
+//! Only verified native metadata methods may terminate a request here.
+use crate::metadata::{Files, Metadata, object, string, text_field};
+use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 
-// A handler must return the exact response payload bytes. When enabling the first
-// handler, add authenticated hello_ok/binding state before permitting local work.
-type Handler = fn(&[u8]) -> Vec<u8>;
-const LOCAL_METHODS: &[(&str, Handler)] = &[];
+const LOCAL_METHODS: &[&str] = &["supported_agents", "list_projects", "describe_project"];
 
 pub(crate) enum Route {
     Forward,
     LocalResponse(Vec<u8>),
 }
 
-pub(crate) fn route(payload: &[u8]) -> Route {
-    route_with_handlers(payload, LOCAL_METHODS)
+pub(crate) fn parse(payload: &[u8]) -> Option<JsValue> {
+    // Node Buffer.toString("utf8") replaces malformed bytes before JSON.parse.
+    parse_json(&String::from_utf8_lossy(payload)).ok()
 }
 
-fn route_with_handlers(payload: &[u8], handlers: &[(&str, Handler)]) -> Route {
-    // Do not impose Rust JSON/UTF-8 validation on passthrough traffic. In
-    // particular TS's UTF-8 replacement and JSON.parse semantics stay upstream.
-    if handlers.is_empty() {
+pub(crate) fn is_hello(frame: &JsValue) -> bool {
+    text_field(frame, "type").as_deref() == Some("hello")
+        && ["protocolVersion", "clientName", "clientVersion", "token"]
+            .iter()
+            .all(|key| frame.get(key).and_then(JsValue::as_string).is_some())
+}
+
+pub(crate) fn is_request(frame: &JsValue) -> bool {
+    text_field(frame, "type").as_deref() == Some("request")
+        && frame.get("id").and_then(JsValue::as_string).is_some()
+        && frame.get("method").and_then(JsValue::as_string).is_some()
+}
+
+pub(crate) fn is_local(request: &JsValue) -> bool {
+    text_field(request, "method").is_some_and(|method| LOCAL_METHODS.contains(&method.as_str()))
+}
+
+pub(crate) fn needs_files(request: &JsValue) -> bool {
+    text_field(request, "method").as_deref() == Some("list_projects")
+        || (text_field(request, "method").as_deref() == Some("describe_project")
+            && request
+                .get("params")
+                .and_then(|params| params.get("projectKey"))
+                .and_then(JsValue::as_string)
+                .is_some())
+}
+
+pub(crate) fn route_with_metadata<F: Files>(
+    request: &JsValue,
+    metadata: Option<&Metadata<F>>,
+) -> Route {
+    if !is_request(request) {
         return Route::Forward;
     }
-    let Ok(request) = serde_json::from_slice::<serde_json::Value>(payload) else {
+    let Some(method) = text_field(request, "method") else {
         return Route::Forward;
     };
-    if request.get("type").and_then(|v| v.as_str()) != Some("request") {
+    if !LOCAL_METHODS.contains(&method.as_str()) {
         return Route::Forward;
     }
-    let Some(method) = request.get("method").and_then(|v| v.as_str()) else {
-        return Route::Forward;
+    let result = match method.as_str() {
+        "supported_agents" => Ok(supported_agents()),
+        "list_projects" => match metadata {
+            Some(metadata) => Ok(metadata.list_projects()),
+            None => return Route::Forward,
+        },
+        "describe_project" => {
+            let Some(metadata) = metadata else {
+                return Route::Forward;
+            };
+            let undefined = JsValue::Undefined;
+            let params = request.get("params").unwrap_or(&undefined);
+            if matches!(params, JsValue::Undefined | JsValue::Null) {
+                let kind = if params.is_undefined() {
+                    "undefined"
+                } else {
+                    "null"
+                };
+                Err((
+                    "gateway_request_failed",
+                    format!("Cannot read properties of {kind} (reading 'projectKey')"),
+                ))
+            } else {
+                let root = params.get("projectKey").unwrap_or(&undefined);
+                match root.as_string() {
+                    Some(root) => Ok(metadata.describe_project(root)),
+                    None => {
+                        let received = match root {
+                            JsValue::Undefined => "undefined".into(),
+                            JsValue::Null => "null".into(),
+                            JsValue::Number(number) => {
+                                format!("type number ({})", error_number(*number))
+                            }
+                            JsValue::Bool(value) => format!("type boolean ({value})"),
+                            JsValue::Array(_) => "an instance of Array".into(),
+                            JsValue::Object(object) => match object.get("constructor") {
+                                None => "an instance of Object".into(),
+                                Some(constructor) => match constructor.get("name") {
+                                    Some(name)
+                                        if name
+                                            .as_string()
+                                            .is_some_and(|name| !name.is_empty()) =>
+                                    {
+                                        match string(name) {
+                                            Some(name) => format!("an instance of {name}"),
+                                            None => return Route::Forward,
+                                        }
+                                    }
+                                    Some(JsValue::Object(_) | JsValue::Array(_)) => {
+                                        return Route::Forward;
+                                    }
+                                    Some(JsValue::Number(number))
+                                        if *number != 0.0 && !number.is_nan() =>
+                                    {
+                                        format!("an instance of {}", error_number(*number))
+                                    }
+                                    Some(JsValue::Bool(true)) => "an instance of true".into(),
+                                    _ => "[Object]".into(),
+                                },
+                            },
+                            // Node util.inspect has a separate contract. Unsupported
+                            // invalid argument shapes remain TS-owned.
+                            _ => return Route::Forward,
+                        };
+                        Err((
+                            "ERR_INVALID_ARG_TYPE",
+                            format!(
+                                "The \"paths[0]\" argument must be of type string. Received {received}"
+                            ),
+                        ))
+                    }
+                }
+            }
+        }
+        _ => unreachable!("checked whitelist"),
     };
-    match handlers.iter().find(|(name, _)| *name == method) {
-        Some((_, handler)) => Route::LocalResponse(handler(payload)),
+    let id = request.get("id").expect("validated request id").clone();
+    let response = match result {
+        Ok(result) => object([
+            ("type", "response".into()),
+            ("id", id),
+            ("ok", JsValue::Bool(true)),
+            ("result", result),
+        ]),
+        Err((code, message)) => object([
+            ("type", "response".into()),
+            ("id", id),
+            ("ok", JsValue::Bool(false)),
+            (
+                "error",
+                object([("code", code.into()), ("message", message.as_str().into())]),
+            ),
+        ]),
+    };
+    match stringify_json(&response).ok().flatten() {
+        Some(response) => Route::LocalResponse(response.into_bytes()),
         None => Route::Forward,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn whitelist_is_empty_even_for_all_first_migration_methods() {
-        for method in [
-            "native_archive_manifest",
-            "native_archive_entries",
-            "native_archive_artifact",
-            "project_files_list",
-            "project_file_read",
-            "model_catalog_list",
-            "session_model_get",
-            "supported_agents",
-            "list_projects",
-            "describe_project",
-            "describe_server",
-            "submit_turn",
-        ] {
-            let payload = format!(r#"{{"type":"request","id":"kept","method":"{method}"}}"#);
-            assert!(matches!(route(payload.as_bytes()), Route::Forward));
-        }
-    }
-
-    #[test]
-    fn matching_handler_receives_original_payload_and_returns_exact_bytes() {
-        fn handler(payload: &[u8]) -> Vec<u8> {
-            assert_eq!(
-                payload,
-                br#"{ "type":"request", "method":"fixture", "id":"kept" }"#
-            );
-            b"{ \"exact\": true }".to_vec()
-        }
-        let route = route_with_handlers(
-            br#"{ "type":"request", "method":"fixture", "id":"kept" }"#,
-            &[("fixture", handler)],
-        );
-        match route {
-            Route::LocalResponse(payload) => assert_eq!(payload, b"{ \"exact\": true }"),
-            Route::Forward => panic!("whitelist hit must select local response"),
-        }
-    }
-
-    #[test]
-    fn unknown_nonrequest_or_unparseable_payload_is_never_claimed_by_handler() {
-        fn handler(_: &[u8]) -> Vec<u8> {
-            panic!("must not claim passthrough payload");
-        }
-        for payload in [
-            br#"{"type":"hello","method":"fixture"}"#.as_slice(),
-            br#"{"type":"request","method":"unknown"}"#,
-            br#"{"type":"request","method":7}"#,
-            b"null",
-            b"invalid json",
-            &[255],
-        ] {
-            assert!(matches!(
-                route_with_handlers(payload, &[("fixture", handler)]),
-                Route::Forward
-            ));
-        }
+fn error_number(number: f64) -> String {
+    if number.is_nan() {
+        "NaN".into()
+    } else if number == f64::INFINITY {
+        "Infinity".into()
+    } else if number == f64::NEG_INFINITY {
+        "-Infinity".into()
+    } else if number == 0.0 && number.is_sign_negative() {
+        "-0".into()
+    } else {
+        stringify_json(&JsValue::Number(number))
+            .ok()
+            .flatten()
+            .unwrap_or_default()
     }
 }
+
+fn supported_agents() -> JsValue {
+    // Protocol data, independently expressed from the fixed TS preset projection.
+    let definitions: &[(&str, &str, &[&str], bool)] = &[
+        (
+            "general-purpose",
+            "General-purpose subagent for complex research/synthesis tasks. Has broad parent-tool access; nested delegation follows the configured depth cap.",
+            &["*"],
+            false,
+        ),
+        (
+            "explore",
+            "Read-only exploration subagent. Inspects files, runs grep/glob, and may run safe shell commands. Cannot edit files.",
+            &["read_file", "grep", "glob", "bash"],
+            true,
+        ),
+        (
+            "plan",
+            "Read-only planning subagent. Inspects code via read/grep/glob and produces a step-by-step plan.",
+            &["read_file", "grep", "glob"],
+            true,
+        ),
+        (
+            "verify",
+            "Verification subagent. Inspects generated artifacts (images, HTML, PDFs) for correctness. Can read files, run shell commands, and search code, but cannot modify files.",
+            &["read_file", "grep", "glob", "bash"],
+            true,
+        ),
+    ];
+    object([(
+        "agents",
+        JsValue::Array(
+            definitions
+                .iter()
+                .map(|(name, description, tools, read_only)| {
+                    object([
+                        ("name", (*name).into()),
+                        ("description", (*description).into()),
+                        (
+                            "tools",
+                            JsValue::Array(tools.iter().map(|tool| (*tool).into()).collect()),
+                        ),
+                        ("readOnly", JsValue::Bool(*read_only)),
+                    ])
+                })
+                .collect(),
+        ),
+    )])
+}
+
+#[cfg(test)]
+pub(crate) mod tests;

@@ -1,4 +1,4 @@
-//! A4 gateway skeleton: parsed downstream frames, empty local method whitelist.
+//! A4 gateway: verified native metadata plus parsed, byte-preserving passthrough.
 use hyper::{server::conn::http1, service::service_fn};
 use hyper_util::{
     client::legacy::Client,

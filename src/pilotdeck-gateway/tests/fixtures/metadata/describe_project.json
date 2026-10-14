@@ -1,0 +1,4 @@
+{
+  "request": "{\"type\":\"request\",\"id\":\"a2f8171c-1f24-4af5-9d49-3ac8d284f633\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\"}}",
+  "response": "{\"type\":\"response\",\"id\":\"a2f8171c-1f24-4af5-9d49-3ac8d284f633\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_build/wt-a2/_tmp/20261014-exp006-r3-live/cur/project\",\"sessionCount\":1,\"lastActivity\":1791944437924,\"createdAt\":1791944435037.8774}}"
+}

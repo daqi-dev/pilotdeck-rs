@@ -326,7 +326,7 @@ async fn hello_binding_notifications_events_and_response_bytes_pass_through() {
 }
 
 #[tokio::test]
-async fn empty_whitelist_forwards_known_unknown_invalid_json_and_utf8_payloads() {
+async fn before_auth_forwards_known_unknown_invalid_json_and_utf8_payloads() {
     let mut pair = Pair::new();
     let payloads: &[&[u8]] = &[
         br#"{ "type":"request", "id":"x", "method":"list_projects", "params":{} }"#,
@@ -633,4 +633,307 @@ async fn upstream_write_failure_on_text_ping_or_close_drains_pending_ts_close() 
         assert_eq!(output, close);
         timeout(DEADLINE, task).await.unwrap().unwrap().unwrap();
     }
+}
+
+fn fixture_pair() -> Pair {
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(
+            downstream,
+            upstream,
+            Some(crate::dispatch::tests::fixture()),
+        )),
+    }
+}
+
+async fn authenticate(pair: &mut Pair) {
+    let hello = client_frame(0x81, 126, br#"{"type":"hello","protocolVersion":"1.2","clientName":"web","clientVersion":"1","token":"fixture"}"#);
+    write(&mut pair.client, &hello).await;
+    read(&mut pair.server, &hello).await;
+    let hello_ok = server_frame(1, br#"{"type":"hello_ok","protocolVersion":"1.2","serverVersion":"fixture","serverInfo":{},"interactionBinding":{"connectionId":"ts-owned","generation":1}}"#);
+    write(&mut pair.server, &hello_ok).await;
+    read(&mut pair.client, &hello_ok).await;
+}
+
+#[tokio::test]
+async fn authenticated_native_requests_match_ts_bytes_and_never_reach_upstream() {
+    let mut pair = fixture_pair();
+    authenticate(&mut pair).await;
+    for raw in [
+        include_str!("../../tests/fixtures/metadata/supported_agents.json"),
+        include_str!("../../tests/fixtures/metadata/list_projects.json"),
+        include_str!("../../tests/fixtures/metadata/describe_project.json"),
+    ] {
+        let golden = crate::dispatch::parse(raw.as_bytes()).unwrap();
+        let request = crate::metadata::text_field(&golden, "request").unwrap();
+        let response = crate::metadata::text_field(&golden, "response").unwrap();
+        write(
+            &mut pair.client,
+            &client_frame(0x81, 126, request.as_bytes()),
+        )
+        .await;
+        read(&mut pair.client, &server_frame(1, response.as_bytes())).await;
+        silent(&mut pair.server).await;
+    }
+    // A valid unrelated request still traverses exactly, with TS binding intact.
+    let request = client_frame(
+        0x81,
+        127,
+        br#"{"type":"request","id":"x","method":"describe_server"}"#,
+    );
+    write(&mut pair.client, &request).await;
+    read(&mut pair.server, &request).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
+
+#[tokio::test]
+async fn local_method_before_hello_ok_is_forwarded_and_auth_state_is_per_pair() {
+    let mut pair = fixture_pair();
+    let request = client_frame(
+        0x81,
+        126,
+        br#"{"type":"request","id":"x","method":"supported_agents"}"#,
+    );
+    write(&mut pair.client, &request).await;
+    read(&mut pair.server, &request).await;
+    silent(&mut pair.client).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
+
+#[tokio::test]
+async fn invalid_authed_frame_prevents_later_coalesced_local_response() {
+    for payload in [
+        b"invalid json".as_slice(),
+        br#"{"type":"hello"}"#,
+        br#"{"type":"request","id":7,"method":"supported_agents"}"#,
+    ] {
+        let mut pair = fixture_pair();
+        authenticate(&mut pair).await;
+        let mut bytes = client_frame(0x81, 126, payload);
+        bytes.extend(client_frame(
+            0x81,
+            127,
+            br#"{"type":"request","id":"later","method":"supported_agents"}"#,
+        ));
+        write(&mut pair.client, &bytes).await;
+        read(&mut pair.server, &bytes).await;
+        silent(&mut pair.client).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn ts_close_suppresses_local_metadata_even_before_upstream_eof() {
+    let mut pair = fixture_pair();
+    authenticate(&mut pair).await;
+    let close = server_frame(8, &1000u16.to_be_bytes());
+    write(&mut pair.server, &close).await;
+    read(&mut pair.client, &close).await;
+    let request = client_frame(
+        0x81,
+        126,
+        br#"{"type":"request","id":"x","method":"supported_agents"}"#,
+    );
+    write(&mut pair.client, &request).await;
+    read(&mut pair.server, &request).await;
+    silent(&mut pair.client).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
+
+#[tokio::test]
+async fn invalid_text_queued_during_hello_prevents_later_local_reply() {
+    let mut pair = fixture_pair();
+    let hello=client_frame(0x81,126,br#"{"type":"hello","protocolVersion":"1.2","clientName":"web","clientVersion":"1","token":"fixture"}"#);
+    write(&mut pair.client, &hello).await;
+    read(&mut pair.server, &hello).await;
+    let invalid = client_frame(0x81, 126, b"invalid json");
+    write(&mut pair.client, &invalid).await;
+    read(&mut pair.server, &invalid).await;
+    let hello_ok=server_frame(1,br#"{"type":"hello_ok","protocolVersion":"1.2","interactionBinding":{"connectionId":"ts","generation":1}}"#);
+    write(&mut pair.server, &hello_ok).await;
+    read(&mut pair.client, &hello_ok).await;
+    let later = client_frame(
+        0x81,
+        126,
+        br#"{"type":"request","id":"x","method":"supported_agents"}"#,
+    );
+    write(&mut pair.client, &later).await;
+    read(&mut pair.server, &later).await;
+    silent(&mut pair.client).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
+
+fn hex(value: &str) -> Vec<u8> {
+    assert_eq!(value.len() % 2, 0);
+    value
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|bytes| u8::from_str_radix(std::str::from_utf8(bytes).unwrap(), 16).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn local_and_coalesced_controls_match_actual_ts_parser_raw_wire_goldens() {
+    let cases = crate::dispatch::parse(include_bytes!(
+        "../../tests/fixtures/metadata/controls.json"
+    ))
+    .unwrap();
+    let pilotdeck_protocol::JsValue::Array(cases) = &cases else {
+        panic!("cases")
+    };
+    for case in cases {
+        let name = crate::metadata::text_field(case, "name").unwrap();
+        let mut pair = fixture_pair();
+        authenticate(&mut pair).await;
+        let input = hex(&crate::metadata::text_field(case, "inputHex").unwrap());
+        let expected = hex(&crate::metadata::text_field(case, "outputHex").unwrap());
+        write(&mut pair.client, &input).await;
+        // The native request never reaches TS; only the following control/bad JSON does.
+        let mut decoder = Decoder::default();
+        decoder.buffer.extend_from_slice(&input);
+        decoder.next().unwrap().unwrap();
+        let forwarded = decoder.next().unwrap().unwrap();
+        read(&mut pair.server, &forwarded.wire).await;
+        match name.as_str() {
+            "ping" => write(&mut pair.server, &server_frame(10, b"native-ping")).await,
+            "close" => write(&mut pair.server, &server_frame(8, &1000u16.to_be_bytes())).await,
+            "invalid" => write(&mut pair.server, &close_wire(4002, "invalid_json")).await,
+            _ => panic!("unknown case"),
+        }
+        read(&mut pair.client, &expected).await;
+        silent(&mut pair.client).await;
+        silent(&mut pair.server).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+    }
+}
+
+struct ReleaseFileRead(std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+impl ReleaseFileRead {
+    fn open(&self) {
+        *self.0.0.lock().unwrap() = true;
+        self.0.1.notify_all();
+    }
+}
+impl Drop for ReleaseFileRead {
+    fn drop(&mut self) {
+        self.open();
+    }
+}
+
+struct SlowFiles {
+    inner: crate::dispatch::tests::FixtureFiles,
+    started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+impl crate::metadata::Files for SlowFiles {
+    fn entries(&self, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
+        if let Some(started) = self.started.lock().unwrap().take() {
+            let _ = started.send(());
+            let (opened, wait) = &*self.release;
+            let result = wait
+                .wait_timeout_while(opened.lock().unwrap(), DEADLINE, |opened| !*opened)
+                .unwrap();
+            assert!(
+                !result.1.timed_out(),
+                "source-oracle filesystem read release timeout"
+            );
+        }
+        self.inner.entries(path)
+    }
+    fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+    fn stat(&self, path: &std::path::Path) -> std::io::Result<crate::metadata::Stat> {
+        self.inner.stat(path)
+    }
+}
+
+fn slow_pair() -> (Pair, tokio::sync::oneshot::Receiver<()>, ReleaseFileRead) {
+    let fixture = crate::dispatch::tests::fixture();
+    let (started, observed) = tokio::sync::oneshot::channel();
+    let gate = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let metadata = crate::metadata::Metadata {
+        home: fixture.home,
+        cwd: fixture.cwd,
+        files: SlowFiles {
+            inner: fixture.files,
+            started: std::sync::Mutex::new(Some(started)),
+            release: gate.clone(),
+        },
+    };
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    (
+        Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        },
+        observed,
+        ReleaseFileRead(gate),
+    )
+}
+
+async fn start_slow_list(pair: &mut Pair, observed: tokio::sync::oneshot::Receiver<()>) -> String {
+    authenticate(pair).await;
+    let golden = crate::dispatch::parse(include_bytes!(
+        "../../tests/fixtures/metadata/list_projects.json"
+    ))
+    .unwrap();
+    let request = crate::metadata::text_field(&golden, "request").unwrap();
+    write(
+        &mut pair.client,
+        &client_frame(0x81, 126, request.as_bytes()),
+    )
+    .await;
+    timeout(DEADLINE, observed)
+        .await
+        .expect("native read must start")
+        .unwrap();
+    crate::metadata::text_field(&golden, "response").unwrap()
+}
+
+#[tokio::test]
+async fn pending_local_disk_read_does_not_block_ping_and_pong_precedes_response() {
+    let (mut pair, observed, release) = slow_pair();
+    let response = start_slow_list(&mut pair, observed).await;
+    let ping = client_frame(0x89, 126, b"slow-ping");
+    write(&mut pair.client, &ping).await;
+    read(&mut pair.server, &ping).await;
+    let pong = server_frame(10, b"slow-ping");
+    write(&mut pair.server, &pong).await;
+    read(&mut pair.client, &pong).await;
+    release.open();
+    read(&mut pair.client, &server_frame(1, response.as_bytes())).await;
+    silent(&mut pair.server).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
+
+#[tokio::test]
+async fn pending_local_disk_read_does_not_block_client_close_or_reply_after_close() {
+    let (mut pair, observed, release) = slow_pair();
+    start_slow_list(&mut pair, observed).await;
+    let close = client_frame(0x88, 126, b"");
+    write(&mut pair.client, &close).await;
+    read(&mut pair.server, &close).await;
+    let reply = server_frame(8, &1000u16.to_be_bytes());
+    write(&mut pair.server, &reply).await;
+    read(&mut pair.client, &reply).await;
+    release.open();
+    silent(&mut pair.client).await;
+    silent(&mut pair.server).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
 }
