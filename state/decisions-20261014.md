@@ -214,3 +214,8 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 - **D4 → B**：修掉两个 bug（实时流不告诉用户已超时；超时被迟到的提交失败覆盖）。exp014 的 6 格登记为批准差异 `A19-HOST`，**每格写明 Rust 的确切期望输出，对拍按期望判，不是放宽**。阶段 C 的 deadline ×2 在 A7 Rust 宿主上按卡片口径计分。落地：A5.4 登记 A19-HOST 逐格期望（帧 / durable / registry 三面），两家评审后冻结；修复本身在 A7。
 - **D6 → A**：用 ICU4X datagen 以 `CollationRootHan::Unihan` 生成 root collation 数据，与 Node ICU 精确对齐；允许从 unicode.org 下载源数据。完成后撤掉方案 C 的非 ASCII 回退（`needs_ts_collation`），恢复本地应答。
 - **下载范围（人定）**：数据、源码、文档等无危害内容允许下载（含 CLDR/ICU 源数据、crates.io crate 源码）。**预编译二进制仍不下载**（协调者解读，保守沿用原约束）。下载内容放独立新目录，只当数据处理。
+
+### 人的回复（2026-10-15，三项）
+- **#68 → A**：批准 A4 文件读取 TOCTOU 安全修正。已登记 `specs/gateway-parity/accepted-diffs.md` 的 A4-FILE-TOCTOU-001（类「原版缺陷 · 安全」），gateway FROZEN 重登记（两家评审），合并后关闭 #68。
+- **归档 native_archive_manifest / entries / artifact → B**：留在 (a) 类，分母保持 10，按默认装配实现（不授权 + 默认 PILOT_HOME 存储 + 无保留期）。依据：基线 apps / packages / src / ui/server 中没有调用方传 nativeArchiveAuthorizer / nativeArchiveRetentionMs / nativeSessionStorage（协调者 grep 复核）；默认装配下 `createLocalGateway.ts:998-1019` 授权器为 undefined，`InProcessGateway.ts:2589-2600` 无授权器即放行。嵌入方扩展点（自定义授权 / 保留期 / 外部存储）留到 A6 再登记。
+- **#94 → A**：维持现状。路由豁免审批人用字符串白名单，靠评审拦截 AI 冒名；人已知并接受「AI 可直接写白名单名字」的残余风险，不上签名、不外置审批。#94 另两条 P2（白名单注释行、PyYAML 依赖）照常跟进。
