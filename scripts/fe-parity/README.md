@@ -46,15 +46,19 @@ self-check验证注册、进程内mock handlers、单端与双端对账正负例
 
 ## 对账规则
 
-分母来自本次展开注册数，历史72用于漂移警报而非取代动态清点。逐身份核对完整结果：应执行=注册数−**理由命中固定白名单的实际skipped**；实际执行=passed/failed/timedOut的唯一尝试。每条SKIP打印原因；无理由或白名单外skip、NOT_RUN、重复/未知身份、interrupted、xfail、behavioral FAIL、report errors、注册漂移、数量不符全部FAIL。报告必须声明 `config.forbidOnly=true`；每侧独立核对后再联合核对，两个报告同时漏例也不能绿。
+分母来自本次展开注册数，历史72用于漂移警报而非取代动态清点。逐身份核对完整结果：应执行=注册数−**身份与理由均获准的实际skipped**；实际执行=passed/failed/timedOut的唯一尝试。每条SKIP打印原因；无理由或身份/理由清单外skip、NOT_RUN、重复/未知身份、interrupted、xfail、behavioral FAIL、report errors、注册漂移、数量不符全部FAIL。报告必须声明 `config.forbidOnly=true`；每侧独立核对后再联合核对，两个报告同时漏例也不能绿。
 
-skip 理由固定白名单（精确匹配，只允许一个 `type: "skip"` annotation，不接受空白变体、拼接或自由文本）：
+**身份许可来源唯一固定为 [skip-allowlist.json](skip-allowlist.json)**：按 `caseId = JSON.stringify([file, 完整展开 title])` 精确匹配，只收 exp007 B 类的9例真实部署/env门控用例。每项的 `source` 给出固定基线 `cc7c4e6` 的用例注册、门控与环境依赖路径:行号，`rationale` 逐条说明原因；不按 `formal-*` / `real-auth-*` 文件名或标题前缀放行。`formal-route-matrix` 保留历史清点未设 profile 时的完整标题 `formal undefined routes follow the generated composition`；将来接入部署矩阵改变展开身份须同步评审注册口径与清单，不能自动归一化成已获准身份。
+
+**实际执行数必须 ≥ 注册数 − 本次注册中命中身份清单的数量**：当前72−9=63。三例 skeleton 与清单无交集，因此最低执行数仍是3。清单内用例允许正常执行，不要求skip；全执行时应执行72，9例合法skip时应执行63。缺失报告/NOT_RUN不算显式skip，仍需72例。身份清单不由报告、环境变量或CLI扩展；任何增删/更名都必须提交清单diff与逐条基线源码依据，经评审后才能生效。
+
+skip 理由仍需满足固定白名单（**理由命中不能替代身份许可**；精确匹配，只允许一个 `type: "skip"` annotation，不接受空白变体、拼接或自由文本）：
 
 | description | 允许语义 |
 |---|---|
 | `deployment profile not applicable` | 用例只适用于本次未选中的部署/profile；必须在 old/new 同一注册身份上同时不适用。缺环境、功能未实现、下一PR再跑均不得使用此理由。 |
 
-两侧 **SKIP 身份集合（file + 完整展开 title）必须完全相等**；skip 数量相等但身份不同也 FAIL。old 72 PASS / new 72 带白名单理由 SKIP 必须 FAIL。白名单变更需要修改本文件和 `accounting.mjs`，不能由报告自行扩展。
+两侧 **SKIP 身份集合（file + 完整展开 title）必须完全相等**；skip 数量相等但身份不同也 FAIL。两侧72例全SKIP、单侧72例全SKIP、两侧同一清单外身份SKIP，即便全部使用获准理由，也必须FAIL；self-check分别覆盖这三条反例。身份清单内用例在两侧均执行可以PASS，原有双侧skip身份一致要求继续生效。理由政策变更同样需要评审，并同步本文件和 `accounting.mjs`。
 
 报告来源由执行时的 Playwright config 写入，`browser.config.mjs` 已自动设置；接入完整基线套件时也必须在实际使用的 config 中设置：
 

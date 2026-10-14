@@ -64,7 +64,7 @@
 
 - [x] 自有积累 —— 调研 002（边界与协议）、调研 003（旧迁移教训：父任务收不了口、探针先行）
 - [x] 他人积累 —— PilotDeck 基线逐条实测（gap §一–§四全部带行号）；旧迁移包只读（`decisions.md:11`、`roadmap.md:11`、`contracts/ui.md`、`risks.csv:6`、`tasks.yaml` UI-00）
-- [x] 自己跑的 —— F1 已有 DOM 与协调者 Chrome r2 记录，真实 OS IME 后续由人亲测后定 Leptos（见本卡末尾）；正式37例黑盒双跑仍未完成。
+- [x] 自己跑的 —— F1 已有 DOM 与协调者 Chrome r3 记录，真实 OS IME 后续由人亲测后定 Leptos（见本卡末尾）；正式37例黑盒双跑仍未完成。
 
 ## 两把尺子
 

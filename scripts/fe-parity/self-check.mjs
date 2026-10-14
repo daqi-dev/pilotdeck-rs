@@ -3,7 +3,7 @@ import { readFile, readdir, stat, mkdtemp, writeFile, symlink, link, rm, mkdir }
 import { Readable } from 'node:stream';
 import { resolve, dirname } from 'node:path';
 import { createMock, TOKEN } from './mock.mjs';
-import { reconcile, reconcilePair, loadReportPair, SKIP_REASONS, checkInventory } from './accounting.mjs';
+import { reconcile, reconcilePair, loadReportPair, SKIP_REASONS, SKIP_ALLOWLIST, caseId, checkInventory } from './accounting.mjs';
 import { oldDist, newDist, ports, ownedPath, root, baseline, historicalInventory, origin } from './env.mjs';
 import { assetPath } from './serve.mjs';
 import { checkMessageMap } from './message-map.mjs';
@@ -40,11 +40,21 @@ export async function selfCheck() {
     assert.deepEqual(sent[1], { type: 'output', data: '你好' }); assert.equal(mock.stats.errors.length, 2);
   });
   await check('reconciliation positive and adversarial controls', () => {
-    const inventory = [{ file: 'a.spec.mjs', title: 'one' }, { file: 'a.spec.mjs', title: 'two' }];
+    const inventory = [{ file: 'a.spec.mjs', title: 'one' }, SKIP_ALLOWLIST[0]];
     const make = (status = 'passed', reason = '') => ({ config: { forbidOnly: true }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: reason && index === 1 ? [{ type: 'skip', description: reason }] : [], results: [{ status: index === 1 ? status : 'passed' }] }] })) }] });
     assert.equal(reconcile(inventory, make(), '').status, 'PASS');
     const unguarded = make(); delete unguarded.config; assert.equal(reconcile(inventory, unguarded, '').status, 'FAIL');
     assert.equal(reconcile(inventory, make('skipped', SKIP_REASONS[0]), '').status, 'PASS');
+    for (const field of ['file', 'title']) {
+      const changed = inventory.map(row => ({ ...row }));
+      changed[1][field] += '-not-allowlisted';
+      const report = make('skipped', SKIP_REASONS[0]);
+      report.suites[0].specs[1][field] = changed[1][field];
+      const rejected = reconcile(changed, report, '');
+      assert.equal(rejected.status, 'FAIL');
+      assert.equal(rejected.minimumExecuted, 2);
+      assert(rejected.errors.some(error => error.startsWith('skip identity not in fixed allowlist')));
+    }
     for (const reason of ['arbitrary reason', ` ${SKIP_REASONS[0]}`, `${SKIP_REASONS[0]} `, [SKIP_REASONS[0]]]) {
       assert.equal(reconcile(inventory, make('skipped', reason), '').status, 'FAIL');
     }
@@ -57,17 +67,27 @@ export async function selfCheck() {
     const retry = make(); retry.suites[0].specs[0].tests[0].results.push({ status: 'passed' }); assert.equal(reconcile(inventory, retry, '').status, 'FAIL');
     const unknown = make(); unknown.suites[0].specs[0].title = 'unknown'; assert.equal(reconcile(inventory, unknown, '').status, 'FAIL');
     const xfail = make(); xfail.suites[0].specs[0].tests[0].expectedStatus = 'failed'; assert.equal(reconcile(inventory, xfail, '').status, 'FAIL');
-    assert.equal(checkInventory(inventory, { registered: 2, tests: inventory }).length, 0);
-    assert(checkInventory(inventory.slice(1), { registered: 2, tests: inventory }).length > 0);
   });
   await check('paired reports: 72 PASS vs 72 SKIP, skip identities and provenance', async () => {
     const inventory = JSON.parse(await readFile(historicalInventory, 'utf8')).tests;
     assert.equal(inventory.length, 72);
+    assert.equal(SKIP_ALLOWLIST.length, 9);
+    assert.equal(checkInventory(inventory, { registered: 72, tests: inventory }).length, 0);
+    assert(checkInventory(inventory.slice(1), { registered: 72, tests: inventory }).length > 0);
+    const allowed = inventory.flatMap((row, i) => SKIP_ALLOWLIST.some(entry => caseId(entry) === caseId(row)) ? [i] : []);
+    assert.equal(allowed.length, 9);
     const origins = { old: origin('old'), new: origin('new') };
     const make = (frontend, skipped = []) => ({ config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } }, suites: [{ specs: inventory.map((row, index) => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: skipped.includes(index) ? [{ type: 'skip', description: SKIP_REASONS[0] }] : [], results: [{ status: skipped.includes(index) ? 'skipped' : 'passed' }] }] })) }] });
     const pair = (old, next) => reconcilePair(inventory, { old, new: next }, '', origins);
     assert.equal(pair(make('old'), make('new')).status, 'PASS');
-    assert.equal(pair(make('old', [1]), make('new', [1])).status, 'PASS');
+    for (const skipped of [allowed.slice(0, 1), allowed]) {
+      const accepted = pair(make('old', skipped), make('new', skipped));
+      assert.equal(accepted.status, 'PASS');
+      for (const side of ['old', 'new']) {
+        assert.equal(accepted[side].minimumExecuted, 63);
+        assert.equal(accepted[side].executed, 72 - skipped.length);
+      }
+    }
     const downgrade = pair(make('old'), make('new', inventory.map((_, i) => i)));
     assert.equal(downgrade.status, 'FAIL');
     assert.equal(downgrade.errors.filter(error => error.startsWith('skip identity only in new:')).length, 72);
@@ -85,6 +105,37 @@ export async function selfCheck() {
       }
     }
   });
+  for (const scenario of ['both sides all skipped', 'one side all skipped', 'non-allowlisted skip']) {
+    await check(`identity allowlist rejects ${scenario}`, async () => {
+      const inventory = JSON.parse(await readFile(historicalInventory, 'utf8')).tests;
+      const origins = { old: origin('old'), new: origin('new') };
+      const outsider = inventory.find(row => !SKIP_ALLOWLIST.some(entry => caseId(entry) === caseId(row)));
+      const reports = Object.fromEntries(['old', 'new'].map(frontend => [frontend, {
+        config: { forbidOnly: true, metadata: { frontend, baseURL: origins[frontend] } },
+        suites: [{ specs: inventory.map(row => {
+          const skip = scenario === 'both sides all skipped' || (scenario === 'one side all skipped' ? frontend === 'new' : caseId(row) === caseId(outsider));
+          return { ...row, tests: [{ expectedStatus: 'passed', annotations: skip ? [{ type: 'skip', description: SKIP_REASONS[0] }] : [], results: [{ status: skip ? 'skipped' : 'passed' }] }] };
+        }) }],
+      }]));
+      const account = reconcilePair(inventory, reports, '', origins);
+      assert.equal(account.status, 'FAIL');
+      assert.equal(account.new.status, 'FAIL');
+      assert(account.new.errors.some(error => error.startsWith('skip identity not in fixed allowlist')));
+      if (scenario === 'non-allowlisted skip') {
+        // Even above the 63-case floor, one unauthorized skip is a failure.
+        assert.equal(account.new.executed, 71);
+        assert.equal(account.new.explicitSkips, 0);
+      } else {
+        assert.equal(account.new.executed, 0);
+        assert.equal(account.new.minimumExecuted, 63);
+        assert(account.new.errors.some(error => error.includes('最低执行数 63')));
+      }
+      if (scenario !== 'one side all skipped') {
+        assert.equal(account.old.status, 'FAIL');
+        assert.deepEqual(account.errors, []); // Matching skip sets cannot mask per-side failures.
+      }
+    });
+  }
   await check('report files must differ: same path, symlink and hardlink rejected', async () => {
     const directory = resolve(root, '_tmp/fe-parity'); await mkdir(directory, { recursive: true });
     const fixture = await mkdtemp(resolve(directory, 'report-file-control-'));
