@@ -764,3 +764,170 @@ fn loop_top_deadline_without_capture_ack_still_publishes_aborted_completed() {
 fn loop_top_requested_without_capture_ack_retains_unknown_and_omits_completed() {
     run_loop_top_without_capture_ack(false);
 }
+
+// Hold the writer inside the prior call's flush after its bytes reached the
+// peer. The peer can ACK that call while the next capture stays Queued.
+struct StalledWire {
+    wire: Wire,
+    resume: Option<mpsc::Receiver<()>>,
+}
+impl Write for StalledWire {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.wire.write(bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.wire.flush()?;
+        if let Some(resume) = self.resume.take() {
+            resume
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(io::Error::other)?;
+        }
+        Ok(())
+    }
+}
+fn run_loop_top_with_replied_prior_and_stalled_writer(deadline: bool) {
+    let owner = ConnectionOwner::new(
+        SidecarBinding {
+            module_id: "pilotdeck-agent-loop".into(),
+            module_instance_id: "instance".into(),
+            connection_generation: "generation".into(),
+            capabilities_version: "1".into(),
+        },
+        8,
+    );
+    let identity = ExecutionIdentity {
+        session_id: "session".into(),
+        turn_id: "turn".into(),
+        run_id: "run".into(),
+        operation_id: "op".into(),
+        request_id: "initial".into(),
+        idempotency_key: None,
+        module_instance_id: "instance".into(),
+        connection_generation: "generation".into(),
+    };
+    let cancellation = Cancellation::default();
+    let control = CallControl {
+        cancellation: cancellation.clone(),
+        deadline: None,
+    };
+    let cleanup = CallControl {
+        cancellation: cancellation.cleanup_scope(),
+        deadline: None,
+    };
+    let (sent, received) = mpsc::channel();
+    let (resume, stalled) = mpsc::channel();
+    let writer_owner = owner.clone();
+    let writer = std::thread::spawn(move || {
+        writer_owner.drive_writer(StalledWire {
+            wire: Wire(sent, vec![]),
+            resume: Some(stalled),
+        })
+    });
+    let peer_owner = owner.clone();
+    let peer = std::thread::spawn(move || {
+        let bytes = received.recv_timeout(Duration::from_secs(1)).unwrap();
+        let request = json(std::str::from_utf8(&bytes).unwrap());
+        assert_eq!(
+            request.get("operation"),
+            Some(&JsValue::from("stream_next"))
+        );
+        let id = request
+            .get("messageId")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .clone();
+        let mut ack = JsObject::new();
+        ack.insert("kind".into(), "response".into());
+        ack.insert("messageId".into(), "ack".into());
+        ack.insert("inReplyTo".into(), JsValue::String(id.clone()));
+        ack.insert("ok".into(), JsValue::Bool(true));
+        peer_owner.receive_response(&JsValue::Object(ack));
+        (received, id)
+    });
+    let mut exchange = owner.bound_exchange(identity).unwrap();
+    exchange
+        .exchange(
+            &control,
+            "model",
+            "stream_next",
+            CallEffect::SideEffect,
+            JsObject::new(),
+        )
+        .unwrap();
+    let (received, prior_id) = peer.join().unwrap();
+    assert_eq!(
+        owner.call_record(&prior_id).unwrap().phase,
+        DispatchPhase::Replied
+    );
+    assert!(cancellation.cancel(if deadline {
+        CancelCause::Deadline
+    } else {
+        CancelCause::Requested("user cancel".into())
+    }));
+    let mut host = RemoteHost::new(
+        exchange,
+        AdvertisedMethods {
+            modules: vec![("context".into(), vec!["capture_turn".into()])],
+        },
+    );
+    let log: Log = Arc::default();
+    let start = Instant::now();
+    let result = run_admitted_turn(
+        &mut config(),
+        &input(),
+        vec![message("prompt")],
+        &mut host,
+        &mut Preparation {
+            log: log.clone(),
+            arm_in_prepare: None,
+        },
+        &mut Events(log.clone()),
+        &Clock,
+        &control,
+        &cleanup,
+        &mut tool_hints(),
+    );
+    let elapsed = start.elapsed();
+    // Release before asserting so a failing regression also joins its writer.
+    resume.send(()).unwrap();
+    // A removed Queued capture must never reach the peer when the writer resumes.
+    assert!(received.recv_timeout(Duration::from_millis(100)).is_err());
+    owner.close();
+    assert!(writer.join().unwrap().is_ok());
+    assert!(
+        elapsed >= Duration::from_secs(5),
+        "writer did not remain stalled for the capture budget"
+    );
+    assert!(
+        elapsed < Duration::from_secs(7),
+        "capture exceeded its local bound"
+    );
+    assert_eq!(
+        owner.call_record(&prior_id).unwrap().phase,
+        DispatchPhase::Replied
+    );
+    if deadline {
+        let output = result.unwrap();
+        assert_eq!(output.result.kind, TurnResultKind::Aborted);
+        assert_eq!(output.result.stop_reason, TurnStopReason::AbortedStreaming);
+        assert_eq!(output.messages.len(), 1);
+        assert_eq!(*log.lock().unwrap(), vec!["turn_completed"]);
+    } else {
+        assert!(matches!(
+            result,
+            Err(PortError::Cancelled {
+                cause: CancelCause::Deadline
+            })
+        ));
+        assert_eq!(*log.lock().unwrap(), vec!["agent_status:turn_aborted"]);
+    }
+}
+#[test]
+fn loop_top_deadline_replied_prior_stalled_writer_still_publishes_aborted_completed() {
+    run_loop_top_with_replied_prior_and_stalled_writer(true);
+}
+#[test]
+fn loop_top_requested_replied_prior_stalled_writer_retains_local_cancel_and_omits_completed() {
+    run_loop_top_with_replied_prior_and_stalled_writer(false);
+}
