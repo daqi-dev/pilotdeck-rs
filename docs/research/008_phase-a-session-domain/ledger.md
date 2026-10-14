@@ -192,3 +192,89 @@ python3 scripts/gateway-coverage/check_ledger.py
 ```
 
 `check_ledger.py` 在执行第3轮的全部检查前展开引用，并拒绝不存在的组/范围、组来源冲突、虚构组内码、重复 JSON 键、遗漏或重复的 `order` 下标等。一次性第3轮对照用 `--compare-expanded _tmp/ledger-round3.json`；默认日常校验不依赖本地快照。完整结果与负例见 `_tmp/RESULT.md` 的「第4轮」。本轮未发现须另列的第3轮语义错误。
+
+## 第 5 轮：校验器剩余结构缺口（2026-10-14）
+
+动态分支现在同时核验 **code 形态和 origin**。`dynamic:true` 仅接受非空、无空白的 `<…>` 占位、`N/A`、`ERR_[A-Z0-9]+(?:_[A-Z0-9]+)*`；普通大写常量必须走静态字面量核验，不能借 dynamic 逃逸。`origin.expression` 必须逐字等于所引源码行去首尾空白后的全文，或等于同一个已扫描范围中实际产码 AST 节点的源码，且 origin 行落在该节点跨度内。AST 节点来自 code 属性/字段/getter/赋值、带 code 的 Error 构造参数、继承 super 参数及已解析工厂的 code 参数；单字符子串、任意括号与不在 origin 行的表达式均 FAIL。
+
+默认装配根严格取 `B/src/cli/pilotdeck.ts:107`–`B/src/cli/pilotdeck.ts:116`，不取该文件稍后的其他 `createLocalGateway` 调用。旧 `default_boot` 误取 `B/src/cli/pilotdeck.ts:347` 的 fallback，本轮修正。装配分析沿真实调用、传入/返回的具体回调、已构造实例的构造函数/字段初始化，保守展开条件分支；CLI 构造并返回的 InProcessGateway RPC handler 是运行时入口，继续追其懒创建路径。构造 site 与函数绑定迭代到有限图的不动点；构造参数只解引用已从此根发现的 sites。全 src 存在 `new`、其他 factory 的注入或没有被调用的函数中的 `new` 均不能成为默认构造证据。默认可达范围禁止 `optional:true`；默认图外的 provider 范围须标 `optional_host` + `optional:true`，保留其补充证据。
+
+反向字面量池和产码观察统一使用 `ast_rules.cjs:errorCodeLiteral`，只接受：
+
+- 大写下划线形式：`[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+`，如 `PROJECT_DELETED`；
+- 小写下划线形式：`[a-z][a-z0-9]*(?:_[a-z0-9]+)+`，如 `gateway_request_failed`；
+- 当前 Node `node:os.constants.errno` 的真实 key，如 `ETIMEDOUT`（不把任意 E 开头英文词当 errno）；
+- 冻结源码已明确使用的单词码有限集合：`aborted/conflict/internal/required/terminal/timeout/unauthorized/unavailable/unsupported`。依据分别可查 `B/packages/sdk/src/types.ts:1188`、`B/src/extension/skills/SkillManager.ts:278`、`B/src/always-on/runtime/DiscoveryScheduler.ts:165`、`B/src/tool/execution/validateToolInput.ts:64`、`B/src/gateway/run/RunRegistry.ts:243`、`B/packages/sdk/src/transport.ts:143`、`B/src/adapters/web/httpRouter.ts:34`、`B/src/tool/registry/createBuiltinRegistry.ts:160`、`B/src/tool/builtin/executeCode.ts:410`。
+
+普通词、typeof/type 名（如 object/string/function/number/boolean/undefined/Object/Error）与类名 AgentLoop 不构成错误码证据。形态规则只决定本账本接受的码字面量，仍要求在该 method 的独立范围/共同运输边界中出现；不会因全仓有同名常量而接受。由此删除 9 条把 `B/src/pilot/staffdeck/projectBinding.ts:49`、`B/src/pilot/staffdeck/projectBinding.ts:51` 的消息文本误记成码的 lexical 记录，没有补登该工厂的其他错误码。字段映射、捕获/转换与实际传播仍交下游复核。
+
+### 8 跳截断后的下游复核名单
+
+默认必需扫描仍为 **8 跳**。报告的 `beyond_depth_review` 另沿同一静态调用边遍历到有限图闭合，**只生成复核名单，不把后续范围/码加入账本、必需范围或 PASS 判据**。跳数为 handler 到函数的最短调用边距离；同一未登记码多处出现时只取其最短距离，表中是这些距离的集合。以下 47 个 method 在第 **9** 跳即有未登记码，仅列 method 与跳数；不补登、不推断为 WS 顶层抛码。
+
+| method | 首个未登记码的最短跳数 | 未登记码的最短跳数集合 |
+|---|---:|---|
+| `background_task_stop` | 9 | 9, 10, 11, 12 |
+| `background_tasks` | 9 | 9, 10, 11, 12 |
+| `commands_list` | 9 | 9, 10, 11, 12, 13 |
+| `delete_session` | 9 | 9, 10, 11, 12 |
+| `export_session_transcript` | 9 | 9, 10, 11, 12 |
+| `finalize_last_turn_replacement` | 9 | 9, 10, 11, 12, 13, 14, 15, 16 |
+| `fork_session` | 9 | 9, 10, 11, 12, 13, 14 |
+| `mcp_server_status` | 9 | 9, 10, 11, 12 |
+| `memory_list` | 9 | 9, 10, 11 |
+| `memory_wipe` | 9 | 9, 10, 11 |
+| `model_catalog_list` | 9 | 9, 10 |
+| `model_usage_snapshot` | 9 | 9, 10, 11, 12 |
+| `native_archive_artifact` | 9 | 9, 10, 11, 12 |
+| `native_archive_entries` | 9 | 9, 10, 11, 12, 13 |
+| `native_archive_manifest` | 9 | 9, 10, 11, 12, 13 |
+| `output_styles_list` | 9 | 9, 10, 11, 12 |
+| `read_session_messages` | 9 | 9, 10, 11, 12, 13, 14, 15 |
+| `read_subagent_messages` | 9 | 9, 10, 11, 12, 13, 14, 15 |
+| `record_agent_status_message` | 9 | 9, 10, 11, 12, 13, 14, 15, 16 |
+| `reload_config` | 9 | 9 |
+| `reload_extensions` | 9 | 9, 10, 11 |
+| `reload_output_styles` | 9 | 9, 10, 11, 12, 18, 19 |
+| `rename_session` | 9 | 9, 10, 11, 12 |
+| `replace_last_turn` | 9 | 9, 10, 11, 12, 13, 14, 15, 16 |
+| `restore_session_transcript` | 9 | 9, 10, 11, 12 |
+| `rewind_files` | 9 | 9, 10, 11, 12 |
+| `seed_read_state` | 9 | 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 23 |
+| `session_model_get` | 9 | 9, 10 |
+| `session_model_set` | 9 | 9, 10 |
+| `set_mcp_servers` | 9 | 9, 10, 11, 12, 15, 16 |
+| `set_output_style` | 9 | 9, 10, 11, 12, 18, 19 |
+| `skill_create` | 9 | 9, 10, 11, 12 |
+| `skill_delete` | 9 | 9, 10, 11, 12 |
+| `skill_import` | 9 | 9, 10, 11, 12 |
+| `skill_list` | 9 | 9, 10, 11, 12 |
+| `skill_read` | 9 | 9, 10, 11, 12 |
+| `skill_scan` | 9 | 9, 10, 11, 12 |
+| `skill_validate` | 9 | 9, 10, 11, 12 |
+| `skill_write` | 9 | 9, 10, 11, 12 |
+| `sop_resume` | 9 | 9, 10, 11, 12, 13, 14 |
+| `sop_status` | 9 | 9, 10, 11, 12, 13, 14 |
+| `steer_turn` | 9 | 9, 12, 13 |
+| `submit_turn` | 9 | 9, 10, 11, 12, 13, 15 |
+| `tag_session` | 9 | 9, 10, 11, 12 |
+| `usage_snapshot` | 9 | 9, 10, 11, 12 |
+| `user_dialog_list` | 9 | 9, 10, 11, 12, 13, 14 |
+| `user_dialog_respond` | 9 | 9, 10, 11, 12, 13 |
+
+继续检查第 10 跳以后，还观察到以下 10 项较晚才出现缺口；与上述 47 项分列，以免把「第9跳边界」误称为全图完备。
+
+| method | 首个跳数 | 跳数集合 |
+|---|---:|---|
+| `apply_flag_settings` | 15 | 15, 16 |
+| `cancel_steer` | 12 | 12, 13 |
+| `close_project_sessions` | 16 | 16, 17 |
+| `close_session` | 15 | 15, 16 |
+| `describe_server` | 16 | 16, 17 |
+| `hook_async_result` | 11 | 11, 14, 15 |
+| `mcp_server_reconnect` | 15 | 15, 16 |
+| `mcp_server_toggle` | 15 | 15, 16 |
+| `set_mcp_permission_mode_override` | 15 | 15, 16 |
+| `set_session_thinking` | 15 | 15, 16 |
+
+本轮账本仍为 101 项、46 READY / 55 BLOCKED，method–范围关联仍 16,816；仅必要的默认 metadata、optional 标记、消息误记及失去引用的 source_files 改动。完整逐项差异、对第3轮的严格展开对照与验证命令见 `_tmp/RESULT.md`「第5轮」及其 JSON 附件。GLM 第3轮已给出「无 P0/P1」，其三项 P2 留作下游复核。

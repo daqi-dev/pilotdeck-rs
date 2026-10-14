@@ -21,7 +21,6 @@
     "-iq0Fg": {"class":"AlwaysOnRunContextRegistry","ref":"B/src/always-on/runtime/AlwaysOnManager.ts:74"},
     "-tFhfg": {"class":"ProjectRouterRuntimeBundle","ref":"B/src/cli/ProjectRuntimeResourcesBundle.ts:230"},
     "00LQVw": {"class":"SessionConfigOverrides","ref":"B/src/cron/runtime/CronRuntime.ts:110"},
-    "07GEcA": {"class":"AgentRuntimeScope","ref":"B/src/agent/scope/AgentRuntimeScope.ts:182"},
     "0BQexA": {"class":"SteerMailbox","ref":"B/src/agent/session/AgentSession.ts:93"},
     "0JsJEQ": {"class":"SessionConfigOverrides","ref":"B/src/always-on/runtime/AlwaysOnRuntime.ts:186"},
     "0LMKQQ": {"class":"HttpHookExecutor","ref":"B/src/extension/hooks/execution/HookRuntime.ts:59"},
@@ -46,12 +45,9 @@
     "3jO8bg": {"class":"SessionConfigOverrides","ref":"B/src/cli/ProjectAutomationBundle.ts:143"},
     "651coQ": {"class":"WorkspaceProviderRegistry","ref":"B/src/always-on/runtime/AlwaysOnRuntime.ts:432"},
     "695MVQ": {"class":"GatewayElicitationBus","ref":"B/src/gateway/client/GatewayInteractionCoordinator.ts:47"},
-    "6GmMkQ": {"class":"AgentLoop","ref":"B/src/agent/loop/AgentLoop.ts:253"},
     "6JfruA": {"class":"GatewayUserDialogJournal","ref":"B/src/gateway/user-dialog/GatewayUserDialogJournal.ts:36"},
     "6KJG8w": {"class":"SessionMetadataStore","ref":"B/src/session/resume/resumeAgentSession.ts:107"},
     "6QK3Vw": {"class":"GatewaySessionPermissionRuleSetRegistry","ref":"B/src/gateway/client/GatewayInteractionCoordinator.ts:49"},
-    "6bgvhQ": {"class":"SessionProjectionRegistry","ref":"B/src/session/projection/FileHistoryProjection.ts:63"},
-    "6ngQ7A": {"class":"AlwaysOnRuntime","ref":"B/src/always-on/runtime/AlwaysOnRuntime.ts:452"},
     "6r7-Kw": {"class":"DiscoveryStateStore","ref":"B/src/always-on/runtime/AlwaysOnProjectStorageProvider.ts:84"},
     "7yFezw": {"class":"ToolRegistry","ref":"B/src/tool/registry/ToolRegistry.ts:212"},
     "8J4cLA": {"class":"HookExecutionEventBus","ref":"B/src/cli/SessionInteractionBundle.ts:145"},
@@ -70,14 +66,11 @@
     "C1kpFg": {"class":"AgentSession","ref":"B/src/agent/session/createAgentSession.ts:178"},
     "CMORxg": {"class":"AlwaysOnEventStore","ref":"B/src/always-on/runtime/AlwaysOnProjectStorageProvider.ts:88"},
     "CWKZ2A": {"class":"WorkCycleStore","ref":"B/src/always-on/runtime/AlwaysOnProjectStorageProvider.ts:86"},
-    "CiMdfw": {"class":"GatewayAgentEventProjector","ref":"B/src/gateway/client/GatewayAgentEventProjector.ts:63"},
     "D6PoqQ": {"class":"CallbackHookExecutor","ref":"B/src/extension/hooks/execution/HookRuntime.ts:61"},
     "DD4Mrw": {"class":"AgentLoop","ref":"B/src/agent/sub/SubAgentSession.ts:181"},
     "DHuV4w": {"class":"StreamingCheckpointManager","ref":"B/src/model/streaming/streamModel.ts:170"},
     "DSYMaA": {"class":"AgentSessionRuntimeBundle","ref":"B/src/agent/sub/SubAgentSession.ts:170"},
     "EYDbSw": {"class":"ToolRegistrationImpl","ref":"B/src/tool/registry/ToolRegistry.ts:79"},
-    "FD1zMw": {"class":"CronRuntime","ref":"B/src/cron/runtime/CronRuntime.ts:566"},
-    "FWTq-w": {"class":"SkillManager","ref":"B/src/extension/skills/migrateSkills.ts:73"},
     "Fx1crQ": {"class":"FileRunRegistry","ref":"B/src/cli/createLocalGateway.ts:996"},
     "GCIqLw": {"class":"TokenBudgetManager","ref":"B/src/context/compaction/AutoCompactionPolicy.ts:22"},
     "GHDMCQ": {"class":"AgentSessionEventRecorder","ref":"B/src/agent/session/AgentSessionRuntimeBundle.ts:139"},
@@ -85,10 +78,8 @@
     "Gx_54g": {"class":"ScopedServiceRegistrationImpl","ref":"B/src/agent/scope/ScopedServiceRegistry.ts:166"},
     "HMn46Q": {"class":"SessionSubagentContinuationBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:680"},
     "HQ3lSQ": {"class":"ExtensionWatchManager","ref":"B/src/cli/createLocalGateway.ts:712"},
-    "HfSFSw": {"class":"AgentSessionEventRecorder","ref":"B/src/sop/staffdeck/SopNodeSessions.ts:49"},
     "HxJ0oQ": {"class":"LspService","ref":"B/src/cli/ProjectRuntimeResourcesBundle.ts:255"},
     "IlDDEA": {"class":"HttpHookExecutor","ref":"B/src/cli/SessionInteractionBundle.ts:187"},
-    "JKNg4Q": {"class":"PromptContributionRegistry","ref":"B/src/context/prompt/PromptContributionRegistry.ts:116"},
     "Jb1ZoQ": {"class":"TelemetryObserverRegistry","ref":"B/src/cli/GatewayTelemetryBundle.ts:27"},
     "JbjQQw": {"class":"PluginRuntimeView","ref":"B/src/extension/plugins/runtime/PluginRuntime.ts:252"},
     "JgkZ6g": {"class":"AgentTurnInbox","ref":"B/src/agent/session/AgentSession.ts:88"},
@@ -99,8 +90,6 @@
     "KNOdhA": {"class":"SessionPlanTodoBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:627"},
     "KR-F6A": {"class":"ToolRegistry","ref":"B/src/tool/registry/createBuiltinRegistry.ts:129"},
     "KyKKdw": {"class":"HttpModuleClient","ref":"B/src/composition/runtimePorts.ts:107"},
-    "LN7zmg": {"class":"AgentSession","ref":"B/src/sop/staffdeck/SopNodeSessions.ts:68"},
-    "Lofwhw": {"class":"SubagentProviderRegistry","ref":"B/src/cli/GatewaySubagentRuntimeBundle.ts:38"},
     "LoyyPw": {"class":"FileHistoryStore","ref":"B/src/cli/ProjectRuntimeRegistry.ts:1145"},
     "Lvi0cA": {"class":"GatewayAgentEventProjector","ref":"B/src/cli/createLocalGateway.ts:927"},
     "M4U0Ng": {"class":"SessionExecutionLease","ref":"B/src/cli/ProjectRuntimeResourcesBundle.ts:309"},
@@ -118,7 +107,6 @@
     "QefN3A": {"class":"HttpModuleClient","ref":"B/src/composition/domainPorts.ts:76"},
     "R8vUDQ": {"class":"ProjectModelRuntimeBundle","ref":"B/src/cli/ProjectRuntimeResourcesBundle.ts:209"},
     "RKZrsA": {"class":"HttpModuleClient","ref":"B/src/composition/domainPorts.ts:38"},
-    "R_ipiw": {"class":"TurnRunner","ref":"B/src/sop/staffdeck/SopNodeSessions.ts:66"},
     "RaGaSA": {"class":"BackgroundSubagentRuntime","ref":"B/src/cli/ProjectRuntimeRegistry.ts:1668"},
     "RflMpg": {"class":"CronManager","ref":"B/src/cron/runtime/CronManager.ts:270"},
     "T4xcrA": {"class":"GatewaySessionPermissionModeRegistry","ref":"B/src/cli/ProjectRuntimeRegistry.ts:238"},
@@ -130,7 +118,6 @@
     "V6A-5w": {"class":"GatewaySessionResourceLeaseBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:216"},
     "VCKPCQ": {"class":"ToolRegistry","ref":"B/src/tool/registry/filterAvailableTools.ts:23"},
     "VdGUTw": {"class":"SessionRouter","ref":"B/src/cli/createLocalGateway.ts:823"},
-    "Vi5tmA": {"class":"AgentLoop","ref":"B/src/cli/pilotdeck-agent-loop-default-factory.ts:198"},
     "VnG6NA": {"class":"ProjectSessionFactory","ref":"B/src/cli/ProjectRuntimeRegistry.ts:300"},
     "W-33IQ": {"class":"ToolResultBudget","ref":"B/src/cli/SessionContextRuntimeBundle.ts:85"},
     "WW_EHA": {"class":"ToolRegistrationImpl","ref":"B/src/tool/registry/ToolRegistry.ts:246"},
@@ -140,14 +127,12 @@
     "XNohpw": {"class":"LifecycleRuntime","ref":"B/src/cli/SessionInteractionBundle.ts:181"},
     "XOhrmw": {"class":"JsonlTranscriptWriter","ref":"B/src/session/storage/ProjectSessionStorage.ts:380"},
     "XVAzfA": {"class":"ModelInvocationProviderRegistry","ref":"B/src/cli/ProjectModelRuntimeBundle.ts:29"},
-    "XaDcMA": {"class":"InMemoryTranscriptWriter","ref":"B/src/session/transcript/InMemoryTranscriptWriter.ts:198"},
     "XdyOZw": {"class":"InProcessGateway","ref":"B/src/cli/createLocalGateway.ts:1021"},
     "XjTHDw": {"class":"SessionContextRuntimeBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:515"},
     "XkUGOg": {"class":"AgentHookExecutor","ref":"B/src/extension/hooks/execution/HookRuntime.ts:60"},
     "XmrAXQ": {"class":"GatewayTurnCompletionFence","ref":"B/src/gateway/client/InProcessGateway.ts:616"},
     "XsDQkA": {"class":"GatewayAttachmentTurnComposer","ref":"B/src/cli/createLocalGateway.ts:1035"},
     "Xv2nYA": {"class":"SessionFileHistoryBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:540"},
-    "XwO1uA": {"class":"GatewayAgentEventProjector","ref":"B/src/gateway/client/GatewayAgentEventProjector.ts:50"},
     "Y02O2g": {"class":"ProjectSessionRuntimeBundle","ref":"B/src/cli/ProjectSessionFactory.ts:251"},
     "YA-lxQ": {"class":"ManualCompactionController","ref":"B/src/agent/session/createAgentSession.ts:169"},
     "YIbTaQ": {"class":"ProjectRouterEventBusProvider","ref":"B/src/cli/ProjectRuntimeRegistry.ts:292"},
@@ -168,9 +153,6 @@
     "bfiTVA": {"class":"AlwaysOnRuntime","ref":"B/src/always-on/runtime/AlwaysOnManager.ts:113"},
     "cK40mw": {"class":"PromptContributionRegistry","ref":"B/src/cli/SessionContextRuntimeBundle.ts:161"},
     "cPglBw": {"class":"CommandHookExecutor","ref":"B/src/cli/SessionInteractionBundle.ts:160"},
-    "cm62JQ": {"class":"TurnTimeline","ref":"B/src/agent/modules/transport/agentLoopSidecarClient.ts:1501"},
-    "cwpOyw": {"class":"SessionRouter","ref":"B/src/gateway/Gateway.ts:50"},
-    "d6h2fA": {"class":"RegistrationImpl","ref":"B/src/telemetry/TelemetryObserverRegistry.ts:174"},
     "dKyvtQ": {"class":"TurnInputProcessor","ref":"B/src/agent/session/createAgentSession.ts:155"},
     "dZWRng": {"class":"AlwaysOnManager","ref":"B/src/always-on/runtime/AlwaysOnManager.ts:222"},
     "dyTuCw": {"class":"GatewayAttachmentTurnComposer","ref":"B/src/cli/GatewayDialogBundle.ts:76"},
@@ -193,24 +175,19 @@
     "hDAMkQ": {"class":"CronRuntime","ref":"B/src/cron/runtime/CronManager.ts:189"},
     "hGMdBA": {"class":"WorkspaceProviderRegistry","ref":"B/src/always-on/runtime/createApplyHandler.ts:109"},
     "hMY8eQ": {"class":"GatewayAttachmentTurnComposer","ref":"B/src/gateway/client/InProcessGateway.ts:579"},
-    "hdxpaA": {"class":"HookRuntime","ref":"B/src/lifecycle/runtime/LifecycleRuntime.ts:64"},
-    "iHHSWw": {"class":"AgentSessionScopeBundle","ref":"B/src/agent/session/AgentSessionRuntimeBundle.ts:170"},
     "iYeirA": {"class":"AlwaysOnRunContextRegistry","ref":"B/src/always-on/runtime/createApplyHandler.ts:108"},
     "igObSw": {"class":"HookRuntime","ref":"B/src/cli/SessionInteractionBundle.ts:158"},
     "it86VQ": {"class":"ProjectRuntimeRegistry","ref":"B/src/cli/createLocalGateway.ts:727"},
     "jOSgAg": {"class":"DefaultPilotConfigStore","ref":"B/src/pilot/config/PilotConfigStore.ts:34"},
     "jaJQHg": {"class":"SessionSubagentContinuationBundle","ref":"B/src/cli/GatewaySubagentRuntimeBundle.ts:57"},
-    "kFI2rQ": {"class":"LspService","ref":"B/src/lsp/runtime/LspService.ts:13"},
     "kUC48A": {"class":"HttpModuleClient","ref":"B/src/composition/runtimePorts.ts:100"},
     "kbzARg": {"class":"DiscoveryPlanStore","ref":"B/src/always-on/runtime/AlwaysOnProjectStorageProvider.ts:85"},
     "kw1y_A": {"class":"LifecycleRuntime","ref":"B/src/cli/SessionInteractionBundle.ts:171"},
     "lP5tOw": {"class":"SessionProjectionCheckpointBinding","ref":"B/src/session/storage/ProjectSessionStorage.ts:329"},
-    "llFeeg": {"class":"SubagentProviderRegistry","ref":"B/src/agent/session/AgentSessionScopeBundle.ts:71"},
     "m9tQIw": {"class":"HookRuntime","ref":"B/src/cli/SessionInteractionBundle.ts:181"},
     "mkhnqA": {"class":"SessionContextRuntimeBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:569"},
     "mok6cQ": {"class":"SkillManager","ref":"B/src/cli/createLocalGateway.ts:851"},
     "mrFXOg": {"class":"InMemoryTranscriptWriter","ref":"B/src/agent/session/AgentSessionRuntimeBundle.ts:130"},
-    "mtFbcA": {"class":"JsonlTranscriptWriter","ref":"B/src/gateway/storage/AsyncTranscriptStorageAdapter.ts:152"},
     "nUYeFw": {"class":"SessionToolCompositionBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:272"},
     "nfm7Xw": {"class":"RouterSessionCustomRouterRegistry","ref":"B/src/router/session/RouterSessionCustomRouterPort.ts:90"},
     "njQpfA": {"class":"SessionAgentConfigBundle","ref":"B/src/cli/ProjectSessionRuntimeBundle.ts:402"},
@@ -222,7 +199,6 @@
     "pbEvGg": {"class":"SessionConfigOverrides","ref":"B/src/cli/createLocalGateway.ts:622"},
     "pdhmfA": {"class":"TurnTimeline","ref":"B/src/agent/loop/AgentLoop.ts:330"},
     "pnIyjg": {"class":"ScopedServiceRegistry","ref":"B/src/agent/scope/ScopedServiceRegistry.ts:80"},
-    "q-tKrQ": {"class":"DiscoveryFire","ref":"B/src/always-on/runtime/AlwaysOnRuntime.ts:244"},
     "qYFiAQ": {"class":"GatewayManualCompactionCoordinator","ref":"B/src/cli/createLocalGateway.ts:931"},
     "qjtA0Q": {"class":"AgentSessionRuntimeBundle","ref":"B/src/agent/session/createAgentSession.ts:116"},
     "r3gmng": {"class":"PluginRegistry","ref":"B/src/extension/plugins/runtime/PluginRuntime.ts:239"},
@@ -246,21 +222,19 @@
     "xJK5XQ": {"class":"ToolRegistry","ref":"B/src/tool/registry/ToolRegistry.ts:197"},
     "xLCKcg": {"class":"JsonlTranscriptWriter","ref":"B/src/session/transcript/JsonlTranscriptWriter.ts:276"},
     "xPQbZg": {"class":"GatewayCommandCatalogBundle","ref":"B/src/cli/createLocalGateway.ts:919"},
-    "xXbdwg": {"class":"AgentRuntimeScope","ref":"B/src/agent/scope/AgentRuntimeScope.ts:102"},
     "xax0fg": {"class":"AgentRegistry","ref":"B/src/cli/GatewaySubagentRuntimeBundle.ts:37"},
     "xfs-5A": {"class":"ProjectRuntimeResourcesBundle","ref":"B/src/cli/ProjectRuntimeRegistry.ts:1600"},
     "xo6Tog": {"class":"AgentRegistry","ref":"B/src/gateway/SessionRouter.ts:99"},
     "yMrM8Q": {"class":"ScopedServiceRegistry","ref":"B/src/agent/scope/AgentRuntimeScope.ts:100"},
     "yQ7KwA": {"class":"SessionRuntime","ref":"B/src/session/transcript/JsonlTranscriptWriter.ts:63"},
     "yVM7tw": {"class":"AsyncHookRegistry","ref":"B/src/extension/hooks/execution/HookRuntime.ts:57"},
-    "zVJAoA": {"class":"ProjectSessionWriteCoordinator","ref":"B/src/cli/createLocalGateway.ts:877"},
-    "zwl6OA": {"class":"InProcessGateway","ref":"B/src/gateway/Gateway.ts:58"}
+    "zVJAoA": {"class":"ProjectSessionWriteCoordinator","ref":"B/src/cli/createLocalGateway.ts:877"}
   },
   "default_boot": {
     "file": "src/cli/pilotdeck.ts",
-    "keys": ["projectRoot"],
-    "line": 347,
-    "refs": ["B/src/cli/pilotdeck.ts:347"]
+    "keys": ["projectRoot","pilotHome","env","fallbackProjectRoot","...initialAutomation","telemetry","sessionCatalog","sessionDataPlane"],
+    "line": 107,
+    "refs": ["B/src/cli/pilotdeck.ts:107"]
   },
   "error_classes": {
     "AbortError": {
@@ -917,12 +891,6 @@
         {"code":"model_not_found","observed":"lexical","refs":["B/src/model/providers/ModelInvocationProviderRegistry.ts:280"],"summary":{"template":"id39mw"}}
       ],
       "source_ranges": ["Or2Usw"]
-    },
-    "load_4CsxZQ": {
-      "errors": [
-        {"code":"StaffDeck binding storage is invalid.","observed":"lexical","refs":["B/src/pilot/staffdeck/projectBinding.ts:49","B/src/pilot/staffdeck/projectBinding.ts:51"],"summary":{"template":"id39mw"}}
-      ],
-      "source_ranges": ["053lcA"]
     },
     "load_pilot_config_leSSlw": {
       "errors": [
@@ -1641,8 +1609,8 @@
       ],
       "branches": {
         "error": {
-          "groups": ["assert_open_0hZBEA","assert_valid_url_ROGTxA","closed_error_suRkVQ","create_bash_tool_a_vgRg","create_builtin_registry_LdLjRw","create_read_file_tool_chain_UqOAfg","create_router_runtime_PppvkA","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","finalize_last_web_session_turn_replacement_A6p9xA","finalize_node_project_session_replacement_2HFVyw","get_model_pzZlVw","load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","optional_baseline_model_YSvg9g","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_FEWfpg","parse_always_on_config_chain_dyjWPA","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_chain_OxgNcQ","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_PM0vNw","parse_model_config_oqwbww","parse_model_definition_6tD85Q","parse_optional_string_field_0zR-ow","parse_projects_nI-BGA","parse_provider_chain_ZOfiQQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","pricing_number_7PGBkQ","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_positive_integer_4r9m9A","read_transcript_Og11Nw","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","register_async_hook_5boPhA","resolve_api_key_VD5V_w","resolve_image_9cKy0g","resolve_image_chain_2yd3Pg","resolve_image_chain_xnHMYQ","resolve_pdf_9yUDuw","stage_UUKi1A","validate_session_event_envelope_wEuoww","validate_session_event_log_-D1yHQ","validate_top_level_XfrIIg"],
-          "order": [155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,22,31,34,32,73,74,75,114,115,33,23,61,24,16,25,26,27,85,86,28,29,30,49,50,51,52,130,128,62,65,66,67,63,64,68,17,18,153,79,80,81,135,137,88,89,154,136,43,126,19,44,45,58,59,60,220,82,83,53,84,110,111,116,117,118,119,120,121,122,123,221,222,143,144,145,223,141,142,69,70,224,146,225,147,148,12,226,13,227,228,20,139,96,97,98,35,36,37,38,39,40,41,42,48,54,55,56,57,21,87,90,91,92,93,94,127,95,99,100,101,102,103,104,105,106,107,108,109,112,113,129,124,125,229,230,15,46,47,72,231,151,138,77,76,232,8,71,149,233,5,234,235,9,1,6,236,140,237,7,14,0,10,150,152,2,11,238,239,3,131,132,133,134,240,4,241,78,242],
+          "groups": ["assert_open_0hZBEA","assert_valid_url_ROGTxA","closed_error_suRkVQ","create_bash_tool_a_vgRg","create_builtin_registry_LdLjRw","create_read_file_tool_chain_UqOAfg","create_router_runtime_PppvkA","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","finalize_last_web_session_turn_replacement_A6p9xA","finalize_node_project_session_replacement_2HFVyw","get_model_pzZlVw","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","optional_baseline_model_YSvg9g","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_FEWfpg","parse_always_on_config_chain_dyjWPA","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_chain_OxgNcQ","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_PM0vNw","parse_model_config_oqwbww","parse_model_definition_6tD85Q","parse_optional_string_field_0zR-ow","parse_projects_nI-BGA","parse_provider_chain_ZOfiQQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","pricing_number_7PGBkQ","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_positive_integer_4r9m9A","read_transcript_Og11Nw","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","register_async_hook_5boPhA","resolve_api_key_VD5V_w","resolve_image_9cKy0g","resolve_image_chain_2yd3Pg","resolve_image_chain_xnHMYQ","resolve_pdf_9yUDuw","stage_UUKi1A","validate_session_event_envelope_wEuoww","validate_session_event_log_-D1yHQ","validate_top_level_XfrIIg"],
+          "order": [154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,21,30,33,31,72,73,74,113,114,32,22,60,23,15,24,25,26,84,85,27,28,29,48,49,50,51,129,127,61,64,65,66,62,63,67,16,17,152,78,79,80,134,136,87,88,153,135,42,125,18,43,44,57,58,59,219,81,82,52,83,109,110,115,116,117,118,119,120,121,122,220,221,142,143,144,222,140,141,68,69,223,145,224,146,147,12,225,13,226,227,19,138,95,96,97,34,35,36,37,38,39,40,41,47,53,54,55,56,20,86,89,90,91,92,93,126,94,98,99,100,101,102,103,104,105,106,107,108,111,112,128,123,124,228,229,45,46,71,230,150,137,76,75,231,8,70,148,232,5,233,234,9,1,6,235,139,236,7,14,0,10,149,151,2,11,237,238,3,130,131,132,133,239,4,240,77,241],
           "specific": [
             {"code":"interaction_reconnect_required","refs":["B/src/gateway/client/InProcessGateway.ts:783"],"summary":"handler 显式分支返回/抛出 interaction_reconnect_required；触发条件见锚点。"},
             {"code":"INVALID_PERMISSION_MODE","refs":["B/src/gateway/client/InProcessGateway.ts:794"],"summary":"handler 显式分支返回/抛出 INVALID_PERMISSION_MODE；触发条件见锚点。"},
@@ -1756,7 +1724,7 @@
       "scenario_note": "A2 mock 模型下的 turn/reconnect/permission，不代表 A6 全 provider 与 #19 竞合。",
       "source_audit": {
         "automatic_providers": ["zOObrg","33WmeQ","9_Wxlw","Fu_8sw","ARiTGg","8yFnag","zKdmDw","9LAx2A","ILuUbA","71br8w","pIUI7g","FG6cjg","Ip0aLQ","ckp26w","LvANzA","FM1RKg","JuULiA","WeA0Ww","6Rx_pw","YrPzeQ","M6Y0tQ","R8NvZQ","hMCFrg","KPl6mw","nTuFzw","Icqw5A","MuM3EA","lidkfQ","ycMaIA","_fbG1A","R2xovA","cMVfsQ","tpPRrA","pYNN1Q","xqkl3A","2eq-dA","pG7qrg","RXWwBw","rWFcIw","o7GSbQ","AFAg8Q","7tfZsw","2u5nWQ","P_G5Mw","XB6E-Q","93PRFA","GPypeQ","hF5wTQ","Rzet0w","nsCUSg","IBZECA","vkEQNQ","v4-EwA","pXMOGA","2dESTQ","3A8Rzg","3PSQLA","3v0kIQ","j2pkZg","RPK9AQ","jooxmA","J7EvYA","Xzao_Q","rtVMWQ","8eYEhA","TeEw1Q","o9qAyg","_aPJ0Q","kbWO2g","h4u_4g","hUWgVw","nIA3gA","mOxhWA","v8V9OA","TUCANA","22M4vg","yN2BaQ","rrO3UA","jHLp4Q","LPVSzw","9BvtKw","MPwGYA","msWaGQ","wL1Zew","dEWtpA","X5BmIw","j0b1Kg","baEuEQ","Z2KQtA","fCQoZg","A14RZg","HvTB-Q","Vn5sZw","4X2NEQ","QL9qhw","XjuftA","8pKY6Q","ZoVRTg","mCBn_A","Wg--8Q","A0kE6g","L18OZQ","zRdN0A","wjYQTw","Hxwd8g","KRiqKQ","xbhpyw","nV_WSw","Ipikew","NtCUSw","c2mJTA","jLQsHA","LSdXVw","FzO7OQ","doAaTA","0E23ng","LPjPIw","coTHLQ","znNYyA","JjZc1A","J3ar1w","JBqDow","_yMo_w","X5ooNw","iHv5EA","CFjC-Q","qgJLWQ","LXYpHQ","mWCfKg","09kdgQ","U3EiPQ","M8Ishg","jUQzpw","Xo4ewQ","7rgN1w","OHZ2qw","lUq7Uw","bxrZTA","lR8J9A","4zeYfQ","0XJwqg"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","XkUGOg","6GmMkQ","OkmR-w","DD4Mrw","95lhBQ","Vi5tmA","gSaDPQ","9_bwHw","xax0fg","xo6Tog","xXbdwg","07GEcA","C1kpFg","LN7zmg","GHDMCQ","grYHug","HfSFSw","qjtA0Q","DSYMaA","iHHSWw","JgkZ6g","yVM7tw","vHCJ0A","1rLCAA","_yudvA","Ax08mA","RaGaSA","eEHJxA","D6PoqQ","cPglBw","-7Vx0Q","oqs0SA","0WwH_Q","TsBCNA","jOSgAg","HQ3lSQ","_iy9eg","sZCgxQ","LoyyPw","rYpLhA","Fx1crQ","Lvi0cA","XwO1uA","CiMdfw","veArTg","PCyxKA","wCb9ag","XsDQkA","dyTuCw","hMY8eQ","695MVQ","Pm6IVw","qYFiAQ","uTesCA","eloUbQ","2jXVgQ","fDtEZQ","9PA7YA","vQ5BfQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","V6A-5w","XmrAXQ","3Ph6kg","_YsWpA","bcRxIQ","oFZu7g","NkKSBg","2LPMYw","14ho7A","6JfruA","8J4cLA","uhcBmw","1lq5WQ","igObSw","8bzdgA","m9tQIw","al6Dmw","hdxpaA","uFQiDA","eztvxA","IlDDEA","0LMKQQ","mrFXOg","KAbAUA","XaDcMA","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","U1p4SQ","h0B-VA","kw1y_A","XNohpw","HxJ0oQ","kFI2rQ","YA-lxQ","XVAzfA","2AvNnA","efXguw","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","1S6Szw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","VnG6NA","Y02O2g","zVJAoA","w1VFQg","vm8LHw","cK40mw","JKNg4Q","KMuV7Q","ZRMEeg","d6h2fA","nfm7Xw","Gx_54g","gUzRAw","yMrM8Q","pnIyjg","njQpfA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","XjTHDw","mkhnqA","M4U0Ng","Xv2nYA","YOnjcg","tJiJ8Q","oB297A","_dCEwg","6KJG8w","KNOdhA","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","jaJQHg","HMn46Q","3AwlSw","nUYeFw","P0qzNQ","9PF8-g","PTcZ9A","0BQexA","llFeeg","Lofwhw","Jb1ZoQ","BXArng","3MberA","vEQ8nA","GCIqLw","2vVa-A","xF_v2Q","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","W-33IQ","dKyvtQ","XMAZuQ","YoT4sA","R_ipiw","pdhmfA","cm62JQ","8qRERw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","XkUGOg","OkmR-w","DD4Mrw","95lhBQ","gSaDPQ","9_bwHw","xax0fg","xo6Tog","C1kpFg","GHDMCQ","grYHug","qjtA0Q","DSYMaA","JgkZ6g","yVM7tw","vHCJ0A","1rLCAA","_yudvA","Ax08mA","RaGaSA","eEHJxA","D6PoqQ","cPglBw","-7Vx0Q","oqs0SA","0WwH_Q","TsBCNA","jOSgAg","HQ3lSQ","_iy9eg","sZCgxQ","LoyyPw","rYpLhA","Fx1crQ","Lvi0cA","veArTg","PCyxKA","wCb9ag","XsDQkA","dyTuCw","hMY8eQ","695MVQ","Pm6IVw","qYFiAQ","uTesCA","eloUbQ","2jXVgQ","fDtEZQ","9PA7YA","vQ5BfQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","V6A-5w","XmrAXQ","3Ph6kg","_YsWpA","bcRxIQ","oFZu7g","NkKSBg","2LPMYw","14ho7A","6JfruA","8J4cLA","uhcBmw","1lq5WQ","igObSw","8bzdgA","m9tQIw","al6Dmw","uFQiDA","eztvxA","IlDDEA","0LMKQQ","mrFXOg","KAbAUA","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","U1p4SQ","h0B-VA","kw1y_A","XNohpw","HxJ0oQ","YA-lxQ","XVAzfA","2AvNnA","efXguw","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","1S6Szw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","VnG6NA","Y02O2g","zVJAoA","w1VFQg","vm8LHw","cK40mw","KMuV7Q","ZRMEeg","nfm7Xw","Gx_54g","gUzRAw","yMrM8Q","pnIyjg","njQpfA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","XjTHDw","mkhnqA","M4U0Ng","Xv2nYA","YOnjcg","tJiJ8Q","oB297A","_dCEwg","6KJG8w","KNOdhA","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA","jaJQHg","HMn46Q","3AwlSw","nUYeFw","P0qzNQ","0BQexA","Jb1ZoQ","BXArng","3MberA","vEQ8nA","GCIqLw","2vVa-A","xF_v2Q","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","W-33IQ","dKyvtQ","XMAZuQ","YoT4sA","pdhmfA","8qRERw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -1785,17 +1753,51 @@
           {"assembly":"automatic_default","ranges":["rWFcIw","lidkfQ","7tfZsw","zKdmDw"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["4IdheQ"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["Fu_8sw","8yFnag","jooxmA","JjZc1A","qgJLWQ","xbhpyw","nV_WSw","LXYpHQ","j2pkZg","bxrZTA","pYNN1Q","pIUI7g","8eYEhA","3v0kIQ","X5ooNw","NtCUSw","Ipikew","nIA3gA","Xo4ewQ","tpPRrA","v4-EwA","9_Wxlw","lR8J9A","WeA0Ww","kbWO2g","hF5wTQ","o7GSbQ","JBqDow","J3ar1w","GPypeQ","Xzao_Q","LSdXVw","LPjPIw","D9RlxQ","jLQsHA","coTHLQ","U3EiPQ","vkEQNQ","mOxhWA","AFAg8Q","nsCUSg","M8Ishg","wjYQTw","hMCFrg","yN2BaQ","rrO3UA","R8NvZQ","OHZ2qw","LvANzA","09kdgQ","P_G5Mw","2u5nWQ","ckp26w","Ip0aLQ","Hxwd8g","KRiqKQ","RXWwBw","CFjC-Q","mWCfKg","ARiTGg","iHv5EA","c2mJTA","lUq7Uw","4zeYfQ","xqkl3A","MuM3EA","_yMo_w","71br8w","ILuUbA","FG6cjg","9LAx2A","3PSQLA","3A8Rzg","pG7qrg","TUCANA","v8V9OA","M6Y0tQ","2dESTQ","pXMOGA","zOObrg","33WmeQ","0XJwqg","jHLp4Q","IBZECA","FM1RKg"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["wpz0KQ","mvnkqw","VKLi9Q","lsb9ew","MjsrZA","6P12PA","fOabQw","ZOnUxA","t0jNYQ","_SH0OQ","NY5nJg","0nnRzg","VFYEdg","mJ7Kyw","mOZtng","2dJqdg","v3_VUA","W9JXJQ","NGrsNQ","KQIUIA","4p2o2g","j0zuBA","Pwne2Q","rPdwLw","UpT9IA","uyPg0Q","7huHCg","MinrqA","jp68Ng","jvzZwQ","rlBQFQ","uYpbtg","XUKGyg","isG1GA","Ozc0gA","PK3pXQ","npiGRw","1nR_fQ","UHrYEA","uU4yhA","xOA7jA","z_XmPA","1G57ww","1XxNJA","Eve38A","6pGHCA","3uVvKA","Hm-Yiw","UoZO8A","lRdCiQ","Dm72Ag","9embgQ","Ts3q5g","FSXQGQ","sbbnlw","ZLIMhA","gXS6Qg","CUyUSQ","AScWww","9kAU8g","SyBrJA","fFbeUQ","fCI65Q","ITI5bA","GPsw1A","bs-dSw","h3oJwg","a1bppQ","c4dtKQ","GNLkvQ","x-d4gg","C8cgrA","YAZuXw","58cviQ","T5HgUQ","ac9z2g","cfJd6A","h-8FhQ","Me-WYA","0-9tEg","giwxEQ","tDbLsA","jhum8w","tYsW8w","YXlW-Q","IOdwxw","DKbFvA","kZ8HgA","UPelEQ","VHCdiA","-f-F5Q","sCZPuQ","uGvf5A","6alodQ","AGMjfw","YY8-3g","fEvTuA","CX4F2w","nzHcgg","m0bWYw","vWTLEQ","PcW4uQ","Punibw","6qtLbA","Mnx5Nw","KSHF4A","1_cYxg","ETyIEw","ulaoQg","2JrbXg","_Dcqzw","Mp7gEw","iVg_pA","585fdQ","3EGgvQ","szW57A","dWepFQ","CzVO1g","PzQbOQ","r5Wr2Q","OxXEsg","Dwwksw","d7eXFg","gWbArw","j1S8UQ","dIWioQ","98mTDw","i-VGug","C0SPjw","6Qilxg","k3oZXw","LhRshg","98SY_w","5FjWVQ","ohf3yg","eEVwOg","pjIsOw","Mio-Lw","tOL24Q","aGunFA","ItfI5A","jikLBg","g7dd9A","u5uwaQ","qDcLJw","fjqt-w","MQt3Yw","H0s8pA","92y8eA","fYISCg","RNCNTg","79YkOg","z9Ls0g","BzqWPw","TbRBoQ","uQ9VPg","PSJ5ZA","TTRcOA","q3Ri2A","swTJOA","5P9zPw","FrMFEA","H88cUA","BfpQ6g","aEGWnw","OaCNiA","AXdg7A","tXd5rQ","LrCAPQ","amnJkQ","n7p3fg","tz1nMw","-cuGdw","eDHaVQ","k8gc6w","Wh7unA","CdHsmg","3ejjGg","Iv9PYw","n5UuOQ","9uIAPQ","_fzEfQ","x4iKHQ","BA0MVQ","g3-cEQ","X2_gcQ","deGlGg","No3dOg","cCxoXA","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","3tX3Yw","-7ZuIg","88yAjg","IDpfhA","SmA8NQ","MOYHrQ","sJrwgA","HbIrDQ","R9Dl7w","xAWmIw","LEam-Q","aeq5qA","Sw54Gw","HqYlyw","yo_g8Q","rQynOg","8wIL2Q","MoSh4w","q98bFQ","FBxxPw","TEhXJg","Op7t0Q","25IoTg","DlwNUg","CZZ-jA","s3lrEg","DUuYPg","SAwQSw","R4nk9A","EwnFjg","5Ejutw","gT3IkQ","ew6T8w","ijetYA","heoT3g","U-rMHQ","Q6_onA","s79y7Q","8xIyXA","QugA2g","f88NSw","YiGlqA","JH13uQ","qHxGgA","4WlmNQ","ZV115Q","KNv93g","16PCZQ","uzu2Cg","0V9w4A","9UwZXA","pMNUlQ","Skw30g","AKW1OQ","MQ8XZA","0RUfDw","wK5x0w","dFg84Q","AxYGug","mEcaJw","WHBwEg","7eBhAg","WCqtvA","XWXDWw","2XrKIw","UQNRLw","UoQd-Q","Ml0J8w","CaXWoA","uFxgxQ","fLUJww","3ASxJA","lqt83g","SYE3-g","HE5NVQ","ETFexA","kHFq9w","n3twWg","sPSekQ","tHFPUA","V5A_Mw","sFiTpA","Qp7sBg","6GHiFQ","QcZHKA","nrULGA","b6uYKg","fvGESQ","YdZrOA","oRC9Dw","RQb9mQ","Pf84yQ","TDbUUA","aeaRwQ","YgYlvg","LcC_Pg","irvxew","UDAUYA","TMSwgg","bHkgSg","mAY2cA","uVbO-A","GMVqag","0cog_w","dE0CjA","B8dSmQ","gHAdqQ","2nvQTQ","gCDkuQ","XabFGQ","fRWO7Q","jJRdKw","NEWtiQ","GeXuUw","pcyfbg","21buBw","MkIWxg","xlP3Iw","8Lvi6g","0gzEXA","Jc_ifw","KTUzmg","fPoa0Q","uzQflQ","EY_sMw","n50eGQ","MerENA","XUa7WQ","X-oubw","OKbFTw","1ilVag","KRorog","uBVbWw","Vjnm-g","Txi9YQ","u9b8hw","z5ZtMA","FuApug","IsKkJw","4Rrcow","e_LY7g","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","4V4O-w","bwel1g","o84_wQ","g2Iz-g","6Jd_LA","I4cPzg","DLaU7g","e3a6JQ","psLZkg","2FaxpQ","XEczzA","UrThew","ZJ0xVw","o3d1OQ","4OR_gw","uHSegg","M8Nahg","U_iFFg","kv_K8w","cHLVpw","suujTQ","1hSerg","hKHrIA","IRFfrg","X4N3KA","-VS6Yg","mFI9OQ","6AT04Q","C3nKLQ","YzS3Yw","3D6-lw","zvnQog","qIyzvQ","9FgU9g","Pw22-A","wZhHQw","5iUixg","nMrooA","CLqWhw","OukYXw","QQk7eQ","4oGEpw","P0kCQA","hxXBBw","jMah8g","bzsqSQ","1g1N5Q","eCOoOw","Zjvu_w","gidmeA","i3gTfg","F4A9pA","yUcNIw","343KZA","mtCMXQ","VkrMYA","gsk6dA","g1M3zQ","WAGLHg","e1w0hQ","naBbpw","Y7Qt5w","RYprXw","Ch8XSQ","IMJ54A","7AL_vw","aguVuQ","2NvUvg","SZQw1A","MMYU5Q","Jel35g","LEV5-Q","Erv7_A","WNh1Sg","fNqacg","Db-Igw","fKfIMA","BM0U6Q","8088ZA","j83DyA","Z9d0xg","NT79sg","5DdZGg","MNFVEg","T3rbMQ","D1neOQ","lPXrsw","HumgSg","GiaDJA","txpirg","6c3GSA","U6xF3A","ELubRg","fJoB7A","VJ_kzw","0P6sCQ","DuI8kw","qjYXag","UQwkww","PvE-5g","7UyWow","pmaaTQ","iU8JNA","Dz4mPw","eEW0qg","gi1Y5w","2DhaSQ","Xl-Uaw","gL_Zrg","3ZspHQ","rUdTbQ","oUM1wA","y1Am7w","g11Dug","YlzP8w","C4Wg7g","iIOVRQ","nSpyjQ","bS2Rkw","LeUyAw","l6Yt-w","xR79Wg","lGdTNA","wQBpxw","LsyIZw","cMB9Mg","B3M9kQ","WhJo7w","0QQr-Q","rrnPiw","PRNKtg","Fh31Yw","8s4W5g","PW9ONQ","a7ft-Q","vRUz8A","Pg0rhw","OCWKTA","UX8IbA","uZo9fA","LZ3orA","s-HRUA","UpeibQ","Am7Xyg","gLQYGw","-qSk4Q","1Yu7tA","kf08Dg","4m1b6w","35NGhQ","D65B_g","Bj9bVQ","4SLgGw","KMmJ0A","g6ZiIw","1gm7SA","Ww0Okw","pbDPTQ","jGPKmA","MYLIcg","Csaj4A"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["wpz0KQ","mvnkqw","VKLi9Q","lsb9ew","MjsrZA","6P12PA","fOabQw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["t0jNYQ","_SH0OQ","NY5nJg","0nnRzg","VFYEdg","mJ7Kyw","mOZtng","2dJqdg","v3_VUA","W9JXJQ","NGrsNQ","KQIUIA","4p2o2g","j0zuBA","Pwne2Q","rPdwLw","UpT9IA","uyPg0Q","7huHCg","MinrqA","jp68Ng","jvzZwQ","rlBQFQ","uYpbtg","XUKGyg","isG1GA","Ozc0gA","PK3pXQ"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["npiGRw"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["1nR_fQ","UHrYEA","uU4yhA","xOA7jA","z_XmPA","1G57ww","1XxNJA","Eve38A","6pGHCA","3uVvKA","Hm-Yiw","UoZO8A","lRdCiQ","Dm72Ag","9embgQ","Ts3q5g","FSXQGQ","sbbnlw","ZLIMhA","gXS6Qg","CUyUSQ","AScWww","9kAU8g","SyBrJA","fFbeUQ","fCI65Q","ITI5bA","GPsw1A","bs-dSw","h3oJwg","a1bppQ","c4dtKQ","GNLkvQ","x-d4gg","C8cgrA","YAZuXw","58cviQ","T5HgUQ","ac9z2g","cfJd6A","h-8FhQ","Me-WYA","0-9tEg","giwxEQ","tDbLsA","jhum8w","tYsW8w","YXlW-Q","IOdwxw","DKbFvA","kZ8HgA","UPelEQ","VHCdiA","-f-F5Q","sCZPuQ","uGvf5A","6alodQ","AGMjfw","YY8-3g","fEvTuA","CX4F2w","nzHcgg","m0bWYw","vWTLEQ","PcW4uQ","Punibw","6qtLbA","Mnx5Nw","KSHF4A","1_cYxg","ETyIEw","ulaoQg","2JrbXg","_Dcqzw","Mp7gEw","iVg_pA","585fdQ","3EGgvQ","szW57A","dWepFQ","CzVO1g","PzQbOQ","r5Wr2Q","OxXEsg","Dwwksw","d7eXFg","gWbArw","j1S8UQ","dIWioQ","98mTDw","i-VGug","C0SPjw","6Qilxg","k3oZXw","LhRshg","98SY_w"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["5FjWVQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["ohf3yg","eEVwOg","pjIsOw","Mio-Lw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["tOL24Q"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["aGunFA","ItfI5A","jikLBg","g7dd9A","u5uwaQ","qDcLJw","fjqt-w","MQt3Yw","H0s8pA","92y8eA","fYISCg","RNCNTg","79YkOg","z9Ls0g","BzqWPw","TbRBoQ","uQ9VPg","PSJ5ZA","TTRcOA","q3Ri2A","swTJOA","5P9zPw","FrMFEA","H88cUA","BfpQ6g","aEGWnw","OaCNiA","AXdg7A","tXd5rQ","LrCAPQ","amnJkQ","n7p3fg","tz1nMw","-cuGdw","eDHaVQ","k8gc6w","Wh7unA","CdHsmg","3ejjGg","Iv9PYw","n5UuOQ","9uIAPQ","_fzEfQ","x4iKHQ","BA0MVQ","g3-cEQ","X2_gcQ","deGlGg","No3dOg","cCxoXA","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","3tX3Yw","-7ZuIg","88yAjg","IDpfhA","SmA8NQ","MOYHrQ","sJrwgA","HbIrDQ","R9Dl7w","xAWmIw","LEam-Q","aeq5qA","Sw54Gw","HqYlyw","yo_g8Q","rQynOg","8wIL2Q","MoSh4w","q98bFQ","FBxxPw","TEhXJg","Op7t0Q","25IoTg","DlwNUg","CZZ-jA","s3lrEg","DUuYPg","SAwQSw","R4nk9A","EwnFjg","5Ejutw","gT3IkQ","ew6T8w","ijetYA","heoT3g","U-rMHQ","Q6_onA","s79y7Q","8xIyXA","QugA2g","f88NSw","YiGlqA","JH13uQ","qHxGgA","4WlmNQ","ZV115Q","KNv93g","16PCZQ","uzu2Cg","0V9w4A","9UwZXA","pMNUlQ","Skw30g"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["AKW1OQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["MQ8XZA","0RUfDw","wK5x0w","dFg84Q","AxYGug","mEcaJw","WHBwEg","7eBhAg","WCqtvA","XWXDWw","2XrKIw","UQNRLw","UoQd-Q","Ml0J8w","CaXWoA","uFxgxQ","fLUJww","3ASxJA","lqt83g","SYE3-g","HE5NVQ"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ETFexA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["kHFq9w"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["n3twWg"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["sPSekQ","tHFPUA","V5A_Mw","sFiTpA","Qp7sBg","6GHiFQ","QcZHKA","nrULGA","b6uYKg","fvGESQ","YdZrOA","oRC9Dw","RQb9mQ"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["Pf84yQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["TDbUUA"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["aeaRwQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["YgYlvg"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["LcC_Pg","irvxew"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["UDAUYA","TMSwgg","bHkgSg","mAY2cA","uVbO-A","GMVqag","0cog_w","dE0CjA","B8dSmQ","gHAdqQ","2nvQTQ","gCDkuQ","XabFGQ","fRWO7Q","jJRdKw","NEWtiQ","GeXuUw","pcyfbg","21buBw","MkIWxg","xlP3Iw","8Lvi6g","0gzEXA","Jc_ifw","KTUzmg","fPoa0Q","uzQflQ","EY_sMw","n50eGQ","MerENA","XUa7WQ","X-oubw","OKbFTw","1ilVag","KRorog","uBVbWw","Vjnm-g","Txi9YQ","u9b8hw","z5ZtMA","FuApug","IsKkJw","4Rrcow","e_LY7g","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","4V4O-w","bwel1g","o84_wQ","g2Iz-g","6Jd_LA","I4cPzg","DLaU7g","e3a6JQ","psLZkg","2FaxpQ","XEczzA","UrThew","ZJ0xVw","o3d1OQ","4OR_gw","uHSegg","M8Nahg","U_iFFg","kv_K8w","cHLVpw","suujTQ","1hSerg","hKHrIA","IRFfrg","X4N3KA","-VS6Yg","mFI9OQ","6AT04Q","C3nKLQ","YzS3Yw","3D6-lw","zvnQog","qIyzvQ","9FgU9g","Pw22-A","wZhHQw","5iUixg","nMrooA","CLqWhw","OukYXw","QQk7eQ","4oGEpw","P0kCQA","hxXBBw","jMah8g","bzsqSQ","1g1N5Q","eCOoOw","Zjvu_w","gidmeA","i3gTfg","F4A9pA","yUcNIw","343KZA","mtCMXQ","VkrMYA","gsk6dA","g1M3zQ","WAGLHg","e1w0hQ","naBbpw","Y7Qt5w","RYprXw","Ch8XSQ","IMJ54A","7AL_vw","aguVuQ","2NvUvg","SZQw1A","MMYU5Q","Jel35g","LEV5-Q","Erv7_A","WNh1Sg","fNqacg","Db-Igw","fKfIMA","BM0U6Q","8088ZA","j83DyA","Z9d0xg","NT79sg","5DdZGg","MNFVEg","T3rbMQ","D1neOQ","lPXrsw","HumgSg","GiaDJA","txpirg","6c3GSA","U6xF3A","ELubRg","fJoB7A","VJ_kzw","0P6sCQ","DuI8kw","qjYXag","UQwkww","PvE-5g","7UyWow","pmaaTQ","iU8JNA","Dz4mPw","eEW0qg","gi1Y5w","2DhaSQ","Xl-Uaw","gL_Zrg","3ZspHQ","rUdTbQ","oUM1wA","y1Am7w","g11Dug","YlzP8w","C4Wg7g","iIOVRQ","nSpyjQ","bS2Rkw","LeUyAw","l6Yt-w","xR79Wg","lGdTNA","wQBpxw","LsyIZw","cMB9Mg","B3M9kQ","WhJo7w","0QQr-Q","rrnPiw","PRNKtg","Fh31Yw","8s4W5g","PW9ONQ","a7ft-Q","vRUz8A"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["Pg0rhw","OCWKTA","UX8IbA","uZo9fA","LZ3orA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["s-HRUA","UpeibQ","Am7Xyg","gLQYGw","-qSk4Q","1Yu7tA","kf08Dg","4m1b6w","35NGhQ","D65B_g","Bj9bVQ","4SLgGw","KMmJ0A","g6ZiIw","1gm7SA","Ww0Okw","pbDPTQ","jGPKmA","MYLIcg","Csaj4A"],"role":"callee"},
           {"assembly":"code_definition","ranges":["9M4BuA","F0O0vQ","ywokrQ","02XSPQ","ZY4yQQ","kTxo7A","ku_jUw","OgTFAg"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["9FHaMA","WD-YDg","eIlJuQ","ThMD7g","aI0LsA","pS-ImA","8V4zSQ","eGdrMQ","luBD2Q","O4wRCg","HlnleQ","5BV7Og","dOwB8A","L3XhFg","X2dHjw","dxth-A","_QBigA","QL45bA","cngYrw","GQvnpQ","Ck-EKw","9m8qZQ","Dw-mWg","EY7joA","gdRohQ","RZzR9Q","jE2EYw","6qLEgw","HKtvLw","iC54DQ","jMyy_Q","FK5xtg","VDQsBg","4vU2Yg","1fIdHw","NExTmA","KjoAqA","eTQp9w","BrMVjw","P4woeA","DZPOvg","4vkMrA","DVSvtQ","Hp5H5A","MXaOyA","1-uRjQ","a4HwcA","5H8ZEA","bNRqQg","aqEgKw","WtALrg","m2rlNw","Ub4TmA","CiKgxQ","bUqH9A","RpcJjg","J0igwA","cuXAYA","J9F3_Q","uXYLwA","mQ71Hg","053lcA","4T5jZg"],"role":"callee"},
           {"assembly":"code_definition","ranges":["qYZ7hw"],"role":"callee"},
-          {"assembly":"automatic_default","ranges":["dZl9pA","aAPuKw","kRvHxQ","QQR4yg","FMZ_pg","Ox_8WA","qSua9w","5mX6Jg","ucZU9g","DZu4nQ","51WbVw","QKXjAw","I1f2LA","azpH2A","kDtiVQ","LZb1bA","qsSiuw","3XVMlg","VetW8A","1uIycg","eMrp5w","XgNjlw","yPyi5g","qpPipg","s0Kz4g","Fhw6UA","f_21UA","QQu_ig","d9wrcQ","qII95A","sBbi6A","CHzHnA","NhDqqQ","2C93BA","IH-FDw","u1hMbw","kU1fDw","NNIqPg","g9XO5Q","dHOLVg","UgkhCA","WuDJ_A","eP7W0g","CBlX_Q","JbZK3Q","RTdmCQ","j4g2QQ","c4l7IA","YlnKlg","C6AFDA","gIk0Tg","czHJHw","DUVL5A","VnymBg","PwcJJA","MCrVeQ","GD4qNA","0u3RwA","d6AaYw","0j6xBg","V6qK5w","GScqwg","crvcjw","vGQnLg","PsrM0w","P29kBg","3oFEXA","S8jGjw","Aybr9g","p_Shsg","6X6ONQ","eSvxWg","-PyElQ","98GpDQ","ZqJRBg","X7dddg","qcc70g","UIC6ww","oSdA3A","A7wSpg","P6HOUA","HUjF5w","2o51Nw","P5pa8Q","QZAxxQ","pYUjWg","aKNR6w","tMHYGw","YkKPXQ","BxOJCA","58y_iQ","f6lCRA","20pAMw","npJprQ","svjIJw","12sQyA","GAjysw","j83oig","wDUJ3w","TWYdhw","5MWAQQ","gPu4vQ","9DSBww","-lujEA","8vUWaQ","qc_efA","KnNpWQ","JTJgLQ","uTmD6g","NiNb5w","5y1Dhw","Y6mU7w","KgaL8A","i6iuVQ","E_ni2A","leejxA","bJNFcw","mPJuhw","GlLMbw"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["dZl9pA","aAPuKw","kRvHxQ","QQR4yg","FMZ_pg","Ox_8WA","qSua9w","5mX6Jg","ucZU9g","DZu4nQ","51WbVw","QKXjAw","I1f2LA","azpH2A","kDtiVQ","LZb1bA","qsSiuw","3XVMlg","VetW8A","1uIycg","eMrp5w","XgNjlw","yPyi5g","qpPipg","s0Kz4g","Fhw6UA","f_21UA","QQu_ig","d9wrcQ","qII95A","sBbi6A","CHzHnA","NhDqqQ","2C93BA","IH-FDw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["u1hMbw"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["kU1fDw","NNIqPg","g9XO5Q","dHOLVg","UgkhCA","WuDJ_A","eP7W0g","CBlX_Q","JbZK3Q","RTdmCQ","j4g2QQ","c4l7IA","YlnKlg","C6AFDA","gIk0Tg","czHJHw","DUVL5A","VnymBg","PwcJJA","MCrVeQ","GD4qNA","0u3RwA","d6AaYw","0j6xBg","V6qK5w","GScqwg","crvcjw","vGQnLg","PsrM0w","P29kBg","3oFEXA","S8jGjw","Aybr9g","p_Shsg","6X6ONQ","eSvxWg","-PyElQ","98GpDQ","ZqJRBg","X7dddg","qcc70g","UIC6ww","oSdA3A","A7wSpg","P6HOUA"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["HUjF5w","2o51Nw","P5pa8Q","QZAxxQ","pYUjWg","aKNR6w","tMHYGw","YkKPXQ","BxOJCA","58y_iQ","f6lCRA","20pAMw","npJprQ","svjIJw","12sQyA","GAjysw","j83oig","wDUJ3w"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["TWYdhw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["5MWAQQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["gPu4vQ","9DSBww","-lujEA","8vUWaQ","qc_efA","KnNpWQ","JTJgLQ","uTmD6g","NiNb5w","5y1Dhw","Y6mU7w","KgaL8A","i6iuVQ","E_ni2A","leejxA","bJNFcw","mPJuhw","GlLMbw"],"role":"callee"},
           {"assembly":"code_definition","ranges":["Kn331g"],"role":"callee"},
-          {"assembly":"automatic_default","ranges":["yDkiRQ","QY2GBw","-3t3aQ","f8sVRQ","EGnQqQ","HPIvgg","yHRcpw","-mF6jw","64YXsA","uey5Uw","EpshEA","mUns-Q","SllOyg","2O7EQQ","Ghofyw","aSlXnQ","b-S0CQ","b7iIDA","PudwAA","UeLGnQ","rVY8IA","HSss3g","F3wEcw","zPMdEA","tBwdzA","qc5xLQ","2AlYvg","6iFbZA","Uh1ISw","SihBaQ","pw0hlw","k5eZKg","mNaYlQ","TaZi8Q","8PfAnQ","scKyfQ","XMpinA","C0loiw","uBga0A","YPi24A","NzCKoQ","iCm3Eg","9LHCzg","_uHbWA","hne6_Q","WSU5Iw","jUSc5Q","ztCUSA","ZEGmvg","vdHkug","4HyyvQ","WdLqGQ","gaTEqg","9wIuhw","JWK6eQ","aje0VA","6weGrQ","-khJaw","H5fPjg","ZVs0GA","QJvTiA","HW2EWg","_VtAPQ","KbzC4g","Q-PeWQ","x_AedA","VEZogA","0q4j5A","TZmuuQ","P74Nog","Ztq_DA","w3PMCA","IhIIdg","IWMX0w","W9uaVw","HBjPBw","O8ThuQ","DMGcYQ","UixB0A","xL_5hQ","Nh6omQ","WaEu3Q","PRB37Q","vCOxfQ","xaD73g","5HJOwA","sFZQ6A","omG_bw","VqptHA","Ezfzuw","K1niBA","bzsT5A","-WT_Qg","RIKsDA","4bXUUQ","Qs-8Yw","NeQSkg","6VjNMA","M3D2OQ","UG6kow","oUKdcg","QnTiKw","7XYz0Q","mTRZjg","bLLioQ","aMGW9Q","WM9rlw","LWdN1Q","Sxc8ag","JrGayQ","ChGDMg","DqDCqg","ybvLlQ","hagyCw","GHFjnw","IM78yg","Sv5HpQ","AKbYAA","XJab1Q","SEGSNg","pF2vDg","W-N5-A","Jk5aFA","rl0upQ","S2m0nQ","DTHn4w","LmMXQw","UaPAng","hicAeg","OfH0XA","Rzaq_g","ziHCXg","jaqLzQ","ds4eNw","P3-LoQ","SnVMYw","kBYfNg","5pdUIg","CdYWCA","CoU3Bw","kj079g","kH19xQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["yDkiRQ","QY2GBw","-3t3aQ","f8sVRQ","EGnQqQ","HPIvgg","yHRcpw","-mF6jw","64YXsA","uey5Uw","EpshEA","mUns-Q","SllOyg","2O7EQQ","Ghofyw","aSlXnQ","b-S0CQ","b7iIDA","PudwAA","UeLGnQ","rVY8IA","HSss3g","F3wEcw","zPMdEA","tBwdzA","qc5xLQ","2AlYvg","6iFbZA","Uh1ISw","SihBaQ","pw0hlw","k5eZKg","mNaYlQ","TaZi8Q","8PfAnQ","scKyfQ","XMpinA","C0loiw","uBga0A","YPi24A","NzCKoQ","iCm3Eg","9LHCzg","_uHbWA","hne6_Q","WSU5Iw","jUSc5Q","ztCUSA","ZEGmvg","vdHkug","4HyyvQ","WdLqGQ","gaTEqg","9wIuhw","JWK6eQ","aje0VA","6weGrQ","-khJaw","H5fPjg","ZVs0GA","QJvTiA","HW2EWg","_VtAPQ","KbzC4g","Q-PeWQ","x_AedA","VEZogA","0q4j5A","TZmuuQ","P74Nog","Ztq_DA","w3PMCA","IhIIdg","IWMX0w","W9uaVw","HBjPBw","O8ThuQ","DMGcYQ","UixB0A","xL_5hQ","Nh6omQ","WaEu3Q","PRB37Q","vCOxfQ","xaD73g","5HJOwA","sFZQ6A","omG_bw","VqptHA","Ezfzuw","K1niBA","bzsT5A","-WT_Qg","RIKsDA","4bXUUQ","Qs-8Yw","NeQSkg","6VjNMA","M3D2OQ","UG6kow","oUKdcg","QnTiKw","7XYz0Q","mTRZjg","bLLioQ","aMGW9Q","WM9rlw","LWdN1Q","Sxc8ag","JrGayQ","ChGDMg","DqDCqg","ybvLlQ","hagyCw","GHFjnw","IM78yg","Sv5HpQ","AKbYAA","XJab1Q","SEGSNg"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["pF2vDg","W-N5-A","Jk5aFA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["rl0upQ","S2m0nQ","DTHn4w","LmMXQw","UaPAng","hicAeg","OfH0XA","Rzaq_g","ziHCXg","jaqLzQ","ds4eNw","P3-LoQ","SnVMYw","kBYfNg","5pdUIg","CdYWCA","CoU3Bw","kj079g","kH19xQ"],"role":"callee"},
           {"assembly":"code_definition","ranges":["__AYNw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["5JCFnQ","umd3rw","cHjZFg","Or2Usw","QqKuyQ","_n7g5A","pSfPxQ","p0bQZA","OYdeTQ","omRdvA","kuIszQ","KOXTpA","8jfEew","dwVkXg","ta44cQ","RxN5uw","BNYfMg","ILbgMg","Kx3riA","q80NyA","USChyQ","hrqXnA","x2YzhQ","RKei0Q","l5wRTQ","fsGKlw","jB3wjQ","Urw4_g","J56L4w","BlEIfQ","v1P1Cw","1B7G_A","w5VyBg","rXOqrA","iB2_KA","tBYCPQ","KgXU-Q","6mKCtA","kAkVjA","9AO5SA","lcjy5w","-tWEfw","2SVQYA","hPWV1g","Agd1jA","HLjl_w","Y7cr1A","wiCRNw","xAlmtA","hy1E6A","2GACrg","vfX_Qg","CmudBw","HDrGrA","9uDwkQ","NOG7mg","rnlgSg","WmXwjg","2IIW_Q","q9c1LA","KvTj6g","pVsbkQ","da3wWg","xQv_3A","mbmp0g","acCuag","EuUh1g","IgcKqA","ZrIaaQ","_0Orig","PsBAxg","LVwBxQ","Ovf5Pw","21pBJg","OvWJLQ","m_hC2w","LxOASg","8uz6HA","pW5QGg","eSY4pA","C1eB-w","etWybw","n_Il9Q","BBpE-Q","vN0jIA","LIh2Ng","PMhn2g","rY8zgQ","GvezJg","eF9AwA","UHA5XQ","wBY_JA","CHW39w","zkp7aw","InzeGQ","8Fa44w","nzyGgA","18mvLA","yqxDvQ","KcZigw","rw6KFA","OavPwg","nldoGg","BBqaIQ","qV6Pmg","YShYmw","c5R9tg","vHZp6w","iISLOg","D4mHkg","MlZl6g","YG7ugw","FMEOvQ","p-qiJg","rpytrg","esrjfQ","qFSpiQ","a_F_kQ","F3dm_w","-WRLfw","jbnZow","v5z_8g","1yE0tQ","1W0mPw","zHUNPA","mkIPLA","SjSNkA","P0jWyg","RKadFw","PHjjmg","G2VE0g","YWOMWw","s6mpqA","_V2GVw","asdLQQ","AtlqjQ","i14TwQ","j2OhUg","WHeoEw","Z5TQnw","EviXQA","dICdcw","mI_wPQ","iVnZDQ","qEGDBQ","dnMK-g","_ZAJsA","W4iU5w","E21Xrw","dLW4_g","xIkSJQ","Cy5tPA","noO49Q","6fdnFg","gDWdOw","qXOTGw","lTxT-Q","X4yv5A","xlHDYg","xQ35Hg","4zGZCA","hHARpg","4a3h9w","8k7fVg","7lvTmg","R0JdsQ","ynBGwQ","o1teaw","0zdL-Q","s8KFFQ","4m7mUQ","3tPX0Q","Txa_Vw","mkb9ng","PNrIMg","BjfTGw","Qnyjnw","o7s5_A","YhQxTg","neQuQw","yJRwhQ","0dsfCg","jfUyYA","_mww_g","wuMZJg","Systmg","I5g-cg","Xwzmcw","CSIxKw","fi7EFA","ApmFow","RvQJlg","9C7CNg"],"role":"callee"},
           {"assembly":"code_definition","ranges":["6uHjow"],"role":"callee"},
-          {"assembly":"automatic_default","ranges":["E70keA","mRG9HA","vljYfA","h6XaZg","Y4SuFw","YpL40A","ZylHxQ","15Z3vg","szaAEQ","Cmdoew","FpEk3g","nX5sQQ","074ULQ","WF4Vlg","l8AeYQ","HE71Kw","ws32-w","ePQqhw","zPe99w","nukpXw","xX7KuQ","ShSU2g","di3Nzw","5H_sDA","af1U6Q","xf_a6Q","7phIcg","Zl0h2Q","j1qY5g","gNt8fA","kSVhuw","26Mo6Q","Mwo7EQ","0kDXLw","N43SXg","a2Mgew","ysZxyw","ASd0_g","8D5xkw","9U34vw","pC9mMA","C1DG-w","PP-ANQ","ORxa6g","dd9oHA","FwhF6g","LIjulA","CwBBzA","k_F1SQ","3nUQCw","C3Hm6g","0rh6ug","dFpcIw","K6Szzw","yUG2yA","zP_BGQ","ndp6SQ","btl2cQ","BcpCnw","jH1Kzw","xobAmQ","z4PZFw","YZIB3w","zxOjjA","w0jWUg","U7Z2wg","ho5BFQ","gI0mww","NBOVRw","QhXTnw","PuazIQ","k5IlgA","_eTaWQ","Wnf5Ww","qYI8VQ","RHh2ZQ","DJJrug","noHAdw","4KaGuw","ZYLXig","90z25Q","dNXE_Q","msnLBQ","GHT4ww","cKPQVg","LV5OFw","bxMGFQ","uhahRg","2m5ISg","FtBhqA","WfddLA","Dh8I1Q","SyvSZw","sruWOg","Szvhmw","kpT5MA","rwK_eg","sgESIg","WKWGnQ","U-2bjw","ocyCvQ","qJuphg","qBubFA","6xjS8Q","w059pg","I6Rb_w","zlW76A","IJh_pQ","GKx6Jg","fswivw","o9RMIw","S87OpQ","EjlquA","EaSxCg","ni49Bg","0iLa-A","-WWe6w","xOaE0Q","59-TQQ","EjeLfg","w6MWZg","6A3hNQ","6Ati8A","Ue72zw","EnvSRw","0-m-hw","aHpcxQ","KA0BEg","Z_G7bg","LC3e0Q","h8OE1A","guwmFA","-g8Tow","7m9XWQ"],"role":"callee"}
+          {"assembly":"automatic_default","ranges":["E70keA","mRG9HA","vljYfA","h6XaZg","Y4SuFw","YpL40A","ZylHxQ","15Z3vg","szaAEQ","Cmdoew","FpEk3g","nX5sQQ","074ULQ","WF4Vlg","l8AeYQ","HE71Kw","ws32-w","ePQqhw","zPe99w","nukpXw","xX7KuQ","ShSU2g","di3Nzw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["5H_sDA","af1U6Q","xf_a6Q","7phIcg","Zl0h2Q","j1qY5g","gNt8fA","kSVhuw","26Mo6Q","Mwo7EQ","0kDXLw","N43SXg","a2Mgew","ysZxyw","ASd0_g","8D5xkw","9U34vw","pC9mMA","C1DG-w"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["PP-ANQ","ORxa6g","dd9oHA","FwhF6g","LIjulA","CwBBzA","k_F1SQ","3nUQCw","C3Hm6g","0rh6ug","dFpcIw","K6Szzw","yUG2yA","zP_BGQ","ndp6SQ","btl2cQ","BcpCnw","jH1Kzw","xobAmQ","z4PZFw","YZIB3w","zxOjjA","w0jWUg","U7Z2wg","ho5BFQ","gI0mww","NBOVRw","QhXTnw","PuazIQ","k5IlgA","_eTaWQ","Wnf5Ww","qYI8VQ","RHh2ZQ","DJJrug","noHAdw","4KaGuw","ZYLXig","90z25Q","dNXE_Q","msnLBQ","GHT4ww","cKPQVg","LV5OFw","bxMGFQ","uhahRg","2m5ISg","FtBhqA","WfddLA","Dh8I1Q","SyvSZw","sruWOg","Szvhmw","kpT5MA","rwK_eg","sgESIg","WKWGnQ","U-2bjw","ocyCvQ","qJuphg","qBubFA","6xjS8Q","w059pg","I6Rb_w","zlW76A","IJh_pQ","GKx6Jg","fswivw","o9RMIw","S87OpQ","EjlquA","EaSxCg","ni49Bg","0iLa-A","-WWe6w","xOaE0Q","59-TQQ","EjeLfg","w6MWZg","6A3hNQ","6Ati8A","Ue72zw","EnvSRw","0-m-hw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["aHpcxQ","KA0BEg","Z_G7bg","LC3e0Q","h8OE1A","guwmFA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["-g8Tow","7m9XWQ"],"role":"callee"}
         ]
       },
       "state": {"effects":["agent_evicted","dialog_project_key_deleted","permission_mode_cleared","reconnect_owner_disposed","session_permissions_removed"],"kinds":["memory","storage"],"refs":["B/src/gateway/client/InProcessGateway.ts:764","B/src/cli/ProjectRuntimeRegistry.ts:956","B/src/gateway/dialog/modelCatalog.ts:58","B/src/cli/GatewaySessionModelBundle.ts:79","B/src/cli/ProjectRuntimeRegistry.ts:830","B/src/cli/ProjectRuntimeRegistry.ts:1058","B/src/gateway/dialog/GatewayAttachmentTurnComposer.ts:56","B/src/pilot/config/sdkSessionSettings.ts:81","B/src/pilot/config/sdkSessionSettings.ts:111","B/src/cli/GatewayUploadedAttachmentBundle.ts:28","B/src/gateway/dialog/UploadStore.ts:255","B/src/gateway/client/InProcessGateway.ts:2049","B/src/gateway/SessionRouter.ts:327","B/src/cli/createLocalGateway.ts:847"],"summary":"持有 inFlightTurns/workspaceAdmissions、completion fence、replay epoch；FileRunRegistry 与 transcript 分别记录运行和消息。 默认链的 IPG.closeSession 删除会话级授权、permission mode、reconnect owner 和 dialog project key。router.close 逐出 agent，onSessionEvict(closed) 清 permission mode；单独 router.close 不删会话级授权。"},
@@ -1850,7 +1852,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["WpoElw","nduGcA","KHA6rw","z3gFog","wjYQTw"],
-        "default_constructions": ["XdyOZw","zwl6OA","8qRERw"],
+        "default_constructions": ["XdyOZw","8qRERw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -1915,7 +1917,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Ej8thA","WpoElw","EMEgfQ","oqKmmw","WzFTdA","khoTEw","GlLMbw"],
-        "default_constructions": ["XdyOZw","zwl6OA","8qRERw"],
+        "default_constructions": ["XdyOZw","8qRERw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -1982,7 +1984,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Ej8thA","IkSiyg","EMEgfQ","LGVtVA","lOGHLg","wo1wMw","gvsI7w","1INFpA","iRWvJQ"],
-        "default_constructions": ["XdyOZw","zwl6OA","8qRERw"],
+        "default_constructions": ["XdyOZw","8qRERw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2047,7 +2049,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Ej8thA","WpoElw","EMEgfQ","YfcR8w","wo1wMw","gvsI7w"],
-        "default_constructions": ["XdyOZw","zwl6OA","8qRERw"],
+        "default_constructions": ["XdyOZw","8qRERw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2111,7 +2113,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Ej8thA","WpoElw","EMEgfQ","GeWhKQ","gvsI7w","iRWvJQ"],
-        "default_constructions": ["XdyOZw","zwl6OA","8qRERw"],
+        "default_constructions": ["XdyOZw","8qRERw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2166,7 +2168,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["S9SR5Q","o5VE6A","LPjPIw","coTHLQ"],
-        "default_constructions": ["Fx1crQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["Fx1crQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2223,7 +2225,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["o5VE6A","0E23ng","LPjPIw","coTHLQ"],
-        "default_constructions": ["Fx1crQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["Fx1crQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2276,7 +2278,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["S9SR5Q","o5VE6A"],
-        "default_constructions": ["Fx1crQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["Fx1crQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2329,7 +2331,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["dnMK-g","2cvHfw","CEvtkQ"],
-        "default_constructions": ["Pm6IVw","eloUbQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["Pm6IVw","eloUbQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2357,8 +2359,8 @@
       ],
       "branches": {
         "error": {
-          "groups": ["assert_allowed_k5Oelg","assert_open_0hZBEA","closed_error_suRkVQ","create_builtin_registry_LdLjRw","create_read_file_tool_chain_MvXbAA","create_read_file_tool_chain_SrcV-A","create_router_runtime_PppvkA","create_web_fetch_tool_chain_-Naizg","create_web_fetch_tool_chain_4DJpGw","create_web_fetch_tool_chain_OeoMdw","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","ensure_token_budget_Qwcn2g","ensure_write_snapshot_fresh_chain_RfAuag","execute_lsp_query_5WbhlQ","get_model_pzZlVw","load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","organization_provider_policy_rejection_YZjgoA","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_chain_I5EyuQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","perform_custom_search_chain_FJp7Gw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_notebook_chain_dPcMOw","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","resolve_api_key_VD5V_w","send_provider_request_cGW3hA","stage_UUKi1A","validate_model_request_ir1GYQ","validate_top_level_XfrIIg"],
-          "order": [153,154,155,28,38,37,39,40,29,30,20,55,56,57,58,68,69,70,21,22,151,84,85,86,137,139,93,94,152,138,49,50,51,64,65,25,0,26,27,66,89,115,116,140,6,7,18,143,144,2,3,24,77,78,79,119,120,67,31,32,33,90,91,34,35,101,102,103,36,136,133,71,72,73,74,132,23,17,41,42,43,44,45,46,47,48,87,54,88,60,61,62,63,92,95,96,97,98,99,100,104,105,106,107,108,109,110,111,112,113,114,117,118,134,129,130,59,19,121,52,53,122,123,124,125,126,127,128,82,16,135,80,11,75,81,5,145,4,12,141,76,142,146,1,13,15,14,8,9,131,83,147,148,149,10,150],
+          "groups": ["assert_allowed_k5Oelg","assert_open_0hZBEA","closed_error_suRkVQ","create_builtin_registry_LdLjRw","create_read_file_tool_chain_MvXbAA","create_read_file_tool_chain_SrcV-A","create_router_runtime_PppvkA","create_web_fetch_tool_chain_-Naizg","create_web_fetch_tool_chain_4DJpGw","create_web_fetch_tool_chain_OeoMdw","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","ensure_token_budget_Qwcn2g","ensure_write_snapshot_fresh_chain_RfAuag","execute_lsp_query_5WbhlQ","get_model_pzZlVw","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","organization_provider_policy_rejection_YZjgoA","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_chain_I5EyuQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","perform_custom_search_chain_FJp7Gw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_notebook_chain_dPcMOw","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","resolve_api_key_VD5V_w","send_provider_request_cGW3hA","stage_UUKi1A","validate_model_request_ir1GYQ","validate_top_level_XfrIIg"],
+          "order": [152,153,154,27,37,36,38,39,28,29,19,54,55,56,57,67,68,69,20,21,150,83,84,85,136,138,92,93,151,137,48,49,50,63,64,24,0,25,26,65,88,114,115,139,6,7,18,142,143,2,3,23,76,77,78,118,119,66,30,31,32,89,90,33,34,100,101,102,35,135,132,70,71,72,73,131,22,17,40,41,42,43,44,45,46,47,86,53,87,59,60,61,62,91,94,95,96,97,98,99,103,104,105,106,107,108,109,110,111,112,113,116,117,133,128,129,58,120,51,52,121,122,123,124,125,126,127,81,16,134,79,11,74,80,5,144,4,12,140,75,141,145,1,13,15,14,8,9,130,82,146,147,148,10,149],
           "specific": [
             {"code":"PROJECT_NOT_FOUND","refs":["B/src/gateway/dialog/projectRegistry.ts:50","B/src/gateway/client/InProcessGateway.ts:3146","B/src/gateway/dialog/projectRegistry.ts:57"],"summary":"provider 拒绝分支：PROJECT_NOT_FOUND，触发条件见锚点。"},
             {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2797","B/src/cli/createLocalGateway.ts:1241"],"summary":"memory_list 调用链的 memoryList 分支产生 CAPABILITY_UNAVAILABLE；对应 WS error.code，条件与传播位置见逐函数锚点。"},
@@ -2386,7 +2388,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["VFYEdg","gpIrsQ","krTj7g","VOfFsw","wjYQTw"],
-        "default_constructions": ["HQ3lSQ","_iy9eg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","BUdlpA","ePA1zA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","cwpOyw","QTfR_g","DHuV4w","WW_EHA","EYDbSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","_iy9eg","XdyOZw","HxJ0oQ","XVAzfA","BUdlpA","ePA1zA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","QTfR_g","DHuV4w","WW_EHA","EYDbSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2395,7 +2397,7 @@
           {"assembly":"automatic_default","ranges":["pSEeLw"],"role":"handler"},
           {"assembly":"automatic_default","ranges":["krTj7g","VOfFsw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["gpIrsQ"],"role":"provider"},
-          {"assembly":"supplemental_review","ranges":["d-FxwQ"],"role":"provider"},
+          {"assembly":"optional_host","optional":true,"ranges":["d-FxwQ"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["wjYQTw","UYhLvA","VFYEdg"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["CX4F2w","nzHcgg","m0bWYw","vWTLEQ","g3-cEQ","X2_gcQ","deGlGg","No3dOg","RMw1fQ","cCxoXA","OvWIAg","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","e_LY7g","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","-7ZuIg","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","585fdQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","U3EiPQ","aI0LsA","pS-ImA","8V4zSQ","o3d1OQ","4OR_gw","uHSegg","M8Nahg","eGdrMQ","6pGHCA","LEam-Q","aeq5qA","Sw54Gw","HqYlyw","yo_g8Q","rQynOg","8wIL2Q","MoSh4w","q98bFQ","FBxxPw","TEhXJg","Op7t0Q","25IoTg","DlwNUg","CZZ-jA","s3lrEg","DUuYPg","SAwQSw","R4nk9A","EwnFjg","5Ejutw","gT3IkQ","ew6T8w","ijetYA","heoT3g","U-rMHQ","Q6_onA","s79y7Q","luBD2Q","O4wRCg","HlnleQ","5BV7Og","dOwB8A","L3XhFg","t0jNYQ","X2dHjw","dxth-A","_QBigA","QL45bA","cngYrw","GQvnpQ","Mnx5Nw","Ck-EKw","9m8qZQ","Dw-mWg","EY7joA","gdRohQ","RZzR9Q","jE2EYw","6qLEgw","HKtvLw","iC54DQ","jMyy_Q","FK5xtg","VDQsBg","4vU2Yg","1fIdHw","NExTmA","KjoAqA","eTQp9w","BrMVjw","P4woeA","DZPOvg","4vkMrA","DVSvtQ","Hp5H5A"],"role":"callee"},
           {"assembly":"code_definition","ranges":["9M4BuA","02XSPQ","kTxo7A"],"role":"callee"},
@@ -2427,8 +2429,8 @@
       ],
       "branches": {
         "error": {
-          "groups": ["assert_allowed_k5Oelg","assert_open_0hZBEA","closed_error_suRkVQ","create_builtin_registry_LdLjRw","create_read_file_tool_chain_MvXbAA","create_read_file_tool_chain_SrcV-A","create_router_runtime_PppvkA","create_web_fetch_tool_chain_-Naizg","create_web_fetch_tool_chain_4DJpGw","create_web_fetch_tool_chain_OeoMdw","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","ensure_token_budget_Qwcn2g","ensure_write_snapshot_fresh_chain_RfAuag","execute_lsp_query_5WbhlQ","get_model_pzZlVw","load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","organization_provider_policy_rejection_YZjgoA","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_chain_I5EyuQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","perform_custom_search_chain_FJp7Gw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_notebook_chain_dPcMOw","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","resolve_api_key_VD5V_w","send_provider_request_cGW3hA","stage_UUKi1A","validate_model_request_ir1GYQ","validate_top_level_XfrIIg"],
-          "order": [153,154,155,156,28,38,37,39,40,29,30,20,55,56,57,58,68,69,70,21,22,151,84,85,86,137,139,93,94,152,138,49,50,51,64,65,25,0,26,27,66,89,115,116,140,6,7,18,143,144,2,3,24,77,78,79,119,120,67,31,32,33,90,91,34,35,101,102,103,36,136,133,71,72,73,74,132,23,17,41,42,43,44,45,46,47,48,87,54,88,60,61,62,63,92,95,96,97,98,99,100,104,105,106,107,108,109,110,111,112,113,114,117,118,134,129,130,59,19,121,52,53,122,123,124,125,126,127,128,82,16,135,80,11,75,81,5,145,4,12,141,76,142,146,1,13,15,14,8,9,131,83,147,148,149,10,150],
+          "groups": ["assert_allowed_k5Oelg","assert_open_0hZBEA","closed_error_suRkVQ","create_builtin_registry_LdLjRw","create_read_file_tool_chain_MvXbAA","create_read_file_tool_chain_SrcV-A","create_router_runtime_PppvkA","create_web_fetch_tool_chain_-Naizg","create_web_fetch_tool_chain_4DJpGw","create_web_fetch_tool_chain_OeoMdw","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","ensure_token_budget_Qwcn2g","ensure_write_snapshot_fresh_chain_RfAuag","execute_lsp_query_5WbhlQ","get_model_pzZlVw","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","organization_provider_policy_rejection_YZjgoA","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_chain_I5EyuQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","perform_custom_search_chain_FJp7Gw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_notebook_chain_dPcMOw","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","resolve_api_key_VD5V_w","send_provider_request_cGW3hA","stage_UUKi1A","validate_model_request_ir1GYQ","validate_top_level_XfrIIg"],
+          "order": [152,153,154,155,27,37,36,38,39,28,29,19,54,55,56,57,67,68,69,20,21,150,83,84,85,136,138,92,93,151,137,48,49,50,63,64,24,0,25,26,65,88,114,115,139,6,7,18,142,143,2,3,23,76,77,78,118,119,66,30,31,32,89,90,33,34,100,101,102,35,135,132,70,71,72,73,131,22,17,40,41,42,43,44,45,46,47,86,53,87,59,60,61,62,91,94,95,96,97,98,99,103,104,105,106,107,108,109,110,111,112,113,116,117,133,128,129,58,120,51,52,121,122,123,124,125,126,127,81,16,134,79,11,74,80,5,144,4,12,140,75,141,145,1,13,15,14,8,9,130,82,146,147,148,10,149],
           "specific": [
             {"code":"INVALID_MEMORY_SCOPE","refs":["B/src/cli/createLocalGateway.ts:1254","B/src/gateway/client/InProcessGateway.ts:2804"],"summary":"provider 拒绝分支：INVALID_MEMORY_SCOPE，触发条件见锚点。"},
             {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2806","B/src/cli/createLocalGateway.ts:1252"],"summary":"memory_wipe 调用链的 memoryWipe 分支产生 CAPABILITY_UNAVAILABLE；对应 WS error.code，条件与传播位置见逐函数锚点。"},
@@ -2457,7 +2459,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["VFYEdg","ghwqzg","krTj7g","VOfFsw","wjYQTw"],
-        "default_constructions": ["HQ3lSQ","_iy9eg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","BUdlpA","ePA1zA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","cwpOyw","QTfR_g","DHuV4w","WW_EHA","EYDbSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","_iy9eg","XdyOZw","HxJ0oQ","XVAzfA","BUdlpA","ePA1zA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","QTfR_g","DHuV4w","WW_EHA","EYDbSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2466,7 +2468,7 @@
           {"assembly":"automatic_default","ranges":["GUZ_xQ"],"role":"handler"},
           {"assembly":"automatic_default","ranges":["krTj7g","VOfFsw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["ghwqzg","wjYQTw"],"role":"provider"},
-          {"assembly":"supplemental_review","ranges":["9EpH7w","fAVTrQ"],"role":"provider"},
+          {"assembly":"optional_host","optional":true,"ranges":["9EpH7w","fAVTrQ"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["UYhLvA","VFYEdg"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["CX4F2w","nzHcgg","m0bWYw","vWTLEQ","g3-cEQ","X2_gcQ","deGlGg","No3dOg","RMw1fQ","cCxoXA","OvWIAg","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","e_LY7g","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","-7ZuIg","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","585fdQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","U3EiPQ","aI0LsA","pS-ImA","8V4zSQ","o3d1OQ","4OR_gw","uHSegg","M8Nahg","eGdrMQ","6pGHCA","LEam-Q","aeq5qA","Sw54Gw","HqYlyw","yo_g8Q","rQynOg","8wIL2Q","MoSh4w","q98bFQ","FBxxPw","TEhXJg","Op7t0Q","25IoTg","DlwNUg","CZZ-jA","s3lrEg","DUuYPg","SAwQSw","R4nk9A","EwnFjg","5Ejutw","gT3IkQ","ew6T8w","ijetYA","heoT3g","U-rMHQ","Q6_onA","s79y7Q","luBD2Q","O4wRCg","HlnleQ","5BV7Og","dOwB8A","L3XhFg","t0jNYQ","X2dHjw","dxth-A","_QBigA","QL45bA","cngYrw","GQvnpQ","Mnx5Nw","Ck-EKw","9m8qZQ","Dw-mWg","EY7joA","gdRohQ","RZzR9Q","jE2EYw","6qLEgw","HKtvLw","iC54DQ","jMyy_Q","FK5xtg","VDQsBg","4vU2Yg","1fIdHw","NExTmA","KjoAqA","eTQp9w","BrMVjw","P4woeA","DZPOvg","4vkMrA","DVSvtQ","Hp5H5A"],"role":"callee"},
           {"assembly":"code_definition","ranges":["9M4BuA","02XSPQ","kTxo7A"],"role":"callee"},
@@ -2524,7 +2526,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["2mk88A","krTj7g","VOfFsw","wjYQTw","U3EiPQ","LmZ-dA"],
-        "default_constructions": ["XdyOZw","zwl6OA"],
+        "default_constructions": ["XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2582,7 +2584,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["VJfuuw","krTj7g","FjBZTQ","wjYQTw","U3EiPQ","vsiazw"],
-        "default_constructions": ["XdyOZw","zwl6OA"],
+        "default_constructions": ["XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2641,7 +2643,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["4UIuFw","krTj7g","FjBZTQ","wjYQTw","U3EiPQ","vsiazw","tuXF1g"],
-        "default_constructions": ["XdyOZw","zwl6OA"],
+        "default_constructions": ["XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2697,7 +2699,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["LRlNZQ","Ga7NcA","wjYQTw"],
-        "default_constructions": ["XdyOZw","zwl6OA","it86VQ"],
+        "default_constructions": ["XdyOZw","it86VQ"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2756,7 +2758,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": [],
-        "default_constructions": ["XdyOZw","zwl6OA"],
+        "default_constructions": ["XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2816,7 +2818,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["hNUveA","1loABA","moETHQ","lcpBXA","wjYQTw"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2885,7 +2887,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["hNUveA","rCkrVg","moETHQ","lcpBXA","wjYQTw"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -2953,7 +2955,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["KQIUIA","hNUveA","vlL9cA","lcpBXA","wjYQTw"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3020,7 +3022,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["7BN0nQ","MuM3EA","dLW4_g","kF0HqA","vkEQNQ","L18OZQ","_yMo_w"],
-        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","LN7zmg","GHDMCQ","grYHug","HfSFSw","1rLCAA","_yudvA","Ax08mA","XsDQkA","dyTuCw","hMY8eQ","mrFXOg","KAbAUA","XaDcMA","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","VdGUTw","cwpOyw","0BQexA"],
+        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","GHDMCQ","grYHug","1rLCAA","_yudvA","Ax08mA","XsDQkA","dyTuCw","hMY8eQ","mrFXOg","KAbAUA","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","VdGUTw","0BQexA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3033,7 +3035,9 @@
           {"assembly":"automatic_default","ranges":["L18OZQ"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["U9wRQw","eS_IwA","a_MccA","vzptjQ","FLPC-Q","qhIioA","m7qaXg","ysHU7A"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["dLW4_g","MuM3EA","_yMo_w","7BN0nQ"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["FSXQGQ","sbbnlw","ZLIMhA","ZOnUxA","t0jNYQ","_SH0OQ","RdhZYw","92y8eA","1h9cuA","XWXDWw","2XrKIw","UQNRLw","fRWO7Q","6alUqw","jJRdKw","9embgQ","gL_Zrg","3ZspHQ","Ts3q5g","rUdTbQ","oUM1wA","y1Am7w","4SLgGw","MQt3Yw","H0s8pA","QY2GBw","S2m0nQ","WCqtvA","nSpyjQ","bS2Rkw"],"role":"callee"}
+          {"assembly":"automatic_default","ranges":["FSXQGQ","sbbnlw","ZLIMhA"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["t0jNYQ","_SH0OQ","RdhZYw","92y8eA","1h9cuA","XWXDWw","2XrKIw","UQNRLw","fRWO7Q","6alUqw","jJRdKw","9embgQ","gL_Zrg","3ZspHQ","Ts3q5g","rUdTbQ","oUM1wA","y1Am7w","4SLgGw","MQt3Yw","H0s8pA","QY2GBw","S2m0nQ","WCqtvA","nSpyjQ","bS2Rkw"],"role":"callee"}
         ]
       },
       "state": {"effects":[],"kinds":["memory"],"refs":["B/src/gateway/client/InProcessGateway.ts:1859","B/src/gateway/SessionRouter.ts:307","B/src/gateway/dialog/GatewayAttachmentTurnComposer.ts:56"],"summary":"中途输入进入该 session 的 steer mailbox，附件可带 allowedReadFiles；不新建 runRegistry 运行。"},
@@ -3076,7 +3080,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["wFO2NQ","dLW4_g","dOb5wg","vkEQNQ"],
-        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","LN7zmg","GHDMCQ","grYHug","HfSFSw","mrFXOg","KAbAUA","XaDcMA","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","VdGUTw","cwpOyw","0BQexA"],
+        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","GHDMCQ","grYHug","mrFXOg","KAbAUA","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","VdGUTw","0BQexA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3086,7 +3090,8 @@
           {"assembly":"automatic_default","ranges":["dOb5wg"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["vkEQNQ"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["dLW4_g","wFO2NQ"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["ZOnUxA","t0jNYQ","_SH0OQ","1Xw8ZA","umrmgA","fRWO7Q","jJRdKw","NEWtiQ","4SLgGw","S2m0nQ","nSpyjQ","bS2Rkw"],"role":"callee"}
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["t0jNYQ","_SH0OQ","1Xw8ZA","umrmgA","fRWO7Q","jJRdKw","NEWtiQ","4SLgGw","S2m0nQ","nSpyjQ","bS2Rkw"],"role":"callee"}
         ]
       },
       "state": {"effects":[],"kinds":["memory"],"refs":["B/src/gateway/client/InProcessGateway.ts:1886","B/src/gateway/SessionRouter.ts:317"],"summary":"只修改活动 session 的待处理 steer 项。"},
@@ -3128,7 +3133,7 @@
       "scenario_ids": ["reconnect"],
       "source_audit": {
         "automatic_providers": ["8yFnag","dLW4_g","625KwQ","vkEQNQ","oYyu_w","3Tw6Pg","Wg--8Q"],
-        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","LN7zmg","XmrAXQ","XdyOZw","zwl6OA","VdGUTw","cwpOyw"],
+        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","XmrAXQ","XdyOZw","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3139,7 +3144,9 @@
           {"assembly":"automatic_default","ranges":["625KwQ"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["vkEQNQ"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["dLW4_g","oYyu_w","3Tw6Pg","8yFnag"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["Ip0aLQ","ZOnUxA","t0jNYQ","_SH0OQ"],"role":"callee"}
+          {"assembly":"automatic_default","ranges":["Ip0aLQ"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["t0jNYQ","_SH0OQ"],"role":"callee"}
         ]
       },
       "state": {"effects":[],"kinds":["memory"],"refs":["B/src/gateway/client/InProcessGateway.ts:2000","B/src/gateway/SessionRouter.ts:252"],"summary":"abortedTurnReasons 与 completion fence 保存本轮取消状态，router 负责活动 session 退出。"},
@@ -3177,11 +3184,11 @@
       "notifications": {"names":[],"refs":["B/src/gateway/client/InProcessGateway.ts:2022"],"scope":"direct_handler","summary":"该 handler 无直接 notification 调用；provider、bus 或会话副作用的通知另列；未闭合者以 BLOCKED 为准。"},
       "owner": "A7",
       "proposed_scenarios": ["a51.list_sessions.success","a51.list_sessions.error","a51.list_sessions.unconfigured"],
-      "provider": {"default_refs":["k8gc6w","AZkFUg","S9dNwg","3JAMeA","K0EMgA"],"refs":["B/src/gateway/client/InProcessGateway.ts:2022","B/src/cli/createLocalGateway.ts:827","B/src/gateway/SessionRouter.ts:368","B/src/cli/ProjectRuntimeRegistry.ts:1703","B/src/gateway/GatewaySessionCatalog.ts:20"],"summary":"SessionRouter.list 优先调用 CLI 注入的 registry.listSessions，后者委派 catalog consumer；没有注入才列 Map。"},
+      "provider": {"default_refs":["k8gc6w","AZkFUg","K0EMgA"],"refs":["B/src/gateway/client/InProcessGateway.ts:2022","B/src/cli/createLocalGateway.ts:827","B/src/gateway/SessionRouter.ts:368","B/src/cli/ProjectRuntimeRegistry.ts:1703","B/src/gateway/GatewaySessionCatalog.ts:20"],"summary":"SessionRouter.list 优先调用 CLI 注入的 registry.listSessions，后者委派 catalog consumer；没有注入才列 Map。"},
       "scenario_ids": ["NONE"],
       "source_audit": {
-        "automatic_providers": ["k8gc6w","AZkFUg","S9dNwg","3JAMeA","K0EMgA"],
-        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","LN7zmg","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "automatic_providers": ["k8gc6w","AZkFUg","K0EMgA"],
+        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3190,7 +3197,8 @@
           {"assembly":"automatic_default","ranges":["D5y8Ag"],"role":"handler"},
           {"assembly":"automatic_default","ranges":["AZkFUg","K0EMgA","LRlNZQ"],"role":"provider"},
           {"assembly":"supplemental_review","ranges":["s5fNvg"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["S9dNwg","3JAMeA","k8gc6w"],"role":"provider"},
+          {"assembly":"optional_host","optional":true,"ranges":["S9dNwg"],"role":"provider"},
+          {"assembly":"automatic_default","ranges":["3JAMeA","k8gc6w"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["MerENA","1G57ww","pjIsOw","0RUfDw"],"role":"callee"}
         ]
       },
@@ -3233,7 +3241,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": [],
-        "default_constructions": ["XdyOZw","zwl6OA"],
+        "default_constructions": ["XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3301,7 +3309,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["WZjQaw","GjR9fA","Vj4WxQ"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","9PF8-g","PTcZ9A","vmgNwQ"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","9PF8-g","PTcZ9A","vmgNwQ"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "lQoPmQ"
@@ -3314,7 +3322,7 @@
           {"assembly":"automatic_default","ranges":["pF2vDg","W-N5-A","aHpcxQ","KA0BEg","n_w3zQ","Z_G7bg","LC3e0Q","h8OE1A","MZr1tw","9kN0aw","xNcL2Q","Jk5aFA","guwmFA","GeyjGg"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["GjR9fA"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["wm4hzA","rtj9QQ","RB5Now"],"role":"callee"},
-          {"assembly":"supplemental_review","ranges":["SPRlnw"],"role":"provider"},
+          {"assembly":"optional_host","optional":true,"ranges":["SPRlnw"],"role":"provider"},
           {"assembly":"supplemental_review","ranges":["UUm9mw","8q2GWw"],"role":"callee"},
           {"assembly":"supplemental_review","ranges":["jsOcLA","9nsszg"],"role":"provider"},
           {"assembly":"supplemental_review","ranges":["7KVXAQ","Un7x3A"],"role":"callee"},
@@ -3396,7 +3404,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Xp3Y4w","uztoHg","x4iKHQ","K24I6Q"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","VdGUTw","cwpOyw","9PF8-g","PTcZ9A","vmgNwQ"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","VdGUTw","9PF8-g","PTcZ9A","vmgNwQ"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "lQoPmQ"
@@ -3409,7 +3417,7 @@
           {"assembly":"automatic_default","ranges":["pF2vDg","W-N5-A","aHpcxQ","KA0BEg","n_w3zQ","Z_G7bg","LC3e0Q","h8OE1A","MZr1tw","9kN0aw","xNcL2Q","GeyjGg","DbUCSA","guwmFA","XHPoWw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["uztoHg"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["rtj9QQ","RB5Now","wm4hzA"],"role":"callee"},
-          {"assembly":"supplemental_review","ranges":["SPRlnw"],"role":"provider"},
+          {"assembly":"optional_host","optional":true,"ranges":["SPRlnw"],"role":"provider"},
           {"assembly":"supplemental_review","ranges":["UUm9mw","8q2GWw"],"role":"callee"},
           {"assembly":"supplemental_review","ranges":["jsOcLA","9nsszg"],"role":"provider"},
           {"assembly":"supplemental_review","ranges":["7KVXAQ","Un7x3A"],"role":"callee"},
@@ -3462,7 +3470,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": [],
-        "default_constructions": ["XdyOZw","zwl6OA"],
+        "default_constructions": ["XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3510,7 +3518,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["hF5wTQ","IBZECA","Nmlepg","jooxmA","16PCZQ","mzy1sQ","IJfv9g"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","JgkZ6g","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3570,7 +3578,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["KQIUIA","Sdo95A","KsOFoQ","dEVZFA","AMziNw","hF5wTQ","wjYQTw"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","HQ3lSQ","T4xcrA","fQPVJA","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","HQ3lSQ","T4xcrA","fQPVJA","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3644,7 +3652,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["KQIUIA","X35T-g","ckApSQ","GLAuHg","x4iKHQ","wjYQTw","SmaoMw"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3717,7 +3725,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["KQIUIA","cEU71g","GLAuHg","t0jNYQ","x4iKHQ","61EivQ","wjYQTw","95P4kQ","9qd08Q","qjYXag","n3twWg"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","HQ3lSQ","T4xcrA","fQPVJA","mrFXOg","KAbAUA","XaDcMA","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","HQ3lSQ","T4xcrA","fQPVJA","mrFXOg","KAbAUA","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3727,7 +3735,9 @@
           {"assembly":"automatic_default","ranges":["cEU71g"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["GLAuHg"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["wjYQTw","UYhLvA","x4iKHQ","61EivQ","KQIUIA","9qd08Q","qjYXag","t0jNYQ","95P4kQ","n3twWg"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["nsCUSg","VFYEdg","ETyIEw","EpshEA","iU8JNA","vkEQNQ","IBZECA","CX4F2w","nzHcgg","m0bWYw","vWTLEQ","g3-cEQ","sJrwgA","HbIrDQ","leejxA","E_ni2A","ZOnUxA","_SH0OQ","0-9tEg","UHrYEA","Ozc0gA","giwxEQ","X2_gcQ","deGlGg","No3dOg","RMw1fQ","cCxoXA","OvWIAg","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","e_LY7g","cHLVpw","suujTQ","CwBBzA","k_F1SQ","3nUQCw","C3Hm6g","0rh6ug","dFpcIw","Dwwksw","98SY_w","98mTDw","i-VGug","C0SPjw","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","-7ZuIg","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","585fdQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","U3EiPQ","YlzP8w","bUqH9A","RpcJjg","J0igwA","PvE-5g","7UyWow","pmaaTQ","cuXAYA","J9F3_Q","Dz4mPw","eEW0qg","gi1Y5w","2DhaSQ","uXYLwA","mQ71Hg","vk4HaA","57C4sg","LIjulA","Yfpjgg"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["nsCUSg","VFYEdg","ETyIEw","EpshEA","iU8JNA","vkEQNQ","IBZECA","CX4F2w","nzHcgg","m0bWYw","vWTLEQ","g3-cEQ","sJrwgA","HbIrDQ","leejxA","E_ni2A"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["_SH0OQ","0-9tEg","UHrYEA","Ozc0gA","giwxEQ","X2_gcQ","deGlGg","No3dOg","RMw1fQ","cCxoXA","OvWIAg","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","e_LY7g","cHLVpw","suujTQ","CwBBzA","k_F1SQ","3nUQCw","C3Hm6g","0rh6ug","dFpcIw","Dwwksw","98SY_w","98mTDw","i-VGug","C0SPjw","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","-7ZuIg","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","585fdQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","U3EiPQ","YlzP8w","bUqH9A","RpcJjg","J0igwA","PvE-5g","7UyWow","pmaaTQ","cuXAYA","J9F3_Q","Dz4mPw","eEW0qg","gi1Y5w","2DhaSQ","uXYLwA","mQ71Hg","vk4HaA","57C4sg","LIjulA","Yfpjgg"],"role":"callee"},
           {"assembly":"code_definition","ranges":["9M4BuA","02XSPQ","kTxo7A"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["isG1GA","16PCZQ","uzu2Cg","Wh7unA","YXlW-Q","k8gc6w","aI0LsA","pS-ImA","8V4zSQ","o3d1OQ","4OR_gw","uHSegg","M8Nahg","eGdrMQ","6pGHCA","LEam-Q","aeq5qA","Sw54Gw","HqYlyw","yo_g8Q","rQynOg","8wIL2Q","MoSh4w","q98bFQ","FBxxPw","TEhXJg","Op7t0Q","25IoTg","DlwNUg","CZZ-jA","s3lrEg","DUuYPg","SAwQSw","R4nk9A","EwnFjg","5Ejutw","gT3IkQ","ew6T8w","ijetYA","heoT3g","U-rMHQ","Q6_onA","s79y7Q","luBD2Q","O4wRCg","HlnleQ","5BV7Og","dOwB8A","L3XhFg","X2dHjw","dxth-A","_QBigA","QL45bA","cngYrw","GQvnpQ","Mnx5Nw","Ck-EKw","9m8qZQ","Dw-mWg","EY7joA","gdRohQ","RZzR9Q","jE2EYw","6qLEgw","HKtvLw","iC54DQ","jMyy_Q","FK5xtg","VDQsBg","4vU2Yg","1fIdHw","NExTmA","KjoAqA","eTQp9w","BrMVjw","P4woeA","DZPOvg","4vkMrA","DVSvtQ","Hp5H5A","6P12PA","fOabQw","-3t3aQ","iISLOg","D4mHkg","MlZl6g","YG7ugw","FMEOvQ","p-qiJg","JTJgLQ","uTmD6g","TWYdhw","NiNb5w","5y1Dhw","Y6mU7w","KgaL8A","i6iuVQ","rpytrg","bJNFcw","mPJuhw","esrjfQ","qFSpiQ","a_F_kQ","FwhF6g"],"role":"callee"},
           {"assembly":"code_definition","ranges":["6uHjow"],"role":"callee"},
@@ -3789,7 +3799,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["KQIUIA","kZjOaw","t0jNYQ","x4iKHQ","wjYQTw","qjYXag"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3859,7 +3869,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["KQIUIA","3bkYNA","t0jNYQ","x4iKHQ","wjYQTw","qjYXag"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3921,7 +3931,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["--aR7w","HGIa1Q","hF5wTQ","Nmlepg","jooxmA","16PCZQ","mzy1sQ","IJfv9g"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -3978,7 +3988,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Eve38A","RXWwBw"],
-        "default_constructions": ["fDtEZQ","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","it86VQ","zVJAoA","w1VFQg","vm8LHw","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","BLWxYQ","yQ7KwA"],
+        "default_constructions": ["fDtEZQ","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","it86VQ","zVJAoA","w1VFQg","vm8LHw","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","BLWxYQ","yQ7KwA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4034,7 +4044,7 @@
       "scenario_note": "auth 仅验证握手前拒绝 describe_server；其成功能力声明仍需拟新增场景。",
       "source_audit": {
         "automatic_providers": ["Wqq07A","nsCUSg"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","T4xcrA","fQPVJA","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","T4xcrA","fQPVJA","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4042,7 +4052,9 @@
         "functions": [
           {"assembly":"automatic_default","ranges":["G8pcIQ"],"role":"handler"},
           {"assembly":"automatic_default","ranges":["Wqq07A","nsCUSg"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["vkEQNQ","IBZECA","ZOnUxA","t0jNYQ","_SH0OQ","0-9tEg","UHrYEA","Ozc0gA","giwxEQ","Dwwksw","98SY_w","98mTDw","i-VGug","C0SPjw","isG1GA","16PCZQ","uzu2Cg","Wh7unA","YXlW-Q","k8gc6w","dIWioQ","MerENA","Ip0aLQ","qHxGgA","4WlmNQ","ZV115Q","KNv93g","1G57ww"],"role":"callee"}
+          {"assembly":"automatic_default","ranges":["vkEQNQ","IBZECA"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["t0jNYQ","_SH0OQ","0-9tEg","UHrYEA","Ozc0gA","giwxEQ","Dwwksw","98SY_w","98mTDw","i-VGug","C0SPjw","isG1GA","16PCZQ","uzu2Cg","Wh7unA","YXlW-Q","k8gc6w","dIWioQ","MerENA","Ip0aLQ","qHxGgA","4WlmNQ","ZV115Q","KNv93g","1G57ww"],"role":"callee"}
         ]
       },
       "state": {"effects":["permission_mode_cleared"],"kinds":["memory"],"refs":["B/src/gateway/client/InProcessGateway.ts:2088"],"summary":"只读 options 与 router.sessionCount；列出的函数存在不代表其底层配置可用。         "},
@@ -4090,7 +4102,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["Cqoqlg","yXBD9g","tvXqBA","GdZ1NA","MBxxSQ","lNacXA","7UQxvA","lCPaMg","98oRGg"],
-        "default_constructions": ["_HT8OQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["_HT8OQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4150,7 +4162,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["JZThZw","wrGz9A"],
-        "default_constructions": ["HQ3lSQ","xPQbZg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
+        "default_constructions": ["HQ3lSQ","xPQbZg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4181,8 +4193,8 @@
       "blockers": [],
       "branches": {
         "error": {
-          "groups": ["load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
-          "order": [119,6,16,15,17,18,7,8,1,33,34,35,36,46,47,48,2,3,117,62,63,64,113,115,71,72,118,114,27,28,29,42,43,44,67,93,94,5,55,56,57,97,98,45,9,10,11,68,69,12,13,79,80,81,14,112,110,49,50,51,52,109,4,19,20,21,22,23,24,25,26,65,32,66,38,39,40,41,70,73,74,75,76,77,78,82,83,84,85,86,87,88,89,90,91,92,95,96,111,107,108,37,0,99,30,31,100,101,102,103,104,105,106,60,58,53,59,116,54,61],
+          "groups": ["load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
+          "order": [118,5,15,14,16,17,6,7,0,32,33,34,35,45,46,47,1,2,116,61,62,63,112,114,70,71,117,113,26,27,28,41,42,43,66,92,93,4,54,55,56,96,97,44,8,9,10,67,68,11,12,78,79,80,13,111,109,48,49,50,51,108,3,18,19,20,21,22,23,24,25,64,31,65,37,38,39,40,69,72,73,74,75,76,77,81,82,83,84,85,86,87,88,89,90,91,94,95,110,106,107,36,98,29,30,99,100,101,102,103,104,105,59,57,52,58,115,53,60],
           "specific": [
             {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2182"],"summary":"handler 显式分支返回/抛出 CAPABILITY_UNAVAILABLE；触发条件见锚点。"}
           ]
@@ -4208,7 +4220,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["9Zw1Pg","F2FGRQ"],
-        "default_constructions": ["vQ5BfQ","XdyOZw","zwl6OA","2AvNnA"],
+        "default_constructions": ["vQ5BfQ","XdyOZw","2AvNnA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4242,8 +4254,8 @@
       ],
       "branches": {
         "error": {
-          "groups": ["load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
-          "order": [119,120,121,6,16,15,17,18,7,8,1,33,34,35,36,46,47,48,2,3,117,62,63,64,113,115,71,72,118,114,27,28,29,42,43,44,67,93,94,5,55,56,57,97,98,45,9,10,11,68,69,12,13,79,80,81,14,112,110,49,50,51,52,109,4,19,20,21,22,23,24,25,26,65,32,66,38,39,40,41,70,73,74,75,76,77,78,82,83,84,85,86,87,88,89,90,91,92,95,96,111,107,108,37,0,99,30,31,100,101,102,103,104,105,106,60,58,53,59,116,54,61],
+          "groups": ["load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
+          "order": [118,119,120,5,15,14,16,17,6,7,0,32,33,34,35,45,46,47,1,2,116,61,62,63,112,114,70,71,117,113,26,27,28,41,42,43,66,92,93,4,54,55,56,96,97,44,8,9,10,67,68,11,12,78,79,80,13,111,109,48,49,50,51,108,3,18,19,20,21,22,23,24,25,64,31,65,37,38,39,40,69,72,73,74,75,76,77,81,82,83,84,85,86,87,88,89,90,91,94,95,110,106,107,36,98,29,30,99,100,101,102,103,104,105,59,57,52,58,115,53,60],
           "specific": [
             {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2187"],"summary":{"template":"va9uxQ"}},
             {"code":"INVALID_SESSION_KEY","refs":["B/src/model/session/NativeSessionModelSelectionPort.ts:120"],"summary":"session_model_get 调用链的 requireSessionKey 分支产生 INVALID_SESSION_KEY；对应 WS error.code，条件与传播位置见逐函数锚点。"},
@@ -4271,7 +4283,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["x7zRUQ","KdUiYQ"],
-        "default_constructions": ["vQ5BfQ","XdyOZw","zwl6OA","2AvNnA","efXguw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A"],
+        "default_constructions": ["vQ5BfQ","XdyOZw","2AvNnA","efXguw","Go3R2Q","3L32vQ","BUWF_A"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4311,8 +4323,8 @@
       ],
       "branches": {
         "error": {
-          "groups": ["load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_transcript_Og11Nw","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_session_event_envelope_Q_Y-6A","validate_session_event_envelope_wEuoww","validate_session_event_log_-D1yHQ","validate_top_level_XfrIIg"],
-          "order": [129,130,131,132,133,134,135,136,6,16,15,17,18,7,8,1,33,34,35,36,46,47,48,2,3,127,62,63,64,117,119,71,72,128,118,27,28,29,42,43,44,67,93,94,5,55,56,57,97,98,45,9,10,11,68,69,12,13,79,80,81,14,112,110,49,50,51,52,109,4,19,20,21,22,23,24,25,26,65,32,66,38,39,40,41,70,73,74,75,76,77,78,82,83,84,85,86,87,88,89,90,91,92,95,96,111,107,108,37,0,99,30,31,100,101,102,103,104,105,106,125,60,58,121,53,123,59,122,120,54,124,126,113,114,115,116,61],
+          "groups": ["load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_transcript_Og11Nw","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_session_event_envelope_Q_Y-6A","validate_session_event_envelope_wEuoww","validate_session_event_log_-D1yHQ","validate_top_level_XfrIIg"],
+          "order": [128,129,130,131,132,133,134,135,5,15,14,16,17,6,7,0,32,33,34,35,45,46,47,1,2,126,61,62,63,116,118,70,71,127,117,26,27,28,41,42,43,66,92,93,4,54,55,56,96,97,44,8,9,10,67,68,11,12,78,79,80,13,111,109,48,49,50,51,108,3,18,19,20,21,22,23,24,25,64,31,65,37,38,39,40,69,72,73,74,75,76,77,81,82,83,84,85,86,87,88,89,90,91,94,95,110,106,107,36,98,29,30,99,100,101,102,103,104,105,124,59,57,120,52,122,58,121,119,53,123,125,112,113,114,115,60],
           "specific": [
             {"code":"SESSION_BUSY","refs":["B/src/cli/GatewaySessionModelBundle.ts:53"],"summary":"活跃轮次时 SESSION_BUSY；provider 写入前检查。"},
             {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2192"],"summary":{"template":"H4oL7w"}},
@@ -4345,7 +4357,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["o9ZFkw","8WOSjQ","n6z0vg","x3-Ang","22M4vg"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","vQ5BfQ","T4xcrA","fQPVJA","_YsWpA","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","2AvNnA","efXguw","it86VQ","zVJAoA","w1VFQg","vm8LHw","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","vQ5BfQ","T4xcrA","fQPVJA","_YsWpA","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","2AvNnA","efXguw","it86VQ","zVJAoA","w1VFQg","vm8LHw","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4419,7 +4431,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["TfuTcA","5x1KyA","n6z0vg","x3-Ang","22M4vg"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","vQ5BfQ","T4xcrA","fQPVJA","_YsWpA","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","efXguw","it86VQ","zVJAoA","w1VFQg","vm8LHw","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","vQ5BfQ","T4xcrA","fQPVJA","_YsWpA","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","efXguw","it86VQ","zVJAoA","w1VFQg","vm8LHw","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4477,7 +4489,7 @@
       "scenario_ids": ["reconnect"],
       "source_audit": {
         "automatic_providers": ["OGqZww","_pCtfQ"],
-        "default_constructions": ["3Ph6kg","bcRxIQ","oFZu7g","XdyOZw","zwl6OA"],
+        "default_constructions": ["3Ph6kg","bcRxIQ","oFZu7g","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4531,7 +4543,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["UIFKbQ","fzS9hQ"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4592,7 +4604,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["Cqoqlg","36lxvQ","wjYQTw","m37C8w"],
-        "default_constructions": ["_HT8OQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["_HT8OQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4647,7 +4659,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["OKMnNw","8IWcwQ","x4iKHQ","hF5wTQ","IBZECA"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","JgkZ6g","HQ3lSQ","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","cwpOyw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","HQ3lSQ","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4711,7 +4723,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["zXmyfw","Wr1YhA","x4iKHQ","hF5wTQ","IBZECA"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","JgkZ6g","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4766,7 +4778,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["B9LqFA","QSQfRA","x4iKHQ","hF5wTQ","IBZECA"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","JgkZ6g","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4822,7 +4834,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["SQulCw","YmPKug","x4iKHQ","hF5wTQ","IBZECA"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","JgkZ6g","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4878,7 +4890,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["7huHCg","uyPg0Q","VyUfNA","x4iKHQ","Ipikew"],
-        "default_constructions": ["T4xcrA","fQPVJA","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","VdGUTw","cwpOyw"],
+        "default_constructions": ["T4xcrA","fQPVJA","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4932,7 +4944,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["UjNtVQ","ynrAEg","x4iKHQ","hF5wTQ","IBZECA","x1ozMw"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","JgkZ6g","T4xcrA","fQPVJA","XdyOZw","zwl6OA","it86VQ","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","T4xcrA","fQPVJA","XdyOZw","it86VQ","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -4958,8 +4970,8 @@
       "blockers": [],
       "branches": {
         "error": {
-          "groups": ["assert_valid_url_ROGTxA","load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_FEWfpg","parse_always_on_config_chain_dyjWPA","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_chain_OxgNcQ","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_model_definition_6tD85Q","parse_optional_string_field_0zR-ow","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","pricing_number_7PGBkQ","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
-          "order": [123,124,125,126,127,128,129,130,131,7,16,19,17,6,58,59,60,100,101,18,8,46,9,2,10,11,12,71,72,13,14,82,83,84,15,34,35,36,37,116,114,47,50,51,52,48,49,53,3,4,121,65,66,67,117,119,74,75,122,118,28,112,5,29,30,43,44,45,20,21,22,23,24,25,26,27,68,33,69,39,40,41,42,73,76,77,78,79,80,81,85,86,87,88,89,90,91,92,93,94,95,98,99,115,110,111,38,70,1,96,97,102,31,32,103,104,105,106,107,108,109,63,61,54,62,120,55,64,132,133,134,135,113,57,136,56,137,138,0],
+          "groups": ["assert_valid_url_ROGTxA","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_FEWfpg","parse_always_on_config_chain_dyjWPA","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_chain_OxgNcQ","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_model_definition_6tD85Q","parse_optional_string_field_0zR-ow","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_D_NWqw","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","pricing_number_7PGBkQ","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
+          "order": [122,123,124,125,126,127,128,129,130,6,15,18,16,5,57,58,59,99,100,17,7,45,8,1,9,10,11,70,71,12,13,81,82,83,14,33,34,35,36,115,113,46,49,50,51,47,48,52,2,3,120,64,65,66,116,118,73,74,121,117,27,111,4,28,29,42,43,44,19,20,21,22,23,24,25,26,67,32,68,38,39,40,41,72,75,76,77,78,79,80,84,85,86,87,88,89,90,91,92,93,94,97,98,114,109,110,37,69,95,96,101,30,31,102,103,104,105,106,107,108,62,60,53,61,119,54,63,131,132,133,134,112,56,135,55,136,137,0],
           "specific": [
             {"code":"CAPABILITY_UNAVAILABLE","refs":["B/src/gateway/client/InProcessGateway.ts:2351"],"summary":{"template":"L1T05A"}},
             {"code":"INVALID_SETTINGS_SOURCE","refs":["B/src/gateway/client/InProcessGateway.ts:2352"],"summary":"handler 显式分支返回/抛出 INVALID_SETTINGS_SOURCE；触发条件见锚点。"},
@@ -5000,7 +5012,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Tn0oRA","56_-TQ","sDWOfg","jp68Ng","Yc6g9Q"],
-        "default_constructions": ["jOSgAg","XdyOZw","zwl6OA"],
+        "default_constructions": ["jOSgAg","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5056,7 +5068,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["hFT9qA","pWjTAg","09kdgQ"],
-        "default_constructions": ["jOSgAg","XdyOZw","zwl6OA"],
+        "default_constructions": ["jOSgAg","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5112,7 +5124,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["qAVY0Q","VPMqhQ","x4iKHQ","hF5wTQ","IBZECA","VGO0ig"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","JgkZ6g","T4xcrA","fQPVJA","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","T4xcrA","fQPVJA","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5165,7 +5177,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["bUDThA","K_Jr6Q"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5227,7 +5239,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["GNSBPg","2sXrlg","x4iKHQ"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","HQ3lSQ","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","cwpOyw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","HQ3lSQ","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5285,7 +5297,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["dH7D8A","Me-riw"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","HQ3lSQ","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","cwpOyw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","HQ3lSQ","695MVQ","Pm6IVw","eloUbQ","T4xcrA","fQPVJA","ANfqKw","6QK3Vw","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5348,7 +5360,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["_dh03Q","j0nMbw"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","bC2b3Q","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","bC2b3Q","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5411,7 +5423,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["n8vQXg","0grz3Q"],
-        "default_constructions": ["HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","bC2b3Q","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","bC2b3Q","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5477,7 +5489,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["swfsyA","B6Ikvw","x4iKHQ"],
-        "default_constructions": ["HQ3lSQ","LoyyPw","rYpLhA","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","LoyyPw","rYpLhA","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","VdGUTw","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5545,7 +5557,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["_jzX5g","ARVhkw"],
-        "default_constructions": ["RaGaSA","bI9GJg","HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["RaGaSA","bI9GJg","HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5607,7 +5619,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["xZJW4A","hu5Skw"],
-        "default_constructions": ["RaGaSA","bI9GJg","HQ3lSQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["RaGaSA","bI9GJg","HQ3lSQ","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5666,7 +5678,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["dLW4_g","7tDX2g"],
-        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","LN7zmg","1rLCAA","_yudvA","Ax08mA","XsDQkA","dyTuCw","hMY8eQ","3Ph6kg","bcRxIQ","oFZu7g","XdyOZw","zwl6OA","VdGUTw","cwpOyw","0BQexA"],
+        "default_constructions": ["28v7kQ","-eWn2g","C1kpFg","1rLCAA","_yudvA","Ax08mA","XsDQkA","dyTuCw","hMY8eQ","3Ph6kg","bcRxIQ","oFZu7g","XdyOZw","VdGUTw","0BQexA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5675,7 +5687,9 @@
           {"assembly":"automatic_default","ranges":["oRq4tQ"],"role":"handler"},
           {"assembly":"automatic_default","ranges":["xIkSJQ","jQLVWw","RTdmCQ","7tDX2g","zWpl9w","YJLJHA","ORGGFw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["UYhLvA","dLW4_g"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["E21Xrw","kF0HqA","f1qzbw","rrO3UA","MuM3EA","L18OZQ","_yMo_w","vkEQNQ","7BN0nQ","5FxiXQ","UpT9IA","FSXQGQ","U9wRQw","eS_IwA","vzptjQ","sbbnlw","ZLIMhA","ZOnUxA","t0jNYQ","_SH0OQ","RdhZYw","a_MccA","92y8eA","FLPC-Q","qhIioA","m7qaXg","1h9cuA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["E21Xrw","kF0HqA","f1qzbw","rrO3UA","MuM3EA","L18OZQ","_yMo_w","vkEQNQ","7BN0nQ","5FxiXQ","UpT9IA","FSXQGQ","U9wRQw","eS_IwA","vzptjQ","sbbnlw","ZLIMhA"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["t0jNYQ","_SH0OQ","RdhZYw","a_MccA","92y8eA","FLPC-Q","qhIioA","m7qaXg","1h9cuA"],"role":"callee"},
           {"assembly":"code_definition","ranges":["9M4BuA"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["XWXDWw","2XrKIw","UQNRLw","ysHU7A","fRWO7Q","6alUqw","jJRdKw","9embgQ","gL_Zrg","3ZspHQ","Ts3q5g","rUdTbQ","oUM1wA","y1Am7w","4SLgGw"],"role":"callee"}
         ]
@@ -5766,7 +5780,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["sl5Few","R8NvZQ","nTuFzw","ycMaIA","2eq-dA","AFAg8Q","7tfZsw","x4iKHQ","k65Njg","hF5wTQ","nsCUSg","IBZECA","A14RZg","HvTB-Q","Vn5sZw"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","6GmMkQ","OkmR-w","DD4Mrw","95lhBQ","Vi5tmA","gSaDPQ","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","qjtA0Q","DSYMaA","iHHSWw","JgkZ6g","HQ3lSQ","T4xcrA","fQPVJA","V6A-5w","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","VnG6NA","Y02O2g","nfm7Xw","Gx_54g","gUzRAw","yMrM8Q","pnIyjg","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","XjTHDw","mkhnqA","M4U0Ng","Xv2nYA","YOnjcg","_dCEwg","6KJG8w","KNOdhA","lP5tOw","JwSMqA","X8lwTA","UOBrUw","VdGUTw","cwpOyw","BLWxYQ","yQ7KwA","3AwlSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","YoT4sA","R_ipiw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","OkmR-w","DD4Mrw","95lhBQ","gSaDPQ","9_bwHw","xax0fg","xo6Tog","C1kpFg","JgkZ6g","HQ3lSQ","T4xcrA","fQPVJA","V6A-5w","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","JbjQQw","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","VnG6NA","Y02O2g","nfm7Xw","Gx_54g","gUzRAw","yMrM8Q","pnIyjg","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","XjTHDw","mkhnqA","M4U0Ng","Xv2nYA","YOnjcg","_dCEwg","6KJG8w","KNOdhA","lP5tOw","JwSMqA","X8lwTA","UOBrUw","VdGUTw","BLWxYQ","yQ7KwA","3AwlSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","YoT4sA","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5781,15 +5795,29 @@
           {"assembly":"automatic_default","ranges":["ymjafg"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["RZURxQ","s1WB7w","ykCwZw","1hfU9w","7u6nPg","ivalVg","fmdkQw","HQT5Qg"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["tuwaSA","UYhLvA","x4iKHQ","2eq-dA","ycMaIA","hF5wTQ","R8NvZQ","AFAg8Q","sl5Few"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["uyPg0Q","7huHCg","VFYEdg","mJ7Kyw","mOZtng","2dJqdg","0-9tEg","UHrYEA","6qOgxg","YY8-3g","fEvTuA","CX4F2w","nzHcgg","m0bWYw","vWTLEQ","PcW4uQ","Punibw","6qtLbA","Mnx5Nw","KSHF4A","t0jNYQ","Dwwksw","98SY_w","98mTDw","i-VGug","ZOnUxA","_SH0OQ","uYpbtg","XUKGyg","isG1GA","PK3pXQ","npiGRw","1nR_fQ","adbGnA","BA0MVQ","g3-cEQ","X2_gcQ","deGlGg","No3dOg","cCxoXA","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","3tX3Yw","-7ZuIg","88yAjg","IDpfhA","SmA8NQ","MOYHrQ","1_cYxg","16PCZQ","uzu2Cg","Wh7unA","YXlW-Q","k8gc6w","PzQbOQ","r5Wr2Q","OxXEsg","d7eXFg","gWbArw","j1S8UQ","dIWioQ","6Qilxg","k3oZXw","LhRshg","YuHItQ","e_LY7g","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","585fdQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","4V4O-w","bwel1g","o84_wQ","g2Iz-g","6Jd_LA","I4cPzg","DLaU7g","e3a6JQ","psLZkg","2FaxpQ","XEczzA","UrThew","ZJ0xVw","o3d1OQ","4OR_gw","uHSegg","M8Nahg","U_iFFg","kv_K8w","MerENA","f88NSw","YiGlqA","JH13uQ","Ip0aLQ","qHxGgA","4WlmNQ","ZV115Q","KNv93g","0V9w4A","9UwZXA","pMNUlQ","Skw30g","1gfjZA","yDkiRQ","-Z6YSA","HABBHA","HIyBCA","LYTQDQ","JJStLA","FrPY4Q","ny68zA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["uyPg0Q","7huHCg","VFYEdg","mJ7Kyw","mOZtng","2dJqdg","0-9tEg","UHrYEA","6qOgxg","YY8-3g","fEvTuA","CX4F2w","nzHcgg","m0bWYw","vWTLEQ","PcW4uQ","Punibw","6qtLbA","Mnx5Nw","KSHF4A","t0jNYQ","Dwwksw","98SY_w","98mTDw","i-VGug"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["_SH0OQ","uYpbtg","XUKGyg","isG1GA","PK3pXQ"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["npiGRw"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["1nR_fQ","adbGnA","BA0MVQ","g3-cEQ","X2_gcQ","deGlGg","No3dOg","cCxoXA","UYYkbQ","0tEomw","cpfy1Q","CpahYw","5Hqmhg","3tX3Yw","-7ZuIg","88yAjg","IDpfhA","SmA8NQ","MOYHrQ","1_cYxg","16PCZQ","uzu2Cg","Wh7unA","YXlW-Q","k8gc6w","PzQbOQ","r5Wr2Q","OxXEsg","d7eXFg","gWbArw","j1S8UQ","dIWioQ","6Qilxg","k3oZXw","LhRshg","YuHItQ","e_LY7g","J6k89A","_t3EUg","Bqw7eA","Za0gog","jdQhVA","A00XAg","L4-wrQ","n-6lHw","Kyj3-w","edxz6g","bJ3xoA","QUuMXQ","585fdQ","RF6Bzw","V_doAw","W5D0jQ","BhXKKg","eQQpUw","WgwjfQ","pZVx3Q","UZRHmQ","QKraRQ","3TQ40w","cnjdUw","IXzoiA","695Epw","DePsJA","DfF8Ew","F3MDdw","ab3U2w","JbvHnw","4V4O-w","bwel1g","o84_wQ","g2Iz-g","6Jd_LA","I4cPzg","DLaU7g","e3a6JQ","psLZkg","2FaxpQ","XEczzA","UrThew","ZJ0xVw","o3d1OQ","4OR_gw","uHSegg","M8Nahg","U_iFFg","kv_K8w","MerENA","f88NSw","YiGlqA","JH13uQ","Ip0aLQ","qHxGgA","4WlmNQ","ZV115Q","KNv93g","0V9w4A","9UwZXA","pMNUlQ","Skw30g","1gfjZA","yDkiRQ","-Z6YSA","HABBHA","HIyBCA","LYTQDQ","JJStLA","FrPY4Q","ny68zA"],"role":"callee"},
           {"assembly":"code_definition","ranges":["9M4BuA","ywokrQ","02XSPQ","kTxo7A","Kn331g"],"role":"callee"},
-          {"assembly":"automatic_default","ranges":["U3EiPQ","aI0LsA","pS-ImA","8V4zSQ","eGdrMQ","6pGHCA","LEam-Q","aeq5qA","Sw54Gw","HqYlyw","yo_g8Q","rQynOg","8wIL2Q","MoSh4w","q98bFQ","FBxxPw","TEhXJg","Op7t0Q","25IoTg","DlwNUg","CZZ-jA","s3lrEg","DUuYPg","SAwQSw","R4nk9A","EwnFjg","5Ejutw","gT3IkQ","ew6T8w","ijetYA","heoT3g","U-rMHQ","Q6_onA","s79y7Q","luBD2Q","O4wRCg","HlnleQ","5BV7Og","dOwB8A","L3XhFg","X2dHjw","dxth-A","_QBigA","QL45bA","cngYrw","GQvnpQ","Ck-EKw","9m8qZQ","Dw-mWg","EY7joA","gdRohQ","RZzR9Q","jE2EYw","6qLEgw","HKtvLw","iC54DQ","jMyy_Q","FK5xtg","VDQsBg","4vU2Yg","1fIdHw","NExTmA","KjoAqA","eTQp9w","BrMVjw","P4woeA","DZPOvg","4vkMrA","DVSvtQ","Hp5H5A","1hSerg","MXaOyA","1-uRjQ","a4HwcA","5H8ZEA","bNRqQg","aqEgKw","WtALrg","m2rlNw","Ub4TmA","CiKgxQ","1G57ww","BM0U6Q","8088ZA","j83DyA","Z9d0xg","NT79sg","ckp26w","5DdZGg","AxYGug","MNFVEg","T3rbMQ","D1neOQ","lPXrsw","HumgSg","GiaDJA","txpirg","WHBwEg","6c3GSA","U6xF3A","ELubRg","eEVwOg","fJoB7A","VJ_kzw","0P6sCQ","DuI8kw","qjYXag","UQwkww","XeUDdg","QHHQTg","m37C8w","iS277Q","jyb8KQ","RNwT6w","_jYvrw","MQt3Yw","A808RQ","H0s8pA","lryV-A","6P12PA","fOabQw","LmMXQw","UaPAng","hicAeg","OfH0XA","Rzaq_g","ziHCXg","g7dd9A","hKHrIA","IRFfrg","X4N3KA","-VS6Yg","mFI9OQ","6AT04Q","C3nKLQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["U3EiPQ","aI0LsA","pS-ImA","8V4zSQ","eGdrMQ","6pGHCA","LEam-Q","aeq5qA","Sw54Gw","HqYlyw","yo_g8Q","rQynOg","8wIL2Q","MoSh4w","q98bFQ","FBxxPw","TEhXJg","Op7t0Q","25IoTg","DlwNUg","CZZ-jA","s3lrEg","DUuYPg","SAwQSw","R4nk9A","EwnFjg","5Ejutw","gT3IkQ","ew6T8w","ijetYA","heoT3g","U-rMHQ","Q6_onA","s79y7Q","luBD2Q","O4wRCg","HlnleQ","5BV7Og","dOwB8A","L3XhFg","X2dHjw","dxth-A","_QBigA","QL45bA","cngYrw","GQvnpQ","Ck-EKw","9m8qZQ","Dw-mWg","EY7joA","gdRohQ","RZzR9Q","jE2EYw","6qLEgw","HKtvLw","iC54DQ","jMyy_Q","FK5xtg","VDQsBg","4vU2Yg","1fIdHw","NExTmA","KjoAqA","eTQp9w","BrMVjw","P4woeA","DZPOvg","4vkMrA","DVSvtQ","Hp5H5A","1hSerg","MXaOyA","1-uRjQ","a4HwcA","5H8ZEA","bNRqQg","aqEgKw","WtALrg","m2rlNw","Ub4TmA","CiKgxQ","1G57ww","BM0U6Q","8088ZA","j83DyA","Z9d0xg","NT79sg","ckp26w","5DdZGg","AxYGug","MNFVEg","T3rbMQ","D1neOQ","lPXrsw","HumgSg","GiaDJA","txpirg","WHBwEg","6c3GSA","U6xF3A"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ELubRg","eEVwOg","fJoB7A"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["VJ_kzw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["0P6sCQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["DuI8kw","qjYXag","UQwkww","XeUDdg","QHHQTg","m37C8w","iS277Q","jyb8KQ","RNwT6w","_jYvrw","MQt3Yw","A808RQ","H0s8pA","lryV-A","6P12PA","fOabQw","LmMXQw","UaPAng","hicAeg","OfH0XA","Rzaq_g","ziHCXg","g7dd9A","hKHrIA","IRFfrg","X4N3KA","-VS6Yg","mFI9OQ","6AT04Q","C3nKLQ"],"role":"callee"},
           {"assembly":"code_definition","ranges":["ku_jUw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["YzS3Yw","3D6-lw","zvnQog","qIyzvQ","9FgU9g","Pw22-A","wZhHQw","5iUixg","nMrooA","CLqWhw","OukYXw","QQk7eQ","4oGEpw","P0kCQA","hxXBBw","jMah8g","bzsqSQ","1g1N5Q","eCOoOw","Zjvu_w","gidmeA","i3gTfg","F4A9pA","yUcNIw","343KZA","mtCMXQ","VkrMYA","gsk6dA","g1M3zQ","WAGLHg","e1w0hQ","naBbpw","Y7Qt5w","RYprXw","Ch8XSQ","IMJ54A","7AL_vw","aguVuQ","2NvUvg","SZQw1A","MMYU5Q","Jel35g","LEV5-Q","Erv7_A","WNh1Sg","kRvHxQ","QQR4yg","jaqLzQ","ds4eNw"],"role":"callee"},
           {"assembly":"code_definition","ranges":["qYZ7hw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["dZl9pA","P3-LoQ","SnVMYw","kBYfNg","5pdUIg","CdYWCA","CoU3Bw","kj079g","kH19xQ"],"role":"callee"},
           {"assembly":"code_definition","ranges":["__AYNw"],"role":"callee"},
-          {"assembly":"automatic_default","ranges":["5JCFnQ","umd3rw","cHjZFg","Or2Usw","QqKuyQ","_n7g5A","pSfPxQ","p0bQZA","OYdeTQ","omRdvA","kuIszQ","KOXTpA","8jfEew","dwVkXg","ta44cQ","RxN5uw","BNYfMg","ILbgMg","Kx3riA","q80NyA","USChyQ","hrqXnA","x2YzhQ","RKei0Q","l5wRTQ","fsGKlw","jB3wjQ","Urw4_g","J56L4w","BlEIfQ","v1P1Cw","1B7G_A","w5VyBg","rXOqrA","iB2_KA","tBYCPQ","KgXU-Q","6mKCtA","kAkVjA","9AO5SA","lcjy5w","-tWEfw","2SVQYA","hPWV1g","Agd1jA","HLjl_w","Y7cr1A","wiCRNw","xAlmtA","hy1E6A","2GACrg","vfX_Qg","CmudBw","HDrGrA","9uDwkQ","NOG7mg","rnlgSg","WmXwjg","2IIW_Q","q9c1LA","KvTj6g","pVsbkQ","da3wWg","xQv_3A","mbmp0g","acCuag","EuUh1g","IgcKqA","ZrIaaQ","_0Orig","PsBAxg","LVwBxQ","Ovf5Pw","21pBJg","OvWJLQ","eSvxWg","m_hC2w","LxOASg","8uz6HA","pW5QGg","eSY4pA","C1eB-w","etWybw","n_Il9Q","BBpE-Q","vN0jIA","LIh2Ng","PMhn2g","rY8zgQ","GvezJg","eF9AwA","UHA5XQ","wBY_JA","CHW39w","zkp7aw","InzeGQ","8Fa44w","nzyGgA","18mvLA","yqxDvQ","KcZigw","rw6KFA","OavPwg","nldoGg","BBqaIQ","qV6Pmg","YShYmw","c5R9tg","vHZp6w","pjIsOw","B8dSmQ","gHAdqQ","2nvQTQ","u1hMbw","kU1fDw","NNIqPg","g9XO5Q","dHOLVg","UgkhCA","WuDJ_A","eP7W0g","CBlX_Q","JbZK3Q","RTdmCQ","j4g2QQ","c4l7IA","YlnKlg","C6AFDA","gIk0Tg","czHJHw","DUVL5A","VnymBg","PwcJJA","MCrVeQ","GD4qNA","0u3RwA","d6AaYw","0j6xBg","V6qK5w","GScqwg","uU4yhA","xOA7jA","z_XmPA","1XxNJA","NGrsNQ","crvcjw","ETyIEw","PvE-5g","7UyWow","pmaaTQ","vGQnLg","PsrM0w","P29kBg","3oFEXA","S8jGjw","Aybr9g","p_Shsg","6X6ONQ","-PyElQ","98GpDQ","ZqJRBg","X7dddg","qcc70g","j0zuBA","UIC6ww","oSdA3A","RNCNTg","FFG2TQ","Dz4mPw","eEW0qg","gi1Y5w","2DhaSQ","A7wSpg","P6HOUA","sJrwgA","J0igwA","HUjF5w","2o51Nw","P5pa8Q","QZAxxQ","pYUjWg","aKNR6w","tMHYGw","YkKPXQ","BxOJCA","58y_iQ","f6lCRA","20pAMw","npJprQ","svjIJw","12sQyA","GAjysw","j83oig","wDUJ3w","TWYdhw","5MWAQQ","gPu4vQ","9DSBww","-lujEA","8vUWaQ","iU8JNA","qc_efA","KnNpWQ","ohf3yg","taYIeg","WCqtvA"],"role":"callee"}
+          {"assembly":"automatic_default","ranges":["5JCFnQ","umd3rw","cHjZFg","Or2Usw","QqKuyQ","_n7g5A","pSfPxQ","p0bQZA","OYdeTQ","omRdvA","kuIszQ","KOXTpA","8jfEew","dwVkXg","ta44cQ","RxN5uw","BNYfMg","ILbgMg","Kx3riA","q80NyA","USChyQ","hrqXnA","x2YzhQ","RKei0Q","l5wRTQ","fsGKlw","jB3wjQ","Urw4_g","J56L4w","BlEIfQ","v1P1Cw","1B7G_A","w5VyBg","rXOqrA","iB2_KA","tBYCPQ","KgXU-Q","6mKCtA","kAkVjA","9AO5SA","lcjy5w","-tWEfw","2SVQYA","hPWV1g","Agd1jA","HLjl_w","Y7cr1A","wiCRNw","xAlmtA","hy1E6A","2GACrg","vfX_Qg","CmudBw","HDrGrA","9uDwkQ","NOG7mg","rnlgSg","WmXwjg","2IIW_Q","q9c1LA","KvTj6g","pVsbkQ","da3wWg","xQv_3A","mbmp0g","acCuag","EuUh1g","IgcKqA","ZrIaaQ","_0Orig","PsBAxg","LVwBxQ","Ovf5Pw","21pBJg","OvWJLQ","eSvxWg","m_hC2w","LxOASg","8uz6HA","pW5QGg","eSY4pA","C1eB-w","etWybw","n_Il9Q","BBpE-Q","vN0jIA","LIh2Ng","PMhn2g","rY8zgQ","GvezJg","eF9AwA","UHA5XQ","wBY_JA","CHW39w","zkp7aw","InzeGQ","8Fa44w","nzyGgA","18mvLA","yqxDvQ","KcZigw","rw6KFA","OavPwg","nldoGg","BBqaIQ","qV6Pmg","YShYmw","c5R9tg","vHZp6w","pjIsOw","B8dSmQ","gHAdqQ","2nvQTQ"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["u1hMbw"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["kU1fDw","NNIqPg","g9XO5Q","dHOLVg","UgkhCA","WuDJ_A","eP7W0g","CBlX_Q","JbZK3Q","RTdmCQ","j4g2QQ","c4l7IA","YlnKlg","C6AFDA","gIk0Tg","czHJHw","DUVL5A","VnymBg","PwcJJA","MCrVeQ","GD4qNA","0u3RwA","d6AaYw","0j6xBg","V6qK5w","GScqwg","uU4yhA","xOA7jA","z_XmPA","1XxNJA","NGrsNQ","crvcjw","ETyIEw","PvE-5g","7UyWow","pmaaTQ","vGQnLg","PsrM0w","P29kBg","3oFEXA","S8jGjw","Aybr9g","p_Shsg","6X6ONQ","-PyElQ","98GpDQ","ZqJRBg","X7dddg","qcc70g","j0zuBA","UIC6ww","oSdA3A","RNCNTg","FFG2TQ","Dz4mPw","eEW0qg","gi1Y5w","2DhaSQ","A7wSpg"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["P6HOUA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["sJrwgA"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["J0igwA","HUjF5w","2o51Nw","P5pa8Q","QZAxxQ","pYUjWg","aKNR6w","tMHYGw","YkKPXQ","BxOJCA","58y_iQ","f6lCRA","20pAMw","npJprQ","svjIJw","12sQyA","GAjysw","j83oig","wDUJ3w","TWYdhw","5MWAQQ","gPu4vQ"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["9DSBww","-lujEA","8vUWaQ","iU8JNA","qc_efA","KnNpWQ","ohf3yg","taYIeg","WCqtvA"],"role":"callee"}
         ]
       },
       "state": {"effects":["agent_evicted","permission_mode_cleared"],"kinds":["storage","memory"],"refs":["B/src/gateway/client/InProcessGateway.ts:2423","B/src/cli/ProjectRuntimeRegistry.ts:956","B/src/gateway/SessionRouter.ts:260","B/src/pilot/config/sdkSessionSettings.ts:81","B/src/pilot/config/sdkSessionSettings.ts:111","B/src/gateway/SessionRouter.ts:327","B/src/cli/createLocalGateway.ts:847"],"summary":"SDK 配置与 file-read mtime 状态；router controlTurns 防控制动作和轮次重入。 router.close 逐出 agent，onSessionEvict(closed) 清 permission mode；单独 router.close 不删会话级授权。"},
@@ -5831,7 +5859,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": [],
-        "default_constructions": ["XdyOZw","zwl6OA"],
+        "default_constructions": ["XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5880,7 +5908,7 @@
       "scenario_ids": ["reconnect"],
       "source_audit": {
         "automatic_providers": ["yjLR3w","J3ar1w"],
-        "default_constructions": ["Pm6IVw","XdyOZw","zwl6OA"],
+        "default_constructions": ["Pm6IVw","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5936,7 +5964,7 @@
       "scenario_ids": ["writes"],
       "source_audit": {
         "automatic_providers": ["vWs_yg","1mfL0w","yg69sQ","wAgNxg"],
-        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","FD1zMw","WeVvKw","NcqxUw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
+        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","WeVvKw","NcqxUw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -5999,7 +6027,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["UTUPBg","1mfL0w","E0rQ1Q"],
-        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","FD1zMw","WeVvKw","NcqxUw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
+        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","WeVvKw","NcqxUw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6058,7 +6086,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["heqHnA","1t1OXw","n47hZw"],
-        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","FD1zMw","WeVvKw","NcqxUw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
+        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","WeVvKw","NcqxUw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6121,7 +6149,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["U1CvfQ","1t1OXw","L-SmxQ"],
-        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","FD1zMw","WeVvKw","NcqxUw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
+        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","WeVvKw","NcqxUw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6184,7 +6212,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["zD8pDw","8mPuuQ","TLDxhA"],
-        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","FD1zMw","WeVvKw","NcqxUw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
+        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","WeVvKw","NcqxUw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6247,7 +6275,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["g5HhGA","1t1OXw","MF774A"],
-        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","FD1zMw","WeVvKw","NcqxUw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
+        "default_constructions": ["O9g6dA","RflMpg","hDAMkQ","WeVvKw","NcqxUw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6303,7 +6331,7 @@
       "scenario_note": "reconnect 现有断言为 delivered:false，不证明重连后成功答复。",
       "source_audit": {
         "automatic_providers": ["ZBHAvw","4g8zCw","AFAg8Q","u60pfQ","uXNeyw"],
-        "default_constructions": ["695MVQ","Pm6IVw","XdyOZw","zwl6OA","it86VQ"],
+        "default_constructions": ["695MVQ","Pm6IVw","XdyOZw","it86VQ"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6360,7 +6388,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["wN19Jg","uZ0o5A","sbW_VA","MBz3Tw","wjYQTw","jXvvFA","aYbSBQ"],
-        "default_constructions": ["HQ3lSQ","f0ujIg","6JfruA","XdyOZw","zwl6OA","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","BLWxYQ","yQ7KwA"],
+        "default_constructions": ["HQ3lSQ","f0ujIg","6JfruA","XdyOZw","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","BLWxYQ","yQ7KwA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6433,7 +6461,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["SkLt-g","2AQ9VQ","t0jNYQ","wjYQTw","LsstrQ","lPqFlA","aYbSBQ","ym6R9w","3mK8vw"],
-        "default_constructions": ["f0ujIg","XdyOZw","zwl6OA","it86VQ"],
+        "default_constructions": ["f0ujIg","XdyOZw","it86VQ"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6496,7 +6524,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["GC1Alw","e-qYmA","wjYQTw","oBg-1w","aYbSBQ","gCcOlg","ym6R9w"],
-        "default_constructions": ["f0ujIg","XdyOZw","zwl6OA","it86VQ"],
+        "default_constructions": ["f0ujIg","XdyOZw","it86VQ"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6566,7 +6594,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["Qq94xg","ExZuXA","LdBybA","6Iya5A","HQL1ag","U6mNlw","wjYQTw","0t9tbw","LsstrQ","DjdNuA","aYbSBQ"],
-        "default_constructions": ["HQ3lSQ","f0ujIg","6JfruA","XdyOZw","zwl6OA","ZRBWzw","mtFbcA","XOhrmw","xLCKcg","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
+        "default_constructions": ["HQ3lSQ","f0ujIg","6JfruA","XdyOZw","ZRBWzw","XOhrmw","xLCKcg","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","BLWxYQ","yQ7KwA","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6631,7 +6659,7 @@
       "scenario_ids": ["permission"],
       "source_audit": {
         "automatic_providers": ["G18TvQ","Wuy76Q"],
-        "default_constructions": ["Pm6IVw","eloUbQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["Pm6IVw","eloUbQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6680,7 +6708,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["fdB9Sg","zCEB2w","iHv5EA"],
-        "default_constructions": ["Pm6IVw","ANfqKw","6QK3Vw","XdyOZw","zwl6OA"],
+        "default_constructions": ["Pm6IVw","ANfqKw","6QK3Vw","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6735,7 +6763,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["7XRQcQ","DGcS0g","OGqZww","_pCtfQ","CdFAFg"],
-        "default_constructions": ["HQ3lSQ","fDtEZQ","3Ph6kg","bcRxIQ","oFZu7g","XdyOZw","zwl6OA","YIbTaQ","it86VQ","xfs-5A","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A","BLWxYQ","yQ7KwA"],
+        "default_constructions": ["HQ3lSQ","fDtEZQ","3Ph6kg","bcRxIQ","oFZu7g","XdyOZw","YIbTaQ","it86VQ","xfs-5A","JwSMqA","X8lwTA","UOBrUw","Go3R2Q","3L32vQ","BUWF_A","BLWxYQ","yQ7KwA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6799,7 +6827,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["rDVpzw","Av7XxQ"],
-        "default_constructions": ["HQ3lSQ","fDtEZQ","XdyOZw","zwl6OA","YIbTaQ","it86VQ","xfs-5A","Go3R2Q","3L32vQ","6bgvhQ","BUWF_A"],
+        "default_constructions": ["HQ3lSQ","fDtEZQ","XdyOZw","YIbTaQ","it86VQ","xfs-5A","Go3R2Q","3L32vQ","BUWF_A"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6869,7 +6897,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["T6DFsA","_BrRlA"],
-        "default_constructions": ["HQ3lSQ","fDtEZQ","XdyOZw","zwl6OA","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","BLWxYQ","yQ7KwA"],
+        "default_constructions": ["HQ3lSQ","fDtEZQ","XdyOZw","0bJZ1g","38pP8A","KGXeIw","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","M4U0Ng","lP5tOw","JwSMqA","X8lwTA","UOBrUw","BLWxYQ","yQ7KwA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6944,7 +6972,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["H4xn0g","pG7qrg","ef_lqw","AbAfyA","mOxhWA","v8V9OA","22M4vg","tvrXKA"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","fDtEZQ","T4xcrA","fQPVJA","XmrAXQ","_YsWpA","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","fDtEZQ","T4xcrA","fQPVJA","XmrAXQ","_YsWpA","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -6964,7 +6992,9 @@
           {"assembly":"automatic_default","ranges":["UYhLvA"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["Mq8fmw","uQnlqQ","AGMjfw"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["pG7qrg"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["dLW4_g","OyQQxA","hF5wTQ","GPsw1A","Wg--8Q","oYyu_w","625KwQ","3Tw6Pg","IBZECA","6alodQ","TUCANA","LrCAPQ","8yFnag","vkEQNQ","0-9tEg","UHrYEA","Ozc0gA","giwxEQ","21buBw","Ml0J8w","MkIWxg","fPk7kg","IrSWuA","x4iKHQ","xlP3Iw","0gzEXA","Jc_ifw","KTUzmg","Ip0aLQ","ZOnUxA","t0jNYQ","_SH0OQ","Dwwksw","98SY_w","98mTDw","i-VGug","C0SPjw","KQIUIA","YlzP8w","suujTQ","KMmJ0A","Ww0Okw"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["dLW4_g","OyQQxA","hF5wTQ","GPsw1A","Wg--8Q","oYyu_w","625KwQ","3Tw6Pg","IBZECA","6alodQ","TUCANA","LrCAPQ","8yFnag","vkEQNQ","0-9tEg","UHrYEA","Ozc0gA","giwxEQ","21buBw","Ml0J8w","MkIWxg","fPk7kg","IrSWuA","x4iKHQ","xlP3Iw","0gzEXA","Jc_ifw","KTUzmg","Ip0aLQ"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["ZOnUxA"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["t0jNYQ","_SH0OQ","Dwwksw","98SY_w","98mTDw","i-VGug","C0SPjw","KQIUIA","YlzP8w","suujTQ","KMmJ0A","Ww0Okw"],"role":"callee"},
           {"assembly":"code_definition","ranges":["9M4BuA","ZY4yQQ","OgTFAg"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["isG1GA","16PCZQ","uzu2Cg","Wh7unA","YXlW-Q","k8gc6w","VFYEdg","ETyIEw","-3t3aQ","e_LY7g","bUqH9A","DTHn4w","dIWioQ","MerENA","CX4F2w","nzHcgg","m0bWYw","vWTLEQ","g3-cEQ","sJrwgA","HbIrDQ","U3EiPQ","gPu4vQ","-g8Tow","7m9XWQ"],"role":"callee"}
         ]
@@ -7019,7 +7049,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["pG7qrg","MMXy7Q","Dd_EDA","mOxhWA","v8V9OA"],
-        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","LN7zmg","fDtEZQ","T4xcrA","fQPVJA","_YsWpA","XdyOZw","zwl6OA","it86VQ","VdGUTw","cwpOyw"],
+        "default_constructions": ["U3X5rg","28v7kQ","-eWn2g","9_bwHw","xax0fg","xo6Tog","C1kpFg","fDtEZQ","T4xcrA","fQPVJA","_YsWpA","XdyOZw","it86VQ","VdGUTw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7079,7 +7109,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["Cqoqlg","LLcFig"],
-        "default_constructions": ["_HT8OQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["_HT8OQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7131,7 +7161,7 @@
       "scenario_ids": ["readonly"],
       "source_audit": {
         "automatic_providers": ["47DFzg","4ud8Bg"],
-        "default_constructions": ["_HT8OQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["_HT8OQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7156,8 +7186,8 @@
       "blockers": [],
       "branches": {
         "error": {
-          "groups": ["assert_valid_url_ROGTxA","load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","optional_baseline_model_YSvg9g","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_FEWfpg","parse_always_on_config_chain_dyjWPA","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_chain_OxgNcQ","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_PM0vNw","parse_model_config_oqwbww","parse_model_definition_6tD85Q","parse_optional_string_field_0zR-ow","parse_projects_nI-BGA","parse_provider_D_NWqw","parse_provider_chain_ZOfiQQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","pricing_number_7PGBkQ","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_positive_integer_4r9m9A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
-          "order": [124,8,17,20,18,59,60,61,101,102,19,9,47,10,2,11,12,13,72,73,14,15,16,35,36,37,38,117,115,48,51,52,53,49,50,54,3,4,122,66,67,68,118,120,75,76,123,119,29,113,5,30,31,44,45,46,69,70,39,71,97,98,103,104,105,106,107,108,109,110,55,56,6,83,84,85,21,22,23,24,25,26,27,28,34,40,41,42,43,7,74,77,78,79,80,81,114,82,86,87,88,89,90,91,92,93,94,95,96,99,100,116,111,112,1,32,33,58,64,63,57,62,0,121,65],
+          "groups": ["assert_valid_url_ROGTxA","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","optional_baseline_model_YSvg9g","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_FEWfpg","parse_always_on_config_chain_dyjWPA","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_chain_OxgNcQ","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_PM0vNw","parse_model_config_oqwbww","parse_model_definition_6tD85Q","parse_optional_string_field_0zR-ow","parse_projects_nI-BGA","parse_provider_D_NWqw","parse_provider_chain_ZOfiQQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","positive_integer_GxpF9Q","pricing_number_7PGBkQ","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_optional_positive_integer_4r9m9A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","resolve_api_key_VD5V_w","validate_top_level_XfrIIg"],
+          "order": [123,7,16,19,17,58,59,60,100,101,18,8,46,9,1,10,11,12,71,72,13,14,15,34,35,36,37,116,114,47,50,51,52,48,49,53,2,3,121,65,66,67,117,119,74,75,122,118,28,112,4,29,30,43,44,45,68,69,38,70,96,97,102,103,104,105,106,107,108,109,54,55,5,82,83,84,20,21,22,23,24,25,26,27,33,39,40,41,42,6,73,76,77,78,79,80,113,81,85,86,87,88,89,90,91,92,93,94,95,98,99,115,110,111,31,32,57,63,62,56,61,0,120,64],
           "specific": [
             {"code":"gateway_request_failed","refs":["B/src/gateway/server/GatewayWsConnection.ts:223","B/src/gateway/server/GatewayWsConnection.ts:251"],"summary":"reload_config 的普通异常若不带 string code，由 WS 映射 gateway_request_failed；带 string code 的 provider/Node errno 异常由 hasStructuredErrorCode 保留。该兜底不替代本项领域分支。"}
           ]
@@ -7183,7 +7213,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["7tWqeA","hk81HQ"],
-        "default_constructions": ["jOSgAg","2jXVgQ","XdyOZw","zwl6OA"],
+        "default_constructions": ["jOSgAg","2jXVgQ","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7242,7 +7272,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["T0NOsQ","Ffq_xQ"],
-        "default_constructions": ["ZI9OtA","pMq2FA","XdyOZw","zwl6OA"],
+        "default_constructions": ["ZI9OtA","pMq2FA","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7265,8 +7295,8 @@
       "blockers": [],
       "branches": {
         "error": {
-          "groups": ["assert_allowed_k5Oelg","assert_open_0hZBEA","closed_error_suRkVQ","create_builtin_registry_LdLjRw","create_read_file_tool_chain_MvXbAA","create_read_file_tool_chain_SrcV-A","create_router_runtime_PppvkA","create_web_fetch_tool_chain_-Naizg","create_web_fetch_tool_chain_4DJpGw","create_web_fetch_tool_chain_OeoMdw","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","ensure_token_budget_Qwcn2g","ensure_write_snapshot_fresh_chain_RfAuag","execute_lsp_query_5WbhlQ","get_model_pzZlVw","load_4CsxZQ","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","organization_provider_policy_rejection_YZjgoA","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_chain_I5EyuQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","perform_custom_search_chain_FJp7Gw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_notebook_chain_dPcMOw","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","resolve_api_key_VD5V_w","send_provider_request_cGW3hA","stage_UUKi1A","validate_model_request_ir1GYQ","validate_top_level_XfrIIg"],
-          "order": [153,28,38,37,39,40,29,30,20,55,56,57,58,68,69,70,21,22,151,84,85,86,137,139,93,94,152,138,49,50,51,64,65,25,0,26,27,66,89,115,116,140,6,7,18,143,144,2,3,24,77,78,79,119,120,67,31,32,33,90,91,34,35,101,102,103,36,136,133,71,72,73,74,132,23,17,41,42,43,44,45,46,47,48,87,54,88,60,61,62,63,92,95,96,97,98,99,100,104,105,106,107,108,109,110,111,112,113,114,117,118,134,129,130,59,19,121,52,53,122,123,124,125,126,127,128,82,16,135,80,11,75,81,5,145,4,12,141,76,142,146,1,13,15,14,8,9,131,83,147,148,149,10,150],
+          "groups": ["assert_allowed_k5Oelg","assert_open_0hZBEA","closed_error_suRkVQ","create_builtin_registry_LdLjRw","create_read_file_tool_chain_MvXbAA","create_read_file_tool_chain_SrcV-A","create_router_runtime_PppvkA","create_web_fetch_tool_chain_-Naizg","create_web_fetch_tool_chain_4DJpGw","create_web_fetch_tool_chain_OeoMdw","create_web_fetch_tool_ciXORw","create_web_search_tool_budAVQ","ensure_token_budget_Qwcn2g","ensure_write_snapshot_fresh_chain_RfAuag","execute_lsp_query_5WbhlQ","get_model_pzZlVw","load_pilot_config_leSSlw","non_empty_string_cPZuyA","non_negative_integer_chain_O0ko-w","organization_provider_policy_rejection_YZjgoA","parse_adapters_config_GMK3IA","parse_agent_Bz1HCA","parse_agent_model_selection_9BNBtQ","parse_agent_subagents_0L4PpQ","parse_always_on_config_3RkkJg","parse_always_on_config_FEWfpg","parse_auto_orchestrate_GUm8dg","parse_cron_config_z1nA4w","parse_custom_provider_-EvUUw","parse_custom_router_Eu4QFg","parse_extension_nQ5kLg","parse_failure_guard_JSatSA","parse_fallback_sHS6yw","parse_gateway_config__UdfVA","parse_interaction_profile_VS-P2g","parse_memory_config_YHjOWw","parse_memory_config_edgwIA","parse_memory_model_ref_tBPKyQ","parse_memory_schedule_chain_fJTyzg","parse_model_config_oqwbww","parse_projects_nI-BGA","parse_provider_0O2yIg","parse_provider_chain_I5EyuQ","parse_provider_qajGuQ","parse_proxy_config_6r31ww","parse_router_config_d69m4w","parse_run_policy_config_OF7hOw","parse_runtime_context_surface_1CeJhg","parse_sandbox_mode_vjP0Gg","parse_scenarios_ccH8NA","parse_schema_version_mgDUWg","parse_stats_zWsh4A","parse_subagent_default_model_selection_DnIhUQ","parse_token_saver_jodWnw","parse_tools_config_-c2qmw","parse_transient_retry_oiAn3g","parse_trigger_ZTLcFg","parse_web_search_7jTeMg","parse_zero_usage_retry_9oqDRw","perform_custom_search_chain_FJp7Gw","positive_integer_GxpF9Q","read_capture_strategy_3jMaVQ","read_non_negative_number_wZDiiA","read_notebook_chain_dPcMOw","read_optional_non_negative_integer_chain_RkoF7A","read_yaml_source_0SRTPQ","read_yaml_source_chain_3MRrwg","register_2jWQ_Q","resolve_api_key_VD5V_w","send_provider_request_cGW3hA","stage_UUKi1A","validate_model_request_ir1GYQ","validate_top_level_XfrIIg"],
+          "order": [152,27,37,36,38,39,28,29,19,54,55,56,57,67,68,69,20,21,150,83,84,85,136,138,92,93,151,137,48,49,50,63,64,24,0,25,26,65,88,114,115,139,6,7,18,142,143,2,3,23,76,77,78,118,119,66,30,31,32,89,90,33,34,100,101,102,35,135,132,70,71,72,73,131,22,17,40,41,42,43,44,45,46,47,86,53,87,59,60,61,62,91,94,95,96,97,98,99,103,104,105,106,107,108,109,110,111,112,113,116,117,133,128,129,58,120,51,52,121,122,123,124,125,126,127,81,16,134,79,11,74,80,5,144,4,12,140,75,141,145,1,13,15,14,8,9,130,82,146,147,148,10,149],
           "specific": [
             {"code":"gateway_request_failed","refs":["B/src/gateway/server/GatewayWsConnection.ts:223","B/src/gateway/server/GatewayWsConnection.ts:251"],"summary":"reload_extensions 的普通异常若不带 string code，由 WS 映射 gateway_request_failed；带 string code 的 provider/Node errno 异常由 hasStructuredErrorCode 保留。该兜底不替代本项领域分支。"}
           ]
@@ -7292,7 +7322,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["TXFypQ","VFYEdg","zkCGdA"],
-        "default_constructions": ["HQ3lSQ","_iy9eg","2jXVgQ","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","BUdlpA","ePA1zA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","cwpOyw","QTfR_g","DHuV4w","WW_EHA","EYDbSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","_iy9eg","2jXVgQ","XdyOZw","HxJ0oQ","XVAzfA","BUdlpA","ePA1zA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","VdGUTw","QTfR_g","DHuV4w","WW_EHA","EYDbSw","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7366,7 +7396,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","BvfINA","SmOc8g","hdO4FA"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7449,7 +7479,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","79TO_Q","-aOOoA","7S0_3A"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7533,7 +7563,7 @@
       "scenario_ids": ["writes"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","v0ygiQ","5tXPxg","24EZSA"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7617,7 +7647,7 @@
       "scenario_ids": ["writes"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","s_ycNw","SvP7fw","gHdZmw"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7700,7 +7730,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","DXoYBQ","9HSIvg","2wogSg"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7790,7 +7820,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","7KVXAQ","rWQKQQ","JaNeug"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7871,7 +7901,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","vRMJEg","QH3EGw","1ykVKA"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -7954,7 +7984,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["79F0Yg","Un7x3A","23xjyg","1WiPAA","gS7JYg"],
-        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","zwl6OA","HxJ0oQ","kFI2rQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","FWTq-w","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
+        "default_constructions": ["HQ3lSQ","oGwrPg","RKZrsA","QefN3A","kUC48A","KyKKdw","MdIbDQ","NxIVbg","XdyOZw","HxJ0oQ","XVAzfA","r3gmng","0bJZ1g","38pP8A","KGXeIw","vRdY5Q","eOfLMw","R8vUDQ","YIbTaQ","-tFhfg","it86VQ","xfs-5A","nfm7Xw","M4U0Ng","mok6cQ","KR-F6A","VCKPCQ","f5ZKqg","xJK5XQ","7yFezw","tXeR-A","e9AZ7g"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -8032,7 +8062,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["WAGLHg","Yo-Mxw","Jkr7dg","wfSq9A","gvtLwA","aXpRMw","R5t0MA","Fie78w","pbP4mQ"],
-        "default_constructions": ["CMORxg","dZWRng","bfiTVA","6ngQ7A","q-tKrQ","gp5K1Q","kbzARg","2KDDQw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","CWKZ2A"],
+        "default_constructions": ["CMORxg","dZWRng","bfiTVA","gp5K1Q","kbzARg","2KDDQw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","CWKZ2A"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -8045,7 +8075,9 @@
           {"assembly":"automatic_default","ranges":["fIqBBQ","iS7-RQ","q8blCg","d6Lciw"],"role":"callee"},
           {"assembly":"supplemental_review","ranges":["lROb4Q"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["R5t0MA","wfSq9A","Jkr7dg","pbP4mQ","Fie78w","WAGLHg"],"role":"provider"},
-          {"assembly":"automatic_default","ranges":["ktxTSg","0jlfWg","B2_aRA","fw7UEw","o-GHbQ","qFd_hA","7huHCg","YxW9Gg","1grXaA","U3EiPQ","cIoRmg","U-r0lQ","HR1Jmw","piX5Fw","K5ZBOA","NpPiqw","17LCZw","WAP_tg","At-0-w","Efe1-w","6P12PA","fOabQw","nJpKSQ","zA-0GA","sCZPuQ","uGvf5A","RUsh8A"],"role":"callee"}
+          {"assembly":"automatic_default","ranges":["ktxTSg","0jlfWg","B2_aRA","fw7UEw","o-GHbQ","qFd_hA","7huHCg","YxW9Gg","1grXaA","U3EiPQ","cIoRmg","U-r0lQ","HR1Jmw","piX5Fw","K5ZBOA","NpPiqw"],"role":"callee"},
+          {"assembly":"supplemental_review","ranges":["17LCZw"],"role":"callee"},
+          {"assembly":"automatic_default","ranges":["WAP_tg","At-0-w","Efe1-w","6P12PA","fOabQw","nJpKSQ","zA-0GA","sCZPuQ","uGvf5A","RUsh8A"],"role":"callee"}
         ]
       },
       "state": {"effects":[],"kinds":["memory","storage","external"],"refs":["B/src/gateway/client/InProcessGateway.ts:2992","B/src/always-on/runtime/AlwaysOnManager.ts:193","B/src/always-on/runtime/AlwaysOnRuntime.ts:333","B/src/always-on/runtime/DiscoveryFire.ts:264","B/src/always-on/runtime/createApplyHandler.ts:65"],"summary":"cycle/plan stores 与 activeControlRuns；fallback 根据已有 work cycle/workspace 执行 apply。"},
@@ -8096,7 +8128,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["WXoeDQ","KGg1hw","xPblsw"],
-        "default_constructions": ["dZWRng","-iq0Fg","11xIkw","iYeirA","bfiTVA","6ngQ7A","XdyOZw","zwl6OA"],
+        "default_constructions": ["dZWRng","-iq0Fg","11xIkw","iYeirA","bfiTVA","XdyOZw"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -8157,7 +8189,7 @@
       "scenario_ids": ["NONE"],
       "source_audit": {
         "automatic_providers": ["lJAXBg","kNEiLw","wfI4ug"],
-        "default_constructions": ["CMORxg","dZWRng","-iq0Fg","11xIkw","iYeirA","bfiTVA","6ngQ7A","q-tKrQ","gp5K1Q","kbzARg","2KDDQw","6r7-Kw","XdyOZw","zwl6OA","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","CWKZ2A","651coQ","hGMdBA"],
+        "default_constructions": ["CMORxg","dZWRng","-iq0Fg","11xIkw","iYeirA","bfiTVA","gp5K1Q","kbzARg","2KDDQw","6r7-Kw","XdyOZw","UuuzRA","0JsJEQ","pbEvGg","3jO8bg","00LQVw","CWKZ2A","651coQ","hGMdBA"],
         "depth": 8,
         "dynamic_boundary": {
           "text": "Tz5wlw"
@@ -8169,9 +8201,9 @@
           {"assembly":"automatic_default","ranges":["BkUzSg"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["fIqBBQ","iS7-RQ","t-pfHg","q8blCg","aoLEXg","mp05KQ","d6Lciw","c8ygLg","NeE38Q"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["wfI4ug","viA1YA","Y18HOA"],"role":"provider"},
-          {"assembly":"supplemental_review","ranges":["T8SwHw"],"role":"provider"},
+          {"assembly":"optional_host","optional":true,"ranges":["T8SwHw"],"role":"provider"},
           {"assembly":"supplemental_review","ranges":["MHn_6A","RC0tDA","HM4HfA","ayLchg"],"role":"callee"},
-          {"assembly":"supplemental_review","ranges":["GJPH9w"],"role":"provider"},
+          {"assembly":"optional_host","optional":true,"ranges":["GJPH9w"],"role":"provider"},
           {"assembly":"supplemental_review","ranges":["suPg1Q","WEBFWw","GBAzDQ","Wsq_aQ","cd97WQ","tunbBA","GinGgA","MF3l4Q","GuAaiQ"],"role":"callee"},
           {"assembly":"automatic_default","ranges":["tbTwFQ"],"role":"provider"},
           {"assembly":"automatic_default","ranges":["UDk2eQ","WIPc-A","sWf-nw","17LCZw","AYJpyg","_Pvhdg","ixZ7XQ","8zoT7w","bYn-3g","g2l3zw","mL3VdQ","WAP_tg","FMUf3g","QnVweg","7huHCg","u1wv4g","Lx5HiQ","sQDpbg","assOJQ","1grXaA","hjUCLw","lGti7g","Fie78w","8dNKyg","pUC6pQ","PreQSg","ozNIRQ","9fSnMg","2eDH_w","K5ZBOA","NpPiqw","pbP4mQ","63WnjQ","_UC6sQ","zp4HdA","oRc8Zw","wC73RA","fw7UEw","raYb0w","At-0-w","BgAgIw","9PuRjw","h1l-eg","7eJkVg","o-GHbQ","RUsh8A","Ionlhg","j2gBIw","kobGJA","5ic2xQ","1Flk-A","U-r0lQ","zA-0GA"],"role":"callee"},
@@ -11753,7 +11785,6 @@
     "src/cli/SessionSubagentTranscriptBundle.ts": {"line_count":117,"sha256":"6575be4ef5df8f97e85d17d3e68c75d333687869dd9aff603ab0d87ddef37082"},
     "src/cli/SessionToolCompositionBundle.ts": {"line_count":81,"sha256":"b6308a1cb03677e277e07c64c2468f6cbb8a92f68a04b0460f0b8f584d620188"},
     "src/cli/createLocalGateway.ts": {"line_count":2045,"sha256":"54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f"},
-    "src/cli/pilotdeck-agent-loop-default-factory.ts": {"line_count":879,"sha256":"98227654052c954f564828d4ceb45ca0af7fd390bf200eda6ffb0b9a13545ec0"},
     "src/cli/pilotdeck.ts": {"line_count":629,"sha256":"88c672b94f32c53d7bf5f188c62ef82965291aa55156e9032a43ae44198c8182"},
     "src/composition/HttpModuleClient.ts": {"line_count":180,"sha256":"7cac96bfaf4f4a4086c97c7d15a1567a8948130b4293747fbae6ff10fcebb2c1"},
     "src/composition/domainPorts.ts": {"line_count":199,"sha256":"f4c98424ac6a172157b1fbcfce654bd2325d189f8f9117d9a35c572f997dda5a"},
@@ -11814,7 +11845,6 @@
     "src/extension/plugins/runtime/PluginRegistry.ts": {"line_count":195,"sha256":"d22f432d191c60f22da54ce7949e9085129c20817ec5fd433bd97180bd0f81da"},
     "src/extension/plugins/runtime/PluginRuntime.ts": {"line_count":899,"sha256":"c601a4f1b01dee289ca715e723c4f579a775f84f72317c7317e5f72b7cd915b4"},
     "src/extension/skills/SkillManager.ts": {"line_count":994,"sha256":"b971873bf42bb0141480e42826088c5e30bd1c1617fc1710375762ded3f87111"},
-    "src/extension/skills/migrateSkills.ts": {"line_count":361,"sha256":"96205a4d6c97c3aade59f129ba310be4db4f58e54f0a5d7f2b03f8113bda9226"},
     "src/extension/skills/renderSkillContent.ts": {"line_count":23,"sha256":"01c2c73a2922055116e985267fe9bc9339bee896743137634167a09e55594c1c"},
     "src/gateway/Gateway.ts": {"line_count":102,"sha256":"7fe803ecde5e62d6082dc221bbce610084e6c73ea87e943cbc1ddcb625b7462a"},
     "src/gateway/GatewaySessionCatalog.ts": {"line_count":38,"sha256":"50c7b0289b8bc641ca6c65b662d6ffede4f7af8e22ab5c0bc11b970401f3df9a"},
@@ -11980,7 +12010,6 @@
     "src/session/transcript/TranscriptReader.ts": {"line_count":106,"sha256":"d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead"},
     "src/session/transcript/TranscriptReplay.ts": {"line_count":14,"sha256":"a786a42fc5aaf04130755630406fcfe418fdb57fb376d9771b6ca69a6474c834"},
     "src/sop/staffdeck/SopAgentLoop.ts": {"line_count":1283,"sha256":"c40fde5966dc4f827371fbda50fbc3d36ab2c3e2673b0b2aeaf69da8f99342fd"},
-    "src/sop/staffdeck/SopNodeSessions.ts": {"line_count":92,"sha256":"75ca5948d9d7e6089f61af3dda0f2394f65d22228da2d7c9b62c8c295d861e89"},
     "src/sop/staffdeck/SopStateStore.ts": {"line_count":539,"sha256":"6b5f6dfad649e2f68a434356c626ab37c9e94bc74a9fecfdc2f9df784b844a0d"},
     "src/sop/staffdeck/StaffDeckSopClient.ts": {"line_count":319,"sha256":"c48937dcdb81414a339ab7a0e31ae58f0d2f559a9748f158626d195e1204ae86"},
     "src/sop/staffdeck/StaffDeckSopControlPlane.ts": {"line_count":62,"sha256":"34464105c569dd9c791f32b7080e04a18cd3d763059a6b59a877071ae39352ba"},

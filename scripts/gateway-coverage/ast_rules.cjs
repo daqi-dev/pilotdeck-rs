@@ -1,4 +1,9 @@
 /* Shared production rules and adversarial in-memory parser controls. */
+const nodeErrno=new Set(Object.keys(require('node:os').constants.errno));
+function errorCodeLiteral(value) {
+  return /^(?:[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/.test(value)||nodeErrno.has(value)||
+    ['aborted','conflict','internal','required','terminal','timeout','unauthorized','unavailable','unsupported'].includes(value);
+}
 function errorClassInfo(ts, node, file, line) {
   const parent=node.heritageClauses?.[0]?.types?.[0]?.expression.getText();
   const ctor=node.members.find(ts.isConstructorDeclaration);
@@ -34,6 +39,9 @@ function unknownError(name,catalog) {
 }
 function controls(ts) {
   const tests=[];
+  const accepted=['PROJECT_DELETED','gateway_request_failed','ETIMEDOUT','required','terminal'];
+  const rejected=['object','string','function','number','boolean','undefined','Object','Error','ERROR','AgentLoop','ordinary English words'];
+  tests.push({name:'error_code_literal_shapes',result:accepted.every(errorCodeLiteral)&&rejected.every(s=>!errorCodeLiteral(s))?'PASS':'FAIL'});
   const samples=[
     ['quoted_comment_regex_template',[
       'function target() {',
@@ -81,4 +89,4 @@ function controls(ts) {
   tests.push({name:'conditional_dynamic_fallback_code',result:fallbackCodes.includes('R3_FALLBACK_CODE')?'PASS':'FAIL'});
   return tests;
 }
-module.exports={errorClassInfo,codeLiterals,constructorLiterals,constructorLiteral,unknownError,controls};
+module.exports={errorCodeLiteral,errorClassInfo,codeLiterals,constructorLiterals,constructorLiteral,unknownError,controls};
