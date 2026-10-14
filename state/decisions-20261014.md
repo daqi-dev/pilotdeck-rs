@@ -185,3 +185,5 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 | C 含非 ASCII 时回退给 TS | 列表里出现非 ASCII 字符时，请求透传给 TS 宿主 | 保住一致性；但这类请求只是「部分本地化」，A8 退役 TS 之前仍然要在 A、B 中选一个 |
 
 **AI 建议：先 C（立即修补 main 上 project_files_list 的不一致，#96 同样处理），再 A（A8 之前完成）。** 请确认 A 里「从 unicode.org 下载 CLDR/ICU 源数据」是否在允许范围内。
+
+**进展（2026-10-15）**：方案 C 已随 #96 合并（自决·待复核）——`model_catalog_list` 与 `project_files_list` 的任一排序键含非 ASCII（UTF-16 单元 > 0x7f）时，整请求原样转发给 TS；ASCII 列表仍由 Rust 应答。两家评审无 P0/P1，A2 在线回归 PASS。A8 之前仍需在 A、B 中选一个。
