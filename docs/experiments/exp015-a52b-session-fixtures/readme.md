@@ -11,7 +11,7 @@ related: [plan/005_phase-a-session-domain, experiments/exp014-a52-session-fixtur
 
 **34 个子例 × k=5 = 170 次进程内测量，全部一致；4 个装置级、6 个观察副本对照均命中指定规则。真实 stdio sidecar 另做 5 次 G 路径交叉确认；原 A5.2a 装置原样回归 360 次及 9 个原有对照。** 首轮共 535 次测量、19 个对照，不含任何 Rust 对拍分数。cold-restart（2 组 × 5，结果一致）与真实 WS（15 子例 × 5 = 75 次执行完，跨遍汇总待补）已由协调者在沙箱外实跑，结果见下表；真实 Web bridge 重连仍单列为未验，不能据此关闭 D5。
 
-**第 2 轮将旧 close 误中新 run 的结论降级为「机制存在、生产次序不可达（单会话）」：范围限定为本轮成功清理、真实 FileRunRegistry 路径。** 去掉额外 WS return 等待、保持 disconnect 同步后，单会话两种次序各 5/5 未命中新 run；多会话两种次序各 5/5 也未命中。权限/问题的四组无 hold 次序另做 20 次，原 binding/abort 结果可复现。共新增 **8 组 × 5 = 40 次**，每次通过原三面检查器；另原样回归主夹具 170 次、10 个对照。第 2 轮报告与逐次证据哈希见 [production-close-results.json](production-close-results.json)，不合并为原 535 次的首次采集。
+**第 2 轮将旧 close 误中新 run 的结论降级为「机制存在、指定生产次序未达到；源码显示成功路径窗口只有微任务（单会话）」：范围限定为本轮成功清理、真实 FileRunRegistry 路径。** 去掉额外 WS return 等待、保持 disconnect 同步后，单会话两种次序各 5/5 未命中新 run；多会话两种次序各 5/5 也未命中。权限/问题的四组无 hold 次序另做 20 次，原 binding/abort 结果可复现。共新增 **8 组 × 5 = 40 次**，每次通过原三面检查器；另原样回归主夹具 170 次、10 个对照。第 2 轮报告与逐次证据哈希见 [production-close-results.json](production-close-results.json)，不合并为原 535 次的首次采集。
 
 逐例摘要、完整集合、装置与证据哈希见 [results.json](results.json)。**正式采集**（预注册规则先单独提交（本 PR 第一个提交；rebase 合并会改哈希，以提交内容为准），记录为 COMMITTED_BEFORE_COLLECTION）：进程内 [`_tmp/a52b/coordinator-main/`](../../../_tmp/a52b/coordinator-main/)，sidecar [`coordinator-sidecar/`](../../../_tmp/a52b/coordinator-sidecar/)，A5.2a 回归 [`coordinator-a52a/`](../../../_tmp/a52b/coordinator-a52a/)。开发期采集 `delivery-main/` 等保留作对照：协调者用同一汇总器分别汇总两次采集，去掉 ID、时间戳、路径与哈希后**零差异**。合并后证据归档在主仓 `_tmp/archive/wt-a52b-tmp/a52b/`。
 
@@ -104,7 +104,7 @@ permission 成功后 B 的 permission_list 从一个 pending 变成空，证明�
 | 单会话：在旧终态真实 registry rename commit 就提前发 B submit，old endTurn 时 close | 每次 activeRun **为空**；没有 new-run 命中 | B accept 已排队，但真实 mutationChain / I/O 后续晚于 A finally 清理；新 loop 确实执行 | 0/5 |
 | 多会话：A first-session 排在目标前；close 等 first-run 的真实 abort drain；目标在 endTurn 发 B submit | 仅命中 **first-run** | B new-run 在首个 abort 仍等待时确实进入；目标 A inFlight 已被 WS finally 删除；close 到目标时虽 activeRun=new-run，has(session)=false，跳过 abort | 0/5 |
 | 多会话：同上，改在目标旧 terminal rename commit 提前发 B submit | 仅命中 **first-run** | 同样真实启动新 run 后才释放 first-run；close 到目标时无 stale inFlight 条目 | 0/5 |
-| permission / question：reconnect-first | 命中 **旧 run** | disconnect=false、preserveTurn=false；旧 A 答复 false、新 B true；resolve 各一次 | 每种 5/5 |
+| permission / question：reconnect-first | 命中 **旧 run**（即 B 已接管的同一 run；**基线缺陷候选**，见表下） | disconnect=false、preserveTurn=false；旧 A 答复 false、新 B true；resolve 各一次 | 每种 5/5 |
 | permission / question：close-first | **未调用 abort** | 同步 disconnect=true、preserveTurn=true；旧 A false、新 B true；resolve 各一次 | 每种 5/5 |
 
 可逐项核对的第 1 次 `terminal-commit` 证据：
@@ -112,7 +112,9 @@ permission 成功后 B 的 permission_list 从一个 pending 变成空，证明�
 - [单会话 journal](../../../_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/1/timeline.ndjson)：order 53 旧终态 rename commit barrier → 54 发起 B → 59 old endTurn → 63 abort.input（activeRun 字段缺省，即无活动 run）→ 65 A WS finally delete → 73 B beginTurn(new-run)。这是新接纳未赶进清理窗口的证据。
 - [多会话 journal](../../../_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/timeline.ndjson)：81 abort first-run → 101 目标 old endTurn → 103 A WS finally delete 目标 → 110 B beginTurn(new-run) → 138 新 loop 在飞 → 153 才 disconnect 目标（activeRun=new-run，但 A inFlight 为空）→ 154 close 完成。没有针对目标的 abort.input。
 
-因此，原装置证明按 session、无 runId 的 abort 在保留 stale 条目时能指向新 run；**成功清理 / FileRunRegistry 的单会话生产次序未达到该机制，结论为「机制存在、生产次序不可达（单会话）」**。多会话实测也未命中：等待另一个会话并不足以保留目标的旧 inFlight 条目。上述是两个指定次序各 k=5 的仲裁结果，不能外推为所有 Gateway 配置和异常路径永不可达；本轮未覆盖失败/timeout 的 post-agent snapshot I/O、无 registry 配置或真实网络自然调度。同步观察回调立即投递是最早投递探针，未暂停原清理栈，也不代表真实 socket 的到达方式。
+**基线缺陷候选（生产次序下可复现）**：reconnect-first 中，B 已经 reconnect 接管 A 的交互，A 的 submit 流仍在飞，A close 时 `disconnectInteraction` 返回 preserveTurn=false，`GatewayWsConnection.ts:57-58` 随即按 sessionKey 调 abortTurn——中止的正是 B 刚接管、用户正在看的那个 run。这不是夹具人为次序（本轮生产时序装置 5/5 复现）。是否属 bug（意向书 bug 定义）与 Rust 宿主如何处理，留 A7 判定并按 D4 同类流程交人，本实验不替人定。
+
+因此，原装置证明按 session、无 runId 的 abort 在保留 stale 条目时能指向新 run；**成功清理 / FileRunRegistry 的单会话生产次序未达到该机制，结论为「机制存在、指定生产次序未达到；源码显示成功路径窗口只有微任务（单会话）」**。多会话实测也未命中：等待另一个会话并不足以保留目标的旧 inFlight 条目。上述是两个指定次序各 k=5 的仲裁结果，不能外推为所有 Gateway 配置和异常路径永不可达；本轮未覆盖失败/timeout 的 post-agent snapshot I/O、无 registry 配置或真实网络自然调度。同步观察回调立即投递是最早投递探针，未暂停原清理栈，也不代表真实 socket 的到达方式。
 
 受控外部 loop 忽略 signal，最终 completed 是装置行为，不能据此证明真实模型/工具取消效果。真实 WS 关闭与 Web bridge 保存/重放 binding 仍需对应证据；本轮未 listen。40 次原始三面观测与 SHA-256 在 [报告](production-close-results.json)，源文件加载前后哈希均一致。第 2 轮正式工作树采集为 [`round2-production-final/`](../../../_tmp/a52b/round2-production-final/)，原夹具回归为 [`round2-original-regression/`](../../../_tmp/a52b/round2-original-regression/)；Git 预提交后的正式采集为 [`coordinator-production/`](../../../_tmp/a52b/coordinator-production/)，结果与之逐项一致。
 
