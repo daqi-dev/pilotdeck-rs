@@ -21,7 +21,7 @@
 
 `coverage.handler` 以 recorder 原始 `X-PilotDeck-Handler` 为处理侧真相源，再交叉核对 metadata 与客户端证据。direct 必须没有 DUT 标记；proxy 每条响应必须唯一 ts/rust，冲突/伪造/缺失即 FAIL。标记验完才从 HTTP 等价 diff 剥离。
 
-Rust 接管由 `specs/ui-server-parity/rust-routes.json` 的静态路由表/配置导出决定，schema=1，routes 为 `{method, path, handler: "rust"}` 数组（空清单合法，当前没有 Rust ui-server）。首次接管必须同步更新此表；不能按流量推断归属。路由规范化后与 runtime/matrix 求交，静态表未枚举的路由、matrix 声明或观测 handler 与静态表矛盾均 FAIL；handler 按结构化枚举 ts/rust 校验，别名失败。接管路由的豁免无论有无用例/流量都必须带 `Approved-By` / `Approval-Basis`，复用 FROZEN 的审批规则（具名人或精确的「AI 代批，待人复核（协调者）」及三份存在的依据文件）。TS reference 无须 rust 标记；proxy 每个登记 case 必须实际由 rust 处理。豁免不算行为验证，也不能替代已有 case 的执行证明。静态表纳入装置哈希；本机同时篡改配置、装置、审批仍在威胁模型之外。
+Rust 接管由 `specs/ui-server-parity/rust-routes.json` 的静态路由表/配置导出决定，schema=1，routes 为 `{method, path, handler: "rust"}` 数组（空清单合法，当前没有 Rust ui-server）。首次接管必须同步更新此表；不能按流量推断归属。路由规范化后与 runtime/matrix 求交，静态表未枚举的路由、matrix 声明或观测 handler 与静态表矛盾均 FAIL；handler 按结构化枚举 ts/rust 校验，别名失败。接管路由的豁免无论有无用例/流量都必须带 `Approved-By` / `Approval-Basis`，必须由具名人审批；`Approved-By` 含「AI」「代批」「待人复核」、模型名（Claude/GPT/GLM/DeepSeek/Gemini/Qwen/Doubao/ChatGPT/模型）或「协调者」均 FAIL，零宽/不可见字符变体也 FAIL。`Approval-Basis` 仍须三份存在、realpath 互异且在允许范围内的依据文件（定标报告 + 两家评审）。TS reference 无须 rust 标记；proxy 每个登记 case 必须实际由 rust 处理。豁免不算行为验证，也不能替代已有 case 的执行证明。静态表纳入装置哈希；本机同时篡改配置、装置、审批仍在威胁模型之外。
 
 ## 行为硬门
 
@@ -42,7 +42,7 @@ WS **先比较同一连接内全序帧序列，再比较按 type/kind 的结构�
 
 无真实五遍输入时 self_compare=null、PENDING_CALIBRATION；已自比但未评审时 PENDING_REVIEW；这些均退出 2。任一已运行门失败则 FAIL/退出 1。另可提供 --proxy 单独报告 direct/DUT 比较，不用 DUT 结果定阈值。
 
-冻结必须先有人过目，随后协调者在 manifest 登记四份规约、B2 与 exp008 两目录的全部 Git 跟踪装置文件 SHA256，并填唯一的 `Approved-By:`、`Approval-Basis:`。审批人接受具名人，或精确的「AI 代批，待人复核（协调者）」；拒绝 TODO、模型名、零宽/不可见字符、占位、空值与重复。依据至少包含三个 realpath 不同、确实存在的文件（定标报告 + 两家评审），且必须位于当前仓库或共享主仓 `_tmp/` 内，链接逃逸也失败。审批清单自身不参与 capture hash。
+冻结必须先有人过目，随后协调者在 manifest 登记四份规约、B2 与 exp008 两目录的全部 Git 跟踪装置文件 SHA256，并填唯一的 `Approved-By:`、`Approval-Basis:`。FROZEN 冻结记录按 R5 接受具名人，或精确的「AI 代批，待人复核（协调者）」；拒绝 TODO、模型名、零宽/不可见字符、占位、空值与重复。依据至少包含三个 realpath 不同、确实存在的文件（定标报告 + 两家评审），且必须位于当前仓库或共享主仓 `_tmp/` 内，链接逃逸也失败。审批清单自身不参与 capture hash。共用审批函数通过显式参数区分用途：只有 FROZEN 开启 R5 AI 代批例外，Rust 接管路由豁免一律要求具名人批；冻结审批不能代替路由豁免审批。
 
 装置完整性威胁模型（协调者自决，**AI 代批，待人复核**）：防 (a) 意外漂移；(b) worker / 开发者在仓库内对装置的改动，包括未跟踪文件、影子模块和旧构建产物。不防拥有本机写权限、能够同时改装置、清单与审批的恶意者；该模型之外的发现按 P2 跟进。Git 跟踪清单、FROZEN 哈希与审批材料构成本模型的信任依据。
 

@@ -115,8 +115,9 @@ def check(enumeration, matrix, scenarios, evidence=None, *, takeover=None):
         if waiver and (waiver.get('route') != route or not all(isinstance(waiver.get(k), str) and waiver[k].strip() for k in (('reason',) if route in owned else ('reason', 'approver')))):
             errors.append(f'{route}: malformed exemption')
         if route in owned and waiver and not approval_valid(
-                waiver.get('Approved-By'), waiver.get('Approval-Basis'), ROOT):
-            errors.append(f'{route}: Rust exemption requires valid Approved-By / Approval-Basis')
+                waiver.get('Approved-By'), waiver.get('Approval-Basis'), ROOT,
+                allow_ai_delegate=False):
+            errors.append(f'{route}: Rust exemption requires named human Approved-By / valid Approval-Basis')
         if 'handler' in row:
             try:
                 declared = Handler(row['handler'])

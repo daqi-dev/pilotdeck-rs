@@ -82,7 +82,8 @@ def check(folder=SPEC, *, root=ROOT):
     bases = re.findall(r'^[ \t]*Approval-Basis:([^\n]*)$', raw, re.M)
 
     approved = approval_valid(approvals[0] if len(approvals) == 1 else None,
-                              bases[0] if len(bases) == 1 else None, root)
+                              bases[0] if len(bases) == 1 else None, root,
+                              allow_ai_delegate=True)
     if not draft and not approved:
         errors.append('missing/invalid Approved-By or Approval-Basis (calibration report + two reviews)')
     entries = re.findall(r'^([0-9a-f]{64})  ([^\s]+)\s*$', raw, re.M)

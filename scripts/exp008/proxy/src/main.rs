@@ -246,12 +246,22 @@ async fn main() -> Result<(), ProxyError> {
 }
 
 impl Proxy {
-    fn local_response(&self, id: u64, status: StatusCode, message: &'static str) -> Response<Body> {
+    fn record_local_error(&self, id: u64, status: StatusCode, message: &'static str) {
         if let Some(log) = &self.recorder {
             let _ = log.write(serde_json::json!({"kind":"recorder_error", "id":id,
                 "status":status.as_u16(), "headers":[], "body_b64":STANDARD.encode(message.as_bytes())}));
         }
+    }
+    fn local_response(&self, id: u64, status: StatusCode, message: &'static str) -> Response<Body> {
+        self.record_local_error(id, status, message);
         plain(status, message)
+    }
+    fn abort_handshake(&self, id: u64) -> Response<Body> {
+        let status = StatusCode::BAD_REQUEST;
+        let message = "invalid websocket upgrade";
+        self.record_local_error(id, status, message);
+        // ws abortHandshake writes directly to the socket without a Date header.
+        plain_without_date(status, message)
     }
     async fn serve(&self, mut request: Request<Incoming>) -> Response<Body> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
@@ -362,11 +372,7 @@ impl Proxy {
         id: u64,
     ) -> Result<Response<Body>, ProxyError> {
         let Some(accept) = websocket_accept(request.method(), request.headers()) else {
-            return Ok(self.local_response(
-                id,
-                StatusCode::BAD_REQUEST,
-                "invalid websocket upgrade",
-            ));
+            return Ok(self.abort_handshake(id));
         };
         let log = self.recorder.as_ref().expect("recording mode").clone();
         log.write(
@@ -441,11 +447,7 @@ impl Proxy {
         id: u64,
     ) -> Result<Response<Body>, ProxyError> {
         if websocket_accept(request.method(), request.headers()).is_none() {
-            return Ok(self.local_response(
-                id,
-                StatusCode::BAD_REQUEST,
-                "invalid websocket upgrade",
-            ));
+            return Ok(self.abort_handshake(id));
         }
         let path = request
             .uri()
@@ -775,18 +777,22 @@ fn empty() -> Body {
         .boxed()
 }
 fn plain(status: StatusCode, message: &'static str) -> Response<Body> {
-    let mut response = Response::new(
-        Full::new(Bytes::from_static(message.as_bytes()))
-            .map_err(|never: Infallible| match never {})
-            .boxed(),
-    );
-    *response.status_mut() = status;
+    let mut response = plain_without_date(status, message);
     response.headers_mut().insert(
         header::DATE,
         httpdate::fmt_http_date(std::time::SystemTime::now())
             .parse()
             .expect("HTTP date"),
     );
+    response
+}
+fn plain_without_date(status: StatusCode, message: &'static str) -> Response<Body> {
+    let mut response = Response::new(
+        Full::new(Bytes::from_static(message.as_bytes()))
+            .map_err(|never: Infallible| match never {})
+            .boxed(),
+    );
+    *response.status_mut() = status;
     response
 }
 
@@ -1103,27 +1109,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_websocket_keys_rejected_over_memory_http() {
-        let (mut client, server) = tokio::io::duplex(8192);
-        let task = tokio::spawn(async move {
-            let service = service_fn(|request: Request<Incoming>| async move {
-                assert!(websocket_accept(request.method(), request.headers()).is_none());
+    async fn handshake_rejections_have_no_date_over_memory_http() {
+        let single = format!("Sec-WebSocket-Key: {KEY}\r\n");
+        let duplicate = format!(
+            "Sec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Key: {}\r\n",
+            STANDARD.encode(b"another nonce123")
+        );
+        for recorded in [false, true] {
+            for (method, version, keys) in [
+                ("GET", "13", duplicate.as_str()),
+                ("POST", "13", single.as_str()),
+                ("GET", "12", single.as_str()),
+                ("GET", "13", "Sec-WebSocket-Key: invalid\r\n"),
+            ] {
+                let (mut client, server) = tokio::io::duplex(8192);
+                let task = tokio::spawn(async move {
+                    let proxy = Arc::new(Proxy {
+                        upstream: "http://memory".into(),
+                        upstream_ws_authority: "memory".into(),
+                        client: Client::builder(TokioExecutor::new()).build_http(),
+                        handler: "ts".into(),
+                        frames: None,
+                        recorder: None,
+                        next_id: AtomicU64::new(1),
+                    });
+                    let service = service_fn(move |mut request: Request<Incoming>| {
+                        let proxy = proxy.clone();
+                        async move {
+                            assert!(websocket_accept(request.method(), request.headers()).is_none());
+                            if request
+                                .headers()
+                                .get_all(header::SEC_WEBSOCKET_KEY)
+                                .iter()
+                                .count()
+                                > 1
+                            {
+                                assert!(websocket_request(
+                                    "ws://memory/ws".parse().unwrap(),
+                                    request.headers()
+                                )
+                                .is_err());
+                            }
+                            let response = if recorded {
+                                proxy.recorded_websocket(&mut request, 1).await
+                            } else {
+                                proxy.websocket(&mut request, 1).await
+                            };
+                            Ok::<_, Infallible>(response.unwrap())
+                        }
+                    });
+                    downstream_http()
+                        .serve_connection(TokioIo::new(server), service)
+                        .await
+                        .unwrap();
+                });
+                client.write_all(format!("{method} /ws HTTP/1.1\r\nHost: memory\r\nConnection: Upgrade, close\r\nUpgrade: websocket\r\nSec-WebSocket-Version: {version}\r\n{keys}\r\n").as_bytes()).await.unwrap();
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await.unwrap();
+                let text = String::from_utf8(response).unwrap();
+                assert!(text.starts_with("HTTP/1.1 400"));
                 assert!(
-                    websocket_request("ws://memory/ws".parse().unwrap(), request.headers())
-                        .is_err()
+                    !text
+                        .lines()
+                        .any(|line| line.to_ascii_lowercase().starts_with("date:")),
+                    "{text}"
                 );
-                Ok::<_, Infallible>(plain(StatusCode::BAD_REQUEST, "invalid websocket upgrade"))
-            });
-            downstream_http()
-                .serve_connection(TokioIo::new(server), service)
-                .await
-                .unwrap();
-        });
-        client.write_all(format!("GET /ws HTTP/1.1\r\nHost: memory\r\nConnection: Upgrade, close\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {KEY}\r\nSec-WebSocket-Key: {}\r\n\r\n", STANDARD.encode(b"another nonce123")).as_bytes()).await.unwrap();
-        let mut response = Vec::new();
-        client.read_to_end(&mut response).await.unwrap();
-        assert!(response.starts_with(b"HTTP/1.1 400"));
-        task.await.unwrap();
+                assert!(text.ends_with("invalid websocket upgrade"));
+                task.await.unwrap();
+            }
+        }
     }
 
     #[tokio::test]
