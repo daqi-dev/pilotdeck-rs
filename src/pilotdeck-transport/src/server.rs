@@ -140,7 +140,8 @@ impl ExecutionContext {
         if matches!(
             self.control.cancellation.cause(),
             Some(CancelCause::OwnerRetired | CancelCause::TransportClosed)
-        ) {
+        ) || self.control.cancellation.hard_stop_cause().is_some()
+        {
             return self.control.check();
         }
         let delivery = CallControl {
@@ -612,8 +613,7 @@ impl ExecutionServer {
             let terminal = if matches!(
                 context.control.cancellation.cause(),
                 Some(CancelCause::Deadline)
-            ) && terminal.outcome != ModuleOutcome::ResultUnknown
-            {
+            ) {
                 ExecutionTerminal {
                     outcome: ModuleOutcome::ResultUnknown,
                     payload: JsObject::new(),
