@@ -92,6 +92,43 @@ test('baseline connection text and random solid PNG color probes return exact an
   assert.equal(plan.body.choices[0].message.content, '1');
 });
 
+test('B operator SOP model uses advertised submit_step_result; frozen native parsers accept handoff/completed and streamed argument fragments', async () => {
+  const yaml = requireUI('yaml');
+  const definitions = yaml.parse(await readFile(resolve(baseline, '../products/pilotdeck-staffdeck-sop/sops/operator-approval.yaml'), 'utf8'));
+  assert(definitions.sops.some(row => row.id === 'operator_approval'));
+  assert(definitions.sops.some(row => row.id === 'operator_approval_alternate'));
+  const local = await readFile(resolve(baseline, '../products/pilotdeck-staffdeck-sop/scripts/local-openai-mock.mjs'), 'utf8');
+  assert(local.includes('name: "submit_step_result"'));
+  const dependencies = { ...await frozenFunctions('../src/model/response/normalizeUsage.ts'),
+    ...await frozenFunctions('../src/model/response/normalizeFinishReason.ts'), randomUUID,
+    jsonrepair: requireUI('jsonrepair').jsonrepair, ModelProviderError: Error };
+  const native = await frozenFunctions('../src/model/providers/openai/stream.ts', dependencies);
+  const response = await frozenFunctions('../src/model/providers/openai/response.ts', dependencies);
+  for (const [prompt, status, replyFragment] of [
+    ['Start the operator approval workflow.', 'handoff', 'Waiting for browser operator approval.'],
+    ['Wait for the alternate operator approval before completing this request.', 'handoff', 'Waiting for browser operator approval.'],
+    ['operator approved', 'completed', 'Browser operator approval completed.'],
+  ]) {
+    const requestBody = { model: 'operator', messages: [{ role: 'user', content: prompt }],
+      tools: [{ type: 'function', function: { name: 'submit_step_result', parameters: {} } }] };
+    const plain = planResponse(request(requestBody));
+    assert.deepEqual(plain, planResponse(request(structuredClone(requestBody))));
+    const parsed = response.parseOpenAIResponse(plain.body);
+    assert.equal(parsed.content[0].type, 'tool_call'); assert.equal(parsed.content[0].name, 'submit_step_result');
+    assert.deepEqual(parsed.content[0].input, { status, replyFragment });
+    const streamed = planResponse(request({ ...requestBody, stream: true })), state = native.createOpenAIStreamState(), events = [];
+    for (const frame of streamed.frames.slice(0, -1)) events.push(...native.normalizeOpenAIStreamEvent(JSON.parse(frame.slice(6)), state));
+    const starts = events.filter(row => row.type === 'tool_call_start'), ends = events.filter(row => row.type === 'tool_call_end');
+    assert.equal(starts.length, 1); assert.equal(ends.length, 1);
+    assert.equal(starts[0].name, 'submit_step_result'); assert.deepEqual(ends[0].toolCall.input, { status, replyFragment });
+    assert(events.filter(row => row.type === 'tool_call_delta').length > 4);
+    assert.equal(streamed.frames.at(-1), 'data: [DONE]\n\n');
+    assert.equal(planResponse(request({ ...requestBody, tools: [] })).status, 422);
+    const title = planResponse(request({ ...requestBody, tools: [], metadata: { purpose: 'session_title_generation' } }));
+    assert.equal(title.script, 'operator-title'); assert.deepEqual(JSON.parse(title.body.choices[0].message.content), { title: 'Operator approval' });
+  }
+});
+
 test('HTTP handler writes distinct SSE chunks, ends stream, logs every request without credentials; rejects unknown/malformed/auth', async () => {
   const recorded = [], writes = [], pauses = [], mock = createMockLLM({ record: async row => recorded.push(row), pause: async () => pauses.push(true) });
   const bytes = Buffer.from(JSON.stringify({ ...body, messages: [{ role: 'system', content: '中文' }, ...body.messages] }));

@@ -19,9 +19,10 @@ export function runtimeConfig(mode, runDir) {
     webui: { runtime: { host: '127.0.0.1', serverPort: realPorts[mode].server, vitePort: realPorts[mode].vite,
       databasePath: resolve(runDir, 'auth.db'), workspacesRoot: resolve(runDir, 'workspace') } } };
 }
-export async function prepareRuntime(mode, runDir) {
+export async function prepareRuntime(mode, runDir, { runRoot = realRunRoot } = {}) {
   ownedPath(runDir);
-  if (!runDir.startsWith(realRunRoot + sep) || await realpath(dirname(runDir)) !== dirname(runDir)) throw new Error('Runtime path must be a fresh directory under canonical real-run');
+  if (![realRunRoot, resolve(root, '_tmp/fe-parity/deploy-run')].includes(runRoot)
+    || !runDir.startsWith(runRoot + sep) || await realpath(dirname(runDir)) !== dirname(runDir)) throw new Error('Runtime path must be a fresh directory under canonical real-run/deploy-run');
   // OS HOME/tmp are prepared before --list. The exclusive PILOT_HOME mkdir
   // below remains the guard against reusing an already seeded runtime.
   await mkdir(runDir, { recursive: true });

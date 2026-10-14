@@ -75,7 +75,7 @@ export function realExecutionEnv(parent, { output, runDir, mode }) {
   for (const name of ['UserInstallation', 'SYSUSERCONFIG', 'SYSUSERHOME', 'URE_BOOTSTRAP']) delete env[name];
   const ports = realPorts[mode];
   Object.assign(env, {
-    ...realOSPaths(runDir), PILOTDECK_SKIP_BROWSER_OPEN: '1',
+    ...realOSPaths(runDir), PILOTDECK_SKIP_BROWSER_OPEN: '1', SKIP_BROWSER_OPEN: '1',
     BASELINE_UI: parent.BASELINE_UI || '',
     PILOTDECK_E2E_MODE: mode, PILOTDECK_E2E_RUN_DIR: runDir,
     PILOTDECK_E2E_RUNTIME_FILE: resolve(runDir, 'runtime.json'),

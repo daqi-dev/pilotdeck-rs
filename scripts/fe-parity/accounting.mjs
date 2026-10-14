@@ -1,6 +1,7 @@
 import { relative, isAbsolute, resolve } from 'node:path';
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { staleEntry, failureSignature, behavioralCoverage, compareStaleRows, deriveStaleCascade, validateStaleCascade, oldRealGate, CASCADE_STATUS } from './baseline-stale.mjs';
+import { staleEntry, failureSignature, matchesStaleFailure, behavioralCoverage, compareStaleRows, deriveStaleCascade, validateStaleCascade, oldRealGate, CASCADE_STATUS } from './baseline-stale.mjs';
+import { cellInventory, activeRegistration, deployOrigin, deployInstanceId, DEPLOY_CELLS, selectDeployCells } from './deploy-matrix.mjs';
 export { CASCADE_STATUS } from './baseline-stale.mjs';
 
 // Reasons belong to exact identities; there is no global reason whitelist.
@@ -279,4 +280,115 @@ export function reconcileRealPair(inventory, reports, testDir, origins) {
   errors.push(...stale.errors);
   return { ...accounts, errors, baselineStale: stale.rows,
     scope: 'D_28_PAIR_ONLY', status: errors.length ? 'FAIL' : 'PASS' };
+}
+
+// B uses an execution floor per deployment. The generic historical B skip
+// allowlist remains unchanged; URL-gated skips never reduce this suite's floor.
+export function validateDeployRegistration(rows, inventory, cell) {
+  const expected = cellInventory(inventory, cell);
+  if (JSON.stringify(rows.map(deployInstanceId).sort()) !== JSON.stringify(expected.map(deployInstanceId).sort())) throw new Error(`${cell.id}: B registration identity drift`);
+  for (const row of rows) {
+    const original = expected.find(item => deployInstanceId(item) === deployInstanceId(row));
+    if (row.line !== original.line || row.column !== original.column) throw new Error(`${cell.id}: frozen B registration location/project drift`);
+  }
+  return expected;
+}
+export function reconcileDeployCell(inventory, report, testDir, cell) {
+  const registrations = cellInventory(inventory, cell), expected = registrations.filter(row => activeRegistration(row, cell)).length;
+  const errors = (report?.errors || []).map(error => error.message || String(error));
+  const meta = report?.config?.metadata;
+  if (report?.config?.forbidOnly !== true || meta?.frontend !== 'old' || meta?.baseURL !== deployOrigin
+    || meta?.suite !== 'blackbox-deploy-B' || meta?.backend !== 'native-with-mock-llm'
+    || meta?.cell !== cell.id || meta?.profile !== cell.profile) errors.push(`${cell.id}: invalid B report provenance`);
+  const received = reportCases(report || {}, testDir);
+  try { validateDeployRegistration(received, inventory, cell); } catch (error) { errors.push(error.message); }
+  const validOriginalReport = errors.length === 0;
+  const rows = registrations.map(registration => {
+    const active = activeRegistration(registration, cell);
+    const matches = received.filter(row => deployInstanceId(row) === deployInstanceId(registration));
+    const base = { ...registration, cell: cell.id, required: active, rawSkipAnnotations: matches[0]?.annotations.filter(a => a.type === 'skip') || [] };
+    if (matches.length !== 1 || matches[0].results.length !== 1 || (matches[0].results[0].retry ?? 0) !== 0) {
+      errors.push(`${cell.id}: no unique original attempt for ${caseId(registration)}`);
+      return { ...base, status: 'NOT_RUN', reason: 'missing/duplicate/retried attempt' };
+    }
+    const row = matches[0], attempt = row.results[0];
+    if (!active) {
+      const binding = SKIP_ALLOWLIST.find(item => item.file === registration.file && item.title === registration.canonicalTitle)?.skipReasons[1];
+      if (attempt.status !== 'skipped' || base.rawSkipAnnotations.length !== 1
+        || base.rawSkipAnnotations[0].description !== binding?.description) {
+        errors.push(`${cell.id}: profile exclusion differs from frozen source ${caseId(registration)}`);
+        return { ...base, status: 'FAIL', reason: 'Invalid profile exclusion', rawStatus: attempt.status };
+      }
+      return { ...base, status: 'PROFILE_EXCLUDED', reason: binding.description, source: binding.source, rawStatus: 'skipped' };
+    }
+    if (!['passed', 'failed', 'timedOut'].includes(attempt.status)) {
+      errors.push(`${cell.id}: required B case did not execute (${attempt.status}) ${caseId(registration)}`);
+      return { ...base, status: attempt.status === 'skipped' ? 'SKIP' : 'NOT_RUN', reason: 'Required B execution; env gates never authorize skip', rawStatus: attempt.status };
+    }
+    const status = attempt.status === 'passed' && row.expectedStatus === 'passed' && !base.rawSkipAnnotations.length ? 'PASS' : 'FAIL';
+    if (status === 'FAIL') errors.push(`${cell.id}: B behavioral failure ${caseId(registration)}`);
+    const stale = staleEntry(registration);
+    const signature = stale ? failureSignature(attempt, testDir, report.config?.rootDir) : undefined;
+    const matched = Boolean(stale && validOriginalReport
+      && row.expectedStatus === 'passed' && !base.rawSkipAnnotations.length && matchesStaleFailure(registration, signature));
+    return { ...base, status, executed: true, rawStatus: attempt.status, reason: attempt.error?.message || '',
+      ...(stale ? { expectedStatus: row.expectedStatus, failureSignature: signature,
+        baselineStale: { defectType: stale.defectType, proofScript: stale.proofScript, evidence: stale.evidence,
+          behavioralCoverageCredit: 0 }, matchedFailCondition: matched, pairedConsistency: 'UNPAIRED' } : {}) };
+  });
+  const executed = rows.filter(row => row.executed).length;
+  if (expected !== executed) errors.push(`${cell.id}: 应执行数 ${expected} vs 实际执行数 ${executed}`);
+  return { cell: cell.id, profile: cell.profile, denominator: registrations.length, expected, executed, minimumExecuted: expected,
+    explicitSkips: 0, profileExclusions: rows.filter(row => row.status === 'PROFILE_EXCLUDED').length,
+    pendingOrchestration: 0, rows, errors, status: errors.length ? 'FAIL' : 'PASS' };
+}
+export function reconcileDeploy(inventory, reports, testDir, cells) {
+  const partitions = {}, errors = [];
+  const catalog = inventory.filter(row => SKIP_ALLOWLIST.some(item => caseId(item) === caseId(row)));
+  if (catalog.length !== 9 || new Set(catalog.map(caseId)).size !== 9) errors.push('B requires the original nine source registrations');
+  for (const row of catalog) {
+    const source = SKIP_ALLOWLIST.find(item => caseId(item) === caseId(row)).source[0];
+    if (row.line !== Number(source.split(':').at(-1)) || !Number.isInteger(row.column) || row.column < 1) errors.push(`B inventory location drift ${caseId(row)}`);
+  }
+  try {
+    const requested = [...new Set(cells.map(cell => cell.profile).filter(profile => profile !== 'native'))];
+    const canonical = selectDeployCells(requested);
+    if (cells.length !== canonical.length || canonical.some(cell => cells.filter(item => JSON.stringify(item) === JSON.stringify(cell)).length !== 1)) {
+      errors.push('B requires exact requested profile cells and both native auxiliaries');
+    }
+  } catch (error) { errors.push(error.message); }
+  for (const cell of cells) {
+    if (cell.blocked) {
+      const rows = cellInventory(inventory, cell).filter(row => activeRegistration(row, cell)).map(row => ({ ...row, cell: cell.id, required: true, status: 'BLOCKED', reason: cell.blocked }));
+      partitions[cell.id] = { cell: cell.id, profile: cell.profile, expected: rows.length, minimumExecuted: rows.length,
+        executed: 0, status: 'BLOCKED', errors: [cell.blocked], rows, profileExclusions: 0 };
+    } else partitions[cell.id] = reconcileDeployCell(inventory, reports[cell.id], testDir, cell);
+    errors.push(...partitions[cell.id].errors.map(error => `${cell.id}: ${error}`));
+  }
+  for (const id of Object.keys(reports)) if (!cells.some(cell => cell.id === id && !cell.blocked)) errors.push(`Unknown/blocked B report partition ${id}`);
+  const b = catalog;
+  const observations = Object.values(partitions).flatMap(part => part.rows.filter(row => row.required));
+  const rows = b.map(registration => {
+    const matches = observations.filter(row => row.file === registration.file && row.canonicalTitle === registration.title);
+    const status = !matches.length ? 'NOT_RUN' : matches.some(row => row.status === 'BLOCKED') ? 'BLOCKED'
+      : matches.some(row => row.status !== 'PASS') ? 'FAIL' : 'PASS';
+    const stale = staleEntry(registration);
+    return { file: registration.file, title: registration.title, status, reason: matches.map(row => row.reason).filter(Boolean).join('; '), observations: matches,
+      ...(stale ? { baselineStale: { defectType: stale.defectType, proofScript: stale.proofScript, evidence: stale.evidence,
+        behavioralCoverageCredit: 0 }, matchedFailCondition: matches.length > 0 && matches.every(row => row.matchedFailCondition === true),
+        pairedConsistency: 'UNPAIRED' } : {}) };
+  });
+  const expected = rows.filter(row => row.observations.length).length;
+  const executed = rows.filter(row => row.observations.some(item => item.executed)).length;
+  const instanceExpected = Object.values(partitions).reduce((n, p) => n + p.expected, 0);
+  const instanceExecuted = Object.values(partitions).reduce((n, p) => n + p.executed, 0);
+  if (expected !== executed) errors.push(`B unique 应执行数 ${expected} vs 实际执行数 ${executed}; BLOCKED 保留分母`);
+  return { denominator: 9, expected, executed, minimumExecuted: expected, instanceExpected, instanceExecuted,
+    explicitSkips: 0, profileExclusions: Object.values(partitions).reduce((n, p) => n + p.profileExclusions, 0), pendingOrchestration: 0,
+    blocked: rows.filter(row => row.status === 'BLOCKED').length, rows, partitions,
+    behavioralCoverage: { eligible: rows.filter(row => row.observations.length && !staleEntry(row)).length,
+      passed: rows.filter(row => row.status === 'PASS' && !staleEntry(row)).length,
+      excludedBaselineStale: rows.filter(row => row.observations.length && staleEntry(row)).length },
+    baselineStale: rows.filter(row => row.observations.length && staleEntry(row)),
+    scope: cells.length === DEPLOY_CELLS.length ? 'B_ALL_9_OLD_ONLY' : 'B_PARTIAL_PROFILES_OLD_ONLY', status: errors.length ? 'FAIL' : 'PASS', errors };
 }

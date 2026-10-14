@@ -51,11 +51,12 @@ export function validateRealRegistration(rows, inventory, mode) {
   }
   return expected;
 }
-async function startRuntime(env, log, children) {
+export async function startRuntime(env, log, children, entrypoint = 'real-launch.mjs') {
   assertRealExecutionEnv(env);
   await assertRealGitBin(env);
+  if (!['real-launch.mjs', 'deploy-launch.mjs'].includes(entrypoint)) throw new Error('Unknown owned runtime entrypoint');
   const handle = await open(log, 'wx');
-  const child = spawn(process.execPath, [resolve(root, 'scripts/fe-parity/real-launch.mjs')], {
+  const child = spawn(process.execPath, [resolve(root, 'scripts/fe-parity', entrypoint)], {
     cwd: root, detached: true, stdio: ['ignore', handle.fd, handle.fd],
     env: { ...env, FE_REAL_RUNTIME: '1', FE_NETWORK_LOG: resolve(env.FE_OUTPUT, 'network.jsonl'),
       NODE_OPTIONS: `--import=${resolve(root, 'scripts/fe-parity/real-network.mjs')}` },
@@ -88,15 +89,15 @@ export function realExecutionError(execution, report, testDir) {
   }
   return null;
 }
-async function waitReady(runtime, env, isInterrupted, audit) {
-  const deadline = Date.now() + 120_000, mode = env.PILOTDECK_E2E_MODE, ports = realPorts[mode];
+export async function waitReady(runtime, env, isInterrupted, audit, deployment) {
+  const deadline = Date.now() + 120_000, mode = env.PILOTDECK_E2E_MODE, ports = deployment?.ports || realPorts[mode];
   while (Date.now() < deadline) {
     audit.assertSafe();
     if (isInterrupted()) throw new Error('Run interrupted');
     runtime.assertAlive();
     try {
       const [front, auth] = await Promise.all([
-        fetch(realOrigin(mode), { signal: AbortSignal.timeout(1000) }),
+        fetch(deployment?.origin || realOrigin(mode), { signal: AbortSignal.timeout(1000) }),
         fetch(`http://127.0.0.1:${ports.server}/api/auth/status`, { signal: AbortSignal.timeout(1000) }),
       ]);
       const status = auth.ok ? await auth.json() : null;
@@ -118,9 +119,13 @@ async function waitReady(runtime, env, isInterrupted, audit) {
   throw new Error(`Timed out waiting for isolated ${mode} runtime (ready requires token file and native bridge handshake; see ${runtime.log})`);
 }
 export async function runReal({ output, inventory, modes, command, children, isInterrupted }) {
+  return withRealAudit({ output, children }, audit => runRealAudited({ output, inventory, modes, command, children, isInterrupted, audit }));
+}
+// Both B and D audit from before their first runtime through final cleanup.
+export async function withRealAudit({ output, children, allowedPorts }, operation) {
   let killCompletion, audit;
   try {
-    audit = await startTCPAudit({ logFile: resolve(output, 'tcp-connections.jsonl'),
+    audit = await startTCPAudit({ logFile: resolve(output, 'tcp-connections.jsonl'), allowedPorts,
       groupRoots: () => [...children].map(child => child.pid),
       playwrightRoots: () => [...children].filter(child => child.fePlaywright).map(child => child.pid),
       browserTmpRoots: () => [...children].filter(child => child.fePlaywright).map(child => child.feBrowserTmp),
@@ -135,7 +140,7 @@ export async function runReal({ output, inventory, modes, command, children, isI
         killCompletion = new Promise(done => setTimeout(() => { signal('SIGKILL'); done(); }, 5000));
       },
     });
-    return await runRealAudited({ output, inventory, modes, command, children, isInterrupted, audit });
+    return await operation(audit);
   } finally { try { await audit?.stop(); } finally { await killCompletion; } }
 }
 async function runRealAudited({ output, inventory, modes, command, children, isInterrupted, audit }) {

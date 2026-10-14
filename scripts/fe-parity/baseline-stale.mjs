@@ -7,7 +7,7 @@ import { serialSuccessors, serialLocation } from './serial-topology.mjs';
 const digest = value => createHash('sha256').update(value).digest('hex');
 // Reviewed manifest fingerprint. Changing a character/identity/evidence line
 // requires an explicit new review in code, never an editable JSON allowance.
-const REVIEWED_DIGEST = '80b8fa5c1624133e630a00ef717343cf4bc9d648b1044d1c047d1c56565f5d38';
+const REVIEWED_DIGEST = 'b855a582a47ffa3cc6bc8865cf6a7ad36f7a4ab4749e15c3805c38ef2b3c85c6';
 const identity = row => JSON.stringify([row.file.replaceAll('\\', '/'), row.title]);
 const deepFreeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(deepFreeze); Object.freeze(value); }
@@ -102,6 +102,7 @@ export function validateStaleCascade(inventory, account) {
 // Old-only calibration is explicit; it cannot certify a MATCHED_FAIL pair.
 export function oldRealGate(inventory, account) {
   const errors = [...account.errors], stale = inventory.filter(staleEntry);
+  const realStale = BASELINE_STALE.tests.filter(row => row.file.startsWith('real/'));
   const sourcesValid = !errors.some(error => error.includes('invalid real provenance'));
   const matched = stale.filter(registration => {
     const row = account.rows.find(item => identity(item) === identity(registration));
@@ -113,13 +114,14 @@ export function oldRealGate(inventory, account) {
     if ((quota.get(normalized) ?? 0) > 0) { quota.set(normalized, quota.get(normalized) - 1); return false; }
     return true;
   });
-  if (stale.length !== BASELINE_STALE.tests.length || matched.length !== stale.length) remaining.push(`Old calibration requires all ${BASELINE_STALE.tests.length} reviewed stale failures`);
+  if (stale.length !== realStale.length || !realStale.every(entry => stale.some(row => identity(row) === identity(entry)))
+    || matched.length !== stale.length) remaining.push(`Old calibration requires all ${realStale.length} reviewed D stale failures`);
   const cascade = validateStaleCascade(inventory, account);
   remaining.push(...cascade.errors);
   for (const row of account.rows) if (!staleEntry(row) && row.status !== CASCADE_STATUS && row.status !== 'PASS') remaining.push(`Old calibration requires PASS ${identity(row)}`);
   if (account.coverage !== 'D_ALL_28') remaining.push('Old calibration requires both real deployments');
   return { status: remaining.length ? 'FAIL' : 'PASS', scope: 'OLD_REAL_CALIBRATION_ONLY',
-    matchedFailConditions: matched.length, pairedConsistency: 'UNPAIRED', staleCascade: cascade.ids.length,
+    matchedFailConditions: matched.length, expectedStaleFailures: realStale.length, pairedConsistency: 'UNPAIRED', staleCascade: cascade.ids.length,
     pendingOrchestration: account.pendingOrchestration, passed: account.rows.filter(row => row.status === 'PASS').length,
     executed: account.executed, errors: remaining };
 }
