@@ -82,7 +82,7 @@ fn lock_live<F: Files>(metadata: &Metadata<F>) -> Result<bool, Error> {
         .read(&metadata.home.join("staffdeck/project-bindings.json.lock"))
     {
         Ok(bytes) => bytes,
-        Err(e) if crate::node_io::lookup(&e).is_some() => return Ok(false),
+        Err(e) if crate::node_io::config_lookup(&e).is_some() => return Ok(false),
         Err(_) => return Err(host_io_error()),
     };
     Ok(lock_pid(&bytes).is_some_and(|pid| metadata.files.process_alive(pid)))
@@ -112,7 +112,7 @@ pub(super) fn apply<F: Files>(
                 )
             };
             let bytes = metadata.files.read(&path).map_err(|e| {
-                if crate::node_io::lookup(&e).is_some() {
+                if crate::node_io::config_lookup(&e).is_some() {
                     invalid()
                 } else {
                     host_io_error()

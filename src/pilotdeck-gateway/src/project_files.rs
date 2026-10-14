@@ -43,6 +43,34 @@ fn encode(value: &JsValue) -> String {
     stringify_json(value).expect("JSON value").expect("defined")
 }
 
+// Only a NOFOLLOW open failure denotes our deliberate security divergence.
+// A realpath ELOOP is an ordinary measured Node error, not evidence of a race.
+#[derive(Debug)]
+struct NoFollowLoop;
+impl std::fmt::Display for NoFollowLoop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("symlink replaced during checked open")
+    }
+}
+impl std::error::Error for NoFollowLoop {}
+fn checked_open_error(error: io::Error) -> io::Error {
+    if error.raw_os_error() == Some(libc::ELOOP) {
+        io::Error::new(error.kind(), NoFollowLoop)
+    } else {
+        error
+    }
+}
+fn nofollow_loop(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|e| e.is::<NoFollowLoop>())
+}
+fn measured(method: &str, error: &io::Error) -> Result<()> {
+    if nofollow_loop(error) || crate::node_io::lookup_for(method, error).is_some() {
+        Ok(())
+    } else {
+        Err(("NODE_IO_REQUIRED", String::new()))
+    }
+}
+
 /// Each component is opened relative to a pinned directory, never following a
 /// symlink. The preceding realpath permits ordinary in-root links; a replacement
 /// after that check fails closed. NONBLOCK prevents a raced-in FIFO hanging us.
@@ -78,7 +106,11 @@ fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Re
         } else {
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK
         };
-        file = File::from(openat(&file, *name, flags, Mode::empty())?);
+        file = File::from(
+            openat(&file, *name, flags, Mode::empty())
+                .map_err(io::Error::from)
+                .map_err(checked_open_error)?,
+        );
     }
     Ok(file)
 }
@@ -291,21 +323,27 @@ fn read<F: Files>(
     let root = metadata
         .files
         .canonical(&root)
-        .map_err(|e| fs_error(e, "realpath", &root))?;
+        .map_err(|e| fs_error("project_file_read", e, "realpath", &root))?;
     let absolute = resolve(&root, path);
     // TS pathSafety also rejects '..name' prefixes, unlike listProjectFiles.
     if !within_read(&root, &absolute) {
         return Err(denied(OUTSIDE));
     }
-    let canonical = metadata
-        .files
-        .canonical(&absolute)
-        .map_err(|_| denied(ESCAPE))?;
+    let canonical = metadata.files.canonical(&absolute).map_err(|e| {
+        measured("project_file_read", &e)
+            .err()
+            .unwrap_or_else(|| denied(ESCAPE))
+    })?;
     if !within_read(&root, &canonical) {
         return Err(denied(ESCAPE));
     }
-    let Ok((stat, true)) = metadata.files.project_stat(&root, &canonical) else {
-        return Ok(JsValue::Null);
+    let stat = match metadata.files.project_stat(&root, &canonical) {
+        Ok((stat, true)) => stat,
+        Ok(_) => return Ok(JsValue::Null),
+        Err(e) => {
+            measured("project_file_read", &e)?;
+            return Ok(JsValue::Null);
+        }
     };
     // Node readFile opens before checking size, then slices to maxBytes.
     // A zero-byte prefix performs our safe open without reading the huge file,
@@ -314,7 +352,7 @@ fn read<F: Files>(
         metadata
             .files
             .project_read(&root, &canonical, 0)
-            .map_err(|e| fs_error(e, "open", &canonical))?;
+            .map_err(|e| fs_error("project_file_read", e, "open", &canonical))?;
         return Err((
             "ERR_FS_FILE_TOO_LARGE",
             format!("File size ({}) is greater than 2 GiB", stat.size),
@@ -332,7 +370,7 @@ fn read<F: Files>(
     let bytes = metadata
         .files
         .project_read(&root, &canonical, limit)
-        .map_err(|e| fs_error(e, "open", &canonical))?;
+        .map_err(|e| fs_error("project_file_read", e, "open", &canonical))?;
     let (content, encoding) = if text_field(params, "encoding").as_deref() == Some("base64") {
         (STANDARD.encode(bytes), "base64")
     } else {
@@ -434,11 +472,14 @@ fn number_from_text(text: &str) -> f64 {
     }
     text.parse().unwrap_or(f64::NAN)
 }
-fn fs_error(error: io::Error, operation: &str, path: &Path) -> Error {
+fn fs_error(method: &str, error: io::Error, operation: &str, path: &Path) -> Error {
     // NOFOLLOW detects a link installed after canonicalization. Never send that
     // request to the TS fallback, whose check/open sequence is not race-safe.
-    if error.raw_os_error() == Some(libc::ELOOP) {
+    if nofollow_loop(&error) {
         return denied(ESCAPE);
+    }
+    if let Err(error) = measured(method, &error) {
+        return error;
     }
     crate::node_io::diagnostic(&error, operation, Some(&path.to_string_lossy()))
         .unwrap_or(("NODE_IO_REQUIRED", String::new()))
@@ -450,7 +491,10 @@ fn list<F: Files>(
     query: &str,
 ) -> Result<JsValue> {
     let registered = registered(metadata, project, false)?;
-    let root = metadata.files.canonical(&registered).map_err(|_| {
+    let root = metadata.files.canonical(&registered).map_err(|e| {
+        if let Err(error) = measured("project_files_list", &e) {
+            return error;
+        }
         (
             "PROJECT_NOT_FOUND",
             format!("Project does not exist: {project}"),
@@ -459,7 +503,7 @@ fn list<F: Files>(
     if !metadata
         .files
         .project_stat(&root, &root)
-        .map_err(|e| fs_error(e, "stat", &root))?
+        .map_err(|e| fs_error("project_files_list", e, "stat", &root))?
         .0
         .directory
     {
@@ -621,7 +665,7 @@ impl<F: Files> Scan<'_, F> {
             .metadata
             .files
             .project_entries(self.root, directory)
-            .map_err(|e| fs_error(e, "scandir", directory))?;
+            .map_err(|e| fs_error("project_files_list", e, "scandir", directory))?;
         // Traversal order can affect visited symlinks and resource limits even
         // when query/includeDirs later removes these names from the result.
         let names: Vec<JsString> = children
@@ -640,8 +684,12 @@ impl<F: Files> Scan<'_, F> {
             if is_directory && EXCLUDED.contains(&name.as_str()) {
                 continue;
             }
-            let Ok(canonical) = self.metadata.files.canonical(&directory.join(&name)) else {
-                continue;
+            let canonical = match self.metadata.files.canonical(&directory.join(&name)) {
+                Ok(path) => path,
+                Err(e) => {
+                    measured("project_files_list", &e)?;
+                    continue;
+                }
             };
             let Ok(relative) = canonical.strip_prefix(self.root) else {
                 continue;
@@ -649,9 +697,12 @@ impl<F: Files> Scan<'_, F> {
             if relative.as_os_str().is_empty() {
                 continue;
             }
-            let Ok((stat, is_file)) = self.metadata.files.project_stat(self.root, &canonical)
-            else {
-                continue;
+            let (stat, is_file) = match self.metadata.files.project_stat(self.root, &canonical) {
+                Ok(stat) => stat,
+                Err(e) => {
+                    measured("project_files_list", &e)?;
+                    continue;
+                }
             };
             if !stat.directory && !is_file {
                 continue;

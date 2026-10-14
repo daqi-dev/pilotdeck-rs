@@ -1189,7 +1189,7 @@ async fn session_selection_requests_match_node_frames_with_an_independent_upstre
     assert!(count > 50);
 }
 
-struct UnknownIo;
+struct UnknownIo(i32);
 impl crate::metadata::Files for UnknownIo {
     fn entries(&self, _: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
         Err(std::io::Error::from_raw_os_error(libc::ENOENT))
@@ -1198,10 +1198,10 @@ impl crate::metadata::Files for UnknownIo {
         Err(std::io::Error::from_raw_os_error(libc::ENOENT))
     }
     fn stat(&self, _: &std::path::Path) -> std::io::Result<crate::metadata::Stat> {
-        Err(std::io::Error::from_raw_os_error(123456))
+        Err(std::io::Error::from_raw_os_error(self.0))
     }
     fn canonical(&self, _: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
-        Err(std::io::Error::from_raw_os_error(123456))
+        Err(std::io::Error::from_raw_os_error(self.0))
     }
 }
 #[tokio::test]
@@ -1209,7 +1209,7 @@ async fn unknown_errno_forwards_original_complete_frames_and_relays_ts_on_the_sa
     let metadata = crate::metadata::Metadata {
         home: "/fixture".into(),
         cwd: "/fixture".into(),
-        files: UnknownIo,
+        files: UnknownIo(123456),
     };
     let (client, downstream) = tokio::io::duplex(1024 * 1024);
     let (upstream, server) = tokio::io::duplex(1024 * 1024);
@@ -1238,6 +1238,74 @@ async fn unknown_errno_forwards_original_complete_frames_and_relays_ts_on_the_sa
         write(&mut pair.server, &response).await;
         read(&mut pair.client, &response).await;
         silent(&mut pair.server).await;
+    }
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}
+
+#[tokio::test]
+async fn mapped_but_unmeasured_project_errnos_forward_original_frames_and_relay_ts() {
+    let fixture = crate::project_files::tests::round6();
+    // EIO has a verified UVException format but no project_files source oracle.
+    // Exercise all ten fs boundaries in actual pairing, including caught ones.
+    for (index, row) in fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .step_by(5)
+        .enumerate()
+    {
+        let metadata = crate::project_files::tests::boundary_metadata(row, Some(libc::EIO));
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        let raw = row["request"]
+            .as_str()
+            .unwrap()
+            .replace("{\"type\"", "{ \"extra\": [1,2], \"type\"");
+        let request = client_frame(0x81, if index % 2 == 0 { 126 } else { 127 }, raw.as_bytes());
+        write(&mut pair.client, &request).await;
+        read(&mut pair.server, &request).await;
+        silent(&mut pair.client).await;
+        let response = server_frame(1, br#"{ "type":"response", "id":"oracle", "ok":false, "error":{"code":"TS_ORACLE","message":"owned by TS"} }"#);
+        write(&mut pair.server, &response).await;
+        read(&mut pair.client, &response).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+    }
+    // Config consumers must not inherit EIO from the shared format map either.
+    let metadata = crate::metadata::Metadata {
+        home: "/fixture".into(),
+        cwd: "/fixture".into(),
+        files: UnknownIo(libc::EIO),
+    };
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    for method in ["session_model_get", "model_catalog_list"] {
+        let raw = format!(
+            "{{ \"type\":\"request\", \"id\":\"eio\", \"method\":\"{method}\", \"params\":{{\"projectKey\":\"/fixture\",\"sessionKey\":\"web:eio\"}}, \"extra\": [1,2] }}"
+        );
+        let request = client_frame(0x81, 127, raw.as_bytes());
+        write(&mut pair.client, &request).await;
+        read(&mut pair.server, &request).await;
+        silent(&mut pair.client).await;
+        let response = server_frame(
+            1,
+            br#"{"type":"response","id":"eio","ok":true,"result":"TS passthrough"}"#,
+        );
+        write(&mut pair.server, &response).await;
+        read(&mut pair.client, &response).await;
     }
     pair.server.shutdown().await.unwrap();
     pair.finish().await;

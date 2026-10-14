@@ -151,13 +151,18 @@ fn execute<F: Files>(
     let path = chat_dir.join(format!("{path_session}.jsonl"));
     let mut entries = vec![];
     match metadata.files.stat(&path) {
-        Err(e) if crate::node_io::lookup(&e).is_some_and(|(code, _)| code == "ENOENT") => {}
+        Err(e)
+            if crate::node_io::lookup_for("session_model_get", &e)
+                .is_some_and(|(code, _)| code == "ENOENT") => {}
         Err(e) => return Err(io_error(&e, &path, "stat")),
         Ok(stat) if stat.size > 50 * 1024 * 1024 => {}
         Ok(_) => {
             let bytes = match metadata.files.read(&path) {
                 Ok(b) => b,
-                Err(e) if crate::node_io::lookup(&e).is_some_and(|(code, _)| code == "ENOENT") => {
+                Err(e)
+                    if crate::node_io::lookup_for("session_model_get", &e)
+                        .is_some_and(|(code, _)| code == "ENOENT") =>
+                {
                     vec![]
                 }
                 Err(e) => return Err(config::read_error(&e, &path.to_string_lossy())),
@@ -329,7 +334,9 @@ fn path_argument(v: &JsValue) -> Error {
     )
 }
 fn io_error(e: &std::io::Error, path: &std::path::Path, syscall: &str) -> Error {
-    match crate::node_io::diagnostic(e, syscall, Some(&path.to_string_lossy())) {
+    match crate::node_io::lookup_for("session_model_get", e)
+        .and_then(|_| crate::node_io::diagnostic(e, syscall, Some(&path.to_string_lossy())))
+    {
         Some((code, message)) => error(code, message),
         None => {
             let mut e = error("NODE_IO_REQUIRED", "");

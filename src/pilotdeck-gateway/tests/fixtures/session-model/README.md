@@ -188,3 +188,14 @@ env HOME="$A4_IO/isolation/home" XDG_CONFIG_HOME="$A4_IO/isolation/xdg" \
 15 项，在 observations.json 明确列出 30 个 excluded ID。每项本地请求的上游
 仍只允许 observer-fence；新增 ioRound5FixtureSha256 独立绑定第三份原件。
 前文的 wire 命令仍可使用，须非 root、28860/28861 空闲、全新输出目录。
+
+
+## 第 6 轮：显式 method errno 白名单
+
+`session_model_get` 的本地 errno 集合为 ENOENT/EACCES/ENOTDIR/EISDIR/
+ENAMETOOLONG/ELOOP，均来自第 4/5 轮生产原件；已有 73 项 RPC/loader 原件
+保持原字节。完整 libuv 格式表不再隐式授权其余 errno。config 共同消费面
+（包括 model_catalog_list）沿相同六项准入，既有吞错/包装语义不变。
+11 个 fs 边界的必跑转发控制从三种未知错误扩成所有「已映射但无 method
+原件」的 errno，加 EDQUOT、123456 和无 errno 错误；实际 pairing 另验证
+EIO 的原始帧转发与 TS 回包透传。白名单与生产原件观测集合相等有独立断言。

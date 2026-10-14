@@ -292,7 +292,11 @@ fn unknown_errno_forwards_entire_session_and_catalog_requests_at_every_fs_bounda
             if target == "lock" && stat {
                 continue;
             }
-            for errno in [Some(123456), Some(libc::EDQUOT), None] {
+            for errno in crate::node_io::unmeasured_errnos("session_model_get")
+                .into_iter()
+                .map(Some)
+                .chain([None])
+            {
                 let m = snapshot(row);
                 let m = Metadata {
                     home: m.home,

@@ -1,0 +1,5920 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "platform": "darwin",
+  "uid": 502,
+  "sourceSha256": {
+    "read": "56d52eeb93660b6d442150459067297e49478066b4857e0c3ef370b892b4ce2c",
+    "list": "b004f655300aa2e67b6643cd46d5effa221b93f2efe253d3847bd20890bfd1f1"
+  },
+  "isolation": {
+    "HOME": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m6/_tmp/round6/oracle-mapped/isolation/home",
+    "XDG_CONFIG_HOME": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m6/_tmp/round6/oracle-mapped/isolation/xdg",
+    "XDG_CACHE_HOME": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m6/_tmp/round6/oracle-mapped/isolation/xdg",
+    "XDG_DATA_HOME": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m6/_tmp/round6/oracle-mapped/isolation/xdg",
+    "TMPDIR": "/Users/da/ws/pilotdeck-rs/_build/wt-a4m6/_tmp/round6/oracle-mapped/isolation/tmp"
+  },
+  "cases": [
+    {
+      "method": "project_files_list",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376409.9895,
+          "ctime_ms": 1792006376410.241,
+          "mtime_ms": 1792006376410.241,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376410.0374,
+          "ctime_ms": 1792006376410.1016,
+          "mtime_ms": 1792006376410.1016,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376410.1003,
+          "ctime_ms": 1792006376410.1675,
+          "mtime_ms": 1792006376410.1675,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376410.1648,
+          "ctime_ms": 1792006376410.3506,
+          "mtime_ms": 1792006376410.3506,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376410.3467,
+          "ctime_ms": 1792006376410.399,
+          "mtime_ms": 1792006376410.399,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376410.239,
+          "ctime_ms": 1792006376410.5942,
+          "mtime_ms": 1792006376410.5942,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376410.5005,
+          "ctime_ms": 1792006376410.526,
+          "mtime_ms": 1792006376410.526,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376410.5925,
+          "ctime_ms": 1792006376410.5925,
+          "mtime_ms": 1792006376410.5925,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "realpath",
+          "message": "ENAMETOOLONG: name too long, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-0\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-0\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Project does not exist: /fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376413.91,
+          "ctime_ms": 1792006376414.1543,
+          "mtime_ms": 1792006376414.1543,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376413.9744,
+          "ctime_ms": 1792006376414.0376,
+          "mtime_ms": 1792006376414.0376,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376414.0312,
+          "ctime_ms": 1792006376414.1038,
+          "mtime_ms": 1792006376414.1038,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376414.1025,
+          "ctime_ms": 1792006376414.225,
+          "mtime_ms": 1792006376414.225,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376414.221,
+          "ctime_ms": 1792006376414.2537,
+          "mtime_ms": 1792006376414.2537,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376414.1533,
+          "ctime_ms": 1792006376414.4077,
+          "mtime_ms": 1792006376414.4077,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376414.323,
+          "ctime_ms": 1792006376414.3472,
+          "mtime_ms": 1792006376414.3472,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376414.406,
+          "ctime_ms": 1792006376414.406,
+          "mtime_ms": 1792006376414.406,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "realpath",
+          "message": "ELOOP: too many symbolic links encountered, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-1\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-1\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Project does not exist: /fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376416.7637,
+          "ctime_ms": 1792006376416.9944,
+          "mtime_ms": 1792006376416.9944,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376416.8096,
+          "ctime_ms": 1792006376416.8696,
+          "mtime_ms": 1792006376416.8696,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376416.8682,
+          "ctime_ms": 1792006376416.9312,
+          "mtime_ms": 1792006376416.9312,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376416.9297,
+          "ctime_ms": 1792006376417.067,
+          "mtime_ms": 1792006376417.067,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376417.0654,
+          "ctime_ms": 1792006376417.0947,
+          "mtime_ms": 1792006376417.0947,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376416.9927,
+          "ctime_ms": 1792006376417.2432,
+          "mtime_ms": 1792006376417.2432,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376417.1567,
+          "ctime_ms": 1792006376417.1792,
+          "mtime_ms": 1792006376417.1792,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376417.2417,
+          "ctime_ms": 1792006376417.2417,
+          "mtime_ms": 1792006376417.2417,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "realpath",
+          "message": "EACCES: permission denied, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-2\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-2\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Project does not exist: /fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376418.5574,
+          "ctime_ms": 1792006376418.7954,
+          "mtime_ms": 1792006376418.7954,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376418.6155,
+          "ctime_ms": 1792006376418.6768,
+          "mtime_ms": 1792006376418.6768,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376418.675,
+          "ctime_ms": 1792006376418.7327,
+          "mtime_ms": 1792006376418.7327,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376418.7314,
+          "ctime_ms": 1792006376418.8796,
+          "mtime_ms": 1792006376418.8796,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376418.8733,
+          "ctime_ms": 1792006376418.9097,
+          "mtime_ms": 1792006376418.9097,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376418.7913,
+          "ctime_ms": 1792006376419.0564,
+          "mtime_ms": 1792006376419.0564,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376418.9685,
+          "ctime_ms": 1792006376418.999,
+          "mtime_ms": 1792006376418.999,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376419.054,
+          "ctime_ms": 1792006376419.054,
+          "mtime_ms": 1792006376419.054,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "realpath",
+          "message": "ENOENT: no such file or directory, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-3\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-3\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Project does not exist: /fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376420.397,
+          "ctime_ms": 1792006376420.659,
+          "mtime_ms": 1792006376420.659,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376420.453,
+          "ctime_ms": 1792006376420.5066,
+          "mtime_ms": 1792006376420.5066,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376420.5051,
+          "ctime_ms": 1792006376420.57,
+          "mtime_ms": 1792006376420.57,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376420.5686,
+          "ctime_ms": 1792006376420.7234,
+          "mtime_ms": 1792006376420.7234,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376420.722,
+          "ctime_ms": 1792006376420.7527,
+          "mtime_ms": 1792006376420.7527,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376420.6575,
+          "ctime_ms": 1792006376420.8901,
+          "mtime_ms": 1792006376420.8901,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376420.812,
+          "ctime_ms": 1792006376420.8352,
+          "mtime_ms": 1792006376420.8352,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376420.8887,
+          "ctime_ms": 1792006376420.8887,
+          "mtime_ms": 1792006376420.8887,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "realpath",
+          "message": "ENOTDIR: not a directory, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-4\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-4\",\"ok\":false,\"error\":{\"code\":\"PROJECT_NOT_FOUND\",\"message\":\"Project does not exist: /fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-stat",
+      "operation": "stat",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376422.4556,
+          "ctime_ms": 1792006376422.6614,
+          "mtime_ms": 1792006376422.6614,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376422.5083,
+          "ctime_ms": 1792006376422.56,
+          "mtime_ms": 1792006376422.56,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376422.5588,
+          "ctime_ms": 1792006376422.6106,
+          "mtime_ms": 1792006376422.6106,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376422.6094,
+          "ctime_ms": 1792006376422.7146,
+          "mtime_ms": 1792006376422.7146,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376422.7136,
+          "ctime_ms": 1792006376422.7358,
+          "mtime_ms": 1792006376422.7358,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376422.6602,
+          "ctime_ms": 1792006376422.876,
+          "mtime_ms": 1792006376422.876,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376422.7905,
+          "ctime_ms": 1792006376422.815,
+          "mtime_ms": 1792006376422.815,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376422.8748,
+          "ctime_ms": 1792006376422.8748,
+          "mtime_ms": 1792006376422.8748,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "stat",
+          "message": "ENAMETOOLONG: name too long, stat '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-5\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-5\",\"ok\":false,\"error\":{\"code\":\"ENAMETOOLONG\",\"message\":\"ENAMETOOLONG: name too long, stat '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-stat",
+      "operation": "stat",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376424.5742,
+          "ctime_ms": 1792006376424.8264,
+          "mtime_ms": 1792006376424.8264,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376424.6455,
+          "ctime_ms": 1792006376424.6948,
+          "mtime_ms": 1792006376424.6948,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376424.6936,
+          "ctime_ms": 1792006376424.758,
+          "mtime_ms": 1792006376424.758,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376424.7568,
+          "ctime_ms": 1792006376424.904,
+          "mtime_ms": 1792006376424.904,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376424.8997,
+          "ctime_ms": 1792006376424.9346,
+          "mtime_ms": 1792006376424.9346,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376424.8245,
+          "ctime_ms": 1792006376425.0818,
+          "mtime_ms": 1792006376425.0818,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376424.9976,
+          "ctime_ms": 1792006376425.0247,
+          "mtime_ms": 1792006376425.0247,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376425.0798,
+          "ctime_ms": 1792006376425.0798,
+          "mtime_ms": 1792006376425.0798,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "stat",
+          "message": "ELOOP: too many symbolic links encountered, stat '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-6\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-6\",\"ok\":false,\"error\":{\"code\":\"ELOOP\",\"message\":\"ELOOP: too many symbolic links encountered, stat '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-stat",
+      "operation": "stat",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376426.8223,
+          "ctime_ms": 1792006376427.1194,
+          "mtime_ms": 1792006376427.1194,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376426.9346,
+          "ctime_ms": 1792006376426.9946,
+          "mtime_ms": 1792006376426.9946,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376426.9937,
+          "ctime_ms": 1792006376427.058,
+          "mtime_ms": 1792006376427.058,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376427.0566,
+          "ctime_ms": 1792006376427.1726,
+          "mtime_ms": 1792006376427.1726,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376427.1711,
+          "ctime_ms": 1792006376427.1982,
+          "mtime_ms": 1792006376427.1982,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376427.1174,
+          "ctime_ms": 1792006376427.3406,
+          "mtime_ms": 1792006376427.3406,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376427.2595,
+          "ctime_ms": 1792006376427.286,
+          "mtime_ms": 1792006376427.286,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376427.3394,
+          "ctime_ms": 1792006376427.3394,
+          "mtime_ms": 1792006376427.3394,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "stat",
+          "message": "EACCES: permission denied, stat '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-7\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-7\",\"ok\":false,\"error\":{\"code\":\"EACCES\",\"message\":\"EACCES: permission denied, stat '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-stat",
+      "operation": "stat",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376428.774,
+          "ctime_ms": 1792006376428.9648,
+          "mtime_ms": 1792006376428.9648,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376428.822,
+          "ctime_ms": 1792006376428.872,
+          "mtime_ms": 1792006376428.872,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376428.8706,
+          "ctime_ms": 1792006376428.9153,
+          "mtime_ms": 1792006376428.9153,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376428.9136,
+          "ctime_ms": 1792006376429.0183,
+          "mtime_ms": 1792006376429.0183,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376429.0166,
+          "ctime_ms": 1792006376429.0469,
+          "mtime_ms": 1792006376429.0469,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376428.9634,
+          "ctime_ms": 1792006376429.199,
+          "mtime_ms": 1792006376429.199,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376429.1135,
+          "ctime_ms": 1792006376429.152,
+          "mtime_ms": 1792006376429.152,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376429.1973,
+          "ctime_ms": 1792006376429.1973,
+          "mtime_ms": 1792006376429.1973,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-8\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-8\",\"ok\":false,\"error\":{\"code\":\"ENOENT\",\"message\":\"ENOENT: no such file or directory, stat '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-stat",
+      "operation": "stat",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376430.7437,
+          "ctime_ms": 1792006376430.9998,
+          "mtime_ms": 1792006376430.9998,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376430.813,
+          "ctime_ms": 1792006376430.8777,
+          "mtime_ms": 1792006376430.8777,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376430.8755,
+          "ctime_ms": 1792006376430.947,
+          "mtime_ms": 1792006376430.947,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376430.9456,
+          "ctime_ms": 1792006376431.0732,
+          "mtime_ms": 1792006376431.0732,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 82,
+          "birth_ms": 1792006376431.07,
+          "ctime_ms": 1792006376431.1064,
+          "mtime_ms": 1792006376431.1064,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376430.9985,
+          "ctime_ms": 1792006376431.275,
+          "mtime_ms": 1792006376431.275,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376431.1814,
+          "ctime_ms": 1792006376431.2112,
+          "mtime_ms": 1792006376431.2112,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376431.2734,
+          "ctime_ms": 1792006376431.2734,
+          "mtime_ms": 1792006376431.2734,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "stat",
+          "message": "ENOTDIR: not a directory, stat '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-9\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-9\",\"ok\":false,\"error\":{\"code\":\"ENOTDIR\",\"message\":\"ENOTDIR: not a directory, stat '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376432.6885,
+          "ctime_ms": 1792006376432.9238,
+          "mtime_ms": 1792006376432.9238,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376432.751,
+          "ctime_ms": 1792006376432.8025,
+          "mtime_ms": 1792006376432.8025,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376432.8008,
+          "ctime_ms": 1792006376432.855,
+          "mtime_ms": 1792006376432.855,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376432.8506,
+          "ctime_ms": 1792006376432.9775,
+          "mtime_ms": 1792006376432.9775,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376432.9746,
+          "ctime_ms": 1792006376433.025,
+          "mtime_ms": 1792006376433.025,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376432.9216,
+          "ctime_ms": 1792006376433.1802,
+          "mtime_ms": 1792006376433.1802,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376433.092,
+          "ctime_ms": 1792006376433.124,
+          "mtime_ms": 1792006376433.124,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376433.1785,
+          "ctime_ms": 1792006376433.1785,
+          "mtime_ms": 1792006376433.1785,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "scandir",
+          "message": "ENAMETOOLONG: name too long, scandir '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-10\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-10\",\"ok\":false,\"error\":{\"code\":\"ENAMETOOLONG\",\"message\":\"ENAMETOOLONG: name too long, scandir '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376434.8845,
+          "ctime_ms": 1792006376435.0837,
+          "mtime_ms": 1792006376435.0837,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376434.9329,
+          "ctime_ms": 1792006376434.9846,
+          "mtime_ms": 1792006376434.9846,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376434.9834,
+          "ctime_ms": 1792006376435.0337,
+          "mtime_ms": 1792006376435.0337,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376435.0327,
+          "ctime_ms": 1792006376435.1416,
+          "mtime_ms": 1792006376435.1416,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376435.1384,
+          "ctime_ms": 1792006376435.164,
+          "mtime_ms": 1792006376435.164,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376435.0828,
+          "ctime_ms": 1792006376435.2913,
+          "mtime_ms": 1792006376435.2913,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376435.217,
+          "ctime_ms": 1792006376435.239,
+          "mtime_ms": 1792006376435.239,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376435.2898,
+          "ctime_ms": 1792006376435.2898,
+          "mtime_ms": 1792006376435.2898,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "scandir",
+          "message": "ELOOP: too many symbolic links encountered, scandir '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-11\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-11\",\"ok\":false,\"error\":{\"code\":\"ELOOP\",\"message\":\"ELOOP: too many symbolic links encountered, scandir '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376436.6785,
+          "ctime_ms": 1792006376436.8835,
+          "mtime_ms": 1792006376436.8835,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376436.7266,
+          "ctime_ms": 1792006376436.7825,
+          "mtime_ms": 1792006376436.7825,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376436.7812,
+          "ctime_ms": 1792006376436.834,
+          "mtime_ms": 1792006376436.834,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376436.8325,
+          "ctime_ms": 1792006376436.9377,
+          "mtime_ms": 1792006376436.9377,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376436.9358,
+          "ctime_ms": 1792006376436.9636,
+          "mtime_ms": 1792006376436.9636,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376436.882,
+          "ctime_ms": 1792006376437.1008,
+          "mtime_ms": 1792006376437.1008,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376437.018,
+          "ctime_ms": 1792006376437.0452,
+          "mtime_ms": 1792006376437.0452,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376437.0996,
+          "ctime_ms": 1792006376437.0996,
+          "mtime_ms": 1792006376437.0996,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "scandir",
+          "message": "EACCES: permission denied, scandir '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-12\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-12\",\"ok\":false,\"error\":{\"code\":\"EACCES\",\"message\":\"EACCES: permission denied, scandir '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376438.168,
+          "ctime_ms": 1792006376438.412,
+          "mtime_ms": 1792006376438.412,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376438.2256,
+          "ctime_ms": 1792006376438.2812,
+          "mtime_ms": 1792006376438.2812,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376438.28,
+          "ctime_ms": 1792006376438.3372,
+          "mtime_ms": 1792006376438.3372,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376438.336,
+          "ctime_ms": 1792006376438.4712,
+          "mtime_ms": 1792006376438.4712,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376438.4697,
+          "ctime_ms": 1792006376438.4917,
+          "mtime_ms": 1792006376438.4917,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376438.4104,
+          "ctime_ms": 1792006376438.6475,
+          "mtime_ms": 1792006376438.6475,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376438.5461,
+          "ctime_ms": 1792006376438.5825,
+          "mtime_ms": 1792006376438.5825,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376438.6448,
+          "ctime_ms": 1792006376438.6448,
+          "mtime_ms": 1792006376438.6448,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "scandir",
+          "message": "ENOENT: no such file or directory, scandir '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-13\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-13\",\"ok\":false,\"error\":{\"code\":\"ENOENT\",\"message\":\"ENOENT: no such file or directory, scandir '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "root-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376439.8867,
+          "ctime_ms": 1792006376440.0986,
+          "mtime_ms": 1792006376440.0986,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376439.943,
+          "ctime_ms": 1792006376439.9915,
+          "mtime_ms": 1792006376439.9915,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376439.9902,
+          "ctime_ms": 1792006376440.0474,
+          "mtime_ms": 1792006376440.0474,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376440.0461,
+          "ctime_ms": 1792006376440.1506,
+          "mtime_ms": 1792006376440.1506,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376440.1494,
+          "ctime_ms": 1792006376440.1746,
+          "mtime_ms": 1792006376440.1746,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376440.0972,
+          "ctime_ms": 1792006376440.2964,
+          "mtime_ms": 1792006376440.2964,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376440.2275,
+          "ctime_ms": 1792006376440.251,
+          "mtime_ms": 1792006376440.251,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376440.2952,
+          "ctime_ms": 1792006376440.2952,
+          "mtime_ms": 1792006376440.2952,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "scandir",
+          "message": "ENOTDIR: not a directory, scandir '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-14\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-14\",\"ok\":false,\"error\":{\"code\":\"ENOTDIR\",\"message\":\"ENOTDIR: not a directory, scandir '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376441.5034,
+          "ctime_ms": 1792006376441.6777,
+          "mtime_ms": 1792006376441.6777,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376441.548,
+          "ctime_ms": 1792006376441.592,
+          "mtime_ms": 1792006376441.592,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376441.5908,
+          "ctime_ms": 1792006376441.6345,
+          "mtime_ms": 1792006376441.6345,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376441.6335,
+          "ctime_ms": 1792006376441.7231,
+          "mtime_ms": 1792006376441.7231,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376441.7222,
+          "ctime_ms": 1792006376441.7454,
+          "mtime_ms": 1792006376441.7454,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376441.6765,
+          "ctime_ms": 1792006376441.8726,
+          "mtime_ms": 1792006376441.8726,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376441.7927,
+          "ctime_ms": 1792006376441.82,
+          "mtime_ms": 1792006376441.82,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376441.871,
+          "ctime_ms": 1792006376441.871,
+          "mtime_ms": 1792006376441.871,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "realpath",
+          "message": "ENAMETOOLONG: name too long, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-15\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-15\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376448.7368,
+          "ctime_ms": 1792006376448.957,
+          "mtime_ms": 1792006376448.957,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376448.794,
+          "ctime_ms": 1792006376448.8442,
+          "mtime_ms": 1792006376448.8442,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376448.843,
+          "ctime_ms": 1792006376448.9026,
+          "mtime_ms": 1792006376448.9026,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376448.8997,
+          "ctime_ms": 1792006376449.027,
+          "mtime_ms": 1792006376449.027,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376449.0227,
+          "ctime_ms": 1792006376449.0657,
+          "mtime_ms": 1792006376449.0657,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376448.9539,
+          "ctime_ms": 1792006376449.215,
+          "mtime_ms": 1792006376449.215,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376449.1318,
+          "ctime_ms": 1792006376449.1604,
+          "mtime_ms": 1792006376449.1604,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376449.2136,
+          "ctime_ms": 1792006376449.2136,
+          "mtime_ms": 1792006376449.2136,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "realpath",
+          "message": "ELOOP: too many symbolic links encountered, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-16\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-16\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376451.7134,
+          "ctime_ms": 1792006376451.9124,
+          "mtime_ms": 1792006376451.9124,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376451.7656,
+          "ctime_ms": 1792006376451.8157,
+          "mtime_ms": 1792006376451.8157,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376451.8142,
+          "ctime_ms": 1792006376451.8623,
+          "mtime_ms": 1792006376451.8623,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376451.861,
+          "ctime_ms": 1792006376451.9658,
+          "mtime_ms": 1792006376451.9658,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376451.9624,
+          "ctime_ms": 1792006376451.9985,
+          "mtime_ms": 1792006376451.9985,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376451.9106,
+          "ctime_ms": 1792006376452.1418,
+          "mtime_ms": 1792006376452.1418,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376452.0635,
+          "ctime_ms": 1792006376452.0854,
+          "mtime_ms": 1792006376452.0854,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376452.139,
+          "ctime_ms": 1792006376452.139,
+          "mtime_ms": 1792006376452.139,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "realpath",
+          "message": "EACCES: permission denied, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-17\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-17\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376453.206,
+          "ctime_ms": 1792006376453.4167,
+          "mtime_ms": 1792006376453.4167,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376453.261,
+          "ctime_ms": 1792006376453.3135,
+          "mtime_ms": 1792006376453.3135,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376453.312,
+          "ctime_ms": 1792006376453.3633,
+          "mtime_ms": 1792006376453.3633,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376453.362,
+          "ctime_ms": 1792006376453.4785,
+          "mtime_ms": 1792006376453.4785,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376453.477,
+          "ctime_ms": 1792006376453.5032,
+          "mtime_ms": 1792006376453.5032,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376453.4153,
+          "ctime_ms": 1792006376453.6423,
+          "mtime_ms": 1792006376453.6423,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376453.5596,
+          "ctime_ms": 1792006376453.5896,
+          "mtime_ms": 1792006376453.5896,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376453.6409,
+          "ctime_ms": 1792006376453.6409,
+          "mtime_ms": 1792006376453.6409,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "realpath",
+          "message": "ENOENT: no such file or directory, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-18\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-18\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376454.9294,
+          "ctime_ms": 1792006376455.1797,
+          "mtime_ms": 1792006376455.1797,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376454.9795,
+          "ctime_ms": 1792006376455.0625,
+          "mtime_ms": 1792006376455.0625,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376455.0613,
+          "ctime_ms": 1792006376455.117,
+          "mtime_ms": 1792006376455.117,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376455.1157,
+          "ctime_ms": 1792006376455.244,
+          "mtime_ms": 1792006376455.244,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376455.241,
+          "ctime_ms": 1792006376455.2732,
+          "mtime_ms": 1792006376455.2732,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376455.178,
+          "ctime_ms": 1792006376455.409,
+          "mtime_ms": 1792006376455.409,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376455.3276,
+          "ctime_ms": 1792006376455.3513,
+          "mtime_ms": 1792006376455.3513,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376455.4075,
+          "ctime_ms": 1792006376455.4075,
+          "mtime_ms": 1792006376455.4075,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "realpath",
+          "message": "ENOTDIR: not a directory, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-19\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-19\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376457.1345,
+          "ctime_ms": 1792006376457.3284,
+          "mtime_ms": 1792006376457.3284,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376457.184,
+          "ctime_ms": 1792006376457.2322,
+          "mtime_ms": 1792006376457.2322,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376457.231,
+          "ctime_ms": 1792006376457.2793,
+          "mtime_ms": 1792006376457.2793,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376457.2778,
+          "ctime_ms": 1792006376457.376,
+          "mtime_ms": 1792006376457.376,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376457.375,
+          "ctime_ms": 1792006376457.397,
+          "mtime_ms": 1792006376457.397,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376457.327,
+          "ctime_ms": 1792006376457.5103,
+          "mtime_ms": 1792006376457.5103,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376457.4443,
+          "ctime_ms": 1792006376457.4626,
+          "mtime_ms": 1792006376457.4626,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376457.5088,
+          "ctime_ms": 1792006376457.5088,
+          "mtime_ms": 1792006376457.5088,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "stat",
+          "message": "ENAMETOOLONG: name too long, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-20\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-20\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376458.8782,
+          "ctime_ms": 1792006376459.0999,
+          "mtime_ms": 1792006376459.0999,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376458.9321,
+          "ctime_ms": 1792006376458.9854,
+          "mtime_ms": 1792006376458.9854,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376458.984,
+          "ctime_ms": 1792006376459.048,
+          "mtime_ms": 1792006376459.048,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376459.0393,
+          "ctime_ms": 1792006376459.1523,
+          "mtime_ms": 1792006376459.1523,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376459.151,
+          "ctime_ms": 1792006376459.1777,
+          "mtime_ms": 1792006376459.1777,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376459.0984,
+          "ctime_ms": 1792006376459.3206,
+          "mtime_ms": 1792006376459.3206,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376459.2498,
+          "ctime_ms": 1792006376459.2708,
+          "mtime_ms": 1792006376459.2708,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376459.317,
+          "ctime_ms": 1792006376459.317,
+          "mtime_ms": 1792006376459.317,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "stat",
+          "message": "ELOOP: too many symbolic links encountered, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-21\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-21\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376460.6665,
+          "ctime_ms": 1792006376460.884,
+          "mtime_ms": 1792006376460.884,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376460.7173,
+          "ctime_ms": 1792006376460.769,
+          "mtime_ms": 1792006376460.769,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376460.7678,
+          "ctime_ms": 1792006376460.8213,
+          "mtime_ms": 1792006376460.8213,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376460.82,
+          "ctime_ms": 1792006376460.9348,
+          "mtime_ms": 1792006376460.9348,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376460.9333,
+          "ctime_ms": 1792006376460.955,
+          "mtime_ms": 1792006376460.955,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376460.8826,
+          "ctime_ms": 1792006376461.0842,
+          "mtime_ms": 1792006376461.0842,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376461.0017,
+          "ctime_ms": 1792006376461.0269,
+          "mtime_ms": 1792006376461.0269,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376461.081,
+          "ctime_ms": 1792006376461.081,
+          "mtime_ms": 1792006376461.081,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "stat",
+          "message": "EACCES: permission denied, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-22\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-22\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376462.0596,
+          "ctime_ms": 1792006376462.2766,
+          "mtime_ms": 1792006376462.2766,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376462.124,
+          "ctime_ms": 1792006376462.1755,
+          "mtime_ms": 1792006376462.1755,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376462.1743,
+          "ctime_ms": 1792006376462.2246,
+          "mtime_ms": 1792006376462.2246,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376462.2234,
+          "ctime_ms": 1792006376462.3323,
+          "mtime_ms": 1792006376462.3323,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376462.3308,
+          "ctime_ms": 1792006376462.358,
+          "mtime_ms": 1792006376462.358,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376462.2751,
+          "ctime_ms": 1792006376462.4863,
+          "mtime_ms": 1792006376462.4863,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376462.4138,
+          "ctime_ms": 1792006376462.4363,
+          "mtime_ms": 1792006376462.4363,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376462.4846,
+          "ctime_ms": 1792006376462.4846,
+          "mtime_ms": 1792006376462.4846,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-23\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-23\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "entry-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376463.7527,
+          "ctime_ms": 1792006376463.945,
+          "mtime_ms": 1792006376463.945,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376463.8015,
+          "ctime_ms": 1792006376463.8518,
+          "mtime_ms": 1792006376463.8518,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376463.8486,
+          "ctime_ms": 1792006376463.895,
+          "mtime_ms": 1792006376463.895,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376463.8938,
+          "ctime_ms": 1792006376463.9963,
+          "mtime_ms": 1792006376463.9963,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376463.995,
+          "ctime_ms": 1792006376464.0205,
+          "mtime_ms": 1792006376464.0205,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376463.943,
+          "ctime_ms": 1792006376464.1418,
+          "mtime_ms": 1792006376464.1418,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376464.073,
+          "ctime_ms": 1792006376464.0952,
+          "mtime_ms": 1792006376464.0952,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376464.1409,
+          "ctime_ms": 1792006376464.1409,
+          "mtime_ms": 1792006376464.1409,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "stat",
+          "message": "ENOTDIR: not a directory, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-24\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-24\",\"ok\":true,\"result\":{\"items\":[],\"projectKey\":\"/fixture/project\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "nested-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project/nested",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376465.5457,
+          "ctime_ms": 1792006376465.7979,
+          "mtime_ms": 1792006376465.7979,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376465.62,
+          "ctime_ms": 1792006376465.687,
+          "mtime_ms": 1792006376465.687,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376465.6855,
+          "ctime_ms": 1792006376465.7468,
+          "mtime_ms": 1792006376465.7468,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376465.7454,
+          "ctime_ms": 1792006376465.8474,
+          "mtime_ms": 1792006376465.8474,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376465.8462,
+          "ctime_ms": 1792006376465.8682,
+          "mtime_ms": 1792006376465.8682,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376465.7964,
+          "ctime_ms": 1792006376465.983,
+          "mtime_ms": 1792006376465.983,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376465.915,
+          "ctime_ms": 1792006376465.935,
+          "mtime_ms": 1792006376465.935,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376465.982,
+          "ctime_ms": 1792006376465.982,
+          "mtime_ms": 1792006376465.982,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "scandir",
+          "message": "ENAMETOOLONG: name too long, scandir '/fixture/project/nested'",
+          "path": "/fixture/project/nested"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-25\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-25\",\"ok\":false,\"error\":{\"code\":\"ENAMETOOLONG\",\"message\":\"ENAMETOOLONG: name too long, scandir '/fixture/project/nested'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "nested-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project/nested",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376467.289,
+          "ctime_ms": 1792006376467.503,
+          "mtime_ms": 1792006376467.503,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376467.3394,
+          "ctime_ms": 1792006376467.3906,
+          "mtime_ms": 1792006376467.3906,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376467.3894,
+          "ctime_ms": 1792006376467.4436,
+          "mtime_ms": 1792006376467.4436,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376467.4421,
+          "ctime_ms": 1792006376467.5652,
+          "mtime_ms": 1792006376467.5652,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376467.5637,
+          "ctime_ms": 1792006376467.5876,
+          "mtime_ms": 1792006376467.5876,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376467.498,
+          "ctime_ms": 1792006376467.7285,
+          "mtime_ms": 1792006376467.7285,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376467.644,
+          "ctime_ms": 1792006376467.668,
+          "mtime_ms": 1792006376467.668,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376467.7236,
+          "ctime_ms": 1792006376467.7236,
+          "mtime_ms": 1792006376467.7236,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "scandir",
+          "message": "ELOOP: too many symbolic links encountered, scandir '/fixture/project/nested'",
+          "path": "/fixture/project/nested"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-26\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-26\",\"ok\":false,\"error\":{\"code\":\"ELOOP\",\"message\":\"ELOOP: too many symbolic links encountered, scandir '/fixture/project/nested'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "nested-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project/nested",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376469.068,
+          "ctime_ms": 1792006376469.2944,
+          "mtime_ms": 1792006376469.2944,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376469.1338,
+          "ctime_ms": 1792006376469.1868,
+          "mtime_ms": 1792006376469.1868,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376469.1855,
+          "ctime_ms": 1792006376469.2388,
+          "mtime_ms": 1792006376469.2388,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376469.2378,
+          "ctime_ms": 1792006376469.3496,
+          "mtime_ms": 1792006376469.3496,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376469.3484,
+          "ctime_ms": 1792006376469.3726,
+          "mtime_ms": 1792006376469.3726,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376469.2922,
+          "ctime_ms": 1792006376469.5046,
+          "mtime_ms": 1792006376469.5046,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376469.4343,
+          "ctime_ms": 1792006376469.4563,
+          "mtime_ms": 1792006376469.4563,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376469.5037,
+          "ctime_ms": 1792006376469.5037,
+          "mtime_ms": 1792006376469.5037,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "scandir",
+          "message": "EACCES: permission denied, scandir '/fixture/project/nested'",
+          "path": "/fixture/project/nested"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-27\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-27\",\"ok\":false,\"error\":{\"code\":\"EACCES\",\"message\":\"EACCES: permission denied, scandir '/fixture/project/nested'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "nested-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project/nested",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376470.5195,
+          "ctime_ms": 1792006376470.7266,
+          "mtime_ms": 1792006376470.7266,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376470.5737,
+          "ctime_ms": 1792006376470.6262,
+          "mtime_ms": 1792006376470.6262,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376470.6248,
+          "ctime_ms": 1792006376470.6753,
+          "mtime_ms": 1792006376470.6753,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376470.674,
+          "ctime_ms": 1792006376470.7827,
+          "mtime_ms": 1792006376470.7827,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376470.781,
+          "ctime_ms": 1792006376470.8054,
+          "mtime_ms": 1792006376470.8054,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376470.725,
+          "ctime_ms": 1792006376470.9265,
+          "mtime_ms": 1792006376470.9265,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376470.8567,
+          "ctime_ms": 1792006376470.8765,
+          "mtime_ms": 1792006376470.8765,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376470.9255,
+          "ctime_ms": 1792006376470.9255,
+          "mtime_ms": 1792006376470.9255,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "scandir",
+          "message": "ENOENT: no such file or directory, scandir '/fixture/project/nested'",
+          "path": "/fixture/project/nested"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-28\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-28\",\"ok\":false,\"error\":{\"code\":\"ENOENT\",\"message\":\"ENOENT: no such file or directory, scandir '/fixture/project/nested'\"}}"
+    },
+    {
+      "method": "project_files_list",
+      "boundary": "nested-scandir",
+      "operation": "scandir",
+      "target": "/fixture/project/nested",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376472.263,
+          "ctime_ms": 1792006376472.474,
+          "mtime_ms": 1792006376472.474,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376472.3152,
+          "ctime_ms": 1792006376472.3647,
+          "mtime_ms": 1792006376472.3647,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376472.362,
+          "ctime_ms": 1792006376472.418,
+          "mtime_ms": 1792006376472.418,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376472.4167,
+          "ctime_ms": 1792006376472.5376,
+          "mtime_ms": 1792006376472.5376,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376472.5361,
+          "ctime_ms": 1792006376472.5627,
+          "mtime_ms": 1792006376472.5627,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376472.4722,
+          "ctime_ms": 1792006376472.7004,
+          "mtime_ms": 1792006376472.7004,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376472.6174,
+          "ctime_ms": 1792006376472.646,
+          "mtime_ms": 1792006376472.646,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376472.699,
+          "ctime_ms": 1792006376472.699,
+          "mtime_ms": 1792006376472.699,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "scandir",
+          "message": "ENOTDIR: not a directory, scandir '/fixture/project/nested'",
+          "path": "/fixture/project/nested"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-29\",\"method\":\"project_files_list\",\"params\":{\"projectKey\":\"/fixture/project\",\"query\":\"absent\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-29\",\"ok\":false,\"error\":{\"code\":\"ENOTDIR\",\"message\":\"ENOTDIR: not a directory, scandir '/fixture/project/nested'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376474.193,
+          "ctime_ms": 1792006376474.4128,
+          "mtime_ms": 1792006376474.4128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376474.2466,
+          "ctime_ms": 1792006376474.3022,
+          "mtime_ms": 1792006376474.3022,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376474.301,
+          "ctime_ms": 1792006376474.357,
+          "mtime_ms": 1792006376474.357,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376474.3557,
+          "ctime_ms": 1792006376474.4702,
+          "mtime_ms": 1792006376474.4702,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376474.4688,
+          "ctime_ms": 1792006376474.4917,
+          "mtime_ms": 1792006376474.4917,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376474.4111,
+          "ctime_ms": 1792006376474.609,
+          "mtime_ms": 1792006376474.609,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376474.5403,
+          "ctime_ms": 1792006376474.5618,
+          "mtime_ms": 1792006376474.5618,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376474.6074,
+          "ctime_ms": 1792006376474.6074,
+          "mtime_ms": 1792006376474.6074,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "realpath",
+          "message": "ENAMETOOLONG: name too long, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-30\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-30\",\"ok\":false,\"error\":{\"code\":\"ENAMETOOLONG\",\"message\":\"ENAMETOOLONG: name too long, realpath '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376475.8633,
+          "ctime_ms": 1792006376476.0728,
+          "mtime_ms": 1792006376476.0728,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376475.9133,
+          "ctime_ms": 1792006376475.9639,
+          "mtime_ms": 1792006376475.9639,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376475.9626,
+          "ctime_ms": 1792006376476.017,
+          "mtime_ms": 1792006376476.017,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376476.0154,
+          "ctime_ms": 1792006376476.13,
+          "mtime_ms": 1792006376476.13,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376476.127,
+          "ctime_ms": 1792006376476.152,
+          "mtime_ms": 1792006376476.152,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376476.0715,
+          "ctime_ms": 1792006376476.2803,
+          "mtime_ms": 1792006376476.2803,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376476.2046,
+          "ctime_ms": 1792006376476.2295,
+          "mtime_ms": 1792006376476.2295,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376476.2788,
+          "ctime_ms": 1792006376476.2788,
+          "mtime_ms": 1792006376476.2788,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "realpath",
+          "message": "ELOOP: too many symbolic links encountered, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-31\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-31\",\"ok\":false,\"error\":{\"code\":\"ELOOP\",\"message\":\"ELOOP: too many symbolic links encountered, realpath '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376478.1675,
+          "ctime_ms": 1792006376478.398,
+          "mtime_ms": 1792006376478.398,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376478.237,
+          "ctime_ms": 1792006376478.2944,
+          "mtime_ms": 1792006376478.2944,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376478.293,
+          "ctime_ms": 1792006376478.346,
+          "mtime_ms": 1792006376478.346,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376478.3447,
+          "ctime_ms": 1792006376478.4421,
+          "mtime_ms": 1792006376478.4421,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376478.4407,
+          "ctime_ms": 1792006376478.4648,
+          "mtime_ms": 1792006376478.4648,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376478.3953,
+          "ctime_ms": 1792006376478.5903,
+          "mtime_ms": 1792006376478.5903,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376478.516,
+          "ctime_ms": 1792006376478.5376,
+          "mtime_ms": 1792006376478.5376,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376478.5881,
+          "ctime_ms": 1792006376478.5881,
+          "mtime_ms": 1792006376478.5881,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "realpath",
+          "message": "EACCES: permission denied, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-32\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-32\",\"ok\":false,\"error\":{\"code\":\"EACCES\",\"message\":\"EACCES: permission denied, realpath '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376479.5977,
+          "ctime_ms": 1792006376479.7925,
+          "mtime_ms": 1792006376479.7925,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376479.65,
+          "ctime_ms": 1792006376479.6953,
+          "mtime_ms": 1792006376479.6953,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376479.694,
+          "ctime_ms": 1792006376479.7454,
+          "mtime_ms": 1792006376479.7454,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376479.7441,
+          "ctime_ms": 1792006376479.846,
+          "mtime_ms": 1792006376479.846,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376479.8447,
+          "ctime_ms": 1792006376479.873,
+          "mtime_ms": 1792006376479.873,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376479.7905,
+          "ctime_ms": 1792006376479.9927,
+          "mtime_ms": 1792006376479.9927,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376479.9263,
+          "ctime_ms": 1792006376479.9502,
+          "mtime_ms": 1792006376479.9502,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376479.9917,
+          "ctime_ms": 1792006376479.9917,
+          "mtime_ms": 1792006376479.9917,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "realpath",
+          "message": "ENOENT: no such file or directory, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-33\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-33\",\"ok\":false,\"error\":{\"code\":\"ENOENT\",\"message\":\"ENOENT: no such file or directory, realpath '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "root-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376481.107,
+          "ctime_ms": 1792006376481.3528,
+          "mtime_ms": 1792006376481.3528,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376481.1707,
+          "ctime_ms": 1792006376481.2312,
+          "mtime_ms": 1792006376481.2312,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376481.2295,
+          "ctime_ms": 1792006376481.296,
+          "mtime_ms": 1792006376481.296,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376481.2935,
+          "ctime_ms": 1792006376481.4265,
+          "mtime_ms": 1792006376481.4265,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376481.4253,
+          "ctime_ms": 1792006376481.4573,
+          "mtime_ms": 1792006376481.4573,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376481.3503,
+          "ctime_ms": 1792006376481.6304,
+          "mtime_ms": 1792006376481.6304,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376481.531,
+          "ctime_ms": 1792006376481.5732,
+          "mtime_ms": 1792006376481.5732,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376481.628,
+          "ctime_ms": 1792006376481.628,
+          "mtime_ms": 1792006376481.628,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "realpath",
+          "message": "ENOTDIR: not a directory, realpath '/fixture/project'",
+          "path": "/fixture/project"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-34\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-34\",\"ok\":false,\"error\":{\"code\":\"ENOTDIR\",\"message\":\"ENOTDIR: not a directory, realpath '/fixture/project'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376482.984,
+          "ctime_ms": 1792006376483.168,
+          "mtime_ms": 1792006376483.168,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376483.0232,
+          "ctime_ms": 1792006376483.0642,
+          "mtime_ms": 1792006376483.0642,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376483.063,
+          "ctime_ms": 1792006376483.1155,
+          "mtime_ms": 1792006376483.1155,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376483.114,
+          "ctime_ms": 1792006376483.218,
+          "mtime_ms": 1792006376483.218,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376483.2168,
+          "ctime_ms": 1792006376483.24,
+          "mtime_ms": 1792006376483.24,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376483.1667,
+          "ctime_ms": 1792006376483.3853,
+          "mtime_ms": 1792006376483.3853,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376483.2969,
+          "ctime_ms": 1792006376483.3242,
+          "mtime_ms": 1792006376483.3242,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376483.3809,
+          "ctime_ms": 1792006376483.3809,
+          "mtime_ms": 1792006376483.3809,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "realpath",
+          "message": "ENAMETOOLONG: name too long, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-35\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-35\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376484.7085,
+          "ctime_ms": 1792006376484.9204,
+          "mtime_ms": 1792006376484.9204,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376484.758,
+          "ctime_ms": 1792006376484.8103,
+          "mtime_ms": 1792006376484.8103,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376484.8071,
+          "ctime_ms": 1792006376484.8586,
+          "mtime_ms": 1792006376484.8586,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376484.8574,
+          "ctime_ms": 1792006376484.9778,
+          "mtime_ms": 1792006376484.9778,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376484.9763,
+          "ctime_ms": 1792006376485.0022,
+          "mtime_ms": 1792006376485.0022,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376484.9153,
+          "ctime_ms": 1792006376485.1267,
+          "mtime_ms": 1792006376485.1267,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376485.059,
+          "ctime_ms": 1792006376485.0825,
+          "mtime_ms": 1792006376485.0825,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376485.1255,
+          "ctime_ms": 1792006376485.1255,
+          "mtime_ms": 1792006376485.1255,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "realpath",
+          "message": "ELOOP: too many symbolic links encountered, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-36\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-36\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376487.148,
+          "ctime_ms": 1792006376487.4185,
+          "mtime_ms": 1792006376487.4185,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376487.2083,
+          "ctime_ms": 1792006376487.277,
+          "mtime_ms": 1792006376487.277,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376487.2756,
+          "ctime_ms": 1792006376487.3467,
+          "mtime_ms": 1792006376487.3467,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376487.3452,
+          "ctime_ms": 1792006376487.476,
+          "mtime_ms": 1792006376487.476,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376487.4746,
+          "ctime_ms": 1792006376487.505,
+          "mtime_ms": 1792006376487.505,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376487.4165,
+          "ctime_ms": 1792006376487.6348,
+          "mtime_ms": 1792006376487.6348,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376487.5671,
+          "ctime_ms": 1792006376487.5872,
+          "mtime_ms": 1792006376487.5872,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376487.6333,
+          "ctime_ms": 1792006376487.6333,
+          "mtime_ms": 1792006376487.6333,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "realpath",
+          "message": "EACCES: permission denied, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-37\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-37\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376488.63,
+          "ctime_ms": 1792006376488.8472,
+          "mtime_ms": 1792006376488.8472,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376488.681,
+          "ctime_ms": 1792006376488.7341,
+          "mtime_ms": 1792006376488.7341,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376488.733,
+          "ctime_ms": 1792006376488.7861,
+          "mtime_ms": 1792006376488.7861,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376488.7847,
+          "ctime_ms": 1792006376488.9075,
+          "mtime_ms": 1792006376488.9075,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376488.906,
+          "ctime_ms": 1792006376488.934,
+          "mtime_ms": 1792006376488.934,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376488.8418,
+          "ctime_ms": 1792006376489.0657,
+          "mtime_ms": 1792006376489.0657,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376488.9873,
+          "ctime_ms": 1792006376489.0117,
+          "mtime_ms": 1792006376489.0117,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376489.0618,
+          "ctime_ms": 1792006376489.0618,
+          "mtime_ms": 1792006376489.0618,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "realpath",
+          "message": "ENOENT: no such file or directory, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-38\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-38\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-realpath",
+      "operation": "realpath",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376490.4102,
+          "ctime_ms": 1792006376490.608,
+          "mtime_ms": 1792006376490.608,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376490.4575,
+          "ctime_ms": 1792006376490.5042,
+          "mtime_ms": 1792006376490.5042,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376490.503,
+          "ctime_ms": 1792006376490.5566,
+          "mtime_ms": 1792006376490.5566,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376490.5537,
+          "ctime_ms": 1792006376490.6663,
+          "mtime_ms": 1792006376490.6663,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376490.6648,
+          "ctime_ms": 1792006376490.7004,
+          "mtime_ms": 1792006376490.7004,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376490.6062,
+          "ctime_ms": 1792006376490.833,
+          "mtime_ms": 1792006376490.833,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376490.757,
+          "ctime_ms": 1792006376490.7837,
+          "mtime_ms": 1792006376490.7837,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376490.8313,
+          "ctime_ms": 1792006376490.8313,
+          "mtime_ms": 1792006376490.8313,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "realpath",
+          "message": "ENOTDIR: not a directory, realpath '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-39\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-39\",\"ok\":false,\"error\":{\"code\":\"PATH_NOT_ALLOWED\",\"message\":\"File path resolves outside the project workspace.\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376492.2666,
+          "ctime_ms": 1792006376492.5198,
+          "mtime_ms": 1792006376492.5198,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376492.3335,
+          "ctime_ms": 1792006376492.3967,
+          "mtime_ms": 1792006376492.3967,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376492.3953,
+          "ctime_ms": 1792006376492.4504,
+          "mtime_ms": 1792006376492.4504,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376492.4482,
+          "ctime_ms": 1792006376492.5813,
+          "mtime_ms": 1792006376492.5813,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376492.5796,
+          "ctime_ms": 1792006376492.605,
+          "mtime_ms": 1792006376492.605,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376492.5183,
+          "ctime_ms": 1792006376492.7627,
+          "mtime_ms": 1792006376492.7627,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376492.6804,
+          "ctime_ms": 1792006376492.704,
+          "mtime_ms": 1792006376492.704,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376492.758,
+          "ctime_ms": 1792006376492.758,
+          "mtime_ms": 1792006376492.758,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "stat",
+          "message": "ENAMETOOLONG: name too long, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-40\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-40\",\"ok\":true,\"result\":null}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376494.1394,
+          "ctime_ms": 1792006376494.3772,
+          "mtime_ms": 1792006376494.3772,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376494.1968,
+          "ctime_ms": 1792006376494.258,
+          "mtime_ms": 1792006376494.258,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376494.2546,
+          "ctime_ms": 1792006376494.3162,
+          "mtime_ms": 1792006376494.3162,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376494.3137,
+          "ctime_ms": 1792006376494.43,
+          "mtime_ms": 1792006376494.43,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376494.4285,
+          "ctime_ms": 1792006376494.4556,
+          "mtime_ms": 1792006376494.4556,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376494.371,
+          "ctime_ms": 1792006376494.589,
+          "mtime_ms": 1792006376494.589,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376494.5122,
+          "ctime_ms": 1792006376494.537,
+          "mtime_ms": 1792006376494.537,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376494.587,
+          "ctime_ms": 1792006376494.587,
+          "mtime_ms": 1792006376494.587,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "stat",
+          "message": "ELOOP: too many symbolic links encountered, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-41\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-41\",\"ok\":true,\"result\":null}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376495.835,
+          "ctime_ms": 1792006376496.0413,
+          "mtime_ms": 1792006376496.0413,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376495.8882,
+          "ctime_ms": 1792006376495.939,
+          "mtime_ms": 1792006376495.939,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376495.9377,
+          "ctime_ms": 1792006376495.9922,
+          "mtime_ms": 1792006376495.9922,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376495.991,
+          "ctime_ms": 1792006376496.0952,
+          "mtime_ms": 1792006376496.0952,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376496.0942,
+          "ctime_ms": 1792006376496.1218,
+          "mtime_ms": 1792006376496.1218,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376496.0398,
+          "ctime_ms": 1792006376496.2695,
+          "mtime_ms": 1792006376496.2695,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376496.1772,
+          "ctime_ms": 1792006376496.2124,
+          "mtime_ms": 1792006376496.2124,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376496.2678,
+          "ctime_ms": 1792006376496.2678,
+          "mtime_ms": 1792006376496.2678,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "stat",
+          "message": "EACCES: permission denied, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-42\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-42\",\"ok\":true,\"result\":null}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376497.25,
+          "ctime_ms": 1792006376497.4556,
+          "mtime_ms": 1792006376497.4556,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376497.2998,
+          "ctime_ms": 1792006376497.3489,
+          "mtime_ms": 1792006376497.3489,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376497.3477,
+          "ctime_ms": 1792006376497.3982,
+          "mtime_ms": 1792006376497.3982,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376497.3965,
+          "ctime_ms": 1792006376497.5044,
+          "mtime_ms": 1792006376497.5044,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376497.5032,
+          "ctime_ms": 1792006376497.5325,
+          "mtime_ms": 1792006376497.5325,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376497.45,
+          "ctime_ms": 1792006376497.6514,
+          "mtime_ms": 1792006376497.6514,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376497.5825,
+          "ctime_ms": 1792006376497.605,
+          "mtime_ms": 1792006376497.605,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376497.6475,
+          "ctime_ms": 1792006376497.6475,
+          "mtime_ms": 1792006376497.6475,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-43\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-43\",\"ok\":true,\"result\":null}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-stat",
+      "operation": "stat",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376498.7744,
+          "ctime_ms": 1792006376498.9746,
+          "mtime_ms": 1792006376498.9746,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376498.829,
+          "ctime_ms": 1792006376498.88,
+          "mtime_ms": 1792006376498.88,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376498.8787,
+          "ctime_ms": 1792006376498.9326,
+          "mtime_ms": 1792006376498.9326,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376498.9314,
+          "ctime_ms": 1792006376499.0334,
+          "mtime_ms": 1792006376499.0334,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376499.032,
+          "ctime_ms": 1792006376499.054,
+          "mtime_ms": 1792006376499.054,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376498.9734,
+          "ctime_ms": 1792006376499.1975,
+          "mtime_ms": 1792006376499.1975,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376499.1157,
+          "ctime_ms": 1792006376499.1394,
+          "mtime_ms": 1792006376499.1394,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376499.1958,
+          "ctime_ms": 1792006376499.1958,
+          "mtime_ms": 1792006376499.1958,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "stat",
+          "message": "ENOTDIR: not a directory, stat '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-44\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-44\",\"ok\":true,\"result\":null}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-open",
+      "operation": "open",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376500.6152,
+          "ctime_ms": 1792006376500.8445,
+          "mtime_ms": 1792006376500.8445,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376500.6804,
+          "ctime_ms": 1792006376500.7383,
+          "mtime_ms": 1792006376500.7383,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376500.737,
+          "ctime_ms": 1792006376500.7917,
+          "mtime_ms": 1792006376500.7917,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376500.7903,
+          "ctime_ms": 1792006376500.9,
+          "mtime_ms": 1792006376500.9,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376500.8982,
+          "ctime_ms": 1792006376500.9236,
+          "mtime_ms": 1792006376500.9236,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376500.8428,
+          "ctime_ms": 1792006376501.0493,
+          "mtime_ms": 1792006376501.0493,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376500.9785,
+          "ctime_ms": 1792006376501.0007,
+          "mtime_ms": 1792006376501.0007,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376501.0476,
+          "ctime_ms": 1792006376501.0476,
+          "mtime_ms": 1792006376501.0476,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENAMETOOLONG",
+          "syscall": "open",
+          "message": "ENAMETOOLONG: name too long, open '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-45\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-45\",\"ok\":false,\"error\":{\"code\":\"ENAMETOOLONG\",\"message\":\"ENAMETOOLONG: name too long, open '/fixture/project/entry'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-open",
+      "operation": "open",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376502.306,
+          "ctime_ms": 1792006376502.5186,
+          "mtime_ms": 1792006376502.5186,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376502.359,
+          "ctime_ms": 1792006376502.4097,
+          "mtime_ms": 1792006376502.4097,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376502.4067,
+          "ctime_ms": 1792006376502.4604,
+          "mtime_ms": 1792006376502.4604,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376502.4592,
+          "ctime_ms": 1792006376502.5784,
+          "mtime_ms": 1792006376502.5784,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376502.5774,
+          "ctime_ms": 1792006376502.6023,
+          "mtime_ms": 1792006376502.6023,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376502.5166,
+          "ctime_ms": 1792006376502.7397,
+          "mtime_ms": 1792006376502.7397,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376502.6611,
+          "ctime_ms": 1792006376502.684,
+          "mtime_ms": 1792006376502.684,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376502.7388,
+          "ctime_ms": 1792006376502.7388,
+          "mtime_ms": 1792006376502.7388,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ELOOP",
+          "syscall": "open",
+          "message": "ELOOP: too many symbolic links encountered, open '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-46\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-46\",\"ok\":false,\"error\":{\"code\":\"ELOOP\",\"message\":\"ELOOP: too many symbolic links encountered, open '/fixture/project/entry'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-open",
+      "operation": "open",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376504.077,
+          "ctime_ms": 1792006376504.2793,
+          "mtime_ms": 1792006376504.2793,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376504.1338,
+          "ctime_ms": 1792006376504.1863,
+          "mtime_ms": 1792006376504.1863,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376504.1846,
+          "ctime_ms": 1792006376504.2354,
+          "mtime_ms": 1792006376504.2354,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376504.2341,
+          "ctime_ms": 1792006376504.3354,
+          "mtime_ms": 1792006376504.3354,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376504.334,
+          "ctime_ms": 1792006376504.3616,
+          "mtime_ms": 1792006376504.3616,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376504.278,
+          "ctime_ms": 1792006376504.492,
+          "mtime_ms": 1792006376504.492,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376504.4163,
+          "ctime_ms": 1792006376504.4414,
+          "mtime_ms": 1792006376504.4414,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376504.4897,
+          "ctime_ms": 1792006376504.4897,
+          "mtime_ms": 1792006376504.4897,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "EACCES",
+          "syscall": "open",
+          "message": "EACCES: permission denied, open '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-47\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-47\",\"ok\":false,\"error\":{\"code\":\"EACCES\",\"message\":\"EACCES: permission denied, open '/fixture/project/entry'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-open",
+      "operation": "open",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376505.578,
+          "ctime_ms": 1792006376505.811,
+          "mtime_ms": 1792006376505.811,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376505.632,
+          "ctime_ms": 1792006376505.6877,
+          "mtime_ms": 1792006376505.6877,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376505.6865,
+          "ctime_ms": 1792006376505.7483,
+          "mtime_ms": 1792006376505.7483,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376505.7468,
+          "ctime_ms": 1792006376505.879,
+          "mtime_ms": 1792006376505.879,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376505.8774,
+          "ctime_ms": 1792006376505.905,
+          "mtime_ms": 1792006376505.905,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376505.8096,
+          "ctime_ms": 1792006376506.0776,
+          "mtime_ms": 1792006376506.0776,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376505.964,
+          "ctime_ms": 1792006376506.0085,
+          "mtime_ms": 1792006376506.0085,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376506.0742,
+          "ctime_ms": 1792006376506.0742,
+          "mtime_ms": 1792006376506.0742,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOENT",
+          "syscall": "open",
+          "message": "ENOENT: no such file or directory, open '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-48\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-48\",\"ok\":false,\"error\":{\"code\":\"ENOENT\",\"message\":\"ENOENT: no such file or directory, open '/fixture/project/entry'\"}}"
+    },
+    {
+      "method": "project_file_read",
+      "boundary": "file-open",
+      "operation": "open",
+      "target": "/fixture/project/entry",
+      "cwd": "/fixture",
+      "home": "/fixture/home",
+      "root": "/fixture/project",
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376507.319,
+          "ctime_ms": 1792006376507.5469,
+          "mtime_ms": 1792006376507.5469,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376507.3823,
+          "ctime_ms": 1792006376507.435,
+          "mtime_ms": 1792006376507.435,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376507.434,
+          "ctime_ms": 1792006376507.4937,
+          "mtime_ms": 1792006376507.4937,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792006376507.4924,
+          "ctime_ms": 1792006376507.602,
+          "mtime_ms": 1792006376507.602,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "birth_ms": 1792006376507.6006,
+          "ctime_ms": 1792006376507.627,
+          "mtime_ms": 1792006376507.627,
+          "base64": "L2ZpeHR1cmUvcHJvamVjdA=="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792006376507.5454,
+          "ctime_ms": 1792006376507.7625,
+          "mtime_ms": 1792006376507.7625,
+          "entries": [
+            [
+              "entry",
+              false
+            ],
+            [
+              "nested",
+              true
+            ]
+          ]
+        },
+        "/fixture/project/entry": {
+          "directory": false,
+          "size": 6,
+          "birth_ms": 1792006376507.6814,
+          "ctime_ms": 1792006376507.7075,
+          "mtime_ms": 1792006376507.7075,
+          "base64": "aW5zaWRl"
+        },
+        "/fixture/project/nested": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792006376507.761,
+          "ctime_ms": 1792006376507.761,
+          "mtime_ms": 1792006376507.761,
+          "entries": []
+        }
+      },
+      "observed": [
+        {
+          "code": "ENOTDIR",
+          "syscall": "open",
+          "message": "ENOTDIR: not a directory, open '/fixture/project/entry'",
+          "path": "/fixture/project/entry"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"files-io-49\",\"method\":\"project_file_read\",\"params\":{\"projectKey\":\"/fixture/project\",\"path\":\"entry\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"files-io-49\",\"ok\":false,\"error\":{\"code\":\"ENOTDIR\",\"message\":\"ENOTDIR: not a directory, open '/fixture/project/entry'\"}}"
+    }
+  ]
+}

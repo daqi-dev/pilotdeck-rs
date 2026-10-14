@@ -377,17 +377,17 @@ fn exists<F: Files>(metadata: &Metadata<F>, path: &std::path::Path) -> Result<bo
     }
     match metadata.files.stat(path) {
         Ok(_) => Ok(true),
-        Err(e) if crate::node_io::lookup(&e).is_some() => Ok(false),
+        Err(e) if crate::node_io::config_lookup(&e).is_some() => Ok(false),
         Err(_) => Err(host_io_error()),
     }
 }
 fn read_hint(e: &std::io::Error, path: &str) -> Result<String, Error> {
-    Ok(crate::node_io::read_file(e, path)
+    Ok(crate::node_io::config_read_file(e, path)
         .ok_or_else(host_io_error)?
         .1)
 }
 pub(crate) fn read_error(e: &std::io::Error, path: &str) -> Error {
-    match crate::node_io::read_file(e, path) {
+    match crate::node_io::config_read_file(e, path) {
         Some((code, message)) => Error::new(code, message),
         None => host_io_error(),
     }
