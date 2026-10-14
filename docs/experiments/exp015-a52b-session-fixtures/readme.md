@@ -3,13 +3,15 @@ type: experiment
 number: "015"
 date: 2026-10-15
 title: A5.2b · 双连接、交错 close、存储故障与重启夹具
-status: 进程内实测完成；真实 sidecar G 交叉确认完成（一格）；cold-restart 与真实 WS 已由协调者实跑（WS 跨遍汇总待补，#112）
+status: 第 2 轮生产 close 时序仲裁完成；真实 sidecar G 交叉确认完成（一格）；cold-restart 与真实 WS 已由协调者实跑（WS 跨遍汇总待补，#112）
 related: [plan/005_phase-a-session-domain, experiments/exp014-a52-session-fixtures, research/008_phase-a-session-domain/gap]
 ---
 
 # A5.2b 基线受控实测
 
-**34 个子例 × k=5 = 170 次进程内测量，全部一致；4 个装置级、6 个观察副本对照均命中指定规则。真实 stdio sidecar 另做 5 次 G 路径交叉确认；原 A5.2a 装置原样回归 360 次及 9 个原有对照。** 本轮共 535 次测量、19 个对照，不含任何 Rust 对拍分数。cold-restart（2 组 × 5，结果一致）与真实 WS（15 子例 × 5 = 75 次执行完，跨遍汇总待补）已由协调者在沙箱外实跑，结果见下表；真实 Web bridge 重连仍单列为未验，不能据此关闭 D5。
+**34 个子例 × k=5 = 170 次进程内测量，全部一致；4 个装置级、6 个观察副本对照均命中指定规则。真实 stdio sidecar 另做 5 次 G 路径交叉确认；原 A5.2a 装置原样回归 360 次及 9 个原有对照。** 首轮共 535 次测量、19 个对照，不含任何 Rust 对拍分数。cold-restart（2 组 × 5，结果一致）与真实 WS（15 子例 × 5 = 75 次执行完，跨遍汇总待补）已由协调者在沙箱外实跑，结果见下表；真实 Web bridge 重连仍单列为未验，不能据此关闭 D5。
+
+**第 2 轮将旧 close 误中新 run 的结论降级为「机制存在、生产次序不可达（单会话）」：范围限定为本轮成功清理、真实 FileRunRegistry 路径。** 去掉额外 WS return 等待、保持 disconnect 同步后，单会话两种次序各 5/5 未命中新 run；多会话两种次序各 5/5 也未命中。权限/问题的四组无 hold 次序另做 20 次，原 binding/abort 结果可复现。共新增 **8 组 × 5 = 40 次**，每次通过原三面检查器；另原样回归主夹具 170 次、10 个对照。第 2 轮报告与逐次证据哈希见 [production-close-results.json](production-close-results.json)，不合并为原 535 次的首次采集。
 
 逐例摘要、完整集合、装置与证据哈希见 [results.json](results.json)。**正式采集**（预注册规则先单独提交（本 PR 第一个提交；rebase 合并会改哈希，以提交内容为准），记录为 COMMITTED_BEFORE_COLLECTION）：进程内 [`_tmp/a52b/coordinator-main/`](../../../_tmp/a52b/coordinator-main/)，sidecar [`coordinator-sidecar/`](../../../_tmp/a52b/coordinator-sidecar/)，A5.2a 回归 [`coordinator-a52a/`](../../../_tmp/a52b/coordinator-a52a/)。开发期采集 `delivery-main/` 等保留作对照：协调者用同一汇总器分别汇总两次采集，去掉 ID、时间戳、路径与哈希后**零差异**。合并后证据归档在主仓 `_tmp/archive/wt-a52b-tmp/a52b/`。
 
@@ -17,13 +19,14 @@ related: [plan/005_phase-a-session-domain, experiments/exp014-a52-session-fixtur
 
 沿用 exp014 的观察先行、三面独立、固定次序重复和失败对照方法。第一份 [预注册](../../../scripts/a5-19/preregistration-b.mjs) 在首次 B 测量前写好；30 个主例之后，为覆盖正确重绑后的 registry 分支和两个答复均在飞的分支，另在首次扩展测量前写好 [增补次序](../../../scripts/a5-19/preregistration-b-extra.mjs)。原预注册文件在采集后未修改；增补没有预填终态、改变 k 或放松规则。每次 launch/manifest 都保存规则哈希，实际 outcomes 只来自原始证据。
 
-**本 worker 按任务禁止提交。严格“先提交规则、后采集”的 Git 时序仍待协调者完成：第一提交只含两个预注册声明及 rules-b.mjs 机器检查器，随后按最终装置复采，再把装置、文档和复采结果放第二提交。** 把机器断言也纳入首提交，防止只封存说明、检查器却在采集后改变。本文当前证据是工作树先登记后采集，不冒充已完成的 Git 预提交。具体顺序、哈希和验证输出见 [`_tmp/RESULT.md`](../../../_tmp/RESULT.md)。这保留了 #105 第 3 条的边界。
+**原规则已经作为 PR #111 的第一个提交单独提交**（rebase 合并会改哈希，以提交内容为准），该提交只包含两个预注册声明和 `rules-b.mjs`；正式复采记录为 COMMITTED_BEFORE_COLLECTION，之后的提交才加入装置与报告。原文“先提交规则仍待协调者”已经过时。第 2 轮另在首次实测前写入独立 [生产时序预注册](../../../scripts/a5-19/preregistration-b-production.mjs)，原声明和检查器均未修改。协调者已按顺序执行：先单独提交这份增补声明，再用最终装置采集到 [`coordinator-production/`](../../../_tmp/a52b/coordinator-production/)（记录为 COMMITTED_BEFORE_COLLECTION），最后提交装置与报告；8 组仲裁投影（newRunHit / newRunAborted / newRunEntered / aborts）与 worker 的 `round2-production-final/` 逐项一致。具体哈希、顺序与验证见 [`_tmp/RESULT.md` 的第 2 轮](../../../_tmp/RESULT.md)。
 
 ```sh
 # worker 可运行：不 listen、不重启 gateway；每次换不存在的 output
 python3 scripts/a5-19/run-b.py --output _tmp/a52b/reproduction
 python3 scripts/a5-19/run-b.py --sidecar --output _tmp/a52b/reproduction-sidecar
 python3 scripts/a5-19/run.py --output _tmp/a52b/reproduction-a52a
+python3 scripts/a5-19/run-production-b.py --output _tmp/a52b/reproduction-production-close
 
 # 只交协调者在沙箱外运行，本轮没有执行
 python3 scripts/a5-19/run-external-b.py --coordinator --suite cold \
@@ -38,9 +41,22 @@ python3 scripts/a5-19/run-external-b.py --coordinator --suite ws --port 48789 \
 
 ## 装置与三个观察面
 
-真实链为 `GatewayWsConnection → InProcessGateway → SessionRouter → AgentSession → TurnRunner`，只有外部 loop/交互 producer 采用受控等待。两个文本 peer 各自使用真实 hello、真实生成的 connectionId/generation、同一生产 gateway 的请求分派器；没有模拟 session busy、binding 拒绝、权限 consume 或 registry 状态机。
+真实链为 `GatewayWsConnection → InProcessGateway → SessionRouter → AgentSession → TurnRunner`。两个文本 peer 各自使用真实 hello、真实生成的 connectionId/generation、同一生产 gateway 的请求分派器；没有模拟 session busy、binding 拒绝、权限 consume 或 registry 状态机。**原 close 夹具除了外部 loop 等待，还在人为加入的 gateway 方法 yield 点上等待**，原文“只有外部 loop/交互 producer 采用受控等待”不准确。
 
-- **帧面**：每连接独立保留 sendText 的原文与解码值、request id、seq、final、notification、response。FRAME_RAW 对原文逐项核验；FRAME_SEQ 对每请求核验 seq 连续及包装 final。WS final 重复承载业务终态只算包装，不当作第二个 durable 终态。此处是传输中立文本通道，close 后仍能受控投递迟到旧 binding 调用并记录 sendText；**不证明关闭的真实 TCP socket 能收到这些帧**。真实 WS cross-check 另有 GatewayServer + 网络客户端的双录面，待协调者采集。
+| 等待 / 次序点 | 性质与作用 | 适用证据 |
+|---|---|---|
+| `runtime-b.mts` 外部 loop 的 `hold` / `returned`；交互 producer 注册 pending | 替代外部 agent/model/tool producer 的受控等待；生产 AgentSession/TurnRunner 本来就异步消费 loop。两个 gate 用于保持执行/返回，非真实 provider 延迟测量 | 主夹具和第 2 轮均保留；loop 忽略 abort signal，不能据最终 completed 证明取消无效 |
+| `fixtures-b.mts:76–79`，`yield* submit(input)` 后 `await streamReturn.promise` | **人为插入 yield 点**；生产 submit 已返回，装置额外持住 WS iterator，使 `inFlightSessions.delete` 延后 | 仅原 `close/no-pending/new-turn`；第 2 轮完全去除，直接使用生产 submitTurn 方法 |
+| `fixtures-b.mts:85`，调用 disconnect 前 `await closeGate.promise` | **人为插入 yield 点**；生产 disconnect 是同步方法，不能在该方法执行前暂停并等多个 B RPC | 原 pending before-disconnect；第 2 轮改为 B 先 reconnect/resume，再 A close |
+| `fixtures-b.mts:87`，真实 disconnect 后 `await closeGate.promise` | **人为插入 yield 点**；延长返回已捕获的 preserveTurn 值，原先的同步返回被变成 Promise | 原 pending after-disconnect 和 no-pending；第 2 轮保持同步返回，记录后直接 return |
+| 生产 `GatewayWsConnection.handleClose:51–58` 的 `await disconnectInteraction`、顺序 `await abortTurn` | **生产中存在的 yield 点**；即使 disconnect 同步，调用方 await 仍有微任务切换；abort 等真实 router/fence 完成 | 第 2 轮原样保留；多会话在首个 abort drain 上等待，不改 abort 方法加 gate |
+| 真实 registry.accept / append 和 session store 的文件操作 | **生产中存在的 I/O yield 点**；FileTap 调用真实文件函数，journal/故障注入在操作内部；成功写仍有真实 commit | 原存储故障与第 2 轮；第 2 轮无 I/O 延迟注入、无文件操作之外的 hold |
+| 第 2 轮 terminal rename commit / router.endTurn 观察回调 | **同步投递探针，无新增 yield**；立即从外部 driver 发 B submit，单会话于 endTurn 发 close；不等待回调返回条件 | 用于尽早投递竞争请求，非真实网络事件自然到达的证明；endTurn/WS finally 不被持住 |
+| driver 的 journal/RPC 等待、sidecar Module callback/外部 iterator 暂停、cold 的父进程 READY | 外部 producer/consumer 或驱动器 barrier；Module RPC 是真实已有异步等待，暂停消费者是明确的外部消费次序 | 不属于 close 清理中的新增 yield；sidecar timeout callback 被显式触发，非自然 deadline 分布 |
+
+表中的 `barrier` 日志本身是同步记录；是否改变生产时序取决于相邻方法有没有额外 `await`，不能只凭日志名认定是生产等待点。20 秒 watchdog 只查挂起，不决定交错。
+
+- **帧面**：每连接独立保留 sendText 的原文与解码值、request id、seq、final、notification、response。FRAME_RAW 对原文逐项核验；FRAME_SEQ 对每请求核验 seq 连续及包装 final。WS final 重复承载业务终态只算包装，不当作第二个 durable 终态。此处是传输中立文本通道，close 后仍能受控投递迟到旧 binding 调用并记录 sendText；**不证明关闭的真实 TCP socket 能收到这些帧**。真实 WS cross-check 已由协调者采集，双录面的跨遍汇总待 #112；不覆盖本轮 close 仲裁或真 Web bridge。
 - **session 存储面**：单个真实 JsonlTranscriptWriter / JsonlSessionEventStore / JsonlSessionPersistence；在 `node:fs/promises` 的真实 appendFile/readFile 边界切 EIO。成功写仍调用原方法；部分写先真的写半段字节再抛错。独立读文件原文、解析坏行、调用真实 store.read，分别核验原文、完整 entries、成功写 journal、FIFO 与 reader diagnostics。尝试、成功调用和可被 reader 解析的行分别记录。
 - **registry 面**：显式注入生产默认类 FileRunRegistry，真实 mutationChain、文件锁、refresh、snapshot writeFile 与 rename 均执行。tap 仅作用于夹具自有路径。read/write EIO、半个临时快照、rename 前失败、真实 rename 完成后返回 EIO 分开测。故障时保留目标文件和 `.tmp` 的真实字节；再用 fresh FileRunRegistry get/events 与直接读盘核验 records/events/seq/state/revision/lastSeq/result。rename 后报错的已落盘内容不会被误删成“失败未写”。
 
@@ -70,13 +86,35 @@ permission 成功后 B 的 permission_list 从一个 pending 变成空，证明�
 
 ## 旧 close / 新 reconnect 交错
 
-| barrier 次序 | binding / 答复 | 旧 close 实际动作 | 存储 / registry | 重复 |
-|---|---|---|---|---|
-| pending permission / question；旧 close 阻塞在 disconnect **之前**，B 先 reconnect + resume + 答复 | 旧 A=false，新 B=true | 迟到 disconnect 返回 disconnected=false、preserveTurn=false；旧 close 调用无 runId 的 abort，activeRun=run | 受控 loop 忽略 abort 并由 barrier 完成，普通 transcript，registry completed/C | 每种 5/5 |
-| pending permission / question；真实 disconnect 已执行，返回值阻塞，B reconnect + resume + 答复 | 旧 A=false，新 B=true | disconnect 先捕获 preserveTurn=true，旧 close 释放后未 abort；B binding 保留 | 同上 | 每种 5/5 |
-| 无 pending；A gateway 已完成，**A WS submit return 尚被持住**；B resume + 新 submit 在飞，再释放旧 close | 新 run 接纳，旧 binding 不参与新 run 接纳 | 旧 close 的 abort.input 只有 sessionKey，实际 activeRun=new-run；新 loop 收到 abort signal | 两轮 transcript；受控 loop 仍 C，两个 registry record 均 completed/C | 5/5 |
+原受控夹具结果仍留存，不能把装置路径改写成生产发生事实。第 2 轮原样回归这五个 close 子例，均仍 5/5 复现；主装置 34 组/170 次、10 个对照全部通过。
 
-这证明特定次序下旧 close 会按 session 指向新 run，**没有证明真实模型/工具被成功取消，也没有替产品定修法**：受控 loop 特意保留 return barrier、忽略 signal，最终 completed 是该装置的观察值。旧 handle fence、interaction generation 和 gateway run 身份分别留证，未混成同一种 generation。真实 WS 关闭会丢弃对旧 socket 的发送，真实 bridge 保存/重放 binding 仍需单独测。
+| 原 barrier 次序 | 人为 hold 的影响 | binding / 旧 close 动作 | 第 2 轮核对 |
+|---|---|---|---|
+| pending permission / question；close 已进入、停在 disconnect **前**，B reconnect + resume + 答复 | 同步方法前新增 yield；让完整 B RPC 链可插入，原叙述的入场次序依赖 hold | A=false，B=true；迟到 disconnect=false、preserveTurn=false，abort 旧 run | 无 hold 的 **B reconnect/resume → A close → 答复**，两种各 5/5 得到相同 binding/abort 结果；支持结果机制，不支持原“close 已进入再暂停”次序 |
+| pending permission / question；真实 disconnect 已执行，返回值被持住，B 完成多个 RPC | 同步返回变成 Promise，扩大捕获 preserveTurn 后的窗口 | A=false，B=true；先捕获 preserveTurn=true，最终无 abort | 无 hold 的 **A close/sync disconnect → B reconnect/resume → 答复**，两种各 5/5 得到相同结果；无需延后 disconnect 返回 |
+| 无 pending；gateway 完成、**WS return 被持住**；B 新 run 在飞再放旧 close | 两处 hold 共同保留 A 的 stale inFlight 条目，并延后 close 的 abort | 无 runId 的 abort 实际 activeRun=new-run，signal 到新 loop；受控 loop 仍 C | 原例仍 5/5，但去除 hold 后单会话两种次序均 0/5 命中新 run；降级为机制证据 |
+
+### 第 2 轮生产清理时序对照
+
+入口为 [production-close-b.mts](../../../scripts/a5-19/production-close-b.mts)，独立预注册 8 组。submitTurn 使用生产原方法；disconnect 的同步日志包装调用原方法并直接返回同一值，断言返回值不是 Promise。router.begin/end、WS Set.delete 和真实 router.abort 仅同步记录，不增加等待。B 使用真实 A binding 重绑并 resume；accept 内的真实 FIFO、文件锁、写入和 rename 不绕过。无需注入 I/O 延迟即可完成所有指定次序。
+
+| 生产清理对照次序 | abortTurn 实际命中 runId | WS / registry 关键观察 | k=5 |
+|---|---|---|---|
+| 单会话：old endTurn 后同栈立即发 B 新 submit 和 A close | 每次调用时 activeRun **为空**；没有 new-run 命中 | A finally 清理先于 B beginTurn；B 实际接纳并进入新 loop，未收到 abort signal | 0/5 命中新 run |
+| 单会话：在旧终态真实 registry rename commit 就提前发 B submit，old endTurn 时 close | 每次 activeRun **为空**；没有 new-run 命中 | B accept 已排队，但真实 mutationChain / I/O 后续晚于 A finally 清理；新 loop 确实执行 | 0/5 |
+| 多会话：A first-session 排在目标前；close 等 first-run 的真实 abort drain；目标在 endTurn 发 B submit | 仅命中 **first-run** | B new-run 在首个 abort 仍等待时确实进入；目标 A inFlight 已被 WS finally 删除；close 到目标时虽 activeRun=new-run，has(session)=false，跳过 abort | 0/5 |
+| 多会话：同上，改在目标旧 terminal rename commit 提前发 B submit | 仅命中 **first-run** | 同样真实启动新 run 后才释放 first-run；close 到目标时无 stale inFlight 条目 | 0/5 |
+| permission / question：reconnect-first | 命中 **旧 run** | disconnect=false、preserveTurn=false；旧 A 答复 false、新 B true；resolve 各一次 | 每种 5/5 |
+| permission / question：close-first | **未调用 abort** | 同步 disconnect=true、preserveTurn=true；旧 A false、新 B true；resolve 各一次 | 每种 5/5 |
+
+可逐项核对的第 1 次 `terminal-commit` 证据：
+
+- [单会话 journal](../../../_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/1/timeline.ndjson)：order 53 旧终态 rename commit barrier → 54 发起 B → 59 old endTurn → 63 abort.input（activeRun 字段缺省，即无活动 run）→ 65 A WS finally delete → 73 B beginTurn(new-run)。这是新接纳未赶进清理窗口的证据。
+- [多会话 journal](../../../_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/timeline.ndjson)：81 abort first-run → 101 目标 old endTurn → 103 A WS finally delete 目标 → 110 B beginTurn(new-run) → 138 新 loop 在飞 → 153 才 disconnect 目标（activeRun=new-run，但 A inFlight 为空）→ 154 close 完成。没有针对目标的 abort.input。
+
+因此，原装置证明按 session、无 runId 的 abort 在保留 stale 条目时能指向新 run；**成功清理 / FileRunRegistry 的单会话生产次序未达到该机制，结论为「机制存在、生产次序不可达（单会话）」**。多会话实测也未命中：等待另一个会话并不足以保留目标的旧 inFlight 条目。上述是两个指定次序各 k=5 的仲裁结果，不能外推为所有 Gateway 配置和异常路径永不可达；本轮未覆盖失败/timeout 的 post-agent snapshot I/O、无 registry 配置或真实网络自然调度。同步观察回调立即投递是最早投递探针，未暂停原清理栈，也不代表真实 socket 的到达方式。
+
+受控外部 loop 忽略 signal，最终 completed 是装置行为，不能据此证明真实模型/工具取消效果。真实 WS 关闭与 Web bridge 保存/重放 binding 仍需对应证据；本轮未 listen。40 次原始三面观测与 SHA-256 在 [报告](production-close-results.json)，源文件加载前后哈希均一致。第 2 轮正式工作树采集为 [`round2-production-final/`](../../../_tmp/a52b/round2-production-final/)，原夹具回归为 [`round2-original-regression/`](../../../_tmp/a52b/round2-original-regression/)；Git 预提交后的正式采集为 [`coordinator-production/`](../../../_tmp/a52b/coordinator-production/)，结果与之逐项一致。
 
 ## 存储故障结果
 
