@@ -80,7 +80,7 @@ function unwrap(n) {
     ts.isTypeAssertionExpression(n)||ts.isAwaitExpression(n)))n=n.expression;
   return n;
 }
-const cache = new Map();
+const cache = new Map();let assemblySites=null;
 function value(n,trail=new Set()) {
   n=unwrap(n);if(!n||trail.has(n)||trail.size>30||!sources.includes(n.getSourceFile()))return [];
   if(cache.has(n))return cache.get(n);
@@ -97,15 +97,15 @@ function value(n,trail=new Set()) {
       // Parameters are resolved only through concrete constructor sites, never
       // through an interface type or a ledger-provided implementation name.
       else if(ts.isParameter(d)&&ts.isConstructorDeclaration(d.parent)) {
-        const cl=d.parent.parent;const ix=d.parent.parameters.indexOf(d);
+        const cl=d.parent.parent;const ix=d.parent.parameters.indexOf(d);let hasSite=false;
         for(const s of sites.get(name(cl))||[]) {
-          if(rel(s).startsWith('src/') && (name(cl)!=='InProcessGateway'||rel(s)==='src/cli/createLocalGateway.ts'))out.push(...v(s.arguments?.[ix]));
+          if((assemblySites===null||assemblySites.has(s))&&rel(s).startsWith('src/') && (name(cl)!=='InProcessGateway'||rel(s)==='src/cli/createLocalGateway.ts')){hasSite=true;out.push(...v(s.arguments?.[ix]));}
         }
-        if(!out.length&&d.initializer)out.push(...v(d.initializer));
+        if(hasSite&&!out.length&&d.initializer)out.push(...v(d.initializer));
       } else if(ts.isParameter(d)&&name(d.parent)==='createLocalGateway') {
         for(const sf of sources)if(rel(sf)==='src/cli/pilotdeck.ts') {
           function calls(a) {
-            if(ts.isCallExpression(a)&&a.expression.getText()==='createLocalGateway')out.push(...v(a.arguments[0]));
+            if(ts.isCallExpression(a)&&a.expression.getText()==='createLocalGateway'&&line(a)===107)out.push(...v(a.arguments[0]));
             ts.forEachChild(a,calls);
           } calls(sf);
         }
@@ -192,7 +192,10 @@ for(const [nm,c] of classes)if(errorClasses[nm]?.code) {
   const f={id:functions.length,file:rel(c),start:line(c),end:line(c,c.end),symbol:nm+'#code',class:nm,kind:'error_class',calls:[],errors:[],unknown_errors:[],literals:[],constructs:[]};
   functions.push(f);byNode.set(c,f);
 }
+const resolvedCalls=new Map();
 for(const [n,f] of byNode) {
+  f.code_expressions=[];
+  function production(a){if(a)f.code_expressions.push({expression:a.getText(),start:line(a),end:line(a,a.end)});}
   function scan(a) {
     // Nested callbacks execute within this function; their bodies are scanned,
     // but declarations of nested named functions are reached via call edges.
@@ -203,6 +206,7 @@ for(const [n,f] of byNode) {
       const nm=a.expression.getText();f.constructs.push({class:nm,file:rel(a),line:line(a)});
       if(rules.unknownError(nm,errorClasses))f.unknown_errors.push({class:nm,line:line(a)});
       if(errorClasses[nm]?.code) {
+        production(a.arguments?.[errorClasses[nm].code_argument]);
         const declaration=classes.get(nm);
         const ctor=declaration.members.find(x=>ts.isConstructorDeclaration(x)&&x.body);
         let ancestor=nm;
@@ -216,26 +220,36 @@ for(const [n,f] of byNode) {
       }
     }
     if(ts.isGetAccessor(a)&&a.name?.text==='code'&&a.body) {
-      function returns(r){if(ts.isReturnStatement(r)&&r.expression)for(const literal of rules.codeLiterals(ts,r.expression))f.errors.push({code:literal.text,line:line(literal),class:f.class});ts.forEachChild(r,returns);}
+      function returns(r){if(ts.isReturnStatement(r)&&r.expression){production(r.expression);for(const literal of rules.codeLiterals(ts,r.expression))f.errors.push({code:literal.text,line:line(literal),class:f.class});}ts.forEachChild(r,returns);}
       returns(a.body);
     }
     if(ts.isPropertyDeclaration(a)&&name(a)==='code'&&a.initializer&&ts.isStringLiteralLike(a.initializer))f.errors.push({code:a.initializer.text,line:line(a.initializer),class:f.class});
     if(ts.isBinaryExpression(a)&&a.operatorToken.kind===ts.SyntaxKind.EqualsToken&&a.left.getText()==='this.code')for(const literal of rules.codeLiterals(ts,a.right))f.errors.push({code:literal.text,line:line(literal),class:f.class});
     if(ts.isCallExpression(a)&&a.expression.kind===ts.SyntaxKind.SuperKeyword) {
       const parent=errorClasses[f.class]?.parent;
+      if(errorClasses[parent]?.code)production(a.arguments[errorClasses[parent].code_argument]);
       if(errorClasses[parent]?.code&&ts.isStringLiteralLike(a.arguments[0]))f.errors.push({code:a.arguments[0].text,line:line(a.arguments[0]),class:parent});
     }
     if(ts.isPropertyAssignment(a)&&name(a)==='code'&&ts.isStringLiteralLike(a.initializer))f.errors.push({code:a.initializer.text,line:line(a.initializer),class:'code'});
+    if((ts.isPropertyAssignment(a)||ts.isPropertyDeclaration(a))&&name(a)==='code')production(a.initializer);
+    if(ts.isBinaryExpression(a)&&a.operatorToken.kind===ts.SyntaxKind.EqualsToken&&a.left.getText()==='this.code')production(a.right);
+    if(ts.isGetAccessor(n)&&name(n)==='code'&&ts.isReturnStatement(a))production(a.expression);
     if(ts.isCallExpression(a)) {
       const expr=a.expression.getText();const targets=value(a.expression).map(x=>byNode.get(x)?.id).filter(x=>x!==undefined);
-      f.calls.push({expression:expr,line:line(a),targets:[...new Set(targets)]});
+      const call={expression:expr,line:line(a),targets:[...new Set(targets)]};
+      f.calls.push(call);resolvedCalls.set(call,a);
       const arg=a.arguments[factoryArgs[expr]];
+      if(Object.hasOwn(factoryArgs,expr))for(const target of value(a.expression))if(callable(target)) {
+        const position=target.parameters.findIndex(p=>name(p)==='code');
+        if(position>=0)production(a.arguments[position]);
+      }
       if(Object.hasOwn(factoryArgs,expr)&&arg&&ts.isStringLiteralLike(arg))f.errors.push({code:arg.text,line:line(arg),class:expr});
     }
     ts.forEachChild(a,scan);
   }
   scan(n.body||n);
-  function literals(a){if(ts.isStringLiteralLike(a))f.literals.push({value:a.text,line:line(a)});ts.forEachChild(a,literals);}
+  f.errors=f.errors.filter(e=>rules.errorCodeLiteral(e.code));
+  function literals(a){if(ts.isStringLiteralLike(a)&&rules.errorCodeLiteral(a.text))f.literals.push({value:a.text,line:line(a)});ts.forEachChild(a,literals);}
   literals(n);
 }
 const ws=sources.find(s=>rel(s)==='src/gateway/server/GatewayWsConnection.ts');
@@ -247,6 +261,66 @@ function wsMethods(n) {
   }ts.forEachChild(n,wsMethods);
 }
 wsMethods(ws);
+// Default assembly is rooted at this exact CLI call, including the concrete
+// values passed to it. Follow calls, callbacks and instance initializers; a new
+// expression elsewhere in src is not construction evidence.
+const cli=sources.find(s=>rel(s)==='src/cli/pilotdeck.ts');let boot,bootNode;
+function findBoot(n){if(ts.isCallExpression(n)&&n.expression.getText()==='createLocalGateway'&&line(n)===107){
+  if(bootNode)throw Error('Ambiguous CLI boot root');
+  bootNode=n;boot={file:rel(n),line:line(n),keys:n.arguments[0].properties.map(p=>name(p)||p.getText())};
+}ts.forEachChild(n,findBoot);}
+findBoot(cli);if(!bootNode)throw Error('CLI boot root missing');
+const defaultNodes=new Set(),defaultFunctions=new Set(),defaultSites=new Set(),pending=[bootNode];
+assemblySites=defaultSites;cache.clear();
+function enqueue(n){if(n&&sources.includes(n.getSourceFile())&&!defaultNodes.has(n))pending.push(n);}
+function assembled() {
+  while(pending.length) {
+    const node=pending.pop();if(defaultNodes.has(node))continue;defaultNodes.add(node);
+    if(byNode.has(node))defaultFunctions.add(byNode.get(node).id);
+    function inspect(a) {
+      if(a!==node&&callable(a)){if(!ts.isFunctionDeclaration(a))enqueue(a);return;}
+      if(ts.isClassDeclaration(a))return;
+      if(ts.isCallExpression(a))for(const target of value(a.expression))if(callable(target))enqueue(target);
+      if(ts.isNewExpression(a)) {
+        defaultSites.add(a);
+        for(const cl of declarations(a.expression).filter(ts.isClassDeclaration))for(const m of cl.members) {
+          if(ts.isConstructorDeclaration(m))enqueue(m);
+          else if(ts.isPropertyDeclaration(m)&&m.initializer)enqueue(m.initializer);
+        }
+      }
+      // Concrete values supplied to factories/constructors and returned in
+      // objects can include lazy provider callbacks and prebuilt CLI resources.
+      if(ts.isIdentifier(a))for(const d of declarations(a)) {
+        if(d.initializer)enqueue(d.initializer);
+        else if(callable(d))enqueue(d);
+      }
+      ts.forEachChild(a,inspect);
+    }
+    inspect(callable(node)?node.body:node);
+  }
+}
+// Discover sites monotonically. A later constructor site can resolve an earlier
+// parameter binding, so revisit the finite set until it reaches a fixed point.
+function assemblyFixedPoint() {
+  let before;
+  do {
+    before=defaultNodes.size+defaultSites.size;
+    const revisit=[...defaultNodes];defaultNodes.clear();cache.clear();pending.push(...revisit);
+    assembled();
+  } while(before!==defaultNodes.size+defaultSites.size);
+}
+assemblyFixedPoint();
+if(![...defaultSites].some(s=>s.expression.getText()==='InProcessGateway'))throw Error('CLI root does not construct InProcessGateway');
+// The constructed Gateway exposes the independently discovered RPC handlers.
+// These are runtime entry points of the root's returned instance, and include
+// lazy project/runtime construction after boot.
+for(const member of Object.values(methods))for(const [node,f] of byNode)
+  if(f.class==='InProcessGateway'&&f.symbol===member&&f.start>630)enqueue(node);
+assemblyFixedPoint();
+cache.clear();
+// Runtime route resolution uses only constructor sites admitted by the root.
+for(const [call,node] of resolvedCalls)call.targets=[...new Set(value(node.expression).map(x=>byNode.get(x)?.id).filter(x=>x!==undefined))];
+const defaultPoints=[...defaultSites].map(s=>({class:s.expression.getText(),ref:'B/'+rel(s)+':'+line(s)}));
 const routes={};
 for(const [method,member] of Object.entries(methods)) {
   const handler=functions.find(f=>f.class==='InProcessGateway'&&f.symbol===member&&f.start>630);
@@ -258,12 +332,9 @@ for(const [method,member] of Object.entries(methods)) {
     frontier=next;
   }
   const providers=[...reached].filter(([id,depth])=>depth<=2&&functions[id].class!=='InProcessGateway'&&!/Error$/.test(functions[id].class||'')).map(([id])=>id);
-  const constructors=[...new Set([...reached.keys()].map(id=>functions[id].class).filter(n=>n&&!/Error$/.test(n)))].flatMap(n=>(sites.get(n)||[]).filter(s=>rel(s).startsWith('src/')).map(s=>({class:n,ref:'B/'+rel(s)+':'+line(s)})));
+  const routeClasses=new Set([...reached.keys()].map(id=>functions[id].class).filter(n=>n&&!/Error$/.test(n)));
+  const constructors=defaultPoints.filter(p=>routeClasses.has(p.class)&&p.ref.startsWith('B/src/'));
   routes[method]={handler:handler.id,providers:[...new Set(providers)],functions:[...reached].map(([id,depth])=>({id,depth})),construction_points:constructors.sort((a,b)=>(a.class+'|'+a.ref).localeCompare(b.class+'|'+b.ref,'en'))};
 }
-// CLI boot is the definition of default. Its call's explicit object keys and
-// spread factory are independently exposed for cross-checks and documentation.
-const cli=sources.find(s=>rel(s)==='src/cli/pilotdeck.ts');let boot;
-function findBoot(n){if(ts.isCallExpression(n)&&n.expression.getText()==='createLocalGateway')boot={file:rel(n),line:line(n),keys:n.arguments[0].properties.map(p=>name(p)||p.getText())};ts.forEachChild(n,findBoot);}
-findBoot(cli);if(!boot)throw Error('CLI boot root missing');
-process.stdout.write(JSON.stringify({parser_controls:rules.controls(ts),parser:ts.version,depth:DEPTH,boot,errorClasses,functions,routes}));
+process.stdout.write(JSON.stringify({parser_controls:rules.controls(ts),parser:ts.version,depth:DEPTH,boot,errorClasses,functions,routes,
+  default_functions:[...defaultFunctions].sort((a,b)=>a-b),default_construction_points:defaultPoints}));

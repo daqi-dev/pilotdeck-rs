@@ -28,6 +28,42 @@ PROSE_REF = re.compile(r'B/[A-Za-z0-9_./-]+(?::[^\s，。；、）)\]}`]+)?')
 SOURCE_MENTION = re.compile(r'(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:tsx?|mts|mjs|js)(?![A-Za-z0-9_])'
                             r'(?::[^\s，。；、）)\]}`]+)?')
 UNCONFIGURED = {'CAPABILITY_UNAVAILABLE', 'not_configured', 'SKILL_MODULE_DISABLED', 'unsupported'}
+DYNAMIC_CODE = re.compile(r'(?:<[^<>\s]+>|N/A|ERR_[A-Z0-9]+(?:_[A-Z0-9]+)*)')
+
+
+def beyond_depth(entries, graph):
+    """Review-only full traversal; never adds required ranges or error records.
+
+    Hops are shortest call-edge distances from the actual RPC handler. Reporting
+    starts beyond the checker-owned bound and omits code names by design.
+    """
+    from collections import deque
+    result = []
+    for entry in entries:
+        route = graph['routes'].get(entry.get('method'))
+        if not route:
+            continue
+        recorded = {b.get('code') for b in entry.get('branches', {}).get('error', []) if isinstance(b, dict)}
+        reached, pending = {route['handler']: 0}, deque([route['handler']])
+        while pending:
+            fid = pending.popleft()
+            for call in graph['functions'][fid]['calls']:
+                for target in call['targets']:
+                    if target not in reached:
+                        reached[target] = reached[fid] + 1
+                        pending.append(target)
+        code_depths = {}
+        for fid, depth in reached.items():
+            if depth <= graph['depth']:
+                continue
+            for error in graph['functions'][fid]['errors']:
+                code = error['code']
+                if code not in recorded:
+                    code_depths[code] = min(depth, code_depths.get(code, depth))
+        if code_depths:
+            result.append({'method': entry['method'], 'first_hop': min(code_depths.values()),
+                           'hops': sorted(set(code_depths.values()))})
+    return sorted(result, key=lambda row: row['method'])
 CATEGORIES = {'(a)': 10, '(b)': 46, '(c)': 4, '待定': 41}
 BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 REQUIRED = {
@@ -144,6 +180,7 @@ def validate(data, baseline, inputs, graph=None):
     graph = graph if graph is not None else source_graph(baseline)
     functions = graph['functions']
     function_index = {}
+    default_classes = {p['class'] for p in graph['default_construction_points']}
     for function in functions:
         function_index.setdefault((function['file'], function['start']), []).append(function)
     automatic_count = 0
@@ -364,9 +401,18 @@ def validate(data, baseline, inputs, graph=None):
                     continue
                 expected_assembly = ('code_definition' if actual.get('kind') == 'error_class' else
                                      'automatic_default' if (actual['file'], actual['start'], actual['end']) in reached_keys else
-                                     'optional_host' if 'FileGatewayUserDialogStore' in actual['file'] else 'supplemental_review')
+                                     'optional_host' if ('FileGatewayUserDialogStore' in actual['file'] or
+                                         scope.get('role') == 'provider' and
+                                         (actual['id'] not in graph['default_functions'] or
+                                          actual['class'] and actual['class'] not in default_classes))
+                                     else 'supplemental_review')
                 if scope.get('assembly') != expected_assembly:
                     fail('default_construction', location, {'expected_assembly': expected_assembly})
+                if scope.get('optional') is True and (actual['id'] in graph['default_functions'] or
+                                                      (actual['file'], actual['start'], actual['end']) in reached_keys):
+                    fail('optional_default_scope', location, 'optional=true is forbidden on a default-reachable function')
+                if expected_assembly == 'optional_host' and scope.get('optional') is not True:
+                    fail('default_construction', location, 'provider outside default construction graph requires optional=true')
                 actual_last = actual['end']
                 key = (path, first, actual_last)
                 if key in seen_ranges:
@@ -415,6 +461,9 @@ def validate(data, baseline, inputs, graph=None):
             for j, branch in enumerate(branches.get('error', [])):
                 code = branch.get('code')
                 if branch.get('dynamic') is True:
+                    if not isinstance(code, str) or not DYNAMIC_CODE.fullmatch(code):
+                        fail('dynamic_code_shape', f'{where}.branches.error[{j}]',
+                             'dynamic code must be <placeholder>, N/A or ERR_*')
                     origin = branch.get('origin', {})
                     refs = origin.get('refs', [])
                     if not string_list(refs, True) or not isinstance(origin.get('expression'), str) or not origin['expression'].strip():
@@ -424,8 +473,12 @@ def validate(data, baseline, inputs, graph=None):
                             match = REF.fullmatch(ref)
                             if not match or not any(f['file'] == match[1] and f['start'] <= int(match[2]) <= f['end'] for f in scanned.values()):
                                 fail('dynamic_code_origin', where, 'origin outside independently scanned functions: ' + str(ref))
-                            elif origin['expression'] not in lines(match[1])[int(match[2]) - 1]:
-                                fail('dynamic_code_origin', where, 'producing expression not present at origin: ' + ref)
+                            elif not (origin['expression'] == lines(match[1])[int(match[2]) - 1].strip() or
+                                      any(p['expression'] == origin['expression'] and
+                                          p['start'] <= int(match[2]) <= p['end']
+                                          for f in scanned.values() if f['file'] == match[1]
+                                          for p in f.get('code_expressions', []))):
+                                fail('dynamic_code_origin', where, 'expression must equal the whole origin line or producing AST node: ' + ref)
                 elif code not in literals:
                     fail('invented_error_code', f'{where}.branches.error[{j}]', {'code': code})
             tags = set()
@@ -520,6 +573,7 @@ def validate(data, baseline, inputs, graph=None):
         'existing_a2_methods': sum(x.get('scenario_ids') != ['NONE'] for x in entries if isinstance(x, dict)),
         'method_function_ranges': method_function_count,
         'unique_function_ranges': len(audited_ranges),
+        'beyond_depth_review': beyond_depth(entries, graph) if not errors else [],
     }
     return errors, summary
 
@@ -530,6 +584,7 @@ def self_test(data, baseline, inputs):
     data, expansion_errors = expand(data)
     if expansion_errors:
         raise ValueError(str(expansion_errors))
+    graph = source_graph(baseline)
     cases = []
     deleted = copy.deepcopy(data)
     deleted['methods'].pop()
@@ -636,6 +691,38 @@ def self_test(data, baseline, inputs):
     no_origin = copy.deepcopy(data)
     next(b for e in no_origin['methods'] for b in e['branches']['error'] if b.get('dynamic'))['origin'] = {}
     cases.append(('dynamic_code_missing_origin', no_origin, 'dynamic_code_origin'))
+    for label, method, code, ref, expression, required in (
+        ('fake_dynamic_paren', 'update_settings', 'TOTALLY_FAKE_CODE', None, '(', 'dynamic_code_origin'),
+        ('other_method_dynamic_code', 'memory_list', 'PROJECT_DELETED', 'B/src/gateway/server/GatewayWsConnection.ts:130', 'e', 'dynamic_code_origin'),
+        ('dynamic_expression_absent', 'update_settings', '<error.code>', None, 'fabricated()', 'dynamic_code_origin'),
+        ('dynamic_partial_expression', 'memory_list', '<error.code>', 'B/src/gateway/server/GatewayWsConnection.ts:130', 'e', 'dynamic_code_origin'),
+        ('dynamic_constant_full_line', 'update_settings', 'TOTALLY_FAKE_CODE', None, None, 'dynamic_code_shape'),
+    ):
+        mutated = copy.deepcopy(data)
+        entry = next(e for e in mutated['methods'] if e['method'] == method)
+        handler = graph['functions'][graph['routes'][method]['handler']]
+        ref = ref or f"B/{handler['file']}:{handler['start']}"
+        match = REF.fullmatch(ref)
+        expression = expression if expression is not None else (baseline / match[1]).read_text().splitlines()[int(match[2]) - 1].strip()
+        entry['branches']['error'].append({'code': code, 'summary': 'dynamic negative control', 'refs': [ref],
+                                           'dynamic': True, 'origin': {'refs': [ref], 'expression': expression}})
+        cases.append((label, mutated, required))
+        if code in ('TOTALLY_FAKE_CODE', 'PROJECT_DELETED'):
+            cases.append((label + '_shape', mutated, 'dynamic_code_shape'))
+    for role in ('handler', 'provider', 'callee'):
+        mutated = copy.deepcopy(data)
+        scope = next(s for e in mutated['methods'] for s in e['source_audit']['functions']
+                     if s['role'] == role and s['assembly'] == 'automatic_default')
+        scope['optional'] = True
+        cases.append(('default_' + role + '_marked_optional', mutated, 'optional_default_scope'))
+    for code in ('object', 'string', 'function', 'AgentLoop'):
+        mutated = copy.deepcopy(data)
+        entry = next(e for e in mutated['methods'] if e['method'] == 'update_settings')
+        entry['branches']['error'].append({'code': code, 'summary': 'type/name is not an error code', 'refs': [anchor]})
+        cases.append(('non_error_literal_' + code, mutated, 'invented_error_code'))
+    mutated = copy.deepcopy(data)
+    next(s for e in mutated['methods'] for s in e['source_audit']['functions'] if s['assembly'] == 'optional_host').pop('optional')
+    cases.append(('optional_injection_missing_marker', mutated, 'default_construction'))
     if compact_data.get('format_version') == 2:
         unknown = copy.deepcopy(compact_data)
         target = next(e for e in unknown['methods'] if e['branches']['error']['groups'])
@@ -678,6 +765,19 @@ def self_test(data, baseline, inputs):
                         'observed': 'FAIL' if detected else 'PASS', 'required_error': 'duplicate_json_key',
                         'result': 'PASS' if detected else 'FAIL'})
     graph = source_graph(baseline)
+    # An existing off-root new expression must not satisfy a provider class's
+    # default construction obligation, even if the ledger repeats that point.
+    altered = copy.deepcopy(graph)
+    altered_data = copy.deepcopy(data)
+    route = altered['routes']['memory_list']
+    provider = next(altered['functions'][i] for i in route['providers'] if altered['functions'][i]['class'])
+    route['construction_points'] = [p for p in route['construction_points'] if p['class'] != provider['class']]
+    next(e for e in altered_data['methods'] if e['method'] == 'memory_list')['source_audit']['default_constructions'] = route['construction_points']
+    errors, _ = validate(altered_data, baseline, inputs, altered)
+    detected = any(e['code'] == 'default_construction' for e in errors)
+    results.append({'name': 'provider_constructor_outside_default_graph', 'expected': 'FAIL',
+                    'observed': 'FAIL' if errors else 'PASS', 'required_error': 'default_construction',
+                    'result': 'PASS' if detected else 'FAIL'})
     # This literal was extracted from a renamed, newly declared code-bearing
     # Error class by the SAME production constructor rule (ast_rules.cjs).
     renamed_code = next(c['observed_code'] for c in graph['parser_controls'] if c['name'] == 'renamed_code_error_class')
