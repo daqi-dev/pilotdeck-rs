@@ -23,10 +23,10 @@ f3fb65449e701d861ca6f3729a0f78fe4b4642201930f665160aa99051c514f1  ../../scripts/
 ed5d447d3ac2e4ba03def27645f355997be981e3d82012427f14b1f1a76870c1  ../../scripts/exp008/reconcile_routes.py
 9be0907a3e5a8c01050858a47c659cb42b68d1cb6ce835a91c3558658fb2476d  ../../scripts/exp008/run.py
 980130c241a926b0854c719210b8d1ccdbcf294f99bde3beb567a5bfda072d90  ../../scripts/exp008/vite.config.mjs
-908843bce4155de0c04c6be4f4572cc61c44cc20df53c9f939c391417cf58b38  ../../scripts/ui-server-parity/README.md
+a319053360040d2f32536f484bea655eecbcb087e766002fbc4b240abf5f9f72  ../../scripts/ui-server-parity/README.md
 268a6625899f6f4fa65e511b0ddbd4c690db1af85caa393ab41dde8f04b84f95  ../../scripts/ui-server-parity/apparatus.py
 985515952fd382a08c9766c6bd507baf0192a8499a975d4479f62fcb7dc39711  ../../scripts/ui-server-parity/benchmark_clock.py
-4fa02e24845a2e5698b071412462a930b9729047bf81e724a956cece0f4a9d3e  ../../scripts/ui-server-parity/calibrate.py
+1cf15bffffc25227355f283c688de5a3ffad2288d7e7b23eed4af9faa9f54394  ../../scripts/ui-server-parity/calibrate.py
 58f1641047497c8076ea93ed2119ffd7aa62601ff2360a99b79f1e55a2a91194  ../../scripts/ui-server-parity/calibrate.sh
 206000021604a6f45890b1a3f8bc919117843452ca08648267de9c851b03ecd6  ../../scripts/ui-server-parity/chat_driver.mjs
 1da600d1c0bf997d66564687671ee0247163ad7104da50e274877a95e886689b  ../../scripts/ui-server-parity/check_coverage.py
@@ -49,7 +49,7 @@ b45b2fff9623f7647adb14d9e1baa73c48da25a10fdbbba52f599313f728f06a  ../../scripts/
 bece605c49006c2f13f5de1a5550dc82616c5f469a0d172b164a765f5457cbd6  ../../scripts/ui-server-parity/scenarios.json
 f74dd7c3acfb8a3c44c750772f98b9af93662539ce65dbe9aea7297ce638d389  ../../scripts/ui-server-parity/snapshot.py
 03759b276dd861191b7372fb85ede5277677a6bc5db12901cb64e0d81d9f54ce  ../../scripts/ui-server-parity/summarize_ruler.py
-bb1db10e125d9731494b2a14a3dc243e14d3a3e680573d0ed733521357b64f3d  ../../scripts/ui-server-parity/test_calibrate.py
+cbd934557a8f4fabc3170417568094e0bbab37a89dbc3718f7cef3c02b5d8a1d  ../../scripts/ui-server-parity/test_calibrate.py
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
 fc253da9424d62f331749d46d1854f01aff8f3f572df1f1a9cfecc2f15d4eae3  ../../scripts/ui-server-parity/test_compare.py
 bb0911486110cae9fd91394a8f01c37613b73ba42bf38c8649f8db3fc1bf7957  ../../scripts/ui-server-parity/test_coverage.py

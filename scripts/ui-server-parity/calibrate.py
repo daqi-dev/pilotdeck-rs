@@ -81,12 +81,31 @@ def utc_day():
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def size(paths):
+def size(paths, *, runner=None):
     paths = [str(p) for p in paths if p.exists()]
     if not paths:
         return 0
-    return sum(int(line.split()[0]) * 1024 for line in
-               subprocess.check_output(['du', '-sk', *paths], text=True).splitlines())
+    runner = runner or subprocess.run
+    command = ['du', '-sk', *paths]
+    for attempt in range(4):  # Initial measurement plus at most three retries.
+        result = runner(command, capture_output=True, text=True,
+                        env=dict(os.environ, LC_ALL='C'))
+        if result.returncode == 0:
+            break
+        # macOS du: "du: <path>: No such file or directory". Never hide other errors.
+        errors = result.stderr.splitlines()
+        if not errors or not all(line.startswith('du: ') and
+                                 line.endswith(': No such file or directory') for line in errors):
+            raise subprocess.CalledProcessError(result.returncode, command,
+                                                output=result.stdout, stderr=result.stderr)
+        if attempt < 3:
+            time.sleep(1)
+    total = sum(int(line.split()[0]) * 1024 for line in result.stdout.splitlines())
+    if result.returncode:
+        print(json.dumps({'event': 'du_size', 'approximate': True, 'bytes': total,
+                          'attempts': 4, 'paths': paths, 'stderr': result.stderr}),
+              file=sys.stderr, flush=True)
+    return total
 
 
 def resource_root():

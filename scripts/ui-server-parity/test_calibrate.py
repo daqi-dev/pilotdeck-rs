@@ -38,16 +38,150 @@ _boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
 exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 from datetime import datetime, timezone
+import contextlib
+import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
+import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import calibrate
 from calibrate import Batch, gate_report
 from common import ClockRefused, node_modules_hash, source_hashes
 from controls.run_all import clock_evidence
+
+
+class DiskSizeControls(unittest.TestCase):
+    def test_success_keeps_kib_sum_and_empty_paths_skip_runner(self):
+        runner = Mock(return_value=subprocess.CompletedProcess(['du'], 0, '2\tfirst\n3\tsecond\n', ''))
+        with tempfile.TemporaryDirectory() as tmp, patch('calibrate.time.sleep') as sleep:
+            self.assertEqual(calibrate.size([Path(tmp)], runner=runner), 5 * 1024)
+            self.assertEqual(calibrate.size([Path(tmp) / 'absent'], runner=runner), 0)
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(runner.call_args.args[0], ['du', '-sk', tmp])
+        self.assertTrue(runner.call_args.kwargs['capture_output'])
+        self.assertTrue(runner.call_args.kwargs['text'])
+        self.assertEqual(runner.call_args.kwargs['env']['LC_ALL'], 'C')
+        sleep.assert_not_called()
+
+    def test_disappearing_file_retries_then_returns_exact_success(self):
+        missing = 'du: /temporary/file: No such file or directory\n'
+        runner = Mock(side_effect=[subprocess.CompletedProcess(['du'], 1, '1\troot\n', missing),
+                                   subprocess.CompletedProcess(['du'], 0, '7\troot\n', '')])
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch('calibrate.time.sleep') as sleep, \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(calibrate.size([Path(tmp)], runner=runner), 7 * 1024)
+        self.assertEqual(runner.call_count, 2)
+        sleep.assert_called_once_with(1)
+        self.assertEqual(output.getvalue(), '')
+
+    def test_retry_exhaustion_uses_only_last_stdout_and_logs_approximate(self):
+        missing = ('du: /temporary/first: No such file or directory\n'
+                   'du: /temporary/second: No such file or directory\n')
+        runner = Mock(side_effect=[subprocess.CompletedProcess(['du'], 1,
+                                   f'{i}\tfirst\n2\tsecond\n', missing) for i in range(1, 5)])
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, patch('calibrate.time.sleep') as sleep, \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(calibrate.size([Path(tmp)], runner=runner), 6 * 1024)
+        self.assertEqual(runner.call_count, 4)
+        self.assertEqual(sleep.call_args_list, [call(1)] * 3)
+        log = json.loads(output.getvalue())
+        self.assertIs(log['approximate'], True)
+        self.assertEqual(log['bytes'], 6 * 1024)
+        self.assertEqual(log['attempts'], 4)
+        self.assertEqual(log['stderr'], missing)
+        self.assertEqual(log['paths'], [tmp])
+
+    def test_other_empty_or_mixed_stderr_fail_without_retry(self):
+        missing = 'du: /temporary/file: No such file or directory\n'
+        denied = 'du: /temporary/private: Permission denied\n'
+        for stderr in (denied, missing + denied, denied + missing, '', missing + '\n',
+                       'unexpected: No such file or directory\n'):
+            with self.subTest(stderr=stderr), tempfile.TemporaryDirectory() as tmp, \
+                    patch('calibrate.time.sleep') as sleep:
+                runner = Mock(return_value=subprocess.CompletedProcess(['du'], 1, '8\troot\n', stderr))
+                with self.assertRaises(subprocess.CalledProcessError) as error:
+                    calibrate.size([Path(tmp)], runner=runner)
+                self.assertEqual(error.exception.returncode, 1)
+                self.assertEqual(error.exception.cmd, ['du', '-sk', tmp])
+                self.assertEqual(error.exception.output, '8\troot\n')
+                self.assertEqual(error.exception.stderr, stderr)
+                runner.assert_called_once()
+                sleep.assert_not_called()
+
+    def test_permission_error_after_disappearance_still_fails(self):
+        runner = Mock(side_effect=[subprocess.CompletedProcess(['du'], 1, '1\troot\n',
+                                   'du: /temporary/file: No such file or directory\n'),
+                                   subprocess.CompletedProcess(['du'], 1, '2\troot\n',
+                                   'du: /temporary/private: Permission denied\n')])
+        with tempfile.TemporaryDirectory() as tmp, patch('calibrate.time.sleep') as sleep:
+            with self.assertRaises(subprocess.CalledProcessError) as error:
+                calibrate.size([Path(tmp)], runner=runner)
+        self.assertIn('Permission denied', error.exception.stderr)
+        self.assertEqual(runner.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_real_du_tolerates_concurrent_file_creation_and_deletion(self):
+        with tempfile.TemporaryDirectory(prefix='b2-du-race-') as tmp:
+            root = Path(tmp)
+            # Churn parent directories too: macOS du can ignore vanished leaf
+            # entries but reports ENOENT when a queued directory disappears.
+            paths = [root / f'dir-{i:04d}' for i in range(200)]
+            for path in paths:
+                path.mkdir()
+                (path / 'file').write_bytes(b'x' * 1024)
+            stop, ready = threading.Event(), threading.Event()
+            errors, measurements = [], []
+
+            def churn():
+                try:
+                    while not stop.is_set():
+                        for path in paths:
+                            if stop.is_set():
+                                return
+                            (path / 'file').unlink()
+                            path.rmdir()
+                            ready.set()
+                        for path in paths:
+                            if stop.is_set():
+                                return
+                            path.mkdir()
+                            (path / 'file').write_bytes(b'x' * 1024)
+                except Exception as error:
+                    errors.append(error)
+
+            def real_runner(*args, **kwargs):
+                result = subprocess.run(*args, **kwargs)
+                measurements.append(result)
+                return result
+
+            worker = threading.Thread(target=churn, daemon=True)
+            worker.start()
+            output = io.StringIO()
+            try:
+                self.assertTrue(ready.wait(5), 'concurrent writer did not start')
+                with contextlib.redirect_stderr(output):
+                    for _ in range(3):
+                        self.assertGreaterEqual(calibrate.size([root], runner=real_runner), 0)
+            finally:
+                stop.set()
+                worker.join(5)
+            self.assertFalse(worker.is_alive(), 'concurrent writer did not stop')
+            self.assertEqual(errors, [])
+            failures = [result for result in measurements if result.returncode]
+            for result in failures:
+                self.assertTrue(all(line.startswith('du: ') and
+                                    line.endswith(': No such file or directory')
+                                    for line in result.stderr.splitlines()))
+            print(f'CONTROL real du concurrent create/delete: {len(measurements)} measurements, '
+                  f'{len(failures)} disappearance exits, no size exception')
+            if failures:
+                print('CONTROL macOS du stderr: ' + failures[0].stderr.splitlines()[0])
 
 
 class CalibrationControls(unittest.TestCase):
