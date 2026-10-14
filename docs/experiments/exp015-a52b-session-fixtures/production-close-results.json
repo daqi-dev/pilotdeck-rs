@@ -1,0 +1,3659 @@
+{
+  "suite": "A5.2b round 2 production close",
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "preregistration": {
+    "status": "WORKTREE_REGISTERED_NOT_COMMITTED",
+    "headCommit": "7285961e9fac5dcdba2c93fbe1f76226a583d80b",
+    "path": "scripts/a5-19/preregistration-b-production.mjs",
+    "sha256": "86b4a02313e217b605fd3cf01cee3052ef71282711edf4e5c5f4b6e160a6a06a"
+  },
+  "fixtureFiles": [
+    {
+      "path": "scripts/a5-19/production-close-b.mts",
+      "sha256": "94ad2d411b532b47ebde0dbd7e5af8741880ca916ded4a9387e352a673d5c289"
+    },
+    {
+      "path": "scripts/a5-19/preregistration-b-production.mjs",
+      "sha256": "86b4a02313e217b605fd3cf01cee3052ef71282711edf4e5c5f4b6e160a6a06a"
+    },
+    {
+      "path": "scripts/a5-19/run-production-b.py",
+      "sha256": "9529d5eb8334328fcefb08c6375e3108173e820316644690d9a2d8736a69e3b4"
+    },
+    {
+      "path": "scripts/a5-19/runtime-b.mts",
+      "sha256": "cc8a2efeb7a0a63602a838c391ca862d1aa8f7285f6e40ac962dbd5420ca0af8"
+    },
+    {
+      "path": "scripts/a5-19/rules-b.mjs",
+      "sha256": "7b5946baaeb286b5b50dfc0cde1f652b728522271d7b9baeaded77e7c5e9559d"
+    },
+    {
+      "path": "scripts/a5-19/preregistration-b.mjs",
+      "sha256": "9d4dd0344abeca5a21231b511efa2295344dcb2240e6084a72bf5d9b020ffa56"
+    },
+    {
+      "path": "scripts/a5-19/preregistration-b-extra.mjs",
+      "sha256": "a0b0b931f215313773da2c6cb789552df644c7be6162bb49109d863bba296fb0"
+    },
+    {
+      "path": "scripts/a5-19/run-b.py",
+      "sha256": "5ab95cf41d8a9ecfdfda59c52b40e0aba286a3050194d336856411fd31561e18"
+    }
+  ],
+  "requirements": [
+    "Use production submitTurn itself; disconnect wrapper returns the original synchronous value, never a Promise",
+    "No extra wait in submitTurn, disconnectInteraction, router.endTurn or WS finally",
+    "Only external loop/interaction waits and the existing real filesystem promises; no sleeps decide ordering",
+    "Every case k=5; unchanged rules-b.checkObservation checks each independent three-plane observation",
+    "Abort runId outcomes are observations; absence of a new-run hit alone is not a universal reachability proof",
+    "Record source/apparatus/registration hashes and raw journals; retain failed attempts separately"
+  ],
+  "expectedCases": [
+    "production-close/single/end-turn",
+    "production-close/single/terminal-commit",
+    "production-close/multi/end-turn",
+    "production-close/multi/terminal-commit",
+    "production-close/permission/reconnect-first",
+    "production-close/permission/close-first",
+    "production-close/question/reconnect-first",
+    "production-close/question/close-first"
+  ],
+  "executedCases": [
+    "production-close/single/end-turn",
+    "production-close/single/terminal-commit",
+    "production-close/multi/end-turn",
+    "production-close/multi/terminal-commit",
+    "production-close/permission/reconnect-first",
+    "production-close/permission/close-first",
+    "production-close/question/reconnect-first",
+    "production-close/question/close-first"
+  ],
+  "repeats": 5,
+  "measurements": 40,
+  "summaries": [
+    {
+      "caseId": "production-close/single/end-turn",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 54,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 113,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 100,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 64,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 114,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 54,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 113,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 100,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 64,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 114,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 54,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 113,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 100,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 64,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 114,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 54,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 113,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 100,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 64,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 114,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 54,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 113,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 100,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 64,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 114,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/5/observation.json"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/terminal-commit",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 59,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 114,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 101,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 65,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 115,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 59,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 114,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 101,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 65,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 115,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 59,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 114,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 101,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 65,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 115,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 59,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 114,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 101,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 65,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 115,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": null
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 59,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 114,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 101,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": []
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 65,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 115,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/5/observation.json"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/end-turn",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 96,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 149,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 166,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 137,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 102,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 150,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 167,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 96,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 149,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 166,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 137,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 102,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 150,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 167,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 96,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 149,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 166,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 137,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 102,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 150,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 167,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 96,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 149,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 166,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 137,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 102,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 150,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 167,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 96,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 149,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 166,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 137,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 102,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 150,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 167,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/5/observation.json"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/terminal-commit",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 101,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 150,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 167,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 138,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 103,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 151,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 168,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 101,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 150,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 167,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 138,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 103,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 151,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 168,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 101,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 150,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 167,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 138,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 103,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 151,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 168,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 101,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 150,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 167,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 138,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 103,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 151,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 168,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "first-session",
+              "activeRun": "first-run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "first-session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": false
+              }
+            },
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [],
+          "newRunEntered": true,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [
+            {
+              "order": 101,
+              "session": "session",
+              "run": "run"
+            },
+            {
+              "order": 150,
+              "session": "first-session",
+              "run": "first-run"
+            },
+            {
+              "order": 167,
+              "session": "session",
+              "run": "new-run"
+            }
+          ],
+          "newRunLive": [
+            {
+              "order": 138,
+              "inFlight": [
+                {
+                  "connection": "A",
+                  "sessions": [
+                    "first-session"
+                  ]
+                },
+                {
+                  "connection": "B",
+                  "sessions": [
+                    "session"
+                  ]
+                }
+              ]
+            }
+          ],
+          "wsDeletes": [
+            {
+              "order": 103,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            },
+            {
+              "order": 151,
+              "connection": "A",
+              "session": "first-session",
+              "deleted": true
+            },
+            {
+              "order": 168,
+              "connection": "B",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/5/observation.json"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/reconnect-first",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 78,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 78,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 78,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 78,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 78,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/5/observation.json"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/close-first",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 76,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 76,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 76,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 76,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 76,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/5/observation.json"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/reconnect-first",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 75,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 75,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 75,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 75,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "routerAborts": [
+            {
+              "session": "session",
+              "activeRun": "run"
+            }
+          ],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": false,
+                "preserveTurn": false
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 75,
+              "connection": "A",
+              "session": "session",
+              "deleted": true
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/5/observation.json"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/close-first",
+      "runs": 5,
+      "distinctOutcomes": 1,
+      "outcomes": [
+        {
+          "repetition": 1,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 73,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/1/observation.json"
+        },
+        {
+          "repetition": 2,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 73,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/2/observation.json"
+        },
+        {
+          "repetition": 3,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 73,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/3/observation.json"
+        },
+        {
+          "repetition": 4,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 73,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/4/observation.json"
+        },
+        {
+          "repetition": 5,
+          "aborts": [],
+          "routerAborts": [],
+          "disconnects": [
+            {
+              "session": "session",
+              "result": {
+                "disconnected": true,
+                "preserveTurn": true
+              }
+            }
+          ],
+          "answers": [
+            false,
+            true
+          ],
+          "newRunEntered": false,
+          "newRunAborted": false,
+          "newRunHit": false,
+          "endTurns": [],
+          "newRunLive": [],
+          "wsDeletes": [
+            {
+              "order": 73,
+              "connection": "A",
+              "session": "session",
+              "deleted": false
+            }
+          ],
+          "observation": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/5/observation.json"
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "caseId": "production-close/single/end-turn",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/1/observation.json",
+          "sha256": "add46aeb2a89e2563f3abe70833dc4bc98c3c24217dcec02da07d1706f3ea740"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/1/timeline.ndjson",
+          "sha256": "2fdcdb7996a07f12e689f9beb3cd86e40282f4709b8af3ff8ba9cfac976a4ff5"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/1/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/1/registry.json",
+          "sha256": "a1cc798d70bfc4cf01be995788e1cfa4b817adb4e941b62b9d51ece5a2e2f7a2"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/end-turn",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/2/observation.json",
+          "sha256": "58803dd52464a02d7d2ddd6cc726555a1a73d5d1bc2f74360a7f05daebc17c24"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/2/timeline.ndjson",
+          "sha256": "58b6c1cd2971916ab7930e90dac5bdd9f5c234f16f3fb2254a342e72b6ca48db"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/2/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/2/registry.json",
+          "sha256": "f7381e9bc3d623cc215b2c139be9bfedf5e3b139d52ce4ebfee09c6707dee387"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/end-turn",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/3/observation.json",
+          "sha256": "5aedccde3ccf1706e632d5575f417c53e6ca788595960b84727fae95f857b25c"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/3/timeline.ndjson",
+          "sha256": "64957924f1ce7fa9754cd4b31e3d53efd500c0e352572eda35e7a129c2b2be38"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/3/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/3/registry.json",
+          "sha256": "01d56ebdb2c8994e7da56b9f630b04648c95a9683ccc3037a35362b65a064efc"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/end-turn",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/4/observation.json",
+          "sha256": "26d8eddf212a2d371416cde943ddb0fb78cb2cb13c432807b9b26434a2b1e75e"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/4/timeline.ndjson",
+          "sha256": "6b7c3fff182683e0a34b5000df072c14218d863ce825764e4be9bfb4d72d2da9"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/4/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/4/registry.json",
+          "sha256": "cc8baee91d3d694ffb6c7db7e0e2168eef0c61ab5724da0d326e4692bc94bc30"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/end-turn",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/5/observation.json",
+          "sha256": "3262bad6865a517072f9b3da7a9ae97fbe5a5ab7825e6b015fbe5aa98afad849"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/5/timeline.ndjson",
+          "sha256": "b2e5133ec61bce673a5566816fa529fd0c092ffe4edd39dc2db0bdd1faa14744"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/5/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/end-turn/5/registry.json",
+          "sha256": "6c25607ced94f4c5203b5573f6e1f5e0e75ba276c720790c93031cdab0d527a0"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/terminal-commit",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/1/observation.json",
+          "sha256": "719d50010b8721b674eca8bc763c19444ef75eca6977517562c65309ef10a95d"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/1/timeline.ndjson",
+          "sha256": "d6a398f3c4c4a817320acb8f1a831bacb42a4e708ba1b22628fa0b8d0dfd9b03"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/1/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/1/registry.json",
+          "sha256": "f0d74f759af1fbfda2de1c7710581534f0590f6ed239836e24edb8b4d31081d9"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/terminal-commit",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/2/observation.json",
+          "sha256": "85d9c7d2d25814197914400b5f44b6acf2c60b9bcbb415e47adb9cb69bee68d1"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/2/timeline.ndjson",
+          "sha256": "ac4fefe6a8eb173ddb9b3ef67113ff9ca6b2944fef7d1fdc6e566ac50fa619b9"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/2/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/2/registry.json",
+          "sha256": "b006d660169063dac9504592e219339ca081bdc2a5a12bafd90abefa048f2f27"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/terminal-commit",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/3/observation.json",
+          "sha256": "d90d96b9c8b7debbbc3069f74d7f51b7c92707269050a4736f1a27b11653e8df"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/3/timeline.ndjson",
+          "sha256": "986e729bb4e8d427627d343155ebf66501cd1a51b02739a33f56ea6bf4c834e7"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/3/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/3/registry.json",
+          "sha256": "6f7a669f2aab648017548f5737d46e2482ee844125821e1a0693c1bacdbc0cb4"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/terminal-commit",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/4/observation.json",
+          "sha256": "7368dd21e8c06c79ad6904079326eab18911d12fce04437646fe98cb904fb532"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/4/timeline.ndjson",
+          "sha256": "5f140b5974f34df97024687a1d28ab83b5b13fd469a215485ce453f9d4191fc9"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/4/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/4/registry.json",
+          "sha256": "ee921985f5c9858f62012f0fa38a57124dcaa613701cead4c49e9efcb45cb546"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/single/terminal-commit",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/5/observation.json",
+          "sha256": "685eed2783fe37e684ba2606c38ff81b14ecfb281fdf794f7d07f98e9b1b0c66"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/5/timeline.ndjson",
+          "sha256": "7f79fc358092c797ebf018e9e5ba8d5fb7b9c99a3b17ba129d38f51c0d1e0016"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/5/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/single/terminal-commit/5/registry.json",
+          "sha256": "a44a96270b12f775f5177b7f08b63b7641fac6eb091f1b033a95b4fcaa0fe66d"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/end-turn",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/1/observation.json",
+          "sha256": "92755aed1ed1cbeb403b7479f41aa5f66423ee51dc308f2749bd4a857a7e15d7"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/1/timeline.ndjson",
+          "sha256": "b97453212b4c2c8776c0974095c580fc3ff4424a09c33140f3f37976d9fcd9a4"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/1/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/1/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/1/registry.json",
+          "sha256": "8b626a907fefff216c7be959e25d660be9bd39b078fe7cdab2ccae7d737d9f6b"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/end-turn",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/2/observation.json",
+          "sha256": "70a35f9524f136dcf103d5d86bba1bc133553400cb95e46b90d6abffe1e74b5f"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/2/timeline.ndjson",
+          "sha256": "7ed657284c3f6309106ce19cbc001bdf08c46f4857d5df4a5c9b4103cb1c709b"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/2/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/2/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/2/registry.json",
+          "sha256": "4f3a68c4e7f9153a59063cd30b35c555cec47edc0086a1b3ffb1faf8f23b3d96"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/end-turn",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/3/observation.json",
+          "sha256": "a5455c34647055eed708d5bdd21141aa0f2ae3f3330d01b7ef519d526404c562"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/3/timeline.ndjson",
+          "sha256": "2cea2047751fcb280256a7e2aabf32d656ae4a70d83bcee81250e785ca56ca3c"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/3/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/3/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/3/registry.json",
+          "sha256": "c482b85ae2dbf8758989d67e88e4859d41aadb6d453be169f4f792a6d7fe78bd"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/end-turn",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/4/observation.json",
+          "sha256": "5bc5f98371fe5669e40f2ade10e14b536b768a4f633bb54cecef02a15caa8e84"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/4/timeline.ndjson",
+          "sha256": "b033ee6f34e1a9b53a0232995a8bde7888bf8ad86f43c5095d62a266affbb06b"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/4/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/4/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/4/registry.json",
+          "sha256": "506f3a85bf8d4041d4ead5755881fc44c9b74dbd1b9c4c57eb222ed5ea22c750"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/end-turn",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/5/observation.json",
+          "sha256": "b8799ff0dae715fda79dcd483d483fa4136f134078f6029afc04855b68b3df3e"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/5/timeline.ndjson",
+          "sha256": "48a6119b55c94e41eeb02b3661484b913bd20933c42d4e0b11c55175c60e49e5"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/5/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/5/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/end-turn/5/registry.json",
+          "sha256": "38aec47fcf9901a438a4ca8cd861d444d6c76f941acf43f25bd2f9793ebaff25"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/terminal-commit",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/observation.json",
+          "sha256": "2d3ce73cc9a131f48fa0f0adc9df4ce81eac795fdf22aabb15e3bd7b345b59a3"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/timeline.ndjson",
+          "sha256": "72ff82e3603ce0638bf3db758ef0d3a7074dce45483b8ebb53d048ff3d76ec09"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/1/registry.json",
+          "sha256": "33a4820ed5b156284e21ec8cdc589769fd9e752cec36409b7094d224b0e1d018"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/terminal-commit",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/2/observation.json",
+          "sha256": "4cbb273cdd05f1cc80a0f1e274fb3f548c839114ad9f5cfbbfb932d6b7ad6527"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/2/timeline.ndjson",
+          "sha256": "26a93ca54d686be9c453050a7f2c92886d760b539d7a3731ad76c14bfeaba5aa"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/2/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/2/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/2/registry.json",
+          "sha256": "b79431230e65cfa0a9fb2436d0504a6faa5c3951350d465e78399bc69952dcf6"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/terminal-commit",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/3/observation.json",
+          "sha256": "a4eb505f9409ee48329afecb7c9b7956da97a3dca6a33cf69829b266161b909d"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/3/timeline.ndjson",
+          "sha256": "cd69dc5d09995b663eec65d6aae6e8d4040968874d310d31b9e4f7532599c49e"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/3/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/3/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/3/registry.json",
+          "sha256": "2aeef370229428cf6a2cddade597efe4463bc6203ce888406a5afaf7ee54a487"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/terminal-commit",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/4/observation.json",
+          "sha256": "7f5d975d05283186692d0e7c6f94918ffcf6a0dc8c9bd608d4b46614cc227a34"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/4/timeline.ndjson",
+          "sha256": "121cc9264d211e1c6afd2f2f81d401e886a580f9adc9a3480a8680c479b1d2e6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/4/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/4/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/4/registry.json",
+          "sha256": "7edb0e94d427ce5b649e609c8060653aebade7c44c8c112ee180e75be4120e87"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/multi/terminal-commit",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/5/observation.json",
+          "sha256": "900a428247153f26c0e5b30ce9917cef89d700072ecde24b50e1f6a59e95fa6d"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/5/timeline.ndjson",
+          "sha256": "90cda36d42454bfab6dcc20cb4bd3ecaae305518e45bf35ee0fb39c1e5496bcf"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/5/first-session/transcript.jsonl",
+          "sha256": "4763573c691c279405791571a0225d5bbe5c31397d9f931682fd0dd816331dd6"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/5/session/transcript.jsonl",
+          "sha256": "e19a2da0d124e3c4ecf21d85af29d71f67e4dfe5c9b6d2bd3d0278eb0df7ad45"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/multi/terminal-commit/5/registry.json",
+          "sha256": "3a0e26eba430b3bc92fb26daa8434be33e0444eb949eb2b4f400283884b5794e"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/reconnect-first",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/1/observation.json",
+          "sha256": "6ee2597cf4b6e950a8ac10c7f6c30f50107d9c6a27601cb3368de1499ec9406c"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/1/timeline.ndjson",
+          "sha256": "68a1afec0ac264c6fbb8ba9e787b718b329fd0a2b8bcb28de905a14d338d7e56"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/1/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/1/registry.json",
+          "sha256": "9bfacbf88a2ff721cb14d6997e47f6f9ae788cc6217e3a32896941807f329a85"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/reconnect-first",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/2/observation.json",
+          "sha256": "6a39c2253b6a7a016993216cd76b115ea1590ce6f7d98cdec9412dec608fbb3e"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/2/timeline.ndjson",
+          "sha256": "b0ae65435ed23986a87760400e7564301f65290f7e56cb3ad850832619d961bd"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/2/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/2/registry.json",
+          "sha256": "b73c7775e9a7f81886820b229d5d91497a431b8d7a960391a3f71e1225a9f08e"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/reconnect-first",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/3/observation.json",
+          "sha256": "1818b783800e3f5e65635b988a0bf442de3fe6b7d299049c0fb6ce90d14729c3"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/3/timeline.ndjson",
+          "sha256": "aeeb13ba5b5b1a43f5f4acd23c92e9842123e5c52f3a3c7a759875c35c5ecc8d"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/3/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/3/registry.json",
+          "sha256": "6747972f9d5ff021a0f6541e7d0d19754b4fbe626b178762abe1c50e95f5b324"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/reconnect-first",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/4/observation.json",
+          "sha256": "c05beb7ba87465abae50926667018efbac0511c8015208e87d18d292b0944c2f"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/4/timeline.ndjson",
+          "sha256": "44330cff7a7a8d1bd67d55fe01dd5495d9fc8e9417191f603a33140f0962b2aa"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/4/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/4/registry.json",
+          "sha256": "9858093fb0f85796dc48cad48c696c3496cd60478ace01021b4269d37d80031d"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/reconnect-first",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/5/observation.json",
+          "sha256": "b16ddf3e0df867e2730e89a9b25304b33b10c6de927501de3481885be1fa9dd1"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/5/timeline.ndjson",
+          "sha256": "ba046fd2c7ced6fccb7ce8fdce3d73251bb13ffac750f00161e8dc3750b9ea29"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/5/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/reconnect-first/5/registry.json",
+          "sha256": "83fc1519dd1ac3e12f1d94707872a719e0ee68c94b920e688756ffbbba855310"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/close-first",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/1/observation.json",
+          "sha256": "646b00b0e0213dd13e64a279e78c472d45d88c3b888c2e76c2017b22e4a05754"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/1/timeline.ndjson",
+          "sha256": "c0c402b3bb06ab048697a0a7771c9b770e6b9b1eca6d3384a559f81bcd1470a4"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/1/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/1/registry.json",
+          "sha256": "73178c8c5479053896c7d4d7d6dd1599e7c2553b7e92e02469a5f9e6d656c06d"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/close-first",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/2/observation.json",
+          "sha256": "58ae68f3b655217ebbd7e420d31ca471233c86a974b5d0474f4a5588a0e3c3f8"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/2/timeline.ndjson",
+          "sha256": "e4d13b21539533b4ae1431feab176925d3f179c49d39be4436b4fe9489f9debd"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/2/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/2/registry.json",
+          "sha256": "9b59fe5236ce1efe27c71f8ab2ac41356502f2c5197e7c10ea3c1b66a1368d6c"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/close-first",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/3/observation.json",
+          "sha256": "ea54449eedddb8d258f865a59c417015105efacbe7b8ced1e42e068c820501c2"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/3/timeline.ndjson",
+          "sha256": "7a02e583fd8c4cea601e283702183a64d898bfc07b75f20fdc2bca2f00d147e2"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/3/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/3/registry.json",
+          "sha256": "19fda523f72c71a0f7b6277ceba65adc1c062ccc35530f18f74ce5544385fa0d"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/close-first",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/4/observation.json",
+          "sha256": "74cb53f2f41116d5cb938d1c2cf84421cfb20665e532a73ca1c625363ca75b55"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/4/timeline.ndjson",
+          "sha256": "93b304fc3fe24b849226fd54f5a839ed9082178138178857d9af790920501707"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/4/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/4/registry.json",
+          "sha256": "e9b30b4042c13ba0313bbd485bb3b9b0e952cc8e92d87cfab0b379153bfe0932"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/permission/close-first",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/5/observation.json",
+          "sha256": "8d5ee616ef1c4bc97209e5d8a2ce0f713840ae69d53e291c7b7e5a9b1b157269"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/5/timeline.ndjson",
+          "sha256": "56c0f926cda2f3ae60625864ddc9b5d73ea6ab567f09c5621bd4e3c9eef1c01f"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/5/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/permission/close-first/5/registry.json",
+          "sha256": "11640de5a44cb4c3c66f9cdbbb7f2e18f88d6af4b8cac112dd095e5d38a5a300"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/reconnect-first",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/1/observation.json",
+          "sha256": "5fbe26fbe61f44d4181e61675b7ef758219a6490e080069b7d69e233d1adf6b2"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/1/timeline.ndjson",
+          "sha256": "ea8470848808c57f599a776fd4e163741f5e437d94c7b0561557b7b2733756ca"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/1/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/1/registry.json",
+          "sha256": "d2fa3fd1556524461f1de117e2a162bf2c9023dc0fb5189501f16b4d40f94879"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/reconnect-first",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/2/observation.json",
+          "sha256": "887e4a304a776ed29d7ce8c62bdba25534d07cecbfa16b992460e8fcb4947bf1"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/2/timeline.ndjson",
+          "sha256": "cde6e7db414e0712bc726b2700f0eeb374e711f5f57459a382885007ca4cf205"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/2/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/2/registry.json",
+          "sha256": "81d620849116afc50e6f4f5174db168eef2713b08b8da48bf220d1a2ee590659"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/reconnect-first",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/3/observation.json",
+          "sha256": "e859ac1d07c0a2cdfae6cd1561104bf5ac59aeed85d3558dbce910f15aea0337"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/3/timeline.ndjson",
+          "sha256": "923a4be8948c56159788b3d5189ecf56d2fa728f984f6468227528b3a070d3f0"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/3/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/3/registry.json",
+          "sha256": "f262c89f3e5a6840e628c585cbf573e72a230a437d6b3bc8ac6183766905be5d"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/reconnect-first",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/4/observation.json",
+          "sha256": "129ec7564b4a00a5cea2f36dfc7c3085d2ae6e61a649165e8bcb5a5e4c850fe0"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/4/timeline.ndjson",
+          "sha256": "1645441cb1e757cfa3f341d2337bbfe17313c63f2721c0c67dba3e128c39d8f2"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/4/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/4/registry.json",
+          "sha256": "a3879ffaf489b7f33c644051c4282413b43cde61cb6749466113c64de4f4cf9f"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/reconnect-first",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/5/observation.json",
+          "sha256": "690ee94682030ff1455fee284c08b6fef4f3b53f720291ecd792e82599f1fcc4"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/5/timeline.ndjson",
+          "sha256": "9264325a3f4a54ad956007b72221fd7d290f05164e0a54e008a5997ca3b807d0"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/5/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/reconnect-first/5/registry.json",
+          "sha256": "624da78efd2a9e494f3fb035e1b0dcd4053b6d108a5b12bf5ae88c8077896c5b"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/close-first",
+      "repetition": 1,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/1/observation.json",
+          "sha256": "6fdde7f9510584eaeafb52d926b2db595b7788146726b202b65992d4f7a61d0b"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/1/timeline.ndjson",
+          "sha256": "1b39c451e143e461dfc5151df86a47255d77811b4d8ae2b5127c509e94402eae"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/1/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/1/registry.json",
+          "sha256": "519d69d51546cb7a0eb1f3220a4ad587750a2a11213e8de5dc1e8be4dc5d2248"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/close-first",
+      "repetition": 2,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/2/observation.json",
+          "sha256": "7c66edd6281becd188ac84709350b65cfb10d451718e34b99eff8b9334896e40"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/2/timeline.ndjson",
+          "sha256": "6485d0a4f95f5f1a6bef189f72593792b0b6133c926cecd23be0f0f9f8672bf2"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/2/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/2/registry.json",
+          "sha256": "1e518c51159506d3ae01bcf280316a5130e3ffb1b0a227161fff9487e105a73a"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/close-first",
+      "repetition": 3,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/3/observation.json",
+          "sha256": "6e220dd37192dc2cc8858dde52df561aa7a64f0e289b69c6ee25b3593d73851e"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/3/timeline.ndjson",
+          "sha256": "0b6378384fd192cfe6a94abd51386471b067c1365b84d71ae8df1568ad46d051"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/3/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/3/registry.json",
+          "sha256": "d4b35affca8a954d5c074f8ef7318a4e2e7bbb366ab4f28e9a14694eb7d3ab96"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/close-first",
+      "repetition": 4,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/4/observation.json",
+          "sha256": "3e7743127d8160522d2957daf300c2288ee47fea0aa53ed22b6026c23ddf37a3"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/4/timeline.ndjson",
+          "sha256": "a7136013ed7542048a58babaad868b26479723fc011ca7147e2ae12817cd2b36"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/4/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/4/registry.json",
+          "sha256": "e43be2c720e85b5e78a7370643bb466a70940d942d18eaafcb1739edbcb7e539"
+        }
+      ]
+    },
+    {
+      "caseId": "production-close/question/close-first",
+      "repetition": 5,
+      "files": [
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/5/observation.json",
+          "sha256": "cf625b4bc5724cf917a58c0442c72e31365fc6ca6b1cc07334e87f792b678f8a"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/5/timeline.ndjson",
+          "sha256": "6284e918b5a20b4db9e66096355f76ee4fe7d165479ea36e50d52b4d5c1e9bd5"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/5/session/transcript.jsonl",
+          "sha256": "2a0d08e743fbc77f15981b7281a2d9df3b0398c5c72d962ca1cc2d80ed1c6c01"
+        },
+        {
+          "path": "_tmp/a52b/round2-production-final/raw/measurements/production-close/question/close-first/5/registry.json",
+          "sha256": "5fa98638cc679f92c527fc2a0d8ad99cdac87043b86196395c9513d0a9d6d9c7"
+        }
+      ]
+    }
+  ],
+  "scope": "Successful turn cleanup with real FileRunRegistry; transport-neutral synchronous earliest-delivery probes; not natural scheduling frequency or network/bridge proof",
+  "conclusion": {
+    "single": "机制存在、生产次序不可达（单会话；本轮成功清理/FileRunRegistry 路径范围）",
+    "multi": "两种生产等待次序均未命中新 run；先等 first-run 的真实 abort drain，目标 A WS finally 删除 session，后处理目标时跳过 abort",
+    "pending": "before/after 原夹具含人为 disconnect yield；原 binding/abort 结果在 reconnect-first/close-first 的无 hold 次序下各复现 5/5"
+  },
+  "rawManifest": {
+    "path": "_tmp/a52b/round2-production-final/raw/manifest.json",
+    "sha256": "a8718a4c74ce907fd015425105323ee73db1bfa43225a9d6909880e0568431c0"
+  },
+  "launch": {
+    "path": "_tmp/a52b/round2-production-final/launch.json",
+    "sha256": "9dcc42ca5548423092dc281d91e292bdda1d85cc51ed4e873fd4d3338b868626"
+  },
+  "sourceVerification": {
+    "loadedFileCount": 526,
+    "allUnchangedAtCompletion": true,
+    "fullList": "_tmp/a52b/round2-production-final/raw/manifest.json"
+  },
+  "originalRegression": {
+    "manifest": {
+      "path": "_tmp/a52b/round2-original-regression/raw/manifest.json",
+      "sha256": "c4a3e216d454d620ddd2409a71dd736d6a2bb0104eca6e7a279f65a5b227f1cf"
+    },
+    "launch": {
+      "path": "_tmp/a52b/round2-original-regression/launch.json",
+      "sha256": "72da3dcc34c062f2a8db37a8fa4b1e4d83358acf49c8c67a5da9793cdce21c63"
+    },
+    "measurements": 170,
+    "unstableGroups": [],
+    "controls": [
+      {
+        "name": "apparatus-bypass-status-fifo",
+        "rule": "STATUS_FIFO",
+        "level": "apparatus",
+        "hitRule": "STATUS_FIFO",
+        "detected": true
+      },
+      {
+        "name": "apparatus-bypass-registry-fifo",
+        "rule": "REGISTRY_FIFO",
+        "level": "apparatus",
+        "hitRule": "REGISTRY_FIFO",
+        "detected": true
+      },
+      {
+        "name": "apparatus-omit-B-connection",
+        "rule": "CONNECTIONS",
+        "level": "apparatus",
+        "hitRule": "CONNECTIONS",
+        "detected": true
+      },
+      {
+        "name": "apparatus-old-binding-as-new",
+        "rule": "BINDING_IDENTITY",
+        "level": "apparatus",
+        "hitRule": "BINDING_IDENTITY",
+        "detected": true
+      },
+      {
+        "name": "drop-frame",
+        "rule": "FRAME_RAW",
+        "level": "observer",
+        "hitRule": "FRAME_RAW",
+        "detected": true
+      },
+      {
+        "name": "omit-registry-events",
+        "rule": "REGISTRY_RAW",
+        "level": "observer",
+        "hitRule": "REGISTRY_RAW",
+        "detected": true
+      },
+      {
+        "name": "ignore-result-overwrite",
+        "rule": "REGISTRY_RAW",
+        "level": "observer",
+        "hitRule": "REGISTRY_RAW",
+        "detected": true
+      },
+      {
+        "name": "attempt-as-success",
+        "rule": "STATUS_COMMITS",
+        "level": "observer",
+        "hitRule": "STATUS_COMMITS",
+        "detected": true
+      },
+      {
+        "name": "both-sides-bad",
+        "rule": "FRAME_RAW",
+        "level": "observer",
+        "hitRule": "FRAME_RAW",
+        "detected": true
+      },
+      {
+        "name": "double-answer-success",
+        "rule": "ANSWER_JOURNAL",
+        "level": "observer",
+        "hitRule": "ANSWER_JOURNAL",
+        "detected": true
+      }
+    ],
+    "closeSummaries": [
+      {
+        "caseId": "close/permission/before-disconnect",
+        "runs": 5,
+        "stable": true,
+        "aborts": [
+          {
+            "order": 79,
+            "input": {
+              "sessionKey": "session"
+            },
+            "activeRun": "run",
+            "kind": "abort.input"
+          }
+        ],
+        "answers": [
+          {
+            "order": 48,
+            "call": 1,
+            "delivered": false,
+            "kind": "answer.result"
+          },
+          {
+            "order": 55,
+            "call": 2,
+            "delivered": true,
+            "kind": "answer.result"
+          }
+        ],
+        "evidence": "_tmp/a52b/round2-original-regression/raw/measurements/close/permission/before-disconnect/1/observation.json"
+      },
+      {
+        "caseId": "close/permission/after-disconnect",
+        "runs": 5,
+        "stable": true,
+        "aborts": [],
+        "answers": [
+          {
+            "order": 49,
+            "call": 1,
+            "delivered": false,
+            "kind": "answer.result"
+          },
+          {
+            "order": 56,
+            "call": 2,
+            "delivered": true,
+            "kind": "answer.result"
+          }
+        ],
+        "evidence": "_tmp/a52b/round2-original-regression/raw/measurements/close/permission/after-disconnect/1/observation.json"
+      },
+      {
+        "caseId": "close/question/before-disconnect",
+        "runs": 5,
+        "stable": true,
+        "aborts": [
+          {
+            "order": 76,
+            "input": {
+              "sessionKey": "session"
+            },
+            "activeRun": "run",
+            "kind": "abort.input"
+          }
+        ],
+        "answers": [
+          {
+            "order": 48,
+            "call": 1,
+            "delivered": false,
+            "kind": "answer.result"
+          },
+          {
+            "order": 54,
+            "call": 2,
+            "delivered": true,
+            "kind": "answer.result"
+          }
+        ],
+        "evidence": "_tmp/a52b/round2-original-regression/raw/measurements/close/question/before-disconnect/1/observation.json"
+      },
+      {
+        "caseId": "close/question/after-disconnect",
+        "runs": 5,
+        "stable": true,
+        "aborts": [],
+        "answers": [
+          {
+            "order": 49,
+            "call": 1,
+            "delivered": false,
+            "kind": "answer.result"
+          },
+          {
+            "order": 55,
+            "call": 2,
+            "delivered": true,
+            "kind": "answer.result"
+          }
+        ],
+        "evidence": "_tmp/a52b/round2-original-regression/raw/measurements/close/question/after-disconnect/1/observation.json"
+      },
+      {
+        "caseId": "close/no-pending/new-turn",
+        "runs": 5,
+        "stable": true,
+        "aborts": [
+          {
+            "order": 92,
+            "input": {
+              "sessionKey": "session"
+            },
+            "activeRun": "new-run",
+            "kind": "abort.input"
+          }
+        ],
+        "answers": [],
+        "evidence": "_tmp/a52b/round2-original-regression/raw/measurements/close/no-pending/new-turn/1/observation.json"
+      }
+    ]
+  }
+}
