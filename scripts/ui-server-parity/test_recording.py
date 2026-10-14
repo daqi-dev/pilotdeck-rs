@@ -142,6 +142,45 @@ class RecordingControls(unittest.TestCase):
 
 
 class CaptureClockControls(unittest.TestCase):
+    def simulate_monitor(self, elapsed, walls):
+        wall = iter(1700000000000000000 + n for n in walls)
+        # Zero-width brackets make the exact 1 ms boundary observable.
+        mono = iter(1000000 + n for t in elapsed for n in (t, t))
+        monitor = ClockMonitor(wall=lambda: next(wall), monotonic=lambda: next(mono))
+        with patch('common.threading.Thread'):
+            meta = {'wall_start_ms': monitor.start()}
+            for _ in elapsed[1:-1]:
+                monitor.sample('periodic')
+            monitor.finish(meta)
+        return meta
+
+    def test_negative_500ppm_slew_for_ten_minutes_is_admitted(self):
+        elapsed = list(range(0, 600_000_000_000 + 1, 250_000_000))
+        meta = self.simulate_monitor(elapsed, [t - t // 2000 for t in elapsed])
+        self.assertEqual(len(meta['clock_regression_check']['samples']), 2401)
+        self.assertEqual(meta['clock_regression_check']['status'], 'PASS')
+        self.assertEqual(validate_clock_check(meta), 'present')
+
+    def test_single_two_ms_step_is_refused_while_wall_still_increases(self):
+        meta = self.simulate_monitor([0, 250_000_000, 500_000_000], [0, 248_000_000, 498_000_000])
+        self.assertEqual(meta['clock_regression_check']['status'], 'REFUSED')
+        # Recompute even if a recorder claims PASS, including replay.
+        meta['clock_regression_check']['status'] = 'PASS'
+        for historical in (False, True):
+            with self.assertRaisesRegex(ClockRefused, 'relative to monotonic'):
+                validate_clock_check(meta, historical=historical)
+
+    def test_wall_backwards_has_no_tolerance(self):
+        meta = self.simulate_monitor([0, 100, 200], [0, -1, 200])
+        self.assertEqual(meta['clock_regression_check']['status'], 'REFUSED')
+        self.assertIn('between adjacent samples', meta['clock_regression_check']['reason'])
+
+    def test_offset_drop_tolerance_is_strictly_greater_than_one_ms(self):
+        for drop, status in ((999_999, 'PASS'), (1_000_000, 'PASS'), (1_000_001, 'REFUSED')):
+            with self.subTest(drop=drop):
+                meta = self.simulate_monitor([0, 250_000_000], [0, 250_000_000 - drop])
+                self.assertEqual(meta['clock_regression_check']['status'], status)
+
     def meta(self):
         return dict(wall_start_ms=1700000000000, wall_end_ms=1700000003000,
                     clock_regression_check=clock_evidence(1700000000000, 1700000003000))

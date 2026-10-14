@@ -96,7 +96,7 @@ class Normalizer:
         self.auth_secret_rows = set()
         self.vapid_keys = set()
         self.expiries = {}
-        self.chat_timestamps = set()
+        self.chat_clocks = {}
         self.reading_clock_paths = []
 
     def nondecreasing(self, values, location, contract):
@@ -128,9 +128,15 @@ class Normalizer:
                 self.clock_instant(stamp, ISO_MS, path)
                 continue
             historical.append(stamp)
-            if not isinstance(stamp, str) or stamp not in self.chat_timestamps:
+            session, sequence = message.get('sessionId'), message.get('sequence')
+            event = (self.chat_clocks.get((session, sequence))
+                     if isinstance(session, str) and session and type(sequence) is int and sequence > 0 else None)
+            if (event is None or not isinstance(stamp, str) or stamp != event[0]
+                    or ('entryId' in message and (not isinstance(message['entryId'], str)
+                        or not message['entryId'] or message['entryId'] != event[1]))):
                 issue(self.out, 'normalization.field', path,
-                      'history timestamp lacks local @chat createdAt witness', side=self.side)
+                      'history timestamp differs from local event identity witness', side=self.side,
+                      sessionId=session, sequence=sequence)
         self.nondecreasing(historical, location + '.messages.timestamps',
                            'history timestamps must be nondecreasing in message order')
 
@@ -695,7 +701,21 @@ class Side:
                 continue
             self.norm.nondecreasing([e.get('createdAt') for e in entries], location + '.createdAt',
                                     '@chat createdAt must be nondecreasing by sequence')
-            self.norm.chat_timestamps.update(e['createdAt'] for e in entries if isinstance(e.get('createdAt'), str))
+            for i, entry in enumerate(entries):
+                session = entry.get('sessionId')
+                if not isinstance(session, str) or not session:
+                    issue(self.out, 'normalization.field', f'{location}[{i}].sessionId',
+                          'invalid @chat event session identity', side=self.label)
+                    continue
+                key = (session, entry['sequence'])
+                if key in self.norm.chat_clocks:
+                    # Ambiguous witnesses must never depend on file order,
+                    # even when duplicate events happen to have equal clocks.
+                    self.norm.chat_clocks[key] = None
+                    issue(self.out, 'normalization.field', f'{location}[{i}].sequence',
+                          'duplicate @chat event identity witness', side=self.label)
+                else:
+                    self.norm.chat_clocks[key] = (entry.get('createdAt'), entry.get('entryId'))
             projection_path = path + '.projections.json'
             projection = files.get(projection_path)
             if not isinstance(projection, dict):

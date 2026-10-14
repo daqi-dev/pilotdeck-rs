@@ -46,6 +46,7 @@ def source_hashes(baseline, recorder):
 # Clock violations describe the environment, not DUT behavior (REFUSED / exit 2).
 INTERVAL_NS = 250_000_000
 MAX_GAP_NS = 2_000_000_000
+OFFSET_DROP_TOLERANCE_NS = 1_000_000
 
 
 class ClockRefused(ValueError):
@@ -66,7 +67,6 @@ def validate_clock_check(meta, *, historical=False):
             or not isinstance(samples, list) or len(samples) < 2):
         raise ClockRefused('clock regression detected or incomplete clock monitor')
     previous = None
-    lower_bound = None
     for i, sample in enumerate(samples):
         if not isinstance(sample, dict):
             raise ClockRefused('invalid clock sample')
@@ -78,9 +78,13 @@ def validate_clock_check(meta, *, historical=False):
         if previous:
             if before <= previous['mono_after_ns'] or after - previous['mono_before_ns'] > MAX_GAP_NS:
                 raise ClockRefused('clock monitor gap or nonmonotonic observer clock')
-            if wall < previous['wall_ns'] or wall - before < lower_bound:
+            if wall < previous['wall_ns']:
+                raise ClockRefused('wall clock regression between adjacent samples')
+            # Compare adjacent brackets, never a running maximum: a normal
+            # negative slew may accumulate far more than 1 ms over a capture.
+            previous_lower = previous['wall_ns'] - previous['mono_after_ns']
+            if previous_lower - (wall - before) > OFFSET_DROP_TOLERANCE_NS:
                 raise ClockRefused('wall clock regression relative to monotonic clock')
-        lower_bound = max(lower_bound if lower_bound is not None else wall - after, wall - after)
         previous = sample
     if (samples[0]['wall_ns'] // 1_000_000 != meta.get('wall_start_ms')
             or samples[-1]['wall_ns'] // 1_000_000 != meta.get('wall_end_ms')):

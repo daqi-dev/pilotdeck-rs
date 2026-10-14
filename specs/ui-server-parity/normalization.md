@@ -385,7 +385,7 @@ chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前�
 
 - schema 1 记录 `interval_ns=250000000`（250 ms 定期采样）、`max_gap_ns=2000000000`（2 s 最大可接受覆盖间隔）、`status`、`samples`，失败另有 `reason`。首尾样本分别为 `start/end`，中间样本为 `periodic`。
 - 每次按 `monotonic_ns → time_ns → monotonic_ns` 取样，记录 `mono_before_ns/wall_ns/mono_after_ns`；使用 bracket 的 offset 区间 `[wall-after, wall-before]`，避免把两次读时钟的正常调用延迟直接当回拨。
-- 任一样本 wall 值小于上一样本，或本样本 offset 上界小于此前 offset 下界的最高值，均拒绝；后者能捕获“wall 仍向前，但比 monotonic 少走一截”的回拨。无额外时间容差，采样 bracket 重叠仍可通过。此门采取保守策略：持续负向时钟校正也可能被拒绝，不给 DUT 计错。
+- 任一样本 wall 值小于上一样本，立即拒绝，无容差。offset 使用相邻样本 bracket：仅当 `previous.wall - previous.mono_after - (current.wall - current.mono_before) > 1000000 ns` 时拒绝；1 ms 恰好相等可通过。阈值由比较器固定，不信任归档自报值。不再使用此前 offset 下界的累计最高值，避免正常负向 slew 随采集时间积累触发拒绝。此条由第 10 轮协调者要求替代最初无容差实现。
 - monotonic 顺序错误、样本格式错误、采样 bracket/相邻覆盖间隔超过 2 s、缺首尾或 wall 起止与 metadata 不匹配，同样 REFUSED。比较器重算所有样本，不仅信任写入的 `status=PASS`；已标 REFUSED 的记录不能恢复成有效采集。
 - 有限频率的采样不能证明两个采样点之间从未发生过立即回拨又恢复的瞬态。记录的含义是“环境前提的采样监测通过”，不是源码单调保证或连续时钟证明；不对这种监测盲区作额外保证。
 
@@ -397,14 +397,14 @@ chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前�
 
 | 路径 | 额外约束 | 回源依据（路径相对 baseline） |
 |---|---|---|
-| `http / readonly.messages / messages.*.timestamp` | 每个历史消息时间必须原值等于本侧 `@chat` 某事件 `createdAt`；响应消息顺序非递减，允许相等 | `src/web/server/readSessionMessages.ts:96–115,529,866–887` 从持久化 entry 取时间并 flatten；`ui/server/routes/messages.js:197` 原样映射 |
+| `http / readonly.messages / messages.*.timestamp` | 每个历史消息按自身 `(sessionId, sequence)` 找到本侧 `@chat` 唯一事件，timestamp 原值等于该事件 createdAt；消息带 entryId 时还必须与该事件一致；响应消息顺序非递减，允许相等 | `src/web/server/readSessionMessages.ts:96–115,529,866–887` 从持久化 entry 取时间并 flatten；`ui/server/routes/messages.js:197` 原样映射 |
 | `disk / @chat / *.createdAt` | 每个 jsonl 独立按 sequence 非递减；sequence 为正整数且在文件内严格递增，不重排文件内容 | `SessionRuntime.ts:57–65,172–179` / `JsonlSessionPersistence.ts:20–35`，加上上述显式环境前提 |
 | `disk / @projection / anchor.createdAt` | 在对应 jsonl 中，按 `asOfSequence` 与 anchor 的 sequence、entryId、parentEntryId、turnId、type 找到唯一事件，并严格相等 | `src/session/projection/checkpoint/SessionProjectionCheckpointStore.ts:110–127` |
 | `disk / @projection / projections."agent-transcript.conversation".state.entries.*.entry.createdAt` | 按 sequence、entryId、parentEntryId、turnId、type、sessionId 找到对应日志唯一事件，严格相等；不能晚于该 projection 的 asOfSequence 或顶层 checkpoint | `src/session/projection/AgentTranscriptProjections.ts:94–103` 保留原 entry |
 | `disk / @projection / projections."web-history.agent-statuses".state.*.createdAt` | 同上按事件身份见证，不能拿任意另一个合法日志时间替代 | `src/session/projection/WebHistoryProjections.ts:124–126` 保留原 entry |
 | `disk / @projection / projections."agent-transcript.metadata".state.updatedAt` | 等于截至该 projection 的 asOfSequence，日志 `session_metadata.metadata.updatedAt` 最后一次对应赋值；不是仅做集合成员判断 | `src/session/projection/AgentTranscriptProjections.ts:322,577–584` 按 sequence merge metadata；accepted_input 分支只合入 modelSelection |
 
-消息与日志均**不新增跨采集固定排名**；同毫秒并列可以随采集变化。messages 见证按本侧事件时间集合，不升级为未裁定的每消息身份映射。projection 见证按对应文件和事件身份，拒绝无对应日志文件的 projection。
+消息与日志均**不新增跨采集固定排名**；同毫秒并列可以随采集变化。messages 见证按第 10 轮协调者要求升级为每消息身份映射；同侧其他事件或其他会话的合法时间不能代替对应事件。projection 见证按对应文件和事件身份，拒绝无对应日志文件的 projection。
 
 **incomplete-turn 的明确读取时钟分支。** `readSessionMessages.ts:137–138,391–410` 在读取时创建特殊 status，`:396` 取 `now()`；`routes/messages.js:185–205,301–308` 将它映射到历史消息数组。比较器仅在以下源码生成形态同时匹配时，把具体 `http[readonly.messages#N].body.messages[i].timestamp` 登记到报告 `reading_clock_paths`：`kind="status"`、`provider="pilotdeck"`、非空 sessionId、id 以该 sessionId 加 `-incomplete-turn-status-` 开头且后缀非空、text 严格等于源码固定中文提示，且没有 entryId/sequence/turnId/runId。这一精确路径只验 ISO 毫秒格式、单位和 wall 区间，排除出历史事件见证及历史顺序序列；其余消息（包括普通 status）仍执行历史规则。原消息保留在响应比较中，未删除或替换其内容；如果它只在一侧出现，结构差异仍 FAIL。对照覆盖该分支和带 entryId 的伪装 status，不能靠“本批恰巧没出现”取得豁免。
 
@@ -430,3 +430,16 @@ chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前�
 ### 验收方式
 
 沿用原 20 ref + 5 TS + 1 proxy 的显式 historical-replay，不启动服务或重采。controls 增加消息倒序、消息全改读取时刻、日志 createdAt 倒序、anchor 改值的单侧与两侧同坏；projection conversation/status/metadata 另有按身份或最新值的反例；允许合法同毫秒并列，明确测试 incomplete-turn 路径；注入 clock 回拨必须 REFUSED。真实归档副本也执行四组单侧/双侧变异与时钟 REFUSED，重算 HTTP ETag/Content-Length/body bytes/offset 或磁盘快照，避免完整性门替代目标规则命中。最终结果记入 `_tmp/RESULT.md` 第 9 轮。
+
+
+## 第 10 轮：历史消息身份见证与 ClockMonitor 容差（2026-10-14，DRAFT）
+
+按 PR #73 第 4 轮要求修复，保留非递减检查及第 9 轮 incomplete-turn 精确读取时钟例外。DRAFT、独立评审 null、未冻结不变；本轮仅做已有归档的离线 historical-replay，不启动服务、不重采。
+
+**身份回源。** 重新读取归档 run-meta 指定 baseline 的 `src/web/server/readSessionMessages.ts:96–115,866–890`：canonical message、timestamp、entryId、sequence 按同一个 entry/数组下标生成；flatten 的 text 分支在 `:529,540–561` 复制时间及可选 entryId。普通 status 在 `:1186–1201` 使用事件 createdAt 和 sequence，但不输出 entryId；error-turn 也在 `:1157–1165` 输出事件时间和 sequence。`ui/server/routes/messages.js:183–205` 将 createdAt 映射为 timestamp，保留 sequence 和存在的 entryId，并设置请求 sessionId。故使用 `(sessionId, sequence)` 为必需定位键，entryId 为存在时的额外一致性条件，不以展示 id 或 turnId 替代事件键。一条事件 flatten 出多条消息可以重复使用同一见证，不能要求一对一消费。独立回读全部 26 份原始 recording/jsonl：78/78 消息按此键时间完全相等，52/52 带 entryId 的消息一致，26 条普通 status 无 entryId；当前完整 baseline/node/recorder 哈希与 26 份采集元数据一致。逐条及源码摘录保存于 `_tmp/b2-round10-source-audit.json`。
+
+**实现边界。** `load_chat_clocks` 从本侧重新 capture 的真实 jsonl 建 `(sessionId, sequence) -> (createdAt, entryId)` 映射；sessionId 必须是非空字符串，sequence 必须是正整数（bool 不算）。事件键重复即 FAIL，不用文件扫描顺序决定见证。历史消息身份缺失/非法/不存在、timestamp 与定位事件不等，或已出现的 entryId 非法/不等，均产生带侧别及消息 timestamp 路径的 `normalization.field`。非递减仍允许同毫秒并列，但合法并列的消息和对应事件时间必须同时一致。普通 status 不能利用缺 entryId 绕开 sequence 见证。读取时生成的 incomplete-turn 精确形态仍只检查格式/单位/wall，stream.messages 不套用历史事件映射。
+
+**ClockMonitor 容差与残余风险。** 相邻 wall 直接倒退无容差；相邻 offset bracket 能确认的下降超过 1 ms 才 REFUSED，不与历史最高 offset 比较。协调者给定的约 500 ppm 负向调速，在 250 ms 标称采样区间累计约 125 µs，低于该阈值；即使持续 10 分钟累计下降 300 ms，也不应触发累计误判。采样 bracket、最大覆盖间隔 2 s、首尾覆盖和旧归档准入规则保持。阈值以下的阶跃回拨可能被采样忽略：小于 1 ms 的单次回拨在毫秒级 createdAt 上最多造成 1 ms 倒序；若留下这种事件/消息倒序，将落到既有非递减检查并 FAIL，不能保证监测器先将其归为环境 REFUSED。同毫秒内回拨可能没有可观察倒序，多个小步以及采样间回拨后恢复也不构成连续时钟证明。检测通过仅表示采样门通过。
+
+**离线验证。** 三类原先漏报的 timestamp 注入（全改 turn_started、逐条改为 sequence−1 事件、改用另一 session 同 sequence 事件）均在真实 TS1↔TS3 + 20 池 historical-replay 上执行单侧及两侧同坏，通过实际 compare CLI 检查 FAIL / exit 1，且命中被修改侧的身份见证路径；HTTP 实体头和字节记录同步重算，排除完整性门抢先拒绝。合成 controls 另覆盖缺失/非法/不存在的定位键、entryId 不一致、合法事件时间并列与普通 status。ClockMonitor 单测模拟 500 ppm 负向 slew 持续 10 分钟可通过、单次 2 ms 阶跃 REFUSED、wall 倒退 1 ns REFUSED，以及 1 ms 阈值严格边界；不修改机器时钟。20+5+1 最终结果与复现命令见 `_tmp/RESULT.md` 第 10 轮。
