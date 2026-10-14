@@ -1,0 +1,106 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "seed": 692734571,
+  "node": "v22.22.0",
+  "yaml": "2.9.0",
+  "generated": 2986,
+  "legacy": 71,
+  "shards": [
+    {
+      "file": "legacy-stages-000.json",
+      "cases": 71,
+      "bytes": 569977,
+      "sha256": "680cd2456def797917f0fa2eff505e25cab5d647827d119c664f79cff25d746c"
+    },
+    {
+      "file": "generated-000.json",
+      "cases": 215,
+      "bytes": 1799551,
+      "sha256": "1bd218500b6e1b77b10f61130176fdb43effebd8852e3db455d569d27c8ec0f8"
+    },
+    {
+      "file": "generated-001.json",
+      "cases": 233,
+      "bytes": 1769104,
+      "sha256": "710331bbc8c73e02c12c51204f535b90ef6cb088b1328eaa68ce6be90711a687"
+    },
+    {
+      "file": "generated-002.json",
+      "cases": 223,
+      "bytes": 1799128,
+      "sha256": "a977e12ae6cbe22dab7e3629bb497082b37cb5cb905c8408864f124dd48934bb"
+    },
+    {
+      "file": "generated-003.json",
+      "cases": 233,
+      "bytes": 1690146,
+      "sha256": "cce9b27b0f9a6756c72ac1205153b666cb639116252c8b8e36d39a159722d371"
+    },
+    {
+      "file": "generated-004.json",
+      "cases": 239,
+      "bytes": 1798755,
+      "sha256": "8d0ab79fc4e5d25a3ca655688c8105a0f32bb2700790c04db826560d69037336"
+    },
+    {
+      "file": "generated-005.json",
+      "cases": 227,
+      "bytes": 1788715,
+      "sha256": "4ba7269fadf4a617eb37500d1c746f013382ad30415d9812ae296f2b84f677c2"
+    },
+    {
+      "file": "generated-006.json",
+      "cases": 209,
+      "bytes": 1799762,
+      "sha256": "ff3ab1109d388f19c088824001e9b2293677e97f14efb26a661f4d7055e609fd"
+    },
+    {
+      "file": "generated-007.json",
+      "cases": 201,
+      "bytes": 1789790,
+      "sha256": "15a33ee98a2d537622872bae189d3563aeb67caec78e255805934046a3aab100"
+    },
+    {
+      "file": "generated-008.json",
+      "cases": 252,
+      "bytes": 1755729,
+      "sha256": "26ff9acd7af684aa18d6c0f3e3691babe3b1730508fa59d7f492512dd992b688"
+    },
+    {
+      "file": "generated-009.json",
+      "cases": 237,
+      "bytes": 1798253,
+      "sha256": "521092b3420d3c264fdcffd729f4d37c8a3cf91fc0760c8538892b409b229a19"
+    },
+    {
+      "file": "generated-010.json",
+      "cases": 177,
+      "bytes": 1300525,
+      "sha256": "1e786836d005e41bfffa9cedc97ff840bcdf3303a0e144a398ef2dc42366c223"
+    },
+    {
+      "file": "generated-011.json",
+      "cases": 4,
+      "bytes": 1799371,
+      "sha256": "3e9f580afd619b8ce9ce20196b133b52ebe7229fd5739d96ed149a02d9b29b9c"
+    },
+    {
+      "file": "generated-012.json",
+      "cases": 258,
+      "bytes": 1657267,
+      "sha256": "037ed63e36e006f46b4f32c1a6287164d27646d09387b0a7df12645a02bd53e2"
+    },
+    {
+      "file": "generated-013.json",
+      "cases": 163,
+      "bytes": 1799945,
+      "sha256": "88a9bbb4b3aaa928521cdb4f5c0aba7ca2aeac62ab91f0e2ed66f46b457ce053"
+    },
+    {
+      "file": "generated-014.json",
+      "cases": 115,
+      "bytes": 645777,
+      "sha256": "c4e5c9bff759aef7a6f6ba7891b6f2bd77145e05fd60462295c6b352599e7b4b"
+    }
+  ]
+}

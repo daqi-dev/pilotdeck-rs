@@ -8,6 +8,7 @@ members = [
     "pilotdeck-protocol",
     "pilotdeck-tokenizer",
     "pilotdeck-gateway",
+    "pilotdeck-yaml",
 ]
 
 [workspace.package]

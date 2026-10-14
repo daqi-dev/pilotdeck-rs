@@ -1,0 +1,2602 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "yaml": "2.9.0",
+  "cases": [
+    {
+      "id": "empty",
+      "yaml": "",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "type": "null"
+        },
+        "nodes": []
+      }
+    },
+    {
+      "id": "comment-only",
+      "yaml": "# comment\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "type": "null"
+        },
+        "nodes": []
+      }
+    },
+    {
+      "id": "null-root",
+      "yaml": "null\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "type": "null"
+        },
+        "nodes": []
+      }
+    },
+    {
+      "id": "tilde-root",
+      "yaml": "~\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "type": "null"
+        },
+        "nodes": []
+      }
+    },
+    {
+      "id": "empty-values",
+      "yaml": "empty:\nquoted: \"\"\nsingle: ''\nnull: null\ntilde: ~\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"empty\"",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "\"quoted\"",
+                {
+                  "type": "string",
+                  "json": "\"\""
+                }
+              ],
+              [
+                "\"single\"",
+                {
+                  "type": "string",
+                  "json": "\"\""
+                }
+              ],
+              [
+                "\"\"",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "\"tilde\"",
+                {
+                  "type": "null"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "core-scalars",
+      "yaml": "[null, Null, NULL, nUlL, ~, true, True, TRUE, tRuE, false, False, FALSE, yes, no, on, off, y, n]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "\"2\"",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "\"3\"",
+                {
+                  "type": "string",
+                  "json": "\"nUlL\""
+                }
+              ],
+              [
+                "\"4\"",
+                {
+                  "type": "null"
+                }
+              ],
+              [
+                "\"5\"",
+                {
+                  "type": "boolean",
+                  "value": "true"
+                }
+              ],
+              [
+                "\"6\"",
+                {
+                  "type": "boolean",
+                  "value": "true"
+                }
+              ],
+              [
+                "\"7\"",
+                {
+                  "type": "boolean",
+                  "value": "true"
+                }
+              ],
+              [
+                "\"8\"",
+                {
+                  "type": "string",
+                  "json": "\"tRuE\""
+                }
+              ],
+              [
+                "\"9\"",
+                {
+                  "type": "boolean",
+                  "value": "false"
+                }
+              ],
+              [
+                "\"10\"",
+                {
+                  "type": "boolean",
+                  "value": "false"
+                }
+              ],
+              [
+                "\"11\"",
+                {
+                  "type": "boolean",
+                  "value": "false"
+                }
+              ],
+              [
+                "\"12\"",
+                {
+                  "type": "string",
+                  "json": "\"yes\""
+                }
+              ],
+              [
+                "\"13\"",
+                {
+                  "type": "string",
+                  "json": "\"no\""
+                }
+              ],
+              [
+                "\"14\"",
+                {
+                  "type": "string",
+                  "json": "\"on\""
+                }
+              ],
+              [
+                "\"15\"",
+                {
+                  "type": "string",
+                  "json": "\"off\""
+                }
+              ],
+              [
+                "\"16\"",
+                {
+                  "type": "string",
+                  "json": "\"y\""
+                }
+              ],
+              [
+                "\"17\"",
+                {
+                  "type": "string",
+                  "json": "\"n\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "core-numbers",
+      "yaml": "[0, -0, +0, 01, 0o17, 0O17, 0xFF, 0XFF, 0b10, 1_000, 1:20, 1.0, .5, 1., 1e3, +1e3, -2E-2, .inf, -.Inf, +.INF, .nan, .NaN, 9007199254740993, 1e999]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "number",
+                  "value": "0"
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "number",
+                  "value": "-0"
+                }
+              ],
+              [
+                "\"2\"",
+                {
+                  "type": "number",
+                  "value": "0"
+                }
+              ],
+              [
+                "\"3\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"4\"",
+                {
+                  "type": "number",
+                  "value": "15"
+                }
+              ],
+              [
+                "\"5\"",
+                {
+                  "type": "string",
+                  "json": "\"0O17\""
+                }
+              ],
+              [
+                "\"6\"",
+                {
+                  "type": "number",
+                  "value": "255"
+                }
+              ],
+              [
+                "\"7\"",
+                {
+                  "type": "string",
+                  "json": "\"0XFF\""
+                }
+              ],
+              [
+                "\"8\"",
+                {
+                  "type": "string",
+                  "json": "\"0b10\""
+                }
+              ],
+              [
+                "\"9\"",
+                {
+                  "type": "string",
+                  "json": "\"1_000\""
+                }
+              ],
+              [
+                "\"10\"",
+                {
+                  "type": "string",
+                  "json": "\"1:20\""
+                }
+              ],
+              [
+                "\"11\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"12\"",
+                {
+                  "type": "number",
+                  "value": "0.5"
+                }
+              ],
+              [
+                "\"13\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"14\"",
+                {
+                  "type": "number",
+                  "value": "1000"
+                }
+              ],
+              [
+                "\"15\"",
+                {
+                  "type": "number",
+                  "value": "1000"
+                }
+              ],
+              [
+                "\"16\"",
+                {
+                  "type": "number",
+                  "value": "-0.02"
+                }
+              ],
+              [
+                "\"17\"",
+                {
+                  "type": "number",
+                  "value": "Infinity"
+                }
+              ],
+              [
+                "\"18\"",
+                {
+                  "type": "number",
+                  "value": "-Infinity"
+                }
+              ],
+              [
+                "\"19\"",
+                {
+                  "type": "number",
+                  "value": "Infinity"
+                }
+              ],
+              [
+                "\"20\"",
+                {
+                  "type": "number",
+                  "value": "NaN"
+                }
+              ],
+              [
+                "\"21\"",
+                {
+                  "type": "number",
+                  "value": "NaN"
+                }
+              ],
+              [
+                "\"22\"",
+                {
+                  "type": "number",
+                  "value": "9007199254740992"
+                }
+              ],
+              [
+                "\"23\"",
+                {
+                  "type": "number",
+                  "value": "Infinity"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "quoted-scalars",
+      "yaml": "[\"null\", '~', \"true\", '01', \"1e999\"]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "string",
+                  "json": "\"null\""
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "string",
+                  "json": "\"~\""
+                }
+              ],
+              [
+                "\"2\"",
+                {
+                  "type": "string",
+                  "json": "\"true\""
+                }
+              ],
+              [
+                "\"3\"",
+                {
+                  "type": "string",
+                  "json": "\"01\""
+                }
+              ],
+              [
+                "\"4\"",
+                {
+                  "type": "string",
+                  "json": "\"1e999\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "block-scalars",
+      "yaml": "literal: |\n  true\n  two\nfolded: >-\n  a\n  b\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"literal\"",
+                {
+                  "type": "string",
+                  "json": "\"true\\ntwo\\n\""
+                }
+              ],
+              [
+                "\"folded\"",
+                {
+                  "type": "string",
+                  "json": "\"a b\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-string",
+      "yaml": "a: 1\na: 2\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "DUPLICATE_KEY",
+          "message": "Map keys must be unique",
+          "pos": [
+            5,
+            6
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "duplicate-quoted",
+      "yaml": "a: 1\n\"a\": 2\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "DUPLICATE_KEY",
+          "message": "Map keys must be unique",
+          "pos": [
+            5,
+            6
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "duplicate-number",
+      "yaml": "1: a\n01: b\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "DUPLICATE_KEY",
+          "message": "Map keys must be unique",
+          "pos": [
+            5,
+            6
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "duplicate-nan",
+      "yaml": ".nan: a\n.NaN: b\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"NaN\"",
+                {
+                  "type": "string",
+                  "json": "\"b\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-null",
+      "yaml": "null: a\n~: b\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "DUPLICATE_KEY",
+          "message": "Map keys must be unique",
+          "pos": [
+            8,
+            9
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "key-coercion-collision",
+      "yaml": "1: a\n\"1\": b\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"1\"",
+                {
+                  "type": "string",
+                  "json": "\"b\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "complex-key",
+      "yaml": "? [a, b]\n: value\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"[ a, b ]\"",
+                {
+                  "type": "string",
+                  "json": "\"value\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "complex-key-duplicate",
+      "yaml": "? [a, b]\n: one\n? [a, b]\n: two\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"[ a, b ]\"",
+                {
+                  "type": "string",
+                  "json": "\"two\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mapping-key",
+      "yaml": "? {a: 1}\n: value\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"{ a: 1 }\"",
+                {
+                  "type": "string",
+                  "json": "\"value\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "proto-keys",
+      "yaml": "__proto__: {x: 1}\nconstructor: 2\ntoString: 3\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"__proto__\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"constructor\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ],
+              [
+                "\"toString\"",
+                {
+                  "type": "number",
+                  "value": "3"
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "numeric-key-order",
+      "yaml": "z: 0\n10: ten\n2: two\na: 1\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"2\"",
+                {
+                  "type": "string",
+                  "json": "\"two\""
+                }
+              ],
+              [
+                "\"10\"",
+                {
+                  "type": "string",
+                  "json": "\"ten\""
+                }
+              ],
+              [
+                "\"z\"",
+                {
+                  "type": "number",
+                  "value": "0"
+                }
+              ],
+              [
+                "\"a\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "alias-scalar",
+      "yaml": "a: &x true\nb: *x\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "boolean",
+                  "value": "true"
+                }
+              ],
+              [
+                "\"b\"",
+                {
+                  "type": "boolean",
+                  "value": "true"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "alias-map",
+      "yaml": "a: &x {nested: [a, b]}\nb: *x\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"b\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"nested\"",
+                {
+                  "ref": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "string",
+                  "json": "\"a\""
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "string",
+                  "json": "\"b\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "alias-redefinition",
+      "yaml": "a: &x 1\nb: &x 2\nc: *x\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"b\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ],
+              [
+                "\"c\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "alias-unknown",
+      "yaml": "a: *missing\n",
+      "phase": "toJSON.throw",
+      "errors": [],
+      "warnings": [],
+      "error": {
+        "name": "ReferenceError",
+        "message": "Unresolved alias (the anchor must be set before the alias): missing"
+      }
+    },
+    {
+      "id": "alias-forward",
+      "yaml": "a: *later\nb: &later 1\n",
+      "phase": "toJSON.throw",
+      "errors": [],
+      "warnings": [],
+      "error": {
+        "name": "ReferenceError",
+        "message": "Unresolved alias (the anchor must be set before the alias): later"
+      }
+    },
+    {
+      "id": "alias-cycle",
+      "yaml": "a: &x {self: *x}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"self\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "alias-key",
+      "yaml": "a: &x key\n*x: value\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "MISSING_CHAR",
+          "message": "Implicit map keys need to be followed by map values",
+          "pos": [
+            10,
+            13
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "BAD_ALIAS",
+          "message": "Alias ending in : is ambiguous",
+          "pos": [
+            12,
+            13
+          ]
+        }
+      ]
+    },
+    {
+      "id": "alias-key-duplicate",
+      "yaml": "a: &x a\n*x: second\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "MISSING_CHAR",
+          "message": "Implicit map keys need to be followed by map values",
+          "pos": [
+            8,
+            11
+          ]
+        }
+      ],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "BAD_ALIAS",
+          "message": "Alias ending in : is ambiguous",
+          "pos": [
+            10,
+            11
+          ]
+        }
+      ]
+    },
+    {
+      "id": "merge-core",
+      "yaml": "base: &b {x: 1}\nitem: {<<: *b, y: 2}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"base\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"item\"",
+                {
+                  "ref": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"<<\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"y\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge-explicit",
+      "yaml": "base: &b {x: 1}\nitem: {!!merge <<: *b, y: 2}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"base\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"item\"",
+                {
+                  "ref": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"y\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge-quoted",
+      "yaml": "base: &b {x: 1}\nitem: {\"<<\": *b, y: 2}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"base\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"item\"",
+                {
+                  "ref": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"<<\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"y\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge-invalid-core",
+      "yaml": "item: {<<: 7}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"item\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"<<\"",
+                {
+                  "type": "number",
+                  "value": "7"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge-invalid-explicit",
+      "yaml": "item: {!!merge <<: 7}\n",
+      "phase": "toJSON.throw",
+      "errors": [],
+      "warnings": [],
+      "error": {
+        "name": "Error",
+        "message": "Merge sources must be maps or map aliases"
+      }
+    },
+    {
+      "id": "merge-duplicate-core",
+      "yaml": "base: &b {x: 1}\nitem: {<<: *b, <<: *b}\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "DUPLICATE_KEY",
+          "message": "Map keys must be unique",
+          "pos": [
+            31,
+            32
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "explicit-str",
+      "yaml": "[!!str true, !!str 1, !!str null, !!str \"\", ! true]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "string",
+                  "json": "\"true\""
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "string",
+                  "json": "\"1\""
+                }
+              ],
+              [
+                "\"2\"",
+                {
+                  "type": "string",
+                  "json": "\"null\""
+                }
+              ],
+              [
+                "\"3\"",
+                {
+                  "type": "string",
+                  "json": "\"\""
+                }
+              ],
+              [
+                "\"4\"",
+                {
+                  "type": "string",
+                  "json": "\"true\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "explicit-int",
+      "yaml": "[!!int 01, !!int \"10\", !!int 1_000]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:yaml.org,2002:int",
+          "pos": [
+            23,
+            28
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "number",
+                  "value": "10"
+                }
+              ],
+              [
+                "\"2\"",
+                {
+                  "type": "string",
+                  "json": "\"1_000\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "explicit-bool-invalid",
+      "yaml": "a: !!bool yes\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:yaml.org,2002:bool",
+          "pos": [
+            3,
+            9
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"yes\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "explicit-int-invalid",
+      "yaml": "a: !!int nope\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:yaml.org,2002:int",
+          "pos": [
+            3,
+            8
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"nope\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "explicit-null-invalid",
+      "yaml": "a: !!null nope\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:yaml.org,2002:null",
+          "pos": [
+            3,
+            9
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"nope\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-tag-plain",
+      "yaml": "a: !custom true\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: !custom",
+          "pos": [
+            3,
+            10
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"true\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-tag-quoted",
+      "yaml": "a: !custom \"true\"\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: !custom",
+          "pos": [
+            3,
+            10
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"true\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-tag-map",
+      "yaml": "a: !custom {x: 1}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: !custom",
+          "pos": [
+            3,
+            10
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-seq",
+      "yaml": "a: !!seq [1, 2]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-set",
+      "yaml": "a: !!set {x: null, y: null}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Set]",
+            "entries": [],
+            "set": [
+              {
+                "type": "string",
+                "json": "\"x\""
+              },
+              {
+                "type": "string",
+                "json": "\"y\""
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-omap",
+      "yaml": "a: !!omap [{x: 1}, {y: 2}]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Map]",
+            "entries": [],
+            "map": [
+              [
+                {
+                  "type": "string",
+                  "json": "\"x\""
+                },
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                {
+                  "type": "string",
+                  "json": "\"y\""
+                },
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-pairs",
+      "yaml": "a: !!pairs [{x: 1}, {x: 2}]\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "ref": 2
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "ref": 3
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-timestamp",
+      "yaml": "a: !!timestamp 2001-12-15T02:59:43.1Z\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"2001-12-15T02:59:43.100Z\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-binary",
+      "yaml": "a: !!binary SGVsbG8=\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "ref": 1
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"type\"",
+                {
+                  "type": "string",
+                  "json": "\"Buffer\""
+                }
+              ],
+              [
+                "\"data\"",
+                {
+                  "ref": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Array]",
+            "entries": [
+              [
+                "\"0\"",
+                {
+                  "type": "number",
+                  "value": "72"
+                }
+              ],
+              [
+                "\"1\"",
+                {
+                  "type": "number",
+                  "value": "101"
+                }
+              ],
+              [
+                "\"2\"",
+                {
+                  "type": "number",
+                  "value": "108"
+                }
+              ],
+              [
+                "\"3\"",
+                {
+                  "type": "number",
+                  "value": "108"
+                }
+              ],
+              [
+                "\"4\"",
+                {
+                  "type": "number",
+                  "value": "111"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-directive",
+      "yaml": "%TAG !e! tag:example.com,2020:\n---\na: !e!test true\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:example.com,2020:test",
+          "pos": [
+            38,
+            45
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"true\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag-directives-two",
+      "yaml": "%TAG !e! tag:example.com,2020:\n%TAG !f! tag:example.org,2021:\n---\na: !e!test true\nb: !f!test false\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:example.com,2020:test",
+          "pos": [
+            69,
+            76
+          ]
+        },
+        {
+          "name": "YAMLWarning",
+          "code": "TAG_RESOLVE_FAILED",
+          "message": "Unresolved tag: tag:example.org,2021:test",
+          "pos": [
+            85,
+            92
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"true\""
+                }
+              ],
+              [
+                "\"b\"",
+                {
+                  "type": "string",
+                  "json": "\"false\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "version-11",
+      "yaml": "%YAML 1.1\n---\na: yes\nb: 012\nc: 1:20\nd: 2001-12-15\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "boolean",
+                  "value": "true"
+                }
+              ],
+              [
+                "\"b\"",
+                {
+                  "type": "number",
+                  "value": "10"
+                }
+              ],
+              [
+                "\"c\"",
+                {
+                  "type": "number",
+                  "value": "80"
+                }
+              ],
+              [
+                "\"d\"",
+                {
+                  "type": "string",
+                  "json": "\"2001-12-15T00:00:00.000Z\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "version-12",
+      "yaml": "%YAML 1.2\n---\na: yes\nb: 012\nc: 1:20\nd: 2001-12-15\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"yes\""
+                }
+              ],
+              [
+                "\"b\"",
+                {
+                  "type": "number",
+                  "value": "12"
+                }
+              ],
+              [
+                "\"c\"",
+                {
+                  "type": "string",
+                  "json": "\"1:20\""
+                }
+              ],
+              [
+                "\"d\"",
+                {
+                  "type": "string",
+                  "json": "\"2001-12-15\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "version-13",
+      "yaml": "%YAML 1.3\n---\na: yes\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "BAD_DIRECTIVE",
+          "message": "Unsupported YAML version 1.3",
+          "pos": [
+            6,
+            9
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"yes\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "version-unknown",
+      "yaml": "%YAML 9.9\n---\na: yes\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [
+        {
+          "name": "YAMLWarning",
+          "code": "BAD_DIRECTIVE",
+          "message": "Unsupported YAML version 9.9",
+          "pos": [
+            6,
+            9
+          ]
+        }
+      ],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"yes\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "version-duplicate",
+      "yaml": "%YAML 1.1\n%YAML 1.2\n---\na: yes\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"yes\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "merge-11",
+      "yaml": "%YAML 1.1\n---\nbase: &b {x: 1}\nitem: {<<: *b, y: 2}\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"base\"",
+                {
+                  "ref": 1
+                }
+              ],
+              [
+                "\"item\"",
+                {
+                  "ref": 2
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          },
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"x\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ],
+              [
+                "\"true\"",
+                {
+                  "type": "number",
+                  "value": "2"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "multiple-docs",
+      "yaml": "a: 1\n---\nb: 2\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "MULTIPLE_DOCS",
+          "message": "Source contains multiple documents; please use YAML.parseAllDocuments()",
+          "pos": [
+            5,
+            14
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "multiple-docs-empty",
+      "yaml": "---\n---\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "MULTIPLE_DOCS",
+          "message": "Source contains multiple documents; please use YAML.parseAllDocuments()",
+          "pos": [
+            4,
+            7
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "document-end",
+      "yaml": "a: 1\n...\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "number",
+                  "value": "1"
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "invalid-after-first-doc",
+      "yaml": "a: 1\n---\n[unterminated\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "MULTIPLE_DOCS",
+          "message": "Source contains multiple documents; please use YAML.parseAllDocuments()",
+          "pos": [
+            5,
+            23
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "unknown-alias-and-duplicate",
+      "yaml": "a: *missing\nb: 1\nb: 2\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "DUPLICATE_KEY",
+          "message": "Map keys must be unique",
+          "pos": [
+            17,
+            18
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "unicode-high-surrogate",
+      "yaml": "a: \"\\uD800\"\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"\\ud800\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unicode-low-surrogate",
+      "yaml": "a: \"\\uDC00\"\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"\\udc00\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unicode-surrogate-pair",
+      "yaml": "a: \"\\uD83D\\uDE00\"\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"😀\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unicode-codepoint",
+      "yaml": "a: \"\\U0001F600\"\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"😀\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unicode-out-of-range",
+      "yaml": "a: \"\\U00110000\"\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "BAD_DQ_ESCAPE",
+          "message": "Invalid escape sequence \\U00110000",
+          "pos": [
+            4,
+            5
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "unicode-nul-escape",
+      "yaml": "a: \"\\0\"\n",
+      "phase": "value",
+      "errors": [],
+      "warnings": [],
+      "value": {
+        "root": {
+          "ref": 0
+        },
+        "nodes": [
+          {
+            "type": "[object Object]",
+            "entries": [
+              [
+                "\"a\"",
+                {
+                  "type": "string",
+                  "json": "\"\\u0000\""
+                }
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-flow-entry",
+      "yaml": "[a,,b]\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "UNEXPECTED_TOKEN",
+          "message": "Unexpected , in flow sequence",
+          "pos": [
+            3,
+            4
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "tab-indent",
+      "yaml": "a:\n\tb: 1\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "TAB_AS_INDENT",
+          "message": "Tabs are not allowed as indentation",
+          "pos": [
+            3,
+            4
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "missing-close",
+      "yaml": "a: [1, 2\n",
+      "phase": "document.errors",
+      "errors": [
+        {
+          "name": "YAMLParseError",
+          "code": "BAD_INDENT",
+          "message": "Flow sequence in block collection must be sufficiently indented and end with a ]",
+          "pos": [
+            9,
+            10
+          ]
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "id": "alias-expansion-limit",
+      "yaml": "a: &x0 [0, 0 ]\nb: &x1 [*x0, *x0 ]\nc: &x2 [*x1, *x1 ]\nd: &x3 [*x2, *x2 ]\ne: &x4 [*x3, *x3 ]\nf: &x5 [*x4, *x4 ]\ng: &x6 [*x5, *x5 ]\nh: &x7 [*x6, *x6 ]\n",
+      "phase": "toJSON.throw",
+      "errors": [],
+      "warnings": [],
+      "error": {
+        "name": "ReferenceError",
+        "message": "Excessive alias count indicates a resource exhaustion attack"
+      }
+    }
+  ]
+}
