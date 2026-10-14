@@ -93,3 +93,6 @@ Rust 内存 duplex 回归覆盖四种原始头、128KiB 载荷、TCP 半关闭�
 
 ### r2 正式重跑（协调者在沙箱外执行，2026-10-14）
 codex 沙箱拒绝绑定 127.0.0.1:28791，协调者按 RESULT-r2 给出的命令原样执行 `check_ruler.py --output _tmp/20261014-exp006-r2-live`：self_compare=true、distinct_ts_rounds=true（5 个不同 gateway PID）、positive_controls=true、same_bad_rejected=true、proxy_parity=true、proxy_rules=[]、lock_takeovers=[]；11 个装置脚本 sha256 已绑进 ruler.json；status=PENDING_REVIEW（independent_review 待填）。
+
+### r3：rebase 后重跑并冻结（2026-10-14 上午）
+rebase 到含 A3 的 main 后，协调者在沙箱外重跑 `check_ruler.py --output _tmp/20261014-exp006-r3-live`：self_compare / distinct_ts_rounds / positive_controls / same_bad_rejected / proxy_parity 全 true，proxy_rules=[]，lock_takeovers=[]。第 3 轮双谱系评审（GLM、DeepSeek）均 independent_review=true、无 P0/P1。据此冻结 `specs/gateway-parity/FROZEN.md`（14 条，**AI 代批，待人复核**）。
