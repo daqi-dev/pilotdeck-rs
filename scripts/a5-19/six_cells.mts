@@ -1,17 +1,26 @@
 /** TS-only observation harness; no product oracle and no network listener. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, appendFileSync } from 'node:fs';
 import { registerHooks, stripTypeScriptTypes } from 'node:module';
 import { dirname, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { Server } from 'node:net';
+import { checkObservation, runControls, RULES } from './observation_rules.mjs';
 
 const WORKTREE = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const BASELINE = '/Users/da/ws/pilotdeck-rs/resources/PilotDeck';
+// The Python launcher isolates the environment BEFORE this Node starts.
+const isolation = process.env.A52_ISOLATION;
+assert.ok(isolation, 'Use python3 scripts/a5-19/run.py (isolated Node startup required)');
+for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'TMPDIR', 'PILOT_HOME']) {
+  assert.ok(process.env[key] && resolve(process.env[key]!).startsWith(resolve(isolation) + '/'), `isolated ${key} required`);
+}
+for (const key of ['PILOTDECK_SKIP_BROWSER_OPEN', 'SKIP_BROWSER_OPEN']) assert.equal(process.env[key], '1');
+const BASELINE = resolve(process.env.A52_BASELINE!);
 const BASE_URL = pathToFileURL(BASELINE + '/').href;
-const OUTPUT = resolve(WORKTREE, 'docs/experiments/exp012-a5-19-six-cells/raw');
-const TMP = resolve(WORKTREE, '_tmp/20261014-a5-19');
+const OUTPUT = resolve(process.env.A52_OUTPUT!);
+const TMP = resolve(process.env.A52_TMP!);
 mkdirSync(TMP, { recursive: true });
 const RUN_DIR = mkdtempSync(resolve(TMP, 'run-'));
 process.env.PILOT_HOME = resolve(RUN_DIR, 'home');
@@ -21,6 +30,10 @@ assert.equal(process.versions.node.split('.')[0], '22', 'Run with Node 22');
 const baselineCommit = execFileSync('git', ['-C', BASELINE, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 assert.equal(baselineCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
 const importedSources = new Map<string, string>();
+// A regression in imported module startup must fail before opening a socket.
+Server.prototype.listen = function() {
+  throw new Error('A5.2a forbids listen; hand listener work to the coordinator');
+} as any;
 // Resolve upstream .js specifiers to their ORIGINAL .ts files. Node's built-in
 // transform is needed for upstream constructor parameter properties; no copied
 // source, emitted JS, build, dependency install or source-text patch is used.
@@ -65,11 +78,14 @@ function clone(value: any) { return JSON.parse(JSON.stringify(value)); }
 function label(event: any) { return `${event.type}:${event.event ?? event.code ?? event.finishReason ?? ''}`; }
 function errorData(error: any) { return { name: error.name, message: error.message, code: error.code ?? null, stack: error.stack }; }
 class Journal {
+  private readonly path: string;
+  constructor(path: string) { this.path = path; writeFileSync(path, ''); }
   rows: any[] = [];
   waiters: any[] = [];
   add(kind: string, data: any = {}) {
     const row = { order: this.rows.length + 1, kind, ...clone(data) };
     this.rows.push(row);
+    appendFileSync(this.path, JSON.stringify(row) + '\n');
     for (const waiter of [...this.waiters]) if (waiter.test(row)) {
       this.waiters.splice(this.waiters.indexOf(waiter), 1); waiter.resolve(row);
     }
@@ -87,13 +103,14 @@ type Variant = {
   name: string;
   order?: 'timeout-first' | 'unknown-first' | 'known-final-first' | 'after-complete' | 'known-final-before-timeout-pending';
   slowStatus?: boolean;
+  slowCatchStatus?: boolean;
   slowAppend?: 'turn_timeout' | 'gateway_submit_failed';
   failStatus?: 'turn_timeout' | 'gateway_submit_failed';
   failAppend?: string;
 };
 const cells: { name: string; registry: boolean; variants: Variant[] }[] = [
   { name: 'no-registry-fast', registry: false, variants: [{ name: 'fast' }] },
-  { name: 'no-registry-slow', registry: false, variants: [{ name: 'status-slow', slowStatus: true }] },
+  { name: 'no-registry-slow', registry: false, variants: [{ name: 'status-slow', slowStatus: true }, { name: 'catch-status-slow', slowCatchStatus: true }] },
   { name: 'no-registry-failure', registry: false, variants: [
     { name: 'timeout-status-fails', failStatus: 'turn_timeout' },
     { name: 'catch-status-fails', failStatus: 'gateway_submit_failed' },
@@ -105,6 +122,8 @@ const cells: { name: string; registry: boolean; variants: Variant[] }[] = [
     { name: 'both-slow', slowStatus: true, slowAppend: 'turn_timeout' },
     { name: 'status-fast-catch-append-slow', slowAppend: 'gateway_submit_failed' },
     { name: 'status-slow-catch-append-slow', slowStatus: true, slowAppend: 'gateway_submit_failed' },
+    { name: 'catch-status-slow-append-fast', slowCatchStatus: true },
+    { name: 'catch-status-slow-append-slow', slowCatchStatus: true, slowAppend: 'turn_timeout' },
   ] },
   { name: 'registry-failure', registry: true, variants: [
     { name: 'timeout-status-fails-append-fast', failStatus: 'turn_timeout' },
@@ -114,9 +133,14 @@ const cells: { name: string; registry: boolean; variants: Variant[] }[] = [
     { name: 'timeout-status-fails-catch-append-slow', failStatus: 'turn_timeout', slowAppend: 'gateway_submit_failed' },
     { name: 'catch-status-fails-catch-append-slow', failStatus: 'gateway_submit_failed', slowAppend: 'gateway_submit_failed' },
     { name: 'timeout-append-fails-status-fast', failAppend: 'error:turn_timeout' },
+    { name: 'timeout-status-event-append-fails', failAppend: 'agent_status:turn_timeout' },
+    { name: 'catch-status-event-append-fails', failAppend: 'agent_status:gateway_submit_failed' },
     { name: 'catch-append-fails-status-fast', failAppend: 'error:gateway_submit_failed' },
     { name: 'timeout-append-fails-status-slow', failAppend: 'error:turn_timeout', slowStatus: true },
     { name: 'catch-append-fails-status-slow', failAppend: 'error:gateway_submit_failed', slowStatus: true },
+    { name: 'timeout-status-and-catch-append-fail', failStatus: 'turn_timeout', failAppend: 'error:gateway_submit_failed' },
+    { name: 'catch-status-and-timeout-append-fail', failStatus: 'gateway_submit_failed', failAppend: 'error:turn_timeout' },
+    { name: 'timeout-append-fails-catch-status-slow', failAppend: 'error:turn_timeout', slowCatchStatus: true },
   ] },
 ];
 // Extra orderings are included in each topology's fast cell, never counted as
@@ -134,7 +158,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   const transcriptPath = resolve(dir, 'transcript.jsonl');
   const registryPath = resolve(dir, 'registry.json');
   writeFileSync(transcriptPath, '');
-  const j = new Journal();
+  const j = new Journal(resolve(dir, 'timeline.ndjson'));
   const frames: any[] = [];
   const statusGate = deferred();
   const appendGate = deferred();
@@ -189,7 +213,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     j.add('transcript.store.enter', { type: event.type, key });
     try {
       if (key !== undefined) j.add('status.store.enter', { key });
-      if (key === 'turn_timeout' && variant.slowStatus) {
+      if ((key === 'turn_timeout' && variant.slowStatus) || (key === 'gateway_submit_failed' && variant.slowCatchStatus)) {
         j.add('status.block', { key, boundary: 'eventStore.append inside writer.writeTail' });
         await statusGate.promise; j.add('status.release', { key });
       }
@@ -198,7 +222,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
         j.add('status.failure', { key, error: errorData(error) }); throw error;
       }
       const entry = await originalStoreAppend(sessionId, turnId, event);
-      if (key !== undefined) j.add('status.commit', { key, sequence: entry.sequence });
+      if (key !== undefined) j.add('status.commit', { key, sequence: entry.sequence, entry });
       return entry;
     } finally { activeStoreWrites--; }
   };
@@ -285,7 +309,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
         try {
           await originalAppend(input);
           j.add('registry.append.commit', {
-            key, diskRecordAfterAppend: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
+            key, event: input.event, diskRecordAfterAppend: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
           });
         }
         catch (error) { j.add('registry.append.failure', { key, error: errorData(error) }); throw error; }
@@ -357,6 +381,10 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
         }
         await waitClose();
         if (!variant.slowStatus) releaseUnknown();
+        if (variant.slowCatchStatus) {
+          await j.wait(r => r.kind === 'status.block' && r.key === 'gateway_submit_failed');
+          j.add('control.release.catch-status'); statusGate.resolve();
+        }
         if (variant.slowAppend) {
           await j.wait(r => r.kind === 'registry.persist.block');
           // Both G append calls are now queued behind the held persist (T or
@@ -396,11 +424,12 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
       assert.deepEqual(events, Object.values(disk.events)[0] ?? [], 'events independently reread');
       registryObservation = { applicable: true, source: relative(WORKTREE, registryPath), rawText: diskText, disk, record, events };
     }
-    const observation = { id, variant, phase, repetition, frames, durableStatus: durable, registry: registryObservation, timeline: j.rows,
+    const observation = { id, evidenceChecks: { frames: ['FRAME_PUBLICATIONS'], durableStatus: ['STATUS_RAW', 'STATUS_COMMITS', 'STATUS_FIFO'], registry: cell.registry ? Object.keys(RULES).filter(k => k.startsWith('REGISTRY_')) : 'N/A' }, variant, phase, repetition, frames, durableStatus: durable, registry: registryObservation, timeline: j.rows,
       transcriptRawText: readFileSync(transcriptPath, 'utf8') };
     checkCompleteness(observation);
     if (variant.failStatus) assert.ok(j.has('status.failure', variant.failStatus), 'status fault was exercised');
     if (variant.failAppend) assert.ok(j.has('registry.persist.failure', variant.failAppend), 'registry disk fault was exercised');
+    if (variant.slowCatchStatus) assert.ok(j.has('status.block', 'gateway_submit_failed'), 'catch status barrier was exercised');
     if (variant.slowStatus) assert.ok(j.has('status.block', 'turn_timeout'), 'status barrier was exercised');
     if (variant.slowAppend) {
       assert.ok(j.has('registry.persist.block', `error:${variant.slowAppend}`), 'append barrier was exercised inside persist');
@@ -423,31 +452,11 @@ function statusEntries(rawText: string) {
 }
 
 function checkCompleteness(o: any) {
-  assert.ok(o.frames.length > 0, 'client observer is nonempty');
-  assert.ok(o.durableStatus.entries.length > 0 || o.durableStatus.emptyReason, 'durable empty explicitly explained');
-  assert.ok(o.timeline.some((r: any) => r.kind === 'loop.final'), 'loop reached a controlled outcome');
-  if (o.registry.applicable) {
-    assert.ok(o.registry.events.length > 0, 'registry observer is nonempty');
-    assert.ok(o.registry.record, 'registry record read');
-    const disk = JSON.parse(o.registry.rawText);
-    assert.deepEqual(o.registry.record, disk.records[0], 'record observer agrees with raw disk snapshot');
-    assert.deepEqual(o.registry.events, Object.values(disk.events)[0] ?? [], 'event observer agrees with raw disk snapshot');
-  } else assert.ok(o.registry.reason);
-  const storedStatus = o.durableStatus.rawText.trim();
-  assert.deepEqual(o.durableStatus.entries, statusEntries(storedStatus), 'status observer agrees with raw file');
-  const keys = (kind: string) => o.timeline.filter((r: any) => r.kind === kind).map((r: any) => r.key);
-  assert.deepEqual(keys('status.store.enter'), keys('status.attempt'), 'status store entry follows real writer admission FIFO');
-  if (o.registry.applicable) assert.deepEqual(
-    keys('registry.persist.enter').filter((key: string) => key !== 'accept'),
-    keys('registry.append.attempt'), 'persist entry follows real registry admission FIFO');
-  const committed = o.timeline.filter((r: any) => r.kind === 'status.commit').map((r: any) => r.key);
-  assert.deepEqual(o.durableStatus.entries.map((r: any) => r.event), committed, 'durable reread vs commit journal (not frames)');
-  const published = o.timeline.filter((r: any) => r.kind === 'queue.enqueue' && !r.closed).map((r: any) => r.event);
-  assert.deepEqual(o.frames, published, 'actual client frames vs open queue publications');
-  if (o.registry.applicable) {
-    assert.deepEqual(o.registry.events.map((e: any) => e.seq), o.registry.events.map((_: any, i: number) => i + 1));
-    assert.equal(o.registry.record.lastSeq, o.registry.events.length);
-  }
+  // Each plane has a named, independent preregistered rule. Empty status is
+  // allowed only with an explanation; no terminal expectation is hard-coded.
+  assert.ok(o.durableStatus.entries.length > 0 || o.durableStatus.emptyReason);
+  assert.ok(o.timeline.some((r: any) => r.kind === 'loop.final'));
+  checkObservation(o);
 }
 // Repetition comparison is local experiment bookkeeping, not a frozen scorer.
 // Keep every event/detail, seq, state, revision and result. Random diagnostic
@@ -464,7 +473,8 @@ function signature(o: any) {
   const record = o.registry.applicable ? clone(o.registry.record) : undefined;
   if (record) for (const key of ['acceptedAt', 'updatedAt', 'ownerPid']) delete record[key];
   return stableValue({ frames: o.frames, statuses: o.durableStatus.entries,
-    registry: o.registry.applicable ? { events: o.registry.events, record } : 'N/A' });
+    registry: o.registry.applicable ? { events: o.registry.events, record } : 'N/A',
+    droppedEnqueues: o.timeline.filter((r: any) => r.kind === 'queue.enqueue' && r.closed).map((r: any) => r.event) });
 }
 function summarize(o: any) {
   const prefix = new Set(['turn_started', 'input_accepted', 'model_request_started', 'tool_call_started']);
@@ -479,26 +489,29 @@ function summarize(o: any) {
     droppedEnqueues: o.timeline.filter((r: any) => r.kind === 'queue.enqueue' && r.closed).map((r: any) => r.key),
   };
 }
-function observerControls(o: any) {
-  const controls: any[] = [];
-  const missing = clone(o); missing.frames = missing.frames.filter((e: any) => e.code !== 'turn_timeout');
-  assert.throws(() => checkCompleteness(missing)); controls.push({ mutation: 'drop observed timeout error frame', detected: true });
-  const missingStatus = clone(o); missingStatus.durableStatus.entries.pop();
-  assert.throws(() => checkCompleteness(missingStatus)); controls.push({ mutation: 'drop durable status entry', detected: true });
-  return controls;
-}
-
 const summary: any[] = [];
 let controls: any[] = [];
 let firstRegistry: any;
+let firstFrames: any;
+let failedStatus: any;
+let failedRegistry: any;
+// Save the rules and complete input manifest BEFORE any baseline measurements.
+writeFileSync(resolve(OUTPUT, 'preregistration.json'), JSON.stringify({ rules: RULES, cells, phases: ['model', 'tool'], repeats: 5 }, null, 2) + '\n');
 for (const cell of cells) {
   const observations: any[] = [];
   const repetitions: any[] = [];
   for (const variant of cell.variants) for (const phase of ['model', 'tool']) {
     const runs: any[] = [];
     for (let repetition = 1; repetition <= 5; repetition++) {
-      const watchdog = realSetTimeout(() => { console.error(`Harness stalled: ${cell.name}/${variant.name}/${phase}/${repetition}`); process.exit(2); }, 15000);
+      const id = `${cell.name}/${variant.name}/${phase}/${repetition}`;
+      const saveIncomplete = (reason: string) => writeFileSync(resolve(OUTPUT, 'incomplete.json'),
+        JSON.stringify({ id, reason, evidence: relative(WORKTREE, resolve(RUN_DIR, id)) }, null, 2) + '\n');
+      const watchdog = realSetTimeout(() => {
+        saveIncomplete('watchdog: controlled barrier not reached');
+        console.error(`Harness stalled: ${id}`); process.exit(2);
+      }, 15000);
       try { runs.push(await measure(cell, variant, phase, repetition)); }
+      catch (error) { saveIncomplete(String(error)); throw error; }
       finally { realClearTimeout(watchdog); }
     }
     const keys = runs.map(r => JSON.stringify(signature(r)));
@@ -507,36 +520,31 @@ for (const cell of cells) {
       ...summarize(runs[0]), observedAlternatives: [...new Map(runs.map(r => [JSON.stringify(signature(r)), summarize(r)])).values()] };
     summary.push(row); repetitions.push(row); observations.push(...runs);
     console.log(JSON.stringify(row));
-    if (cell.name === 'no-registry-fast' && variant.name === 'fast' && phase === 'model') controls = observerControls(runs[0]);
+    if (cell.name === 'no-registry-fast' && variant.name === 'fast' && phase === 'model') firstFrames = runs[0];
+    if (cell.name === 'no-registry-failure' && variant.name === 'timeout-status-fails' && phase === 'model') failedStatus = runs[0];
+    if (cell.name === 'registry-failure' && variant.name === 'catch-append-fails-status-fast' && phase === 'model') failedRegistry = runs[0];
     if (cell.name === 'registry-fast' && variant.name === 'fast' && phase === 'model') firstRegistry = runs[0];
   }
   writeFileSync(resolve(OUTPUT, cell.name + '.json'), JSON.stringify({ cell: cell.name, baselineCommit, node: process.version, repetitions, observations }, null, 2) + '\n');
 }
-// Independent observer mutations: events omission and result overwrite cannot
-// silently disappear from the experiment's semantic comparison.
-const removedEvents = clone(firstRegistry); removedEvents.registry.events.pop();
-assert.throws(() => checkCompleteness(removedEvents));
-controls.push({ mutation: 'drop registry event', detected: true });
-const ignoredResult = clone(firstRegistry); ignoredResult.registry.record.result = { type: 'error', code: 'turn_timeout' };
-assert.throws(() => checkCompleteness(ignoredResult));
-controls.push({ mutation: 'hide registry result overwrite', detected: true });
-for (const kind of ['status.store.enter', 'registry.persist.enter']) {
-  const reversed = clone(firstRegistry);
-  const rows = reversed.timeline.filter((r: any) => r.kind === kind && r.key !== 'accept');
-  [rows[0].key, rows[1].key] = [rows[1].key, rows[0].key];
-  assert.throws(() => checkCompleteness(reversed));
-  controls.push({ mutation: `reverse observed FIFO entry order at ${kind}`, detected: true });
-}
+// Controls must reject with EXACT registered rule IDs, not just throw/exit.
+controls = runControls(firstFrames, firstRegistry, failedStatus, failedRegistry);
 for (const [path, hash] of importedSources) assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), hash, `baseline changed: ${path}`);
 const manifest = {
   generatedAt: new Date().toISOString(), node: process.version, baselineCommit,
   worktreeCommit: execFileSync('git', ['-C', WORKTREE, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-  command: 'node scripts/a5-19/six_cells.mts', pilotHome: process.env.PILOT_HOME,
+  command: 'python3 scripts/a5-19/run.py',
+  preregisteredRules: RULES, expectedCases: cells.flatMap(c => c.variants.flatMap(v => ['model', 'tool'].map(phase => `${c.name}/${v.name}/${phase}`))),
+  executedCases: summary.map(r => `${r.cell}/${r.variant}/${r.phase}`),
+  isolation: Object.fromEntries(['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'TMPDIR', 'PILOTDECK_SKIP_BROWSER_OPEN', 'SKIP_BROWSER_OPEN'].map(k => [k, process.env[k]])), pilotHome: process.env.PILOT_HOME,
+  fixtureFiles: ['six_cells.mts', 'observation_rules.mjs', 'run.py'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: createHash('sha256').update(readFileSync(resolve(WORKTREE, 'scripts/a5-19', name))).digest('hex') })),
   scriptSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
   // 路径与哈希分两行写：文件名含 token / credential 时，同一行的 64 位哈希会被 gitleaks 误判为密钥。
   importedSources: [...importedSources].map(([path, hash]) => ({ path: relative(BASELINE, path), sha256: hash })),
-  checks: { nonemptyObservers: true, diskRereadAgreesWithFreshRegistry: true, statusInjectionInsideWriteTail: true, registryInjectionInsideMutationChain: true, baselineHashesUnchanged: true, observerControls: controls },
+  checks: { tcpListenForbidden: true, nonemptyObservers: true, diskRereadAgreesWithFreshRegistry: true, statusInjectionInsideWriteTail: true, registryInjectionInsideMutationChain: true, baselineHashesUnchanged: true, observerControls: controls },
+  unstableGroups: summary.filter(r => !r.stable),
   repeats: 5, totalMeasurements: summary.reduce((n, r) => n + r.runs, 0), summary,
 };
+assert.deepEqual(manifest.executedCases, manifest.expectedCases, 'no missing/duplicate/implicit skip cases');
 writeFileSync(resolve(OUTPUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 console.log(`DONE ${manifest.totalMeasurements} measurements; ${summary.filter(r => !r.stable).length} unstable variant/phase groups; ${importedSources.size} unchanged baseline source files.`);
