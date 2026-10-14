@@ -48,7 +48,7 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/gap,
 
 **推荐 Rust gateway 直接驱动阶段 C Rust sidecar，继续用已有 Module Protocol；同时必须实现 Rust 宿主。** 基线 stdio 连接工厂只负责 spawn / JSONL；model、工具执行、权限、context、lifecycle、event 与持久化仍在宿主。Rust 现有 transport 的 `BoundExchange` 也会向外发送 `module_call`，不是这些生产能力的实现。依据：`B/src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts:26-31,74-97`、`B/src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts:394-437`、`src/pilotdeck-transport/src/stdio.rs:426-438,469-485`。
 
-建议用四格对照隔离错误：TS host + TS sidecar（固定基准）；TS host + Rust sidecar（既有 C）；Rust host + TS sidecar（测新宿主）；Rust host + Rust sidecar（最终集成）。阶段 C 的 53 场景语义尺子与 A 的帧/落盘/HTTP 尺子分别保留；新宿主接到同一语义驱动需要新装置入口，不能把当前 `--side rust` 当成已支持无 TS host。证据：`.42cog/intent.md:9-11`、`scripts/parity/round.py:132-157`、`scripts/gateway-parity/run_round.py:221-230`、`docs/experiments/exp006-gateway-parity-ruler/readme.md:74-78`。进程内链接可作为迁移后的独立优化，本轮不同时改两种执行拓扑（`.42cog/intent.md:26`）。
+建议用四格对照隔离错误：TS host + TS sidecar（固定基准）；TS host + Rust sidecar（既有 C）；Rust host + TS sidecar（测新宿主）；Rust host + Rust sidecar（最终集成）。阶段 C 的 53 场景语义尺子与 A 的帧/落盘/HTTP 尺子分别保留；新宿主接到同一语义驱动需要新装置入口，不能把当前 `--side rust` 当成已支持无 TS host。证据：`.42cog/intent.md:9-11`、`scripts/parity/round.py:132-157`、`scripts/gateway-parity/run_round.py:221-230`、`docs/experiments/exp006-gateway-parity-ruler/readme.md:74-78`。进程内链接可作为迁移后的独立优化；本轮先保留现有进程边界，以便用四格对照区分宿主与 sidecar 的错误归属，这是 [decision D2](decision.md) 的技术建议，不是意向书对双拓扑的明文禁令。
 
 ## #19 与“不确定结果”的底线
 
