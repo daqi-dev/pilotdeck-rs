@@ -7,7 +7,7 @@ import {resolve,join,dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
 const baseline=resolve(process.argv[2]),output=resolve(process.argv[3]),scratch=resolve(process.argv[4]);
-if(process.versions.node.split('.')[0]!=='22'||process.getuid?.()===0)throw Error('non-root Node 22 required');
+if(process.version!=='v22.22.0'||process.getuid?.()===0)throw Error('non-root Node 22 required');
 for(const k of ['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR'])if(!process.env[k]?.startsWith(scratch))throw Error(`Unisolated ${k}`);
 if(process.env.SKIP_BROWSER_OPEN!=='1'||process.env.PILOTDECK_SKIP_BROWSER_OPEN!=='1')throw Error('Browser guards missing');
 const source=(p:string)=>import(pathToFileURL(join(baseline,'src',p)).href);
@@ -26,7 +26,7 @@ const killCalls:number[]=[];const nativeKill=(process as any)._kill;
 (process as any)._kill=(pid:number)=>{killCalls.push(pid);throw Error('Unexpected PID probe in failing-read fixture');};
 try {
 for(const target of ['transcript','global','project','store','sops','lock']){
- const scenarios=target==='lock'?['read-denied','read-missing','read-notdir','read-directory']:['stat-denied','stat-missing','stat-notdir','read-denied','read-missing','read-notdir','read-directory'];
+ const scenarios=target==='lock'?['read-denied','read-missing','read-notdir','read-directory','read-longname','read-loop','read-deep']:['stat-denied','stat-missing','stat-notdir','read-denied','read-missing','read-notdir','read-directory','stat-longname','read-longname','stat-loop','read-loop','stat-deep','read-deep',...(target==='transcript'?['stat-long-session']:[])];
  for(const scenario of scenarios){
   const id=`io-${target}-${scenario}`,root=join(scratch,'cases',String(results.length)),home=join(root,'home');fs.mkdirSync(home,{recursive:true});
   const paths={transcript:join(home,'projects','registered','chats','web:fixture.jsonl'),global:join(root,'global','pilotdeck.yaml'),project:join(home,'.pilotdeck','pilotdeck.yaml'),store:join(home,'staffdeck','project-bindings.json'),sops:join(home,'staffdeck','b','sops.json'),lock:join(home,'staffdeck','project-bindings.json.lock')};
@@ -37,9 +37,38 @@ for(const target of ['transcript','global','project','store','sops','lock']){
   fs.writeFileSync(paths.store,JSON.stringify({version:1,installationId:'i',projects:[{projectRoot:home,bindingId:'b',agentId:'a',origin:'https://staffdeck.invalid',tenantId:'tenant',status:target==='lock'?'binding':'bound',runtimeReady:true}]}));
   fs.writeFileSync(paths.sops,'{"sops":[{"id":"sop"}]}');fs.writeFileSync(paths.lock,'invalid');
   const files:any={};const collect=(p:string)=>{const s=real.stat(p),f:any={directory:s.isDirectory(),size:s.size};files[p]=f;if(s.isDirectory()){f.entries=fs.readdirSync(p,{withFileTypes:true}).map(e=>[e.name,e.isDirectory()]);for(const [n] of f.entries)collect(join(p,n));}else f.bytes=real.read(p).toString('base64');};collect(root);
-  const path=paths[target as keyof typeof paths],race=(target!=='lock'&&['read-missing','read-notdir'].includes(scenario))||(target==='lock'&&scenario==='read-notdir');let mutated=false;
-  const mutate=()=>{if(mutated)return;mutated=true;if(scenario.endsWith('denied'))fs.chmodSync(scenario.startsWith('stat')?dirname(path):path,0);else if(scenario.endsWith('missing'))fs.unlinkSync(path);else if(scenario.endsWith('notdir')){fs.renameSync(dirname(path),dirname(path)+'.held');fs.writeFileSync(dirname(path),'parent replaced');}else{fs.unlinkSync(path);fs.mkdirSync(path);}};
-  const reset=()=>{fs.existsSync=real.exists;fs.statSync=real.stat;fs.readFileSync=real.read;fsp.stat=real.asyncStat;fsp.readFile=real.asyncRead;syncBuiltinESMExports();if(!mutated)return;if(scenario.endsWith('denied'))fs.chmodSync(scenario.startsWith('stat')?dirname(path):path,0o700);else if(scenario.endsWith('missing'))fs.writeFileSync(path,Buffer.from(files[path].bytes,'base64'));else if(scenario.endsWith('notdir')){fs.unlinkSync(dirname(path));fs.renameSync(dirname(path)+'.held',dirname(path));}else{fs.rmdirSync(path);fs.writeFileSync(path,Buffer.from(files[path].bytes,'base64'));}mutated=false;};
+  const sessionKey=scenario==='stat-long-session'?'web:'+'x'.repeat(300):'web:fixture';
+  if(scenario==='stat-long-session'){paths.transcript=join(dirname(paths.transcript),sessionKey+'.jsonl');files[paths.transcript]={directory:false,size:0,absent:true};}
+  const path=paths[target as keyof typeof paths],race=(target!=='lock'&&['read-missing','read-notdir','read-longname','read-loop','read-deep'].includes(scenario))||(target==='lock'&&scenario==='read-notdir');let mutated=false;
+  const links:string[]=[];
+  const mutate=()=>{
+   if(mutated)return;mutated=true;
+   if(scenario==='stat-long-session')return;
+   if(scenario.endsWith('denied'))fs.chmodSync(scenario.startsWith('stat')?dirname(path):path,0);
+   else if(scenario.endsWith('missing'))fs.unlinkSync(path);
+   else if(scenario.endsWith('notdir')){fs.renameSync(dirname(path),dirname(path)+'.held');fs.writeFileSync(dirname(path),'parent replaced');}
+   else if(scenario.endsWith('longname')){fs.unlinkSync(path);fs.symlinkSync('x'.repeat(300),path);}
+   else if(scenario.endsWith('loop')){fs.unlinkSync(path);fs.symlinkSync(path,path);}
+   else if(scenario.endsWith('deep')){
+    fs.unlinkSync(path);
+    for(let i=0;i<80;i++){const link=path+'.chain.'+i;links.push(link);fs.symlinkSync(i===79?path+'.end':path+'.chain.'+(i+1),link);}
+    fs.writeFileSync(path+'.end','');fs.symlinkSync(links[0],path);
+   }else{fs.unlinkSync(path);fs.mkdirSync(path);}
+  };
+  const reset=()=>{
+   fs.existsSync=real.exists;fs.statSync=real.stat;fs.readFileSync=real.read;fsp.stat=real.asyncStat;fsp.readFile=real.asyncRead;syncBuiltinESMExports();
+   if(!mutated)return;
+   if(scenario==='stat-long-session'){}
+   else if(scenario.endsWith('denied'))fs.chmodSync(scenario.startsWith('stat')?dirname(path):path,0o700);
+   else if(scenario.endsWith('notdir')){fs.unlinkSync(dirname(path));fs.renameSync(dirname(path)+'.held',dirname(path));}
+   else{
+    if(scenario.endsWith('directory'))fs.rmdirSync(path);
+    else if(!scenario.endsWith('missing'))fs.unlinkSync(path);
+    for(const link of links)fs.unlinkSync(link);if(links.length)fs.unlinkSync(path+'.end');links.length=0;
+    fs.writeFileSync(path,Buffer.from(files[path].bytes,'base64'));
+   }
+   mutated=false;
+  };
   const observations:any[]=[];const observe=(stage:string,e:any)=>{observations.push({stage,code:e.code,syscall:e.syscall,message:e.message,path:e.path});};
   const install=()=>{
    if(!race)mutate();
@@ -56,12 +85,12 @@ for(const target of ['transcript','global','project','store','sops','lock']){
   const bundle=new GatewaySessionModelBundle({fallbackProjectKey:home,resolveProjectKey:dialog.projects.resolveProjectKey,router:{hasActiveTurn(){routerCalls++;throw Error('runtime touched');},async close(){routerCalls++;throw Error('runtime touched');}},selectionPort:new NativeSessionModelSelectionPort({pilotHome:home,now:()=>new Date(),storageProvider:plane.persistence}),policy:new NativeSessionModelSelectionPolicy(env)});
   let receive:any,finish:any;const ws={onMessage(fn:any){receive=fn},onClose(){},sendText(s:string){if(JSON.parse(s).type==='response')finish(s);},close(){throw Error('Unexpected close');}};
   new GatewayWsConnection(ws as any,{gateway:{describeServer:async()=>({}),sessionModelGet:(p:any)=>bundle.sessionModelGet(p)} as any,token:'offline',serverVersion:'offline'});receive(JSON.stringify({type:'hello',protocolVersion:'1.2',clientName:'web',clientVersion:'fixture',token:'offline'}));await new Promise(r=>setImmediate(r));
-  const request=JSON.stringify({type:'request',id,method:'session_model_get',params:{projectKey:home,sessionKey:'web:fixture'}});let response:string;
+  const request=JSON.stringify({type:'request',id,method:'session_model_get',params:{projectKey:home,sessionKey}});let response:string;
   try{install();response=await new Promise<string>((done,reject)=>{const timer=setTimeout(()=>reject(Error('No response '+id)),5000);finish=(s:string)=>{clearTimeout(timer);done(s);};receive(request);});}finally{reset();}
   const rpcKillCalls=killCalls.splice(0);
   if(loadKillCalls.length||rpcKillCalls.length)throw Error('Unexpected kill calls '+id);
   if(!observations.length)throw Error('No actual fs failure '+id);
-  const expectedCode=scenario.endsWith('denied')?'EACCES':scenario.endsWith('missing')?'ENOENT':scenario.endsWith('notdir')?'ENOTDIR':'EISDIR';
+  const expectedCode=scenario.endsWith('denied')?'EACCES':scenario.endsWith('missing')?'ENOENT':scenario.endsWith('notdir')?'ENOTDIR':(scenario.endsWith('longname')||scenario==='stat-long-session')?'ENAMETOOLONG':(scenario.endsWith('loop')||scenario.endsWith('deep'))?'ELOOP':'EISDIR';
   for(const o of observations){if(o.code!==expectedCode||o.syscall!==(o.stage==='stat'?'stat':expectedCode==='EISDIR'?'read':'open'))throw Error('Unexpected fs diagnostic '+JSON.stringify(o));files[path][o.stage+'Error']=o.code;}
   // Keep initial tree facts, plus exact observed stat/read failures for replay.
   const replace=(s:string)=>s.replaceAll(root,'/fixture');for(const fact of Object.values(files) as any[])if(fact.bytes)fact.bytes=Buffer.from(replace(Buffer.from(fact.bytes,'base64').toString())).toString('base64');
@@ -74,7 +103,7 @@ const spread:any[]=[];for(const enabled of [false,true])for(const webui of [[],[
  const env:any={PILOT_HOME:spreadHome,STAFFDECK_PROJECT_BINDING_ENABLED:'true',...(enabled?{STAFFDECK_FORMAL_API_ORIGIN:'https://staffdeck.invalid',STAFFDECK_COPY_TENANT_ID:'tenant'}:{})};
  const input={webui};const next=applyProjectBinding(input,spreadHome,env);spread.push({enabled,input,webui:next.webui});
 }
-fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),node:process.version,icu:process.versions.icu,routerCalls,cases:results},null,2)+'\n');
+fs.mkdirSync(dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify({baselineCommit:execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),node:process.version,icu:process.versions.icu,routerCalls,cases:process.argv.includes('--round5')?results.filter(r=>/(?:longname|loop|deep|long-session)$/.test(r.io.scenario)):results},null,2)+'\n');
 
 fs.writeFileSync(join(dirname(output),'webui-spread.json'),JSON.stringify({node:process.version,spread},null,2)+'\n');
 

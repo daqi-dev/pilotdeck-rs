@@ -1,5 +1,5 @@
 //! Read-only StaffDeck runtime binding transformation. No queues or provisioning.
-use super::{Env, Error, graph, read_hint, structured_clone, value::*};
+use super::{Env, Error, exists, graph, host_io_error, read_error, structured_clone, value::*};
 use crate::metadata::{Files, Metadata, object, resolve};
 use pilotdeck_protocol::{JsValue, parse_json};
 use pilotdeck_yaml::{Options, parse_document};
@@ -76,14 +76,18 @@ pub(super) fn lock_pid(bytes: &[u8]) -> Option<i32> {
     (number.is_finite() && number.fract() == 0.0 && number > 0.0 && number <= f64::from(i32::MAX))
         .then_some(number as i32)
 }
-fn lock_live<F: Files>(metadata: &Metadata<F>) -> bool {
-    metadata
+fn lock_live<F: Files>(metadata: &Metadata<F>) -> Result<bool, Error> {
+    let bytes = match metadata
         .files
         .read(&metadata.home.join("staffdeck/project-bindings.json.lock"))
-        .ok()
-        .and_then(|b| lock_pid(&b))
-        .is_some_and(|pid| metadata.files.process_alive(pid))
+    {
+        Ok(bytes) => bytes,
+        Err(e) if crate::node_io::lookup(&e).is_some() => return Ok(false),
+        Err(_) => return Err(host_io_error()),
+    };
+    Ok(lock_pid(&bytes).is_some_and(|pid| metadata.files.process_alive(pid)))
 }
+
 pub(super) fn apply<F: Files>(
     metadata: &Metadata<F>,
     raw: JsValue,
@@ -100,14 +104,20 @@ pub(super) fn apply<F: Files>(
     let mut binding = None;
     if let Some(project) = project.filter(|p| !p.is_empty()) {
         let path = metadata.home.join("staffdeck/project-bindings.json");
-        if metadata.files.stat(&path).is_ok() {
+        if exists(metadata, &path)? {
             let invalid = || {
                 Error::new(
                     "PROJECT_BINDING_STORE_INVALID",
                     "StaffDeck binding storage is invalid.",
                 )
             };
-            let bytes = metadata.files.read(&path).map_err(|_| invalid())?;
+            let bytes = metadata.files.read(&path).map_err(|e| {
+                if crate::node_io::lookup(&e).is_some() {
+                    invalid()
+                } else {
+                    host_io_error()
+                }
+            })?;
             let store = parse_json(&String::from_utf8_lossy(&bytes)).map_err(|_| invalid())?;
             let version = property(&store, "version")?;
             if version.as_number() != Some(1.0)
@@ -138,12 +148,14 @@ pub(super) fn apply<F: Files>(
     if nullish(&modules) {
         modules = object([]);
     }
-    let live = binding.as_ref().is_some_and(|b| {
+    let live = if let Some(b) = &binding {
         eq(field(b, "status"), "bound")
             || (eq(field(b, "status"), "binding")
                 && truthy(field(b, "runtimeReady"))
-                && lock_live(metadata))
-    });
+                && lock_live(metadata)?)
+    } else {
+        false
+    };
     let matches = binding.as_ref().is_some_and(|b| {
         field(b, "tenantId")
             == &env
@@ -199,10 +211,11 @@ pub(super) fn apply<F: Files>(
             &metadata.cwd,
             &format!("{}/staffdeck/{id}/sops.json", metadata.home.display()),
         );
-        let bundle = if metadata.files.stat(&definitions).is_ok() {
-            let bytes = metadata.files.read(&definitions).map_err(|e| {
-                Error::new(io_code(&e), read_hint(&e, &definitions.to_string_lossy()))
-            })?;
+        let bundle = if exists(metadata, &definitions)? {
+            let bytes = metadata
+                .files
+                .read(&definitions)
+                .map_err(|e| read_error(&e, &definitions.to_string_lossy()))?;
             let doc = parse_document(
                 &String::from_utf8_lossy(&bytes).into_owned().into(),
                 Options::default(),
@@ -430,15 +443,6 @@ fn encode_uri_component(v: &JsValue) -> Result<String, Error> {
         }
     }
     Ok(output)
-}
-pub(crate) fn io_code(e: &std::io::Error) -> &'static str {
-    match e.kind() {
-        std::io::ErrorKind::NotFound => "ENOENT",
-        std::io::ErrorKind::PermissionDenied => "EACCES",
-        std::io::ErrorKind::IsADirectory => "EISDIR",
-        std::io::ErrorKind::NotADirectory => "ENOTDIR",
-        _ => "gateway_request_failed",
-    }
 }
 
 #[cfg(test)]

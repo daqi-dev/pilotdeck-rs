@@ -19,6 +19,9 @@ fixture_bytes=fixture_path.read_bytes();fixture=json.loads(fixture_bytes)
 io_fixture_path=fixture_path.with_name('io-errors.json')
 io_fixture_bytes=io_fixture_path.read_bytes();io_fixture=json.loads(io_fixture_bytes)
 fixture['cases'].extend(io_fixture['cases'])
+io_round5_path=fixture_path.with_name('io-errors-round5.json')
+io_round5_bytes=io_round5_path.read_bytes();io_round5=json.loads(io_round5_bytes)
+fixture['cases'].extend(io_round5['cases'])
 def native_case(row):
  # Forwarding and injected errno are mandatory unit controls. A NUL-bearing
  # env object is also a loader-only control: OS process environments cannot
@@ -83,6 +86,7 @@ try:
   if not row['process']['alive'] and lock.poll() is None:lock.stdin.close();lock.wait(timeout=5)
   case=out/('case-'+str(len(rows)));case.mkdir();replace=lambda s:s.replace('/fixture',str(case))
   for path,fact in row['files'].items():
+   if fact.get('absent'):continue
    target=Path(replace(path))
    if fact['directory']:target.mkdir(parents=True,exist_ok=True)
    else:
@@ -109,6 +113,14 @@ try:
     target.parent.rename(target.parent.with_name(target.parent.name+'.held'))
     target.parent.write_text('parent replaced')
    elif scenario.endswith('directory'):target.unlink();target.mkdir()
+   elif scenario.endswith('longname'):target.unlink();target.symlink_to('x'*300)
+   elif scenario.endswith('loop'):target.unlink();target.symlink_to(target)
+   elif scenario.endswith('deep'):
+    target.unlink()
+    for i in range(80):
+     link=Path(str(target)+'.chain.'+str(i));link.symlink_to(str(target)+('.end' if i==79 else '.chain.'+str(i+1)))
+    Path(str(target)+'.end').write_text('');target.symlink_to(str(target)+'.chain.0')
+   elif scenario=='stat-long-session':pass
   runenv=env.copy();runenv.update({k:replace(v) for k,v in row['env'].items()});runenv.update(PILOTDECK_PROXY_LISTEN='127.0.0.1:28861',PILOTDECK_PROXY_UPSTREAM='http://127.0.0.1:28860')
   log=(case/'proxy.log').open('w');proc=subprocess.Popen([str(root/'src/target/debug/pilotdeck-gateway')],env=runenv,cwd=case,stdout=log,stderr=subprocess.STDOUT)
   processes.append({'id':row['id'],'pid':proc.pid,'argv':[str(root/'src/target/debug/pilotdeck-gateway')],'cwd':str(case),'env':{k:runenv[k] for k in ['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR']}})
@@ -136,7 +148,7 @@ try:
     # Node's ERR_INVALID_ARG_VALUE truncates inspected paths at 128 UTF-16
     # units. Replacing roots after truncation is not a valid normalization.
     # Get the real Node fs error at this run's path; NUL fails before a syscall.
-    source="const fs=require('node:fs');if(process.versions.node.split('.')[0]!=='22')throw Error('Node 22 required');const v=JSON.parse(fs.readFileSync(0,'utf8'));if(!v.path.includes('\\0'))throw Error('NUL required');try{fs.statSync(v.path);throw Error('NUL accepted');}catch(e){if(e.code!=='ERR_INVALID_ARG_VALUE')throw e;v.frame.error={code:e.code,message:e.message};process.stdout.write(JSON.stringify(v.frame));}"
+    source="const fs=require('node:fs');if(process.version!=='v22.22.0')throw Error('Node v22.22.0 required');const v=JSON.parse(fs.readFileSync(0,'utf8'));if(!v.path.includes('\\0'))throw Error('NUL required');try{fs.statSync(v.path);throw Error('NUL accepted');}catch(e){if(e.code!=='ERR_INVALID_ARG_VALUE')throw e;v.frame.error={code:e.code,message:e.message};process.stdout.write(JSON.stringify(v.frame));}"
     expected=subprocess.check_output(['node','-e',source],input=json.dumps({'path':replace(row['invalidPath']),'frame':json.loads(expected)}).encode(),env=runenv).decode()
     byte_equal=actual.decode()==expected
    else:byte_equal=normalized==row['response']
@@ -153,5 +165,5 @@ except Exception as e:
 finally:
  if lock.poll() is None:lock.stdin.close();lock.wait(timeout=5)
  stop.set();thread.join(timeout=2);listener.close()
- (out/'observations.json').write_text(json.dumps({'passed':not errors and len(rows)==sum(native_case(r) for r in fixture['cases']) and all(r['byteEqual'] for r in rows),'fixtureSha256':hashlib.sha256(fixture_bytes).hexdigest(),'ioFixtureSha256':hashlib.sha256(io_fixture_bytes).hexdigest(),'cases':rows,'excluded':[r['id'] for r in fixture['cases'] if not native_case(r)],'errors':errors,'processes':processes,'ownedLockHolder':{'pid':lock.pid,'exitCode':lock.returncode}},indent=2)+'\n')
+ (out/'observations.json').write_text(json.dumps({'passed':not errors and len(rows)==sum(native_case(r) for r in fixture['cases']) and all(r['byteEqual'] for r in rows),'fixtureSha256':hashlib.sha256(fixture_bytes).hexdigest(),'ioFixtureSha256':hashlib.sha256(io_fixture_bytes).hexdigest(),'ioRound5FixtureSha256':hashlib.sha256(io_round5_bytes).hexdigest(),'cases':rows,'excluded':[r['id'] for r in fixture['cases'] if not native_case(r)],'errors':errors,'processes':processes,'ownedLockHolder':{'pid':lock.pid,'exitCode':lock.returncode}},indent=2)+'\n')
  assert not errors,errors

@@ -144,3 +144,47 @@ env HOME="$A4_IO/isolation/home" XDG_CONFIG_HOME="$A4_IO/isolation/xdg" \
 分别保存两个原件哈希。前文 wire 命令仍可使用，须非 root 且选择全新输出目录。
 新增 39 项的 RPC/load killCalls 在真实 Node `_kill` 边界分别计数，均为空；
 任何意外 PID 探测都会使录制失败，不会访问归档或用户进程。
+
+## 第 5 轮：完整 Node errno 表与 ENAMETOOLONG / ELOOP
+
+公共映射和生成流程见 `../node-io/README.md`；`node_io` 是 session、config、
+binding 和 project_files 的唯一底层 io code/message 表。所有未映射的 errno
+（包括真实 EDQUOT）和没有原始 errno 的 Rust 错误都转发整请求。已知错误保留
+上表的吞错/包装语义，未知错误也在 exists/store/lock 的吞错边界转发，不猜测
+Node 的返回。project_files 的 NOFOLLOW/ELOOP 安全拒绝规则保持本地。
+model_catalog 通过同一 global config loader 获得相同映射和转发边界。
+
+`io-errors-round5.json` 独立新增 **34** 个真实 Node 场景；原有 `cases.json`、
+`io-errors.json`、`webui-spread.json` 保持原字节。录制器仍实测全部 73 项，
+`--round5` 只导出本轮新增项。新增覆盖 transcript/global/project/store/SOP 的
+stat/open ENAMETOOLONG、自环 symlink ELOOP、80 层 symlink 链 ELOOP；lock 另有
+三类 read 失败。独立长 sessionKey 案例使用原样 `"web:" + "x".repeat(300)`。
+read 竞态在真实 stat/existsSync 成功后替换叶子；只有文件树变更 hooks，没有
+注入 errno/message。RPC 和直接 loader 分别重建文件树，各自记录真实错误。
+
+复录（Node v22.22.0、非 root、全新隔离目录）：
+
+```sh
+A4_IO="$(mktemp -d /private/tmp/a4-session-io-r5.XXXXXX)"
+A4_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
+mkdir -p "$A4_IO/isolation/home" "$A4_IO/isolation/xdg" "$A4_IO/isolation/tmp"
+env HOME="$A4_IO/isolation/home" XDG_CONFIG_HOME="$A4_IO/isolation/xdg" \
+  XDG_CACHE_HOME="$A4_IO/isolation/xdg" XDG_DATA_HOME="$A4_IO/isolation/xdg" \
+  TMPDIR="$A4_IO/isolation/tmp" PILOTDECK_SKIP_BROWSER_OPEN=1 SKIP_BROWSER_OPEN=1 \
+  node --import "$A4_BASELINE/node_modules/tsx/dist/loader.mjs" \
+  src/pilotdeck-gateway/tests/record_session_io.mts "$A4_BASELINE" \
+  "$A4_IO/io-errors-round5.json" "$A4_IO" --round5
+```
+
+快照中 file size 保留真实 scratch 路径字节长度（例如 marker、binding JSON）；
+不同 scratch 长度可改变这些事实，不改变根映射后的 wire/diagnostics。全部
+73 项 RPC response 与 loader diagnostics 都是必跑逐字节对照。未知 errno
+对 transcript/global/project/store/SOP/lock 的 stat/read 边界执行 33 项必跑
+控制；另在同一实际 pairing 中验证 session/catalog/project_file_read 原始
+请求帧（含扩展字段、空白、126/127 长度编码和 mask）完整转发及 TS 回包透传。
+
+真实 proxy 检查读取三个 fixture，预期 **236** 项本地 wire 匹配：原有 217 +
+本轮 19 稳态案例。新增 15 个精确读取竞态由必跑单元 fixture 验证，连同此前
+15 项，在 observations.json 明确列出 30 个 excluded ID。每项本地请求的上游
+仍只允许 observer-fence；新增 ioRound5FixtureSha256 独立绑定第三份原件。
+前文的 wire 命令仍可使用，须非 root、28860/28861 空闲、全新输出目录。

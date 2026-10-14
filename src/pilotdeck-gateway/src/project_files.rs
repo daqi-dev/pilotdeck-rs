@@ -53,7 +53,7 @@ fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Re
     use rustix::fs::{Mode, OFlags, openat};
     let relative = canonical
         .strip_prefix(root)
-        .map_err(|_| io::ErrorKind::PermissionDenied)?;
+        .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
     // Walk the canonical root from / as well: a raced-in link in any
     // ancestor must not redirect the root descriptor outside the project.
     let mut file = File::open("/")?;
@@ -64,7 +64,7 @@ fn open_checked(root: &Path, canonical: &Path, search_directory: bool) -> io::Re
         .collect();
     for (index, component) in components.iter().enumerate() {
         let Component::Normal(name) = component else {
-            return Err(io::ErrorKind::PermissionDenied.into());
+            return Err(io::Error::from_raw_os_error(libc::EACCES));
         };
         let flags = if index + 1 < components.len() || search_directory {
             // Traversing a directory needs search permission, not read permission.
@@ -252,7 +252,10 @@ pub(crate) fn execute<F: Files>(
 fn local_result(result: Result<JsValue>) -> Option<Result<JsValue>> {
     if matches!(
         &result,
-        Err(("gateway_request_failed" | "TS_COLLATION_REQUIRED", _))
+        Err((
+            "gateway_request_failed" | "TS_COLLATION_REQUIRED" | "NODE_IO_REQUIRED",
+            _
+        ))
     ) {
         None
     } else {
@@ -437,17 +440,8 @@ fn fs_error(error: io::Error, operation: &str, path: &Path) -> Error {
     if error.raw_os_error() == Some(libc::ELOOP) {
         return denied(ESCAPE);
     }
-    // Node v22 raw fs errors AND their WS responses: node-runtime-round3.json.
-    let (code, description) = match error.kind() {
-        io::ErrorKind::NotFound => ("ENOENT", "no such file or directory"),
-        io::ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
-        io::ErrorKind::NotADirectory => ("ENOTDIR", "not a directory"),
-        _ => ("gateway_request_failed", "filesystem operation failed"),
-    };
-    (
-        code,
-        format!("{code}: {description}, {operation} '{}'", path.display()),
-    )
+    crate::node_io::diagnostic(&error, operation, Some(&path.to_string_lossy()))
+        .unwrap_or(("NODE_IO_REQUIRED", String::new()))
 }
 fn list<F: Files>(
     metadata: &Metadata<F>,

@@ -11,7 +11,7 @@ struct FixtureFiles {
 }
 impl Files for FixtureFiles {
     fn entries(&self, _: &Path) -> io::Result<Vec<(String, bool)>> {
-        Err(io::ErrorKind::NotFound.into())
+        Err(io::Error::from_raw_os_error(libc::ENOENT))
     }
     fn read(&self, _: &Path) -> io::Result<Vec<u8>> {
         if self.kind.as_deref() == Some("directory") {
@@ -21,7 +21,7 @@ impl Files for FixtureFiles {
     }
     fn stat(&self, _: &Path) -> io::Result<Stat> {
         if self.kind.as_deref() == Some("missing") {
-            return Err(io::ErrorKind::NotFound.into());
+            return Err(io::Error::from_raw_os_error(libc::ENOENT));
         }
         Ok(Stat {
             directory: false,
