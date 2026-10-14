@@ -32,6 +32,12 @@ DYNAMIC_CODE = re.compile(r'(?:<[^<>\s]+>|N/A|ERR_[A-Z0-9]+(?:_[A-Z0-9]+)*)')
 # Exact source/value exceptions, reviewed independently of ledger authors.
 # This field is a telemetry label (Error.name), not an RPC/domain code.
 CODE_LITERAL_EXEMPTIONS = {
+    ('src/tool/builtin/executeCode.ts', 198, 'string'):
+        'inputSchema.properties.code describes Python source input, not a domain error code.',
+    ('src/tool/builtin/executeCode.ts', 198,
+     'Python 3 source code to execute. Use `from pilotdeck_tools import ...` to call allowed PilotDeck tools.'):
+        'inputSchema.properties.code.description is schema prose, not a domain error code.',
+
     ('src/cli/ProjectMemoryMaintenanceController.ts', 94, 'UnknownError'):
         'Memory maintenance catch reports Error.name / UnknownError to telemetry; it does not emit a domain code.',
     ('src/agent/modules/transport/stdioAgentLoopSidecarConnection.ts', 184, 'null'):
@@ -484,6 +490,29 @@ def validate(data, baseline, inputs, graph=None):
                 fail('provider_domain_errors', where, {'missing_domain_codes': sorted(domain - recorded_codes)})
             if scanned_codes - recorded_codes:
                 fail('error_code_coverage', where, {'missing_scanned_codes': sorted(scanned_codes - recorded_codes)})
+            # Every unresolved production has its own origin obligation. A
+            # dynamic entry at the WS catch cannot cover an unrelated provider.
+            dynamic_origins = {}
+            for branch in branches.get('error', []):
+                if not isinstance(branch, dict) or branch.get('dynamic') is not True:
+                    continue
+                origin = branch.get('origin', {})
+                expression = origin.get('expression')
+                if not isinstance(expression, str):
+                    continue
+                for ref in origin.get('refs', []):
+                    match = REF.fullmatch(ref) if isinstance(ref, str) else None
+                    if match:
+                        dynamic_origins.setdefault(match[1], []).append((int(match[2]), expression))
+            for function in scanned.values():
+                for production in function.get('dynamic_code_expressions', []):
+                    if not any(production['start'] <= number <= production['end'] and
+                               (expression == production['expression'] or
+                                producing_line_origin(expression, lines(function['file'])[number - 1],
+                                                      production, number))
+                               for number, expression in dynamic_origins.get(function['file'], [])):
+                        fail('dynamic_code_coverage', where,
+                             dict(production, file=function['file']))
             # Reverse inclusion rejects invented codes. Nonliteral codes/results
             # require a precise producing expression inside a scanned function.
             for kind in ('error', 'unconfigured'):
@@ -804,6 +833,30 @@ def self_test(data, baseline, inputs):
         entry = next(e for e in omitted['methods'] if any(b['code'] == code for b in e['branches']['error']))
         entry['branches']['error'] = [b for b in entry['branches']['error'] if b['code'] != code]
         cases.append(('omit_discovered_factory_code_' + code, omitted, 'error_code_coverage'))
+    for method, codes in (
+        ('submit_turn', ('tool_failure_limit_reached', 'model_failure_limit_reached', 'agent_max_budget_reached')),
+        ('submit_turn', ('INVALID_SDK_MODEL', 'INVALID_SDK_FALLBACK_MODEL', 'INVALID_SDK_SUBAGENT_MODEL')),
+        ('seed_read_state', ('INVALID_SDK_MODEL', 'INVALID_SDK_FALLBACK_MODEL', 'INVALID_SDK_SUBAGENT_MODEL')),
+    ):
+        for code in codes:
+            omitted = copy.deepcopy(data)
+            entry = next(e for e in omitted['methods'] if e['method'] == method)
+            assert any(b['code'] == code for b in entry['branches']['error'])
+            entry['branches']['error'] = [b for b in entry['branches']['error'] if b['code'] != code]
+            cases.append(('omit_symbol_code_' + method + '_' + code, omitted, 'error_code_coverage'))
+    for label, file, number in (
+        ('parameter', 'src/agent/protocol/errors.ts', 38),
+        ('partial_conditional', 'src/gateway/client/InProcessGateway.ts', 883),
+        ('transport', 'src/gateway/server/GatewayWsConnection.ts', 216),
+    ):
+        omitted = copy.deepcopy(data)
+        entry = next(e for e in omitted['methods'] if e['method'] == 'submit_turn')
+        ref = f'B/{file}:{number}'
+        removed = [b for b in entry['branches']['error']
+                   if b.get('dynamic') and ref in b.get('origin', {}).get('refs', [])]
+        assert removed, ref
+        entry['branches']['error'] = [b for b in entry['branches']['error'] if b not in removed]
+        cases.append(('omit_dynamic_production_' + label, omitted, 'dynamic_code_coverage'))
     for label, code, ref in (
         ('invented_ERR_with_real_code_node', 'ERR_TOTALLY_FAKE_CODE', 'B/src/gateway/server/GatewayWsConnection.ts:233'),
         ('whole_line_without_production', '<error.code>', 'B/src/gateway/server/GatewayWsConnection.ts:130'),

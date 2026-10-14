@@ -329,3 +329,17 @@ python3 scripts/gateway-coverage/check_ledger.py
 WS 可选 method 的拒绝码也必须有独立来源：源码图仅提取当前 RPC 对应 case 的合法字面量，加入该 method 的字面量池；不把其他 case 的码或调用边并入 provider 扫描。默认构造、范围、8跳边界及 error 覆盖要求不变。permission_list、hook_async_result、supported_agents、user_dialog_list/claim/release 的 CAPABILITY_UNAVAILABLE 确在各自 WS case 中产生，因此保留；未用虚构替代码或放宽动态规则。
 
 回源修正15条 unconfigured 结果注释：10条既有 N/A 补返回证据；list_sessions 的 fallback、record_agent_status_message 的 recorded:false、active_turn_snapshot 的 active:false 改为有返回 AST 的 N/A；set_permission_mode 的 applied:true 改为 WS 缺 method 时实际返回的 CAPABILITY_UNAVAILABLE；user_dialog_respond 的无配置 N/A 改为缺 live dialog 时恢复/确认返回的 gateway_restarted。逐条旧值、新值与源码锚点见本轮 `_tmp/RESULT.md` 和 `_tmp/round7-ledger-changes.json`。N/A 只证明所引返回所在函数无直接领域码，不宣称所有下游调用无错。
+
+## 第 8 轮：符号解析与动态产码正向覆盖
+
+产码提取现在使用既有 TypeScript checker 回源到 `const` 初始化表达式，递归处理顶层/局部/导入别名、三元与 `??`/`||`、断言/括号、字符串枚举成员及对象成员。成员访问保留对象结构；计算键无法确定时取对象全部成员值，包含嵌套对象和 spread。解析到的码同时进入该产码函数的 `errors` 与反向字面量池，产码锚点仍指向使用位置；不会因初始化在顶层或另一文件而报 invented_error_code。循环和深度保护、未知条件分支均保留 dynamic，参数、let 和函数返回值不会按类型或默认值猜码。
+
+全量核对所有101项的默认8跳、既有补充范围及共同 WS 边界，补登 submit_turn 的三个真实漏码：`tool_failure_limit_reached`（常量定义 B/src/agent/policy/FailureGuard.ts:5，产码 B/src/agent/policy/FailureGuard.ts:71）、`model_failure_limit_reached`（定义 B/src/agent/policy/FailureGuard.ts:6，产码 B/src/agent/policy/FailureGuard.ts:82）及 `agent_max_budget_reached`（局部三元 const B/src/agent/loop/AgentLoop.ts:984，调用参数 B/src/agent/loop/AgentLoop.ts:987）。另一个三元分支 agent_task_budget_reached 已登记，仍受覆盖要求。
+
+GLM第7轮的 map 缺口也已纳入同一规则：B/src/cli/ProjectRuntimeRegistry.ts:1919 的 errorByField[field] 正向要求 `INVALID_SDK_MODEL`、`INVALID_SDK_AGENT_MODEL`、`INVALID_SDK_FALLBACK_MODEL`、`INVALID_SDK_SUBAGENT_MODEL`。这些码已有记录，本轮没有重复补登；从 submit_turn 或 seed_read_state 删除其中三个原先未受要求的码，各自必须 error_code_coverage FAIL。
+
+未能枚举完整取值的产码表达式现在有独立的 dynamic_code_coverage 要求：必须在 branches.error 中有 dynamic:true、匹配该产码位置的 origin。静态 fallback 与动态部分分别登记，WS catch 的 origin 不覆盖另一个 provider；branches.unconfigured 仍参与反向 origin 核验，但不代替 error 正向记录。共补齐86个此前未覆盖的动态位置，新增762条 method–dynamic 记录；占位符是确定性的来源编号，真实表达式和完整 producing refs 保留，不冒充运行时码或已验证的最终 WS 传播。相同 WS 表达式的多个位置可合并一条记录，但每个 origin ref 都必须验证。明细见 `_tmp/round8-ledger-changes.json`。
+
+对象值递归也发现 B/src/tool/builtin/executeCode.ts:198 的 inputSchema.properties.code 是 Python 源码输入的 schema。它的 `type: string` 和 description 不是错误码，校验器按精确文件/产码行/值加入两项豁免并写明原因；没有忽略所有对象、所有 string 或所有 code 字段。既有三项豁免保留。
+
+账本仅新增上述错误记录，全部既有分支和非错误字段保持相同；默认 boot、routes、provider、构造点、函数边界/调用边、8跳边界和扫描范围均不变。错误记录6,352→7,117，method–范围关联仍16,816；101项、46 READY / 55 BLOCKED 不变。为维持1,500,000字节上限，确定性排版去除缩进，仍按行显示结构与原子表行；没有删字段、缩短既有说明或改变数组顺序。展开→compact逐字节一致，当前1,499,774字节。完整验证及相对第7轮的精确差异证明见 `_tmp/RESULT.md`「第8轮」。

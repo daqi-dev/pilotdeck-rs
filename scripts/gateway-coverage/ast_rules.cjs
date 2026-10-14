@@ -21,19 +21,61 @@ function errorClassInfo(ts, node, file, line) {
   assignments(node);
   return {file,line,parent,code,code_argument:arg>=0?arg:null};
 }
-function codeValues(ts, expression) {
-  if(!expression)return [];
+// Resolve only immutable bindings, never a type's possible values or a
+// parameter's default. Unknown branches remain explicit dynamic obligations.
+function codeResolution(ts, expression, checker, trail=new Set(), access=[]) {
+  const unknown=()=>({values:[],dynamic:true});
+  const combine=rows=>({values:[...new Set(rows.flatMap(r=>r.values))],dynamic:!rows.length||rows.some(r=>r.dynamic)});
+  if(!expression||trail.has(expression)||trail.size>60)return unknown();
+  const next=new Set(trail);next.add(expression);
+  const resolve=(n,selection=access)=>codeResolution(ts,n,checker,next,selection);
   if(ts.isStringLiteralLike(expression)||ts.isNumericLiteral(expression)||
      [ts.SyntaxKind.TrueKeyword,ts.SyntaxKind.FalseKeyword,ts.SyntaxKind.NullKeyword].includes(expression.kind)||
-     ts.isPrefixUnaryExpression(expression)&&ts.isNumericLiteral(expression.operand))return [expression];
-  if(ts.isParenthesizedExpression(expression)||ts.isAsExpression(expression)||ts.isNonNullExpression(expression)||ts.isTypeAssertionExpression(expression))return codeValues(ts,expression.expression);
-  if(ts.isConditionalExpression(expression))return [...codeValues(ts,expression.whenTrue),...codeValues(ts,expression.whenFalse)];
-  if(ts.isBinaryExpression(expression)&&[ts.SyntaxKind.QuestionQuestionToken,ts.SyntaxKind.BarBarToken].includes(expression.operatorToken.kind))return [...codeValues(ts,expression.left),...codeValues(ts,expression.right)];
-  return [];
+     ts.isPrefixUnaryExpression(expression)&&ts.isNumericLiteral(expression.operand))return access.length?unknown():{values:[expression],dynamic:false};
+  if(ts.isParenthesizedExpression(expression)||ts.isAsExpression(expression)||ts.isNonNullExpression(expression)||ts.isTypeAssertionExpression(expression))return resolve(expression.expression);
+  if(ts.isConditionalExpression(expression))return combine([resolve(expression.whenTrue),resolve(expression.whenFalse)]);
+  if(ts.isBinaryExpression(expression)&&[ts.SyntaxKind.QuestionQuestionToken,ts.SyntaxKind.BarBarToken].includes(expression.operatorToken.kind))return combine([resolve(expression.left),resolve(expression.right)]);
+  function declarations(n) {
+    if(!checker)return [];
+    let sym=ts.isShorthandPropertyAssignment(n.parent)?checker.getShorthandAssignmentValueSymbol(n.parent):checker.getSymbolAtLocation(n);
+    if(sym?.flags&ts.SymbolFlags.Alias)sym=checker.getAliasedSymbol(sym);
+    return sym?.declarations||[];
+  }
+  function initializer(d) {
+    if(ts.isVariableDeclaration(d)&&ts.isVariableDeclarationList(d.parent)&&d.parent.flags&ts.NodeFlags.Const)return d.initializer;
+    if(ts.isEnumMember(d))return d.initializer;
+  }
+  if(ts.isObjectLiteralExpression(expression)) {
+    const keys=access.length?access[0]:null,remaining=access.slice(1),rows=[];
+    for(const p of expression.properties) {
+      if(ts.isSpreadAssignment(p)) {rows.push(resolve(p.expression));continue;}
+      const property=ts.isComputedPropertyName(p.name)?resolve(p.name.expression,[]):null;
+      const names=property?property.values.map(n=>n.text):[p.name?.text];
+      if(keys===null||names.some(n=>keys.includes(n))||property?.dynamic)
+        rows.push(resolve(ts.isShorthandPropertyAssignment(p)?p.name:p.initializer,remaining));
+    }
+    // Unknown keys select all members. Their runtime value is irrelevant once
+    // every possible map value is known; unknown member values stay dynamic.
+    return combine(rows);
+  }
+  if(ts.isIdentifier(expression)) {
+    const decls=declarations(expression);
+    return combine(decls.map(d=>initializer(d)?resolve(initializer(d)):unknown()));
+  }
+  if(ts.isPropertyAccessExpression(expression)||ts.isElementAccessExpression(expression)) {
+    // Enum members and namespace-imported consts have concrete declarations;
+    // interface fields and mutable class properties deliberately stay dynamic.
+    const decls=declarations(ts.isPropertyAccessExpression(expression)?expression.name:expression);
+    if(decls.length&&decls.every(d=>initializer(d)))return combine(decls.map(d=>resolve(initializer(d))));
+    const keys=ts.isPropertyAccessExpression(expression)?{values:[expression.name],dynamic:false}:resolve(expression.argumentExpression,[]);
+    return resolve(expression.expression,[keys.dynamic?null:keys.values.map(n=>n.text??n.getText()),...access]);
+  }
+  return unknown();
 }
-function codeLiterals(ts, expression) { return codeValues(ts,expression).filter(ts.isStringLiteralLike); }
-function codeObservations(ts, expression) {
-  return codeValues(ts,expression).map(node=>({node,
+function codeValues(ts, expression, checker) { return codeResolution(ts,expression,checker).values; }
+function codeLiterals(ts, expression, checker) { return codeValues(ts,expression,checker).filter(ts.isStringLiteralLike); }
+function codeObservations(ts, expression, checker) {
+  return codeValues(ts,expression,checker).map(node=>({node,
     code:ts.isStringLiteralLike(node)?node.text:node.getText(),
     valid:ts.isStringLiteralLike(node)&&errorCodeLiteral(node.text)}));
 }
@@ -147,6 +189,44 @@ function controls(ts) {
   const wrapper=ts.createSourceFile('wrapper.ts','function wrapper(message: string,errorCode: string){return renamed(message,errorCode);}',ts.ScriptTarget.Latest,true).statements[0];
   tests.push({name:'factory_forwarded_errorCode',result:
     JSON.stringify(factoryCodePositions(ts,wrapper,{},()=>[1]))==='[1]'?'PASS':'FAIL'});
+  const fixtureFiles={
+    '/codes.ts':'export const IMPORTED = "IMPORTED_CODE"; export const MAP = {a:"MAP_A", ["b"]:"MAP_B"} as const;',
+    '/consumer.ts':[
+      'import {IMPORTED as ALIAS, MAP} from "./codes";',
+      'enum Codes { One="ENUM_CODE" }',
+      'const TOP="TOP_CODE"; const CHOICE = flag ? "CHOICE_A" : "CHOICE_B";',
+      'const SPREAD={...MAP,c:TOP} as const; const CYCLE=CYCLE;',
+      'const NESTED={codes:MAP} as const; const MIXED=flag ? MAP : getMap(); const RECURSIVE={...RECURSIVE};',
+      'let mutable="MUTABLE_CODE";',
+      'function target(param:string) {',
+      ' const LOCAL=CHOICE; const PARTIAL=flag ? TOP : param;',
+      ' const probes=[TOP,LOCAL,ALIAS,Codes.One,MAP.a,MAP["b"],MAP[param],SPREAD[param],param,mutable,getCode(),CYCLE,PARTIAL,NESTED.codes[param],MIXED[param],RECURSIVE[param],({a:TOP,b:ALIAS} as const)];',
+      '}',
+    ].join('\n'),
+  };
+  const host=ts.createCompilerHost({});
+  host.getSourceFile=(file,version)=>fixtureFiles[file]===undefined?undefined:ts.createSourceFile(file,fixtureFiles[file],version,true);
+  host.fileExists=file=>fixtureFiles[file]!==undefined;
+  host.readFile=file=>fixtureFiles[file];
+  const program=ts.createProgram(Object.keys(fixtureFiles),{noLib:true,moduleResolution:ts.ModuleResolutionKind.Node10},host);
+  const checker=program.getTypeChecker();let probes;
+  function findProbes(n){if(ts.isVariableDeclaration(n)&&n.name.getText()==='probes')probes=n.initializer;ts.forEachChild(n,findProbes);}
+  findProbes(program.getSourceFile('/consumer.ts'));
+  const expected=[
+    ['top_level_const',['TOP_CODE'],false],['local_conditional_const',['CHOICE_A','CHOICE_B'],false],
+    ['imported_const_alias',['IMPORTED_CODE'],false],['enum_member',['ENUM_CODE'],false],
+    ['as_const_member',['MAP_A'],false],['computed_literal_member',['MAP_B'],false],
+    ['computed_dynamic_map',['MAP_A','MAP_B'],false],['spread_map',['MAP_A','MAP_B','TOP_CODE'],false],
+    ['parameter_dynamic',[],true],['let_dynamic',[],true],['call_dynamic',[],true],['cycle_dynamic',[],true],
+    ['partial_resolution',['TOP_CODE'],true],
+    ['nested_object_map',['MAP_A','MAP_B'],false],['partial_object_map',['MAP_A','MAP_B'],true],
+    ['spread_cycle_dynamic',[],true],['direct_object_all_members',['TOP_CODE','IMPORTED_CODE'],false],
+  ];
+  for(let i=0;i<expected.length;i++) {
+    const [label,wanted,dynamic]=expected[i];const result=codeResolution(ts,probes.elements[i],checker);
+    const actual=result.values.map(n=>n.text).sort();
+    tests.push({name:'symbol_'+label,result:JSON.stringify(actual)===JSON.stringify([...wanted].sort())&&result.dynamic===dynamic?'PASS':'FAIL'});
+  }
   return tests;
 }
-module.exports={codeValues,codeObservations,codeParameter,factoryCodePositions,errorCodeLiteral,errorClassInfo,codeLiterals,constructorLiterals,constructorLiteral,unknownError,controls};
+module.exports={codeResolution,codeValues,codeObservations,codeParameter,factoryCodePositions,errorCodeLiteral,errorClassInfo,codeLiterals,constructorLiterals,constructorLiteral,unknownError,controls};
