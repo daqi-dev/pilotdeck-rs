@@ -4,6 +4,19 @@
 Recorder 13101 -> [B1 DUT 13103 ->] TS UI 13102 -> gateway 28990.
 Enumerator 13104; reserved browser frontend 13105. Loopback only.
 """
+# Admit source-only apparatus before json or any local module can be imported.
+import os as _boot_os
+import sys as _boot_sys
+_boot_sys.dont_write_bytecode = True
+_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+_boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
+if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+with open(_boot_source, 'rb') as _boot_file:
+    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+_boot_namespace['preflight'](_boot_dir)
 import argparse
 import base64
 import binascii
@@ -106,13 +119,31 @@ def record_side(out, side, slot=None):
             'baseline_path': str(b1.BASELINE), 'apparatus_sha256': apparatus_hashes(),
             'source_sha256': source_hashes(b1.BASELINE, BINARY)}
     monitor = ClockMonitor()
+    result = None
+    failure = None
     try:
         meta['wall_start_ms'] = monitor.start()
-        return record_monitored_side(directory, side, meta)
+        result = record_monitored_side(directory, side, meta)
+        # Driver reports can carry a FAIL even without raising an exception.
+        if len(result) != 6 or any(case.get('status') != 'PASS' for case in result.values()):
+            raise RuntimeError('DUT/driver scenario FAIL or incomplete; inspect scenarios.json')
+        meta['dut_result'] = {'status': 'PASS'}
+    except ClockRefused as error:
+        failure = error
+        meta['dut_result'] = {'status': 'NOT_RUN', 'reason': str(error)}
+    except Exception as error:
+        failure = error
+        meta['dut_result'] = {'status': 'FAIL', 'error': f'{type(error).__name__}: {error}'}
     finally:
         monitor.finish(meta)
         b1.save(directory, 'run-meta.json', meta)
-        validate_clock_check(meta)
+    # Preserve a DUT failure while recording independent clock evidence.
+    if failure is not None and not isinstance(failure, ClockRefused):
+        raise failure
+    validate_clock_check(meta)
+    if failure is not None:
+        raise failure
+    return result
 
 
 def record_monitored_side(directory, side, meta):
@@ -239,6 +270,7 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     b1.BASELINE = args.baseline.resolve()
     report = {'scope': 'S1/S2 recording plus S3 snapshot inputs; single-side PASS is not calibration', 'status': 'FAIL', 'sides': {}}
+    failures, clock_refusals = [], []
     try:
         build()
         enum = out / 'enumeration'
@@ -252,11 +284,21 @@ def main():
             # Independent fresh services and homes; one failed side cannot suppress the other.
             try:
                 report['sides'][side] = record_side(out, side, args.slot if args.side else None)
+                result = report['sides'][side]
+                if len(result) != 6 or any(case.get('status') != 'PASS' for case in result.values()):
+                    failures.append(side + ' incomplete/failing driver scenarios')
             except ClockRefused as error:
-                report['status'] = 'REFUSED'
+                clock_refusals.append(str(error))
                 report['sides'][side] = {'device': {'status': 'REFUSED', 'error': str(error)}}
             except Exception as error:
+                failures.append(str(error))
                 report['sides'][side] = {'device': {'status': 'FAIL', 'error': str(error)}}
+            metadata = out / (args.slot if args.side else side) / 'run-meta.json'
+            if metadata.is_file():
+                meta = json.loads(metadata.read_text())
+                report.setdefault('capture_checks', {})[side] = {
+                    'dut_result': meta.get('dut_result'),
+                    'clock_regression_check': meta.get('clock_regression_check')}
             b1.save(out, 'result.json', report)
         evidence = out / 'cases.jsonl'
         if args.side:
@@ -267,13 +309,26 @@ def main():
             coverage_code = 0
         else:
             evidence.write_text(''.join((out / side / 'cases.jsonl').read_text() if (out / side / 'cases.jsonl').exists() else '' for side in sides))
-            coverage = subprocess.run([sys.executable, str(HERE / 'check_coverage.py'), '--enumeration',
-                        str(enum / 'router-enumeration.json'), '--evidence', str(evidence),
-                        '--out', str(out / 'coverage-evidence.json')])
-            coverage_code = coverage.returncode
-        if coverage_code == 0 and all(len(result) == 6 and all(s['status'] == 'PASS' for s in result.values()) for result in report['sides'].values()):
+            coverage_code = 0
+            if not failures and not clock_refusals:
+                coverage = subprocess.run([sys.executable, str(HERE / 'check_coverage.py'), '--enumeration',
+                            str(enum / 'router-enumeration.json'), '--evidence', str(evidence),
+                            '--out', str(out / 'coverage-evidence.json')])
+                coverage_code = coverage.returncode
+        if coverage_code != 0:
+            failures.append('coverage evidence FAIL')
+        scenarios_pass = all(len(result) == 6 and all(s['status'] == 'PASS' for s in result.values())
+                             for result in report['sides'].values())
+        if not failures and not clock_refusals and not scenarios_pass:
+            failures.append('incomplete/failing driver scenarios')
+        if failures:
+            report['status'] = 'FAIL'
+        elif clock_refusals:
+            report['status'] = 'REFUSED'
+        elif scenarios_pass:
             report['status'] = 'PASS'
     except Exception as error:
+        report['status'] = 'FAIL'
         report['error'] = f'{type(error).__name__}: {error}'
     finally:
         b1.save(out, 'result.json', report)

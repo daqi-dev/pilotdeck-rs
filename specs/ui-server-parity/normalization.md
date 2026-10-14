@@ -449,7 +449,9 @@ chat 的事件 `createdAt` 是写日志时间，`metadata.updatedAt` 是此前�
 
 单次 `monotonic_ns → time_ns → monotonic_ns` 的 bracket 上限固定为 **1,000,000 ns（1 ms）**。相邻两有效样本的 bracket 总宽度也不得超过 1 ms：旧 offset 区间判据最多会隐藏「上一读数 wall→after」和「本次 before→wall」两段延迟；如果只各自限制 1 ms，残余风险实际会到 1 ms + 2 ms，不能声称 2 ms。本实现共用 1 ms 总预算，故实际可漏检回拨上限为 **1 ms + bracket 预算 1 ms = 2 ms**。这仍不是连续时钟证明；采样间回拨后恢复、多次小步的风险保留。
 
-超出单次或相邻总预算的样本不进入 `samples` 判据，保存到诊断 `rejected_samples` 后**立即重采本次 phase**，不等待下一次 250 ms 周期。连续 **8 次**超限将该遍标为 REFUSED 并记录原因；上一个有效样本始终是 gap 检查锚点，重采不重置它，任一尝试跨过 2 s 门立刻 REFUSED。首样本多次超限、周期线程失败和尾样本多次超限均保存 `run-meta.json.clock_regression_check`，不得用之后的有效尾样本抹去周期失败。开始失败时没有有效 `wall_start_ms`，不补造覆盖时间。
+超出单次或相邻总预算的样本不进入 `samples` 的 offset 判据，保存到诊断 `rejected_samples` 后**立即重采本次 phase**，不等待下一次 250 ms 周期。但任何已观察读数（包括超宽作废读数）之间若 wall 直接倒退，已经证明回拨，立即 REFUSED 并保留该读数；后续重采恢复不能抹去事实。校验端也合并有效/作废读数重算 wall 非递减，不信任归档自报 PASS。连续 **8 次**超限将该遍标为 REFUSED 并记录原因；上一个有效样本始终是 gap 检查锚点，重采不重置它，任一尝试跨过 2 s 门立刻 REFUSED。首样本多次超限、周期线程失败和尾样本多次超限均保存 `run-meta.json.clock_regression_check`，不得用之后的有效尾样本抹去周期失败。开始失败时没有有效 `wall_start_ms`，不补造覆盖时间。
+
+采集的 DUT/driver 结论单独保存为 `run-meta.json.dut_result`，时钟结论保存为 `clock_regression_check`；`result.json.capture_checks` 同时引用两者。已存在 DUT/driver FAIL 或其他采集失败时，最终 FAIL / exit 1，即使同遍或另一侧时钟也 REFUSED；只有无其他失败、仅时钟拒收时才 REFUSED / exit 2，允许按原规则单遍重采。不能因 `finally` 的时钟校验覆盖原始失败而开放重采。
 
 schema 1 新增诊断 `max_bracket_ns=1000000`、`max_bracket_attempts=8`、`rejected_samples`；判据仍由比较器固定并逐样本重算，不信任归档自报上限。已存在但超宽的旧时钟记录即使 historical-replay 也 REFUSED；仅缺失记录的显式旧归档例外保持。
 

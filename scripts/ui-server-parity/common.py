@@ -1,20 +1,33 @@
 """Version binding and capture-clock admission; never certify changed apparatus from cache."""
+# Admit source-only apparatus before json or any local module can be imported.
+import os as _boot_os
+import sys as _boot_sys
+_boot_sys.dont_write_bytecode = True
+_boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
+_boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
+if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+with open(_boot_source, 'rb') as _boot_file:
+    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+_boot_namespace['preflight'](_boot_dir)
 import hashlib
 from pathlib import Path
 import threading
 import time
+from apparatus import scan, SPEC_FILES, EXP008_FILES
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def apparatus_hashes():
-    files = sorted(p for p in (ROOT / 'scripts/ui-server-parity').rglob('*')
-                   if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
+    files = [Path(p) for p in scan(ROOT / 'scripts/ui-server-parity')]
+    scan(ROOT / 'scripts/exp008')
     # The approval/hash manifest is not apparatus: filling its pending review
     # fields must not invalidate the captures used to approve this very ruler.
-    files += [ROOT / 'specs/ui-server-parity' / name for name in
-              ('acceptance.md', 'normalization.md', 'accepted-diffs.md', 'multimodal.md')]
-    files += [ROOT / 'scripts/exp008' / name for name in ('run.py', 'compare.py', 'enumerate_hook.mjs', 'preload.mjs', 'proxy/src/main.rs', 'proxy/Cargo.toml', 'proxy/Cargo.lock')]
+    files += [ROOT / 'specs/ui-server-parity' / name for name in SPEC_FILES]
+    files += [ROOT / 'scripts/exp008' / name for name in EXP008_FILES]
     return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 
@@ -97,6 +110,20 @@ def validate_clock_check(meta, *, historical=False):
     if (samples[0]['wall_ns'] // 1_000_000 != meta.get('wall_start_ms')
             or samples[-1]['wall_ns'] // 1_000_000 != meta.get('wall_end_ms')):
         raise ClockRefused('clock samples do not cover capture start/end')
+    rejected = check.get('rejected_samples', [])
+    if not isinstance(rejected, list):
+        raise ClockRefused('invalid rejected clock samples')
+    for sample in rejected:
+        if (not isinstance(sample, dict)
+                or any(type(sample.get(k)) is not int or sample[k] <= 0
+                       for k in ('wall_ns', 'mono_before_ns', 'mono_after_ns'))
+                or sample['mono_after_ns'] < sample['mono_before_ns']):
+            raise ClockRefused('invalid rejected clock sample')
+    # Broad brackets cannot support the offset test, but their wall reads still
+    # prove a rollback. Recompute that fact even if archived status says PASS.
+    observed = sorted(samples + rejected, key=lambda s: s['mono_before_ns'])
+    if any(after['wall_ns'] < before['wall_ns'] for before, after in zip(observed, observed[1:])):
+        raise ClockRefused('wall clock regression including rejected brackets')
     return 'present'
 
 
@@ -111,6 +138,7 @@ class ClockMonitor:
     def sample(self, phase):
         previous_width = (self.samples[-1]['mono_after_ns'] - self.samples[-1]['mono_before_ns']
                           if self.samples else 0)
+        previous_wall = max((s['wall_ns'] for s in self.samples[-1:] + self.rejected_samples[-1:]), default=None)
         for _ in range(MAX_BRACKET_ATTEMPTS):
             before = self.monotonic()
             wall = self.wall()
@@ -118,6 +146,10 @@ class ClockMonitor:
             sample = dict(phase=phase, wall_ns=wall, mono_before_ns=before, mono_after_ns=after)
             if any(type(v) is not int or v <= 0 for v in (wall, before, after)) or after < before:
                 raise ClockRefused('invalid/nonmonotonic clock bracket')
+            if previous_wall is not None and wall < previous_wall:
+                self.rejected_samples.append({**sample, 'reason': 'wall clock regression between adjacent samples'})
+                raise ClockRefused('wall clock regression between adjacent samples (including rejected brackets)')
+            previous_wall = wall
             # Keep the LAST ACCEPTED sample as the coverage anchor across retries.
             if self.samples and (before <= self.samples[-1]['mono_after_ns']
                                  or after - self.samples[-1]['mono_before_ns'] > MAX_GAP_NS):
