@@ -1,0 +1,593 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "basic",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"basic\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"basic\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "input-missing",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"input-missing\",\"method\":\"model_catalog_list\"}",
+      "response": "{\"type\":\"response\",\"id\":\"input-missing\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of undefined (reading 'query')\"}}"
+    },
+    {
+      "id": "input-null",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": null,
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"input-null\",\"method\":\"model_catalog_list\",\"params\":null}",
+      "response": "{\"type\":\"response\",\"id\":\"input-null\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot read properties of null (reading 'query')\"}}"
+    },
+    {
+      "id": "query-number",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {
+        "query": 7
+      },
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"query-number\",\"method\":\"model_catalog_list\",\"params\":{\"query\":7}}",
+      "response": "{\"type\":\"response\",\"id\":\"query-number\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"input.query?.trim is not a function\"}}"
+    },
+    {
+      "id": "project-unregistered",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {
+        "projectKey": "/not/registered"
+      },
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"project-unregistered\",\"method\":\"model_catalog_list\",\"params\":{\"projectKey\":\"/not/registered\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"project-unregistered\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "query-trim-case",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {
+        "query": "  PARITY  "
+      },
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"query-trim-case\",\"method\":\"model_catalog_list\",\"params\":{\"query\":\"  PARITY  \"}}",
+      "response": "{\"type\":\"response\",\"id\":\"query-trim-case\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "unknown-filter-order-ignored",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {
+        "filter": "nothing",
+        "order": "reverse"
+      },
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"unknown-filter-order-ignored\",\"method\":\"model_catalog_list\",\"params\":{\"filter\":\"nothing\",\"order\":\"reverse\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"unknown-filter-order-ignored\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "high-surrogate",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {displayName: \"\\uD800\"}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"high-surrogate\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"high-surrogate\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"\\ud800\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "low-surrogate",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {displayName: \"\\uDC00\"}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"low-surrogate\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"low-surrogate\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"\\udc00\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "surrogate-pair",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {displayName: \"\\uD83D\\uDE00\"}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"surrogate-pair\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"surrogate-pair\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"😀\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "codepoint",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {displayName: \"\\U0001F600\"}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"codepoint\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"codepoint\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"😀\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "version-11-model",
+      "yaml": "%YAML 1.1\n---\nschemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {displayName: yes}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"version-11-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"version-11-model\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "version-12-model",
+      "yaml": "%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {displayName: yes}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"version-12-model\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"version-12-model\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"yes\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "duplicate-version",
+      "yaml": "%YAML 1.1\n%YAML 1.2\n---\nschemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"duplicate-version\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"duplicate-version\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "two-tag-directives",
+      "yaml": "%TAG !e! tag:example.com,2020:\n%TAG !f! tag:example.org,2021:\n---\nschemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {displayName: !e!name Example}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"two-tag-directives\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"two-tag-directives\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"Example\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "bad-yaml-before-query",
+      "yaml": "a: [\n",
+      "params": {
+        "query": 7
+      },
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_YAML_INVALID",
+        "message": "Failed to parse default config YAML.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_YAML_INVALID",
+            "severity": "fatal",
+            "message": "Failed to parse default config YAML.",
+            "path": "<PILOT_HOME>/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "<PILOT_HOME>/pilotdeck.yaml"
+            },
+            "hint": "Flow sequence in block collection must be sufficiently indented and end with a ]",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"bad-yaml-before-query\",\"method\":\"model_catalog_list\",\"params\":{\"query\":7}}",
+      "response": "{\"type\":\"response\",\"id\":\"bad-yaml-before-query\",\"ok\":false,\"error\":{\"code\":\"CONFIG_YAML_INVALID\",\"message\":\"Failed to parse default config YAML.\"}}"
+    },
+    {
+      "id": "missing-agent-before-query",
+      "yaml": "{}\n",
+      "params": {
+        "query": 7
+      },
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"missing-agent-before-query\",\"method\":\"model_catalog_list\",\"params\":{\"query\":7}}",
+      "response": "{\"type\":\"response\",\"id\":\"missing-agent-before-query\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_MISSING\",\"message\":\"Config must contain an agent section.\"}}"
+    },
+    {
+      "id": "provider-warning",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    broken: {protocol: not-supported}\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": true,
+        "diagnostics": [
+          {
+            "code": "MODEL_UNSUPPORTED_PROTOCOL",
+            "severity": "warning",
+            "message": "Provider broken has unsupported protocol.",
+            "path": "model.providers.broken",
+            "hint": "This provider was excluded from the runtime. Correct its settings to enable it.",
+            "recoverable": true
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"provider-warning\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"provider-warning\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "provider-warning-agent-fatal",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: not-supported\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_AGENT_PROVIDER_NOT_FOUND",
+        "message": "agent.model references unknown provider parity.",
+        "diagnostics": [
+          {
+            "code": "MODEL_UNSUPPORTED_PROTOCOL",
+            "severity": "warning",
+            "message": "Provider parity has unsupported protocol.",
+            "path": "model.providers.parity",
+            "hint": "This provider was excluded from the runtime. Correct its settings to enable it.",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_PROVIDER_NOT_FOUND",
+            "severity": "fatal",
+            "message": "agent.model references unknown provider parity.",
+            "path": "agent.model",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"provider-warning-agent-fatal\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"provider-warning-agent-fatal\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_PROVIDER_NOT_FOUND\",\"message\":\"agent.model references unknown provider parity.\"}}"
+    },
+    {
+      "id": "env-empty",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {},
+      "env": {
+        "PILOT_AGENT_MODEL": ""
+      },
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"env-empty\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"env-empty\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "env-untrimmed",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {},
+      "env": {
+        "PILOT_AGENT_MODEL": " parity/deterministic "
+      },
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_AGENT_PROVIDER_NOT_FOUND",
+        "message": "agent.model references unknown provider  parity.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_AGENT_PROVIDER_NOT_FOUND",
+            "severity": "fatal",
+            "message": "agent.model references unknown provider  parity.",
+            "path": "agent.model",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"env-untrimmed\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"env-untrimmed\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_PROVIDER_NOT_FOUND\",\"message\":\"agent.model references unknown provider  parity.\"}}"
+    },
+    {
+      "id": "env-replaces-primitive-agent",
+      "yaml": "schemaVersion: 1\nagent: 7\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\n",
+      "params": {},
+      "env": {
+        "PILOT_AGENT_MODEL": "parity/deterministic"
+      },
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"env-replaces-primitive-agent\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"env-replaces-primitive-agent\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "extension-before-gateway",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nextension: 7\ngateway: 7\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_EXTENSION_INVALID",
+        "message": "extension config must be an object.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_EXTENSION_INVALID",
+            "severity": "fatal",
+            "message": "extension config must be an object.",
+            "path": "extension",
+            "recoverable": false
+          },
+          {
+            "code": "GATEWAY_CONFIG_INVALID",
+            "severity": "fatal",
+            "message": "gateway config must be an object.",
+            "path": "gateway",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"extension-before-gateway\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"extension-before-gateway\",\"ok\":false,\"error\":{\"code\":\"CONFIG_EXTENSION_INVALID\",\"message\":\"extension config must be an object.\"}}"
+    },
+    {
+      "id": "memory-throw-before-extension-fatal",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nextension: 7\nmemory: {maxMessageChars: -1}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_MEMORY_VALUE_INVALID",
+        "message": "memory.maxMessageChars must be a positive number.",
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"memory-throw-before-extension-fatal\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"memory-throw-before-extension-fatal\",\"ok\":false,\"error\":{\"code\":\"CONFIG_MEMORY_VALUE_INVALID\",\"message\":\"memory.maxMessageChars must be a positive number.\"}}"
+    },
+    {
+      "id": "modules-invalid",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: 7\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "MODULES_INVALID",
+        "message": "modules must be an object.",
+        "diagnostics": [
+          {
+            "code": "MODULES_INVALID",
+            "severity": "fatal",
+            "message": "modules must be an object.",
+            "path": "modules",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"modules-invalid\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"modules-invalid\",\"ok\":false,\"error\":{\"code\":\"MODULES_INVALID\",\"message\":\"modules must be an object.\"}}"
+    },
+    {
+      "id": "staffdeck-number-modules",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: 7\n",
+      "params": {},
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true"
+      },
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot create property 'knowledge' on number '7'"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"staffdeck-number-modules\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"staffdeck-number-modules\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot create property 'knowledge' on number '7'\"}}"
+    },
+    {
+      "id": "staffdeck-string-modules",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: text\n",
+      "params": {},
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true"
+      },
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot create property 'knowledge' on string 'text'"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"staffdeck-string-modules\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"staffdeck-string-modules\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot create property 'knowledge' on string 'text'\"}}"
+    },
+    {
+      "id": "staffdeck-false-modules",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: false\n",
+      "params": {},
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true"
+      },
+      "load": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot create property 'knowledge' on boolean 'false'"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"staffdeck-false-modules\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"staffdeck-false-modules\",\"ok\":false,\"error\":{\"code\":\"gateway_request_failed\",\"message\":\"Cannot create property 'knowledge' on boolean 'false'\"}}"
+    },
+    {
+      "id": "staffdeck-null-modules",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: null\n",
+      "params": {},
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true"
+      },
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"staffdeck-null-modules\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"staffdeck-null-modules\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "knowledge-invalid",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: {knowledge: 7, sop: 7}\n",
+      "params": {},
+      "env": {},
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "MODULE_INVALID",
+        "message": "modules.knowledge must be an object.",
+        "diagnostics": [
+          {
+            "code": "MODULE_INVALID",
+            "severity": "fatal",
+            "message": "modules.knowledge must be an object.",
+            "path": "modules.knowledge",
+            "recoverable": false
+          },
+          {
+            "code": "SOP_MODULE_INVALID",
+            "severity": "fatal",
+            "message": "modules.sop must be an object.",
+            "path": "modules.sop",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"knowledge-invalid\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"knowledge-invalid\",\"ok\":false,\"error\":{\"code\":\"MODULE_INVALID\",\"message\":\"modules.knowledge must be an object.\"}}"
+    },
+    {
+      "id": "staffdeck-disables-knowledge-sop",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: {knowledge: 7, sop: 7}\n",
+      "params": {},
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true"
+      },
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "request": "{\"type\":\"request\",\"id\":\"staffdeck-disables-knowledge-sop\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"staffdeck-disables-knowledge-sop\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/deterministic\",\"provider\":\"parity\",\"model\":\"deterministic\",\"displayName\":\"deterministic\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}"
+    },
+    {
+      "id": "staffdeck-case-sensitive",
+      "yaml": "schemaVersion: 1\nagent:\n  model: parity/deterministic\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock-only\n      models:\n        deterministic: {}\nmodules: {knowledge: 7, sop: 7}\n",
+      "params": {},
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "TRUE"
+      },
+      "load": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "MODULE_INVALID",
+        "message": "modules.knowledge must be an object.",
+        "diagnostics": [
+          {
+            "code": "MODULE_INVALID",
+            "severity": "fatal",
+            "message": "modules.knowledge must be an object.",
+            "path": "modules.knowledge",
+            "recoverable": false
+          },
+          {
+            "code": "SOP_MODULE_INVALID",
+            "severity": "fatal",
+            "message": "modules.sop must be an object.",
+            "path": "modules.sop",
+            "recoverable": false
+          }
+        ]
+      },
+      "request": "{\"type\":\"request\",\"id\":\"staffdeck-case-sensitive\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"staffdeck-case-sensitive\",\"ok\":false,\"error\":{\"code\":\"MODULE_INVALID\",\"message\":\"modules.knowledge must be an object.\"}}"
+    }
+  ]
+}

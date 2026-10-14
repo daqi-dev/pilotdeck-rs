@@ -112,7 +112,7 @@ pub(crate) fn native_stat(root: &Path, path: &Path) -> io::Result<(Stat, bool)> 
 }
 
 // Node/ICU's POSIX default locale precedence, measured in node-runtime.json.
-fn node_locale(env: impl FnMut(&str) -> Option<String>) -> Locale {
+pub(crate) fn node_locale(env: impl FnMut(&str) -> Option<String>) -> Locale {
     let value = ["LC_ALL", "LC_MESSAGES", "LANG"]
         .into_iter()
         .find_map(env)
@@ -152,7 +152,7 @@ fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> Strin
 // Unsupported collation extensions fall back to the language's default in
 // Node. Keep a final root fallback for unavailable locale data; never panic in
 // dispatch, even if the compiled provider cannot construct either collator.
-fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
+pub(crate) fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
     let mut preferences: CollatorPreferences = locale.clone().into();
     Collator::try_new(preferences, Default::default())
         .or_else(|_| {

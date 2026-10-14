@@ -1,5 +1,21 @@
 # Rust sidecar 来源与适配记录
 
+## A4 配置加载与 model_catalog_list（2026-10-14）
+
+`pilotdeck-gateway/src/config/` 与 `model_catalog.rs` 按只读 PilotDeck 基线
+`cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 独立实现。行为依据为
+`src/pilot/config/loadPilotConfig.ts`、同目录各配置节解析器、
+`src/model/config/`、`src/gateway/dialog/modelCatalog.ts` 与
+`src/gateway/server/GatewayWsConnection.ts`；没有搬入这些 TypeScript 源码。
+YAML 使用本仓 `pilotdeck-yaml`，JS 字符串与 wire 使用 `pilotdeck-protocol`。
+
+`config/catalog-data.json`、`contracts.json`、`timezones.json` 由
+`tests/record_config_data.mts` 在隔离 HOME/XDG/TMPDIR 的离线 Node 22.22.0 /
+ICU 78.2 中导出基线运行时数据。目录 fixture 与诊断原件通过真实基线调用
+录制，具体来源、SHA-256、边界及复现命令见
+`pilotdeck-gateway/tests/fixtures/config/README.md`。没有复制源码、启动监听服务、
+读取用户 PilotHome 或下载预编译程序。
+
 来源仓（只读）：`/Users/da/ws/PilotDeck-rust-program-20261009/build/source-repository`。
 来源 commit：`0eba113`。取文件仅使用 `git -C <来源仓> archive 0eba113 ...` 和 `git -C <来源仓> show 0eba113:<路径>`，未在旧现场写入或 checkout。
 

@@ -1,0 +1,92 @@
+{
+  "agentLoop": {
+    "contract": "pilotdeck.agent-loop/v1",
+    "methods": [
+      "execute",
+      "cancel",
+      "status",
+      "resume",
+      "ack"
+    ]
+  },
+  "skills": {
+    "contract": "pilotdeck.skills/v1",
+    "methods": [
+      "list",
+      "read",
+      "create",
+      "write",
+      "delete",
+      "validate",
+      "import",
+      "scan"
+    ]
+  },
+  "modelProvider": {
+    "contract": "pilotdeck.model/v1",
+    "methods": [
+      "prepare",
+      "materialize_prepared_request",
+      "stream",
+      "stream_next",
+      "close_stream",
+      "get_metadata"
+    ]
+  },
+  "tools": {
+    "contract": "pilotdeck.tools/v1",
+    "methods": [
+      "execute",
+      "execute_batch",
+      "list_tools",
+      "plan_todo"
+    ]
+  },
+  "context": {
+    "contract": "pilotdeck.context/v1",
+    "methods": [
+      "prepare_for_model",
+      "apply_tool_results",
+      "recover_from_model_error",
+      "capture_turn",
+      "try_auto_compact"
+    ]
+  },
+  "knowledge": {
+    "contract": "staffdeck.knowledge/v1",
+    "methods": [
+      "list_bases",
+      "create_base",
+      "get_base",
+      "update_base",
+      "delete_base",
+      "list_versions",
+      "sync_base",
+      "publish_version",
+      "rollback_version",
+      "list_documents",
+      "get_document",
+      "import_document",
+      "import_okf",
+      "update_document",
+      "delete_document",
+      "list_document_buckets",
+      "update_bucket",
+      "list_bucket_chunks",
+      "update_chunk",
+      "get_job",
+      "list_jobs",
+      "cancel_job",
+      "list_okf_concepts",
+      "get_okf_concept",
+      "upsert_okf_concept",
+      "export_okf",
+      "lint_okf",
+      "list_discoveries",
+      "confirm_discovery",
+      "reject_discovery",
+      "query",
+      "resolve_citation"
+    ]
+  }
+}

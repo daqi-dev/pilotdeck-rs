@@ -1,9 +1,11 @@
 //! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
+mod config;
 mod dispatch;
 mod frame;
 pub mod http_proxy;
 mod metadata;
+mod model_catalog;
 mod pairing;
 mod project_files;
 mod upstream;

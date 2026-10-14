@@ -154,7 +154,7 @@ where
                     };
                     if eligible && request.as_ref().is_some_and(dispatch::is_local) {
                         let request = request.expect("eligible local request");
-                        if metadata.is_some() && dispatch::needs_files(&request) {
+                        if dispatch::needs_files(&request) {
                             let metadata = metadata.cloned();
                             // Completion is polled only after the current input
                             // buffer: TS dispatches promises without blocking
