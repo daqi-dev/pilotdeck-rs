@@ -1,15 +1,15 @@
-# B2 ui/server 尺子冻结登记草稿（待定标）
+# B2 ui/server 尺子冻结登记
 
-> **待定标**：仅准备哈希清单。真实新装置 20 遍 TS 参考池 + 5 遍 TS 十对 + 1 遍 proxy、26 遍 clock PASS、独立双谱系评审及人批均待补。此文件不构成冻结或阶段验收。
+> **2026-10-14 冻结**（AI 代批，待人复核）。定标：main c49c42e，仓外 detached checkout，同一 UTC 日 20 遍 TS 参考池 + 5 遍 TS 计分 + 1 遍 proxy；TS 十对 10/10、proxy PASS（#72 两处差异消失）、26 遍时钟检查 PASS、无重采 / REFUSED / 近似测量。废弃批次：8dc6e94e（c3111d3，ref1 因 du 竞态 FAIL，修复见 #89）与主仓 4c1b39c2（中途停止、改在仓外重跑）均不计分。两家评审（GLM、Claude）均「无 P0/P1，可冻结」。
 > 定标命令及重采规则：`scripts/ui-server-parity/README.md`；不得借历史 replay 定标。
 > 冻结时由协调者补定标证据与两家评审路径、替换下方审批及依据占位，再移除首行「待定标」。`Approved-By:` 接受具名人或「AI 代批，待人复核（协调者）」，并必须有 `Approval-Basis:` 记明定标报告路径和两家评审路径。冻结后变更需遵循 CLAUDE.md §五。
 > 校验：`python3 -I scripts/ui-server-parity/check_frozen.py`；格式沿用 gateway：「sha256 两空格 相对本目录路径」。草稿哈希全一致退出 2 / DRAFT，缺项/漂移/未登记装置文件退出 1 / FAIL。
 > 清单覆盖规约四份、scripts/ui-server-parity 与 scripts/exp008 两目录的全部 Git 跟踪文件；实际文件必须等于 Git 跟踪清单，额外/未跟踪/缺失文件、链接、__pycache__、*.pyc 一律 FAIL；仅精确名为 .DS_Store 的普通文件不登记、不执行、不参与 hash。根 rust-toolchain(.toml) 若存在也纳入清单。所有 Python 入口带 -I，装置预检源码自身先校验哈希，本目录模块按已验哈希的绝对路径载入。威胁模型与每批新构建规则见 README 和 acceptance.md；不防同时篡改装置、清单与审批的本机恶意者。
 
-Approved-By: <待批准>
-Approval-Basis: <待定标报告路径及两家评审路径>
-Calibration-Evidence: <待定标>
-Independent-Reviews: <待定标后登记两家评审>
+Approved-By: AI 代批，待人复核（协调者）
+Approval-Basis: _tmp/archive/b2-calibration-2026-10-14-7d28f0de-58c9-449f-8381-adefc94245a0/summary.json; _tmp/review-b2-freeze/rev-glm.md; _tmp/review-b2-freeze/rev-claude.md
+Calibration-Evidence: _tmp/archive/b2-calibration-2026-10-14-7d28f0de-58c9-449f-8381-adefc94245a0/summary.json; _tmp/archive/b2-calibration-2026-10-14-7d28f0de-58c9-449f-8381-adefc94245a0/final-ruler-b574d022-9df5-4f85-8b68-523712a3a8cc.json; _tmp/archive/b2-calibration-2026-10-14-7d28f0de-58c9-449f-8381-adefc94245a0/ts-ruler-b71e9a0b-11df-4ed7-8627-851a1fdaad0b.json; _tmp/archive/b2-calibration-2026-10-14-7d28f0de-58c9-449f-8381-adefc94245a0/driver.log
+Independent-Reviews: _tmp/review-b2-freeze/rev-glm.md; _tmp/review-b2-freeze/rev-claude.md
 
 f6d385e8da46ed612ba5207dcdf588c8331cfe025a866bdb59bb7e02ff32a7cc  ../../scripts/exp008/compare.py
 3b8bec2dbcd28b3e99ee11017e4e37c3e59d873d2800331decf0f90a1fd25b24  ../../scripts/exp008/controls.py
