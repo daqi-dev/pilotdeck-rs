@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""Boundary regressions beyond single-mutation controls; no live services."""
+import base64
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import unittest
+
+from check_frozen import check as frozen
+from check_ruler import check as ruler
+from compare import Normalizer, compare_sides, diff, read_jsonl, sse_events
+from policy import CHAT_FIXTURE_SESSIONS
+from snapshot import capture
+
+HERE = Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location('control_fixtures', HERE / 'controls/run_all.py')
+controls = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(controls)
+
+
+class ComparatorBoundaries(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='b2-boundary-')
+        self.root = Path(self.temp.name)
+        self.enumeration, self.matrix, self.manifest = controls.fixture(self.root)
+        self.left, self.right = self.root / 'left', self.root / 'right'
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def compare(self):
+        return compare_sides(self.left, self.right, self.enumeration, self.matrix, self.manifest)
+
+    def mutate_log(self, fn):
+        path = self.right / 'recording.jsonl'
+        rows = read_jsonl(path)
+        fn(rows)
+        controls.write_log(path, rows)
+
+    def test_multivalue_header_name_case_and_grouping(self):
+        def mutate(rows):
+            for row in rows:
+                if row['kind'] == 'http_response':
+                    # Order between DIFFERENT names is irrelevant, per-name order is not.
+                    row['headers'].sort(key=lambda h: h['name'], reverse=True)
+                    for h in row['headers']:
+                        h['name'] = h['name'].upper()
+        self.mutate_log(mutate)
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+        def swap(rows):
+            for row in rows:
+                if row['kind'] == 'http_response' and row['id'] == 1:
+                    cookies = [h for h in row['headers'] if h['name'].lower() == 'set-cookie']
+                    cookies[0]['value_b64'], cookies[1]['value_b64'] = cookies[1]['value_b64'], cookies[0]['value_b64']
+        self.mutate_log(swap)
+        self.assertIn('http.headers', self.compare()['rules'])
+
+    def test_trailer_date_is_literal_not_header_clock(self):
+        for side, value in ((self.left, 'a'), (self.right, 'b')):
+            path = side / 'recording.jsonl'
+            rows = read_jsonl(path)
+            end = next(r for r in rows if r['kind'] == 'http_end' and r['id'] == 1 and r['direction'] == 'response')
+            trailer = {**end, 'kind': 'http_chunk', 'trailers': [controls.hdr('Date', value)]}
+            rows.insert(rows.index(end), trailer)
+            controls.write_log(path, rows)
+        self.assertTrue(any(d['rule'] == 'http.headers' and d['location'].endswith('trailers.date[0]') for d in self.compare()['differences']))
+
+    def test_sse_rechunk_is_equivalent(self):
+        def mutate(rows):
+            chunks = [r for r in rows if r['kind'] == 'http_chunk' and r['id'] == 3 and r['direction'] == 'response']
+            first = chunks[0]
+            data = base64.b64decode(first['body_b64'])
+            cut = len(data) // 2
+            first.update(body_b64=controls.b64(data[:cut]), bytes=cut)
+            second = {**first, 'body_b64': controls.b64(data[cut:]), 'bytes': len(data) - cut, 'offset': cut}
+            rows.insert(rows.index(first) + 1, second)
+        self.mutate_log(mutate)
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+
+    def test_sse_crlf_multiline_resume_and_unterminated_dispatch(self):
+        raw = b'\xef\xbb\xbfid: 7\r\nevent: progress\r\ndata: one\r\ndata: two\r\n\r\ndata: done\r\n\r\n'
+        errors = []
+        events = sse_events(raw, [(len(raw), 100)], 1, errors, 'sse', 'left')
+        self.assertFalse(errors)
+        self.assertEqual([e['id'] for e in events], ['7', '7'])
+        self.assertEqual(events[0]['data'], 'one\ntwo')
+        self.assertEqual([e['event'] for e in events], ['progress', 'message'])
+        errors = []
+        sse_events(raw[:-1], [(len(raw) - 1, 100)], 1, errors, 'sse', 'left')
+        # CR alone is a valid blank terminator, so remove the entire final separator.
+        self.assertFalse(errors)
+        sse_events(raw[:-2], [(len(raw) - 2, 100)], 1, errors, 'sse', 'left')
+        self.assertTrue(any(e['rule'] == 'sse.complete' for e in errors))
+
+    def test_global_timestamp_race_does_not_reorder_ws_seq(self):
+        def mutate(rows):
+            frames = [r for r in rows if r['kind'] == 'ws_frame']
+            frames[1]['arrival_ns'], frames[2]['arrival_ns'] = frames[2]['arrival_ns'], frames[1]['arrival_ns']
+        self.mutate_log(mutate)
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+
+    def test_seq_gap_and_mutated_wire_rejected(self):
+        path = self.right / 'recording.jsonl'
+        rows = read_jsonl(path)
+        frame = next(r for r in rows if r['kind'] == 'ws_frame')
+        frame['seq'] += 1
+        path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        self.assertIn('ws.sequence', self.compare()['rules'])
+        controls.write_log(path, rows)
+        frame['wire_b64'] = controls.b64(b'\x81\x00')
+        path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        self.assertIn('evidence.integrity', self.compare()['rules'])
+
+    def test_cross_connection_interleaving_is_not_compared(self):
+        for side in (self.left, self.right):
+            path = side / 'recording.jsonl'
+            rows = read_jsonl(path)
+            split = next(i for i, r in enumerate(rows) if r['kind'] == 'ws_frame')
+            prefix = rows[:split]
+            handshake = [copy.deepcopy(r) for r in prefix if r.get('id') == 4]
+            for r in handshake:
+                r['id'] = 5
+                if r['kind'] == 'http_request':
+                    r['case'] = 'ws.probe.2'
+                if 'connection' in r:
+                    r['connection'] = 2
+            prefix.extend(handshake)
+            first = [r for r in rows if r['kind'] == 'ws_frame']
+            second = copy.deepcopy(first)
+            for r in second:
+                r['connection'] = 2
+            end1 = next(r for r in rows if r['kind'] == 'ws_end')
+            end2 = {**end1, 'connection': 2}
+            frames = first + second if side == self.left else [r for pair in zip(second, first) for r in pair]
+            controls.write_log(path, prefix + frames + [end1, end2, rows[-1]])
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+
+    def test_fragment_type_pass_then_orphan_continuation_fails(self):
+        for side in (self.left, self.right):
+            path = side / 'recording.jsonl'
+            rows = read_jsonl(path)
+            first = next(r for r in rows if r['kind'] == 'ws_frame')
+            raw = base64.b64decode(first['payload_b64'])
+            cut = len(raw) // 2
+            first.update(fin=False, payload_b64=controls.b64(raw[:cut]), bytes=cut)
+            continuation = {**first, 'opcode': 0, 'fin': True, 'payload_b64': controls.b64(raw[cut:]), 'bytes': len(raw) - cut}
+            rows.insert(rows.index(first) + 1, continuation)
+            controls.write_log(path, rows)
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+        path = self.right / 'recording.jsonl'
+        rows = read_jsonl(path)
+        rows.remove(next(r for r in rows if r['kind'] == 'ws_frame'))
+        controls.write_log(path, rows)
+        self.assertIn('ws.sequence', self.compare()['rules'])
+
+    def test_unknown_volatile_named_field_remains_literal(self):
+        def mutate(rows):
+            controls.response_body(rows, 1, lambda raw: controls.change_json(raw, lambda body: body.update(timestamp='2026-10-14T00:00:00Z')))
+        self.mutate_log(mutate)
+        self.assertTrue(any(d['rule'] == 'http.body' and d['location'].endswith('.timestamp') for d in self.compare()['differences']))
+
+    def test_expiry_shift_is_not_erased_as_a_clock(self):
+        def mutate(rows):
+            controls.response_body(rows, 3, lambda raw: raw.replace(b'2000000', b'2000001'))
+        self.mutate_log(mutate)
+        self.assertTrue(any(d['rule'] == 'normalization.field' and d['location'].endswith('.expiresAt') for d in self.compare()['differences']))
+
+    def test_backend_and_wire_expiry_shift_preserves_ttl_difference(self):
+        path = self.right / 'home/.tmp/chat-uploads/upload-1/metadata.json'
+        metadata = json.loads(path.read_text())
+        metadata['expiresAt'] += 1
+        controls.write_json(path, metadata)
+        controls.write_json(self.right / 'snapshot.json', capture(self.right))
+        self.mutate_log(lambda rows: controls.response_body(rows, 3, lambda raw: raw.replace(b'2000000', b'2000001')))
+        report = self.compare()
+        self.assertIn('disk.snapshot', report['rules'])
+        self.assertIn('sse.sequence', report['rules'])
+
+    def test_literal_dotted_key_cannot_impersonate_identity_path(self):
+        for side, value in ((self.left, 8), (self.right, 9)):
+            path = side / 'recording.jsonl'
+            rows = read_jsonl(path)
+            controls.response_body(rows, 1, lambda raw: controls.change_json(raw, lambda body: body.update({'user.id': value})))
+            controls.write_log(path, rows)
+        self.assertTrue(any(d['rule'] == 'http.body' and d['location'].endswith('."user.id"') for d in self.compare()['differences']))
+
+    def test_sse_clock_rule_is_scoped_to_case_and_event(self):
+        self.manifest['http_cases'][2]['id'] = 'custom.sse'
+        self.matrix['routes'][2]['cases'] = ['custom.sse']
+        for side in (self.left, self.right):
+            path = side / 'recording.jsonl'
+            rows = read_jsonl(path)
+            request = next(r for r in rows if r['kind'] == 'http_request' and r['id'] == 3)
+            request['case'] = 'custom.sse'
+            for header in request['headers']:
+                if header['name'] == 'x-pdrs-parity-case':
+                    header['value_b64'] = controls.b64('custom.sse')
+            if side == self.right:
+                controls.response_body(rows, 3, lambda raw: raw.replace(b'2000000', b'2000001'))
+            controls.write_log(path, rows)
+            path = side / 'cases.jsonl'
+            cases = read_jsonl(path)
+            cases[2]['case'] = 'custom.sse'
+            path.write_text(''.join(json.dumps(c) + '\n' for c in cases))
+        self.assertIn('sse.sequence', self.compare()['rules'])
+
+    def test_json_numeric_equivalence_but_identity_types_distinct(self):
+        def mutate(rows):
+            controls.response_body(rows, 1, lambda raw: controls.change_json(raw, lambda body: body['user'].update(id='1')))
+        self.mutate_log(mutate)
+        self.assertEqual(self.compare()['verdict'], 'FAIL')
+
+    def test_undeclared_clock_and_invalid_json_both_sides_fail(self):
+        for side in (self.left, self.right):
+            rows = read_jsonl(side / 'recording.jsonl')
+            controls.response_body(rows, 1, lambda raw: b'{"success":NaN}')
+            controls.write_log(side / 'recording.jsonl', rows)
+        self.assertIn('evidence.integrity', self.compare()['rules'])
+
+    def test_handler_rust_declared_requires_actual_rust_case(self):
+        self.matrix['routes'][0]['handler'] = 'rust'
+        report = self.compare()
+        self.assertTrue(any(d['rule'] == 'coverage.handler' and 'auth.register' in d['location'] for d in report['differences']))
+        # A real marker, not client metadata, must change when TS claims Rust.
+        def mutate(rows):
+            response = next(r for r in rows if r['kind'] == 'http_response' and r['id'] == 1)
+            response['handler'] = 'rust'
+            for h in response['headers']:
+                if h['name'] == 'x-pilotdeck-handler':
+                    h['value_b64'] = controls.b64('rust')
+        self.mutate_log(mutate)
+        path = self.right / 'cases.jsonl'
+        clients = read_jsonl(path)
+        clients[0]['handler'] = 'rust'
+        path.write_text(''.join(json.dumps(r) + '\n' for r in clients))
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+
+    def test_disk_captured_then_modified_on_both_sides_fails_archive_check(self):
+        for side in (self.left, self.right):
+            (side / 'project/note.txt').write_text('same corruption')
+        self.assertIn('disk.snapshot', self.compare()['rules'])
+
+    def test_snapshot_sqlite_logical_and_binary_diff(self):
+        for side in (self.left, self.right):
+            with sqlite3.connect(side / 'home/local.db') as db:
+                db.execute('CREATE TABLE x (v INTEGER PRIMARY KEY) WITHOUT ROWID')
+                db.execute('INSERT INTO x VALUES (1)')
+            (side / 'project/opaque.bin').write_bytes(b'\xff\0')
+            controls.write_json(side / 'snapshot.json', capture(side))
+        self.assertEqual(self.compare()['verdict'], 'PASS')
+        with sqlite3.connect(self.right / 'home/local.db') as db:
+            db.execute('UPDATE x SET v = 2')
+        controls.write_json(self.right / 'snapshot.json', capture(self.right))
+        self.assertIn('disk.snapshot', self.compare()['rules'])
+
+    def test_cli_missing_evidence_returns_fail_json(self):
+        proc = subprocess.run([sys.executable, str(HERE / 'compare.py'), str(self.root / 'missing'), str(self.right),
+                               '--enumeration', str(self.root / 'enumeration.json'), '--matrix', str(self.root / 'matrix.json'),
+                               '--scenarios', str(self.root / 'manifest.json'), '--paired-only'], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(json.loads(proc.stdout)['verdict'], 'FAIL')
+
+    def test_synthetic_five_archives_cannot_calibrate(self):
+        rounds = []
+        for i in range(5):
+            target = self.root / f'ts{i}' / 'direct'
+            target.parent.mkdir()
+            shutil.copytree(self.left, target)
+            rounds.append(target)
+        result = ruler(rounds, self.root / 'enumeration.json', matrix=self.root / 'matrix.json', scenarios=self.root / 'manifest.json', paired_only=True)
+        self.assertFalse(result['self_compare'])
+        self.assertEqual(result['verdict'], 'FAIL')
+        self.assertIsNone(result['independent_review'])
+
+    def test_uuid_namespace_and_derived_suffix_across_channels(self):
+        uuid = '11111111-1111-4111-8111-111111111111'
+        errors = []
+        norm = Normalizer('left', errors)
+        http = norm.value({'messages': [{'turnId': uuid, 'blockId': uuid + ':text:0'}]}, 'http', 'readonly.messages')
+        ws = norm.value({'runId': uuid, 'timeline': {'id': uuid + ':text:0'}}, 'ws', 'text')
+        disk = norm.value([{'turnId': uuid, 'message': {'content': [{'blockId': uuid + ':text:0'}]}}], 'disk', '@chat')
+        self.assertEqual(http['messages'][0]['turnId'], ws['runId'])
+        self.assertEqual(ws['runId'], disk[0]['turnId'])
+        self.assertEqual(http['messages'][0]['blockId'], ws['timeline']['id'])
+        self.assertEqual(ws['timeline']['id'], disk[0]['message']['content'][0]['blockId'])
+        self.assertEqual(ws['timeline']['id'], ws['runId'] + ':text:0')
+        self.assertFalse(errors)
+        self.assertEqual(norm.value({'other': {'blockId': uuid}}, 'ws', 'text')['other']['blockId'], uuid)
+        # Different concrete entity types/indices remain different even when
+        # the UUID is consistently renamed across ALL occurrences.
+        self.assertNotEqual(norm.ref('block', uuid + ':text:1', 'x'), ws['timeline']['id'])
+        self.assertNotEqual(norm.ref('timeline', uuid + ':thinking:0', 'x'), ws['timeline']['id'])
+        self.assertNotEqual(norm.ref('run', 'status_' + uuid, 'x'), norm.ref('run', 'text_' + uuid, 'x'))
+
+    def test_seed_never_sorts_compared_lists_or_erases_session_aliases(self):
+        errors = []
+        a, b = Normalizer('left', errors), Normalizer('right', errors)
+        for norm in (a, b):
+            norm.seed_chat_identities([])
+        sessions = [{'id': s} for s in CHAT_FIXTURE_SESSIONS]
+        left = a.value({'sessions': sessions}, 'http', 'readonly.sessions')
+        right = b.value({'sessions': sessions[::-1]}, 'http', 'readonly.sessions')
+        diff(left, right, errors, 'http.body', 'body')
+        self.assertTrue(any(d['location'] == 'body.sessions[0].id' for d in errors))
+        errors.clear()
+        collapsed = b.value({'sessions': [sessions[0], sessions[0]]}, 'http', 'readonly.sessions')
+        diff(left, collapsed, errors, 'http.body', 'body')
+        self.assertTrue(any(d['location'] == 'body.sessions[1].id' for d in errors))
+
+    def test_ws_disk_uuid_renames_pass_but_reference_collapse_fails(self):
+        for side, uuid, other in ((self.left, '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'),
+                                  (self.right, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')):
+            chat = side / f'home/projects/exp008-fixture/chats/{CHAT_FIXTURE_SESSIONS[0]}.jsonl'
+            chat.parent.mkdir(parents=True)
+            chat.write_text(json.dumps({'turnId': uuid, 'entryId': other, 'message': {'content': [
+                {'blockId': other + ':text:0', 'timeline': {'id': other + ':text:0', 'turnId': uuid}}]}}) + '\n'
+                + json.dumps({'turnId': uuid}) + '\n')
+            controls.write_json(side / 'snapshot.json', capture(side))
+            rows = read_jsonl(side / 'recording.jsonl')
+            template = next(r for r in rows if r['kind'] == 'ws_frame' and r['dir'] == 'u2c' and r['opcode'] == 1)
+            body = {'kind': 'text', 'runId': uuid, 'blockId': other + ':text:0',
+                    'timeline': {'id': other + ':text:0', 'turnId': uuid}, 'content': 'retained'}
+            raw = json.dumps(body).encode()
+            rows.insert(rows.index(template), {**template, 'payload_b64': controls.b64(raw), 'bytes': len(raw)})
+            controls.write_log(side / 'recording.jsonl', rows)
+        report = self.compare()
+        self.assertEqual(report['verdict'], 'PASS', report['differences'])
+        def collapse(rows):
+            controls.mutate_frames(rows, lambda body: body['timeline'].update(turnId='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+                                   if body.get('kind') == 'text' else None)
+        self.mutate_log(collapse)
+        self.assertTrue(any(d['rule'] == 'ws.structure' and d['location'].endswith('.timeline.turnId')
+                            for d in self.compare()['differences']))
+
+    def test_real_recording_hash_gate_remains_strict_including_replay(self):
+        for side in (self.left, self.right):
+            path = side / 'run-meta.json'
+            meta = json.loads(path.read_text())
+            meta.update(synthetic=False, apparatus_sha256={'original': 'a' * 64})
+            controls.write_json(path, meta)
+        strict = self.compare()
+        self.assertTrue(strict['calibration_eligible'])
+        self.assertEqual(sum('hash mismatch' in d['message'] for d in strict['differences']), 2)
+        replay = compare_sides(self.left, self.right, self.enumeration, self.matrix, self.manifest,
+                               recorded_apparatus={'wrong': 'b' * 64})
+        self.assertFalse(replay['calibration_eligible'])
+        self.assertEqual(replay['comparison_mode'], 'historical-replay')
+        self.assertEqual(sum('hash mismatch' in d['message'] for d in replay['differences']), 2)
+
+    def test_draft_and_unapproved_frozen_manifest(self):
+        folder = self.root / 'specs'
+        folder.mkdir()
+        self.assertEqual(frozen(folder)['verdict'], 'DRAFT')
+        (folder / 'FROZEN.md').write_text('AI 代批\n')
+        self.assertEqual(frozen(folder)['verdict'], 'FAIL')
+
+
+if __name__ == '__main__':
+    unittest.main()

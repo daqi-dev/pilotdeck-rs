@@ -11,7 +11,7 @@
     },
     {
       "id": "chat",
-      "description": "mock 模型两会话并发一轮对话 + 带外 activity"
+      "description": "mock 模型两会话逐个完成一轮对话；等待双连接 idle 与 project watcher + 带外 activity"
     },
     {
       "id": "watch",

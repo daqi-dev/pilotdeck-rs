@@ -14,15 +14,32 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
+import uuid
+
+from snapshot import capture
+from common import apparatus_hashes, source_hashes
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 # Reuse B1 isolated fixture/env/process-group ownership + lsof assertions.
 # Its comparator/scenarios are never invoked here (S3 belongs to the next PR).
-sys.path.insert(0, str(ROOT / 'scripts/exp008'))
+# B1 imports its own `compare` at module load. Isolate that import so loading
+# S1 after S3 (e.g. unittest discovery) cannot bind either comparator incorrectly.
+compare_spec = importlib.util.spec_from_file_location('b1_comparator', ROOT / 'scripts/exp008/compare.py')
+b1_comparator = importlib.util.module_from_spec(compare_spec)
+compare_spec.loader.exec_module(b1_comparator)
 spec = importlib.util.spec_from_file_location('b1_device', ROOT / 'scripts/exp008/run.py')
 b1 = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(b1)
+previous_compare = sys.modules.get('compare')
+try:
+    sys.modules['compare'] = b1_comparator
+    spec.loader.exec_module(b1)
+finally:
+    if previous_compare is None:
+        sys.modules.pop('compare', None)
+    else:
+        sys.modules['compare'] = previous_compare
 b1.PORTS = {'rust': 13103, 'ui': 13102, 'enum': 13104, 'gateway': 28990, 'vite': 13105}
 b1.ALL_PORTS = set(b1.PORTS.values()) | {13101}
 BINARY = ROOT / '_build/exp010-target/debug/pdrs-exp008-proxy'
@@ -82,9 +99,14 @@ def enumerate_routes(out):
         cleanup(out, first)
 
 
-def record_side(out, side):
-    directory = out / side
+def record_side(out, side, slot=None):
+    directory = out / (slot or side)
     directory.mkdir()
+    meta = {'schema': 1, 'mode': side, 'fixture_path': str(directory.resolve()),
+            'run_id': str(uuid.uuid4()), 'observer_port': 13102, 'synthetic': False,
+            'baseline_path': str(b1.BASELINE), 'apparatus_sha256': apparatus_hashes(),
+            'source_sha256': source_hashes(b1.BASELINE, BINARY),
+            'wall_start_ms': time.time_ns() // 1_000_000}
     home, project = b1.make_home(directory)
     env = b1.build_env(directory, side, {'VITE_IS_PLATFORM': 'false', 'EXP008_POLL_WATCH': '0'})
     # Inherit no external record/DUT configuration.
@@ -121,7 +143,13 @@ def record_side(out, side):
         results = json.loads((directory / 'scenarios.json').read_text())
     finally:
         cleanup(directory, first)
+        meta['wall_end_ms'] = time.time_ns() // 1_000_000
+        meta['source_sha256_end'] = source_hashes(b1.BASELINE, BINARY)
+        b1.save(directory, 'run-meta.json', meta)
+    if meta['source_sha256_end'] != meta['source_sha256']:
+        raise RuntimeError('binary/baseline changed during capture')
     validate_recording(directory / 'recording.jsonl')
+    b1.save(directory, 'snapshot.json', capture(directory))
     return results
 
 
@@ -196,11 +224,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True, help='new directory; existing evidence is never overwritten')
     parser.add_argument('--baseline', type=Path, default=b1.BASELINE)
+    parser.add_argument('--side', choices=('direct', 'proxy'), help='one fresh side for k=5 calibration/DUT comparison')
+    parser.add_argument('--slot', default='direct', choices=('direct', 'proxy'), help='single-side fixture directory; use the SAME slot and --out on every round')
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     b1.BASELINE = args.baseline.resolve()
-    report = {'scope': 'S1/S2 only', 'status': 'FAIL', 'sides': {}}
+    report = {'scope': 'S1/S2 recording plus S3 snapshot inputs; single-side PASS is not calibration', 'status': 'FAIL', 'sides': {}}
     try:
         build()
         enum = out / 'enumeration'
@@ -209,19 +239,28 @@ def main():
         enumerate_routes(enum)
         subprocess.run([sys.executable, str(HERE / 'check_coverage.py'), '--enumeration',
                         str(enum / 'router-enumeration.json'), '--out', str(out / 'coverage-declarations.json')], check=True)
-        for side in ('direct', 'proxy'):
+        sides = (args.side,) if args.side else ('direct', 'proxy')
+        for side in sides:
             # Independent fresh services and homes; one failed side cannot suppress the other.
             try:
-                report['sides'][side] = record_side(out, side)
+                report['sides'][side] = record_side(out, side, args.slot if args.side else None)
             except Exception as error:
                 report['sides'][side] = {'device': {'status': 'FAIL', 'error': str(error)}}
             b1.save(out, 'result.json', report)
         evidence = out / 'cases.jsonl'
-        evidence.write_text(''.join((out / side / 'cases.jsonl').read_text() if (out / side / 'cases.jsonl').exists() else '' for side in ('direct', 'proxy')))
-        coverage = subprocess.run([sys.executable, str(HERE / 'check_coverage.py'), '--enumeration',
+        if args.side:
+            source = out / args.slot / 'cases.jsonl'
+            evidence.write_text(source.read_text() if source.exists() else '')
+            # S2's combined evidence gate requires both modes. Single-side runs
+            # are certified only after S3 consumes two independently archived sides.
+            coverage_code = 0
+        else:
+            evidence.write_text(''.join((out / side / 'cases.jsonl').read_text() if (out / side / 'cases.jsonl').exists() else '' for side in sides))
+            coverage = subprocess.run([sys.executable, str(HERE / 'check_coverage.py'), '--enumeration',
                         str(enum / 'router-enumeration.json'), '--evidence', str(evidence),
                         '--out', str(out / 'coverage-evidence.json')])
-        if coverage.returncode == 0 and all(len(result) == 6 and all(s['status'] == 'PASS' for s in result.values()) for result in report['sides'].values()):
+            coverage_code = coverage.returncode
+        if coverage_code == 0 and all(len(result) == 6 and all(s['status'] == 'PASS' for s in result.values()) for result in report['sides'].values()):
             report['status'] = 'PASS'
     except Exception as error:
         report['error'] = f'{type(error).__name__}: {error}'

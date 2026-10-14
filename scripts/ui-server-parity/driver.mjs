@@ -5,6 +5,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
+import { driveChatTurns } from './chat_driver.mjs';
 const [output, baseline, project, side, entryPort, directPort, home] = process.argv.slice(2);
 const require = createRequire(join(baseline, 'package.json'));
 const WS = require('ws');
@@ -116,10 +117,8 @@ try {
   await snapshot(observer, 'before-scenarios');
   await scenario('chat', async () => {
     const a = await socket(), b = await socket();
-    a.send(command(session(1))); b.send(command(session(2)));
-    await until(() => [a,b].every(s => s.frames.some(f => f.kind === 'complete' || f.kind === 'error')), 'two concurrent mock turns');
-    for (const s of [a,b]) { assert(!s.frames.some(f => f.kind === 'error')); assert(s.frames.some(f => JSON.stringify(f).includes('EXP008_MOCK_OK'))); }
-    const anchor = await snapshot(observer, 'after-concurrent-chat');
+    await driveChatTurns([a, b], [session(1), session(2)], command, until);
+    const anchor = await snapshot(observer, 'after-serial-chat');
     for (const id of [session(1),session(2)]) assert(anchor.activities.some(a => a.sessionId === id && Number.isInteger(a.revision)), `real direct activity ${id}`);
     await a.close(); await b.close();
   });
@@ -144,17 +143,22 @@ try {
     await snapshot(observer, 'after-watch-reconnect');
     resumed.send({ type: 'unwatch-session', sessionId: session(1) }); await resumed.close();
     const nonce = 'exp010'; const sentinel = `PDSENTINEL_${nonce}`;
-    const init = { type: 'init', projectPath: project, sessionId: 'exp010-pty', provider: 'plain-shell', isPlainShell: true, initialCommand: 'exec bash -i', hasSession: false, cols: 80, rows: 24 };
+    const prompt = 'PDPROMPT> ';
+    const text = s => s.frames.filter(f => f.type === 'output').map(f => f.data || '').join('');
+    // Own the shell fixture: no host rc/startup banner/URL and an explicit prompt
+    // barrier. S3 still compares every output message and its exact content.
+    const init = { type: 'init', projectPath: project, sessionId: 'exp010-pty', provider: 'plain-shell', isPlainShell: true,
+      initialCommand: "exec env BASH_SILENCE_DEPRECATION_WARNING=1 PS1='PDPROMPT> ' bash --noprofile --norc -i",
+      hasSession: false, cols: 80, rows: 24 };
     const shell = await socket(entry, '/shell'); shell.send(init);
-    await wait(1000);
+    await until(() => text(shell).endsWith(prompt), 'PTY initial prompt', 15000);
     const input = `printf 'PDSENTINEL_%s\\n' '${nonce}'\n`;
     assert(!input.includes(sentinel), 'PTY input echo cannot satisfy sentinel');
     shell.send({ type: 'input', data: input });
-    const text = s => s.frames.filter(f => f.type === 'output').map(f => f.data || '').join('');
-    await until(() => text(shell).includes(sentinel), 'PTY executed sentinel', 15000);
+    await until(() => text(shell).includes(sentinel) && text(shell).endsWith(prompt), 'PTY executed sentinel and prompt', 15000);
     await shell.close();
     const shellResumed = await socket(entry, '/shell'); shellResumed.send({ ...init, hasSession: true });
-    await wait(300);
+    await until(() => text(shellResumed).endsWith(prompt), 'PTY replayed prompt', 15000);
     shellResumed.send({ type: 'resize', cols: 100, rows: 30 });
     shellResumed.send({ type: 'input', data: 'stty size\n' });
     await until(() => /30[ \t]+100/.test(text(shellResumed)), 'PTY reconnected resize', 15000);
