@@ -43,8 +43,7 @@ WS_HANDSHAKE_KEY = base64.b64encode(b'exp008-ws-probe1').decode('ascii')
 # Reuse the comparator's normalisation rules instead of keeping a second,
 # drifting copy (the old `equivalence` scenario had its own scrub).
 sys.path.insert(0, str(SCRIPT))
-from compare import HEADER_EXCLUDE, normalise_header, Normalizer, compare_sides  # noqa: E402
-READONLY_NORM = Normalizer()
+from compare import Normalizer, compare_sides, normalise_http, diff_http_style, revision_number  # noqa: E402
 
 PROCESSES = []
 RESULTS = {}
@@ -183,11 +182,13 @@ def wait_http(out, port, proc, path='/health'):
 
 def raw_http(port, method, path, headers=None, body=None):
     conn = http.client.HTTPConnection('127.0.0.1', port, timeout=30)
+    started_ms = time.time_ns() // 1_000_000
     conn.request(method, path, body=body, headers=headers or {})
     resp = conn.getresponse()
     data = resp.read()
     result = {'status': resp.status, 'reason': resp.reason,
-              'headers': {k.lower(): v for k, v in resp.getheaders()}, 'body': data}
+              'headers': {k.lower(): v for k, v in resp.getheaders()}, 'body': data,
+              'requestTimeMs': [started_ms, time.time_ns() // 1_000_000]}
     conn.close()
     return result
 
@@ -396,27 +397,33 @@ def scenario_readonly(out):
     for path in paths:
         direct = raw_http(PORTS['ui'], 'GET', path, headers)
         proxy = raw_http(PORTS['rust'], 'GET', path, headers)
-        # Reuse the comparator's header rules so this scenario asserts the same
-        # end-to-end headers the recorder does -- including etag / set-cookie /
-        # x-refreshed-token -- instead of computing a diff it never checked.
-        direct_headers = {k.lower(): normalise_header(k.lower(), v, direct['body'].decode('utf-8', 'replace'), READONLY_NORM)
-                          for k, v in direct['headers'].items() if k.lower() not in HEADER_EXCLUDE}
-        proxy_headers = {k.lower(): normalise_header(k.lower(), v, proxy['body'].decode('utf-8', 'replace'), READONLY_NORM)
-                         for k, v in proxy['headers'].items() if k.lower() not in HEADER_EXCLUDE}
+        def recording(response):
+            return {'case': path, 'method': 'GET', 'path': path,
+                    'status': response['status'], 'headers': response['headers'],
+                    'body': response['body'].decode('utf-8', 'replace'),
+                    'requestTimeMs': response['requestTimeMs']}
+        differences = diff_http_style(
+            'http', [normalise_http(recording(direct), Normalizer())],
+            [normalise_http(recording(proxy), Normalizer())])
         same_status = direct['status'] == proxy['status']
         same_body = direct['body'] == proxy['body']
-        same_headers = direct_headers == proxy_headers
+        same_headers = not differences
+        direct_revision = revision_number(direct['headers'].get('x-projects-revision', ''))
+        proxy_revision = revision_number(proxy['headers'].get('x-projects-revision', ''))
+        revision_ordered = (path != '/api/projects' or (
+            direct_revision is not None and proxy_revision is not None
+            and proxy_revision >= direct_revision))
         records.append({'path': path, 'directStatus': direct['status'], 'proxyStatus': proxy['status'],
                         'sameStatus': same_status, 'sameBody': same_body, 'sameHeaders': same_headers,
-                        'headerDifferences': {k: [direct_headers.get(k), proxy_headers.get(k)]
-                                              for k in sorted(set(direct_headers) | set(proxy_headers))
-                                              if direct_headers.get(k) != proxy_headers.get(k)},
+                        'revisionOrdered': revision_ordered,
+                        'headerDifferences': differences,
                         'directRevision': direct['headers'].get('x-projects-revision'),
                         'proxyRevision': proxy['headers'].get('x-projects-revision'),
                         'proxyHandler': proxy['headers'].get('x-pilotdeck-handler'),
                         'directBodyPrefix': direct['body'][:200].decode('utf-8', 'replace')})
     assert all(r['sameStatus'] for r in records), f'status mismatch: {records}'
     assert all(r['sameBody'] for r in records), f'body mismatch: {[r for r in records if not r["sameBody"]]}'
+    assert all(r['revisionOrdered'] for r in records), f'cached projects revision: {records}'
     assert all(r['sameHeaders'] for r in records), \
         f'end-to-end header mismatch: {[r for r in records if not r["sameHeaders"]]}'
     assert all(r['proxyHandler'] == 'ts' for r in records), 'every proxied read must be tagged ts'
@@ -608,7 +615,7 @@ HTTP_CASES = [
     ('models', 'GET', '/api/models', {}),
     # Same-snapshot project/session reads. The only per-request value here is
     # the wall-clock `X-Projects-Revision` header, which the comparator validates
-    # by form; the bodies are compared in full.
+    # against the recorded request time range; the bodies are compared in full.
     ('projects', 'GET', '/api/projects', {}),
     ('projects-sessions', 'GET', '/api/projects/exp008-fixture/sessions', {}),
     # Scenario 7 real route: the resume header must survive the relay even when
@@ -682,7 +689,7 @@ def record_http_sse(out, side, port, token):
 
     `/api/projects` and the session list are recorded on both sides in immediate
     succession (same snapshot). Their only per-request value is the wall-clock
-    `X-Projects-Revision` header, which the comparator normalises by form; the
+    `X-Projects-Revision` header, which the comparator normalises against the recorded request time range; the
     bodies are compared in full."""
     directory = out / 'compare' / side
     directory.mkdir(parents=True, exist_ok=True)
@@ -692,6 +699,7 @@ def record_http_sse(out, side, port, token):
         response = raw_http(port, method, path, {**auth, **extra})
         http_records.append({'case': case, 'method': method, 'path': path,
                              'status': response['status'], 'headers': response['headers'],
+                             'requestTimeMs': response['requestTimeMs'],
                              'body': response['body'].decode('utf-8', 'replace')})
     write_jsonl(directory / 'http.jsonl', http_records)
     sse_records = []
@@ -709,7 +717,8 @@ def record_ws(out, side, port):
     directory.mkdir(parents=True, exist_ok=True)
     driver = run_driver(out, 'chat-raw', port, f'compare-{side}',
                         extra_env={'EXP008_SESSION': COMPARE_SESSIONS[side]})
-    ws_records = ([{'case': 'chat-raw', 'dir': 'c2u', 'opcode': 'text', 'raw': raw}
+    ws_records = ([{'case': 'chat-raw', 'dir': 'c2u', 'opcode': 'text', 'raw': raw,
+                     'activityBaseline': driver['activityBaseline']}
                    for raw in driver.get('sent', [])]
                   + [{'case': 'chat-raw', 'dir': 'u2c', 'opcode': 'text', 'raw': raw}
                      for raw in driver['raw']])
@@ -870,12 +879,15 @@ def scenario_equivalence(out):
     direct = run_driver(out, 'chat-raw', PORTS['ui'], 'equiv-direct',
                         extra_env={'EXP008_SESSION': 'web:22222222-2222-4222-8222-000000000002'})
     directory = out / 'equivalence'
-    for side, lines in (('proxy', proxy['raw']), ('direct', direct['raw'])):
+    for side, driver in (('proxy', proxy), ('direct', direct)):
         target = directory / side
         target.mkdir(parents=True, exist_ok=True)
-        write_jsonl(target / 'ws.jsonl',
-                    [{'case': 'equivalence', 'dir': 'u2c', 'opcode': 'text', 'raw': line}
-                     for line in lines])
+        records = ([{'case': 'equivalence', 'dir': 'c2u', 'opcode': 'text', 'raw': line,
+                     'activityBaseline': driver['activityBaseline']}
+                    for line in driver['sent']]
+                   + [{'case': 'equivalence', 'dir': 'u2c', 'opcode': 'text', 'raw': line}
+                      for line in driver['raw']])
+        write_jsonl(target / 'ws.jsonl', records)
     report = compare_sides(directory / 'direct', directory / 'proxy', [out / 'project'])
     save(out, 'equivalence.json', {'counts': report['counts'],
          'differences': report['differences'][:10], 'status': report['verdict']})

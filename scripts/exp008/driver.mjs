@@ -54,13 +54,23 @@ if (mode === 'chat') {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws${suffix}`);
   const raw = [];
   const sent = [];
-  ws.addEventListener('message', (event) => raw.push(String(event.data)));
+  let activityBaseline;
+  let collecting = false;
+  ws.addEventListener('message', (event) => {
+    const text = String(event.data);
+    const frame = JSON.parse(text);
+    if (!collecting && frame.type === 'session-activity-snapshot') activityBaseline = frame;
+    else raw.push(text);
+  });
   await deadline(() => ws.readyState === WebSocket.OPEN, 'raw socket open');
+  ws.send(JSON.stringify({ type: 'get-session-activity' }));
+  await deadline(() => activityBaseline !== undefined, 'pre-command activity snapshot');
+  collecting = true;
   const frame = JSON.stringify(command(resolveSession('web:exp008-chat-raw'), 'EXP008_TEXT'));
   sent.push(frame);
   ws.send(frame);
   await deadline(() => raw.some((line) => { try { const f = JSON.parse(line); return f.kind === 'complete' || f.kind === 'error'; } catch { return false; } }), 'chat-raw complete');
-  save({ port, sent, raw });
+  save({ port, sent, raw, activityBaseline });
   ws.close();
 } else if (mode === 'ws-handshake') {
   // Raw HTTP upgrade so an Authorization header can be attached: the baseline

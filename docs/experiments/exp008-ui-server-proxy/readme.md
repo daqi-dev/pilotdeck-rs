@@ -62,6 +62,8 @@
 
 ### 比较器 `scripts/exp008/compare.py`
 
+以下 r1/r2 结果为历史证据。r2 的“按字段路径”表述经 #41 复核仍是按键名递归，首值基准和头自洽检查存在漏判；#41 收紧后的规则见文末。旧录制缺少独立基准和请求时间，须重录才能验收 B2 前置。
+
 - **录制**（`run.py` 的 `compare` 场景）：同一组请求在两侧各录一遍——**直连** TS `ui/server` `13002`，**经反代** Rust `13001`；两侧共用同一 `PILOT_HOME` 与同一 `out/project`，满足 `specs/parity/normalization.md` 的「两侧同一路径」。落 `out/compare/<side>/{http,handshake,ws,sse,close}.jsonl`：HTTP/握手 `{case,method,path,status,headers,body}`、WS 按连接全序帧 `{case,dir,opcode,raw}`、SSE 完整事件序列 `{case,index,sseId,event,data}`、WS close `{case,sentCode,sentReason,observedCode,observedReason}`（`handshake`/`close` 为 r2 新增）。
 - **归一化（r2 起按字段路径限定，不再全局抹）**：身份键（`runId`/`sessionId`/`id`/`blockId`/`timeline.turnId`…）里内嵌的 UUID 按**每侧首次出现顺序**映射成 `<uuid:N>`，前缀（`status_`/`text_`/`web:`）保留，引用关系保留；时钟键（`timestamp`/`startedAt`/`lastActivity`…）与进程键（`pid`…）塌缩 `<VOLATILE>`；会话相关计数器（`revision`/`generation`）按同 case 首个值取**相对差**（所以「漏加/多加一次 revision」仍会现形）；**其余一律逐字比**——`used`/`displayUsed`/`ratio`/token 预算不再塌缩，任意业务字符串里的 UUID 不再被替换。`out/project` 绝对路径替换成 `<PATH>`。SSE 事件的 `sseId` 是**续传锚点，不归一化**。
 - **头（r2 起只剥可重算/逐跳）**：白名单仅 `date`/`content-length`/`connection`/`keep-alive`/`transfer-encoding`/`x-pilotdeck-handler`；`set-cookie`/`x-refreshed-token`/`etag` 及其余端到端头必须参与比对。`etag` 额外按 body 重算校验（`<ETAG-VALID>`），丢了或改坏都算差异；`x-projects-revision` 是**每次请求现取墙钟**（`projects.js:70-73`），按「正整数形式」归一为 `<REVISION>`，丢失或非数字仍算差异。
@@ -211,3 +213,28 @@ python3 scripts/exp008/run.py --out _tmp/20261014-exp008-pty --only pty
 ## 协调者补跑：场景 5 PTY（沙箱外，2026-10-14 04:45）
 
 `python3 scripts/exp008/run.py --out _tmp/20261014-exp008-pty --only pty` → exit 0：`{'status': 'PASS', 'sentinel': 'PDSENTINEL_58db9e1e7ca1', 'proxyOutputBytes': 446}`；端口 13001 / 13002 / 28890 / 15180 无残留。**只验了哨兵**（哨兵字节不在输入文本里），计划 B1 S3 第 5 条的「`exit` 与重连」本轮未验，留给 B2。
+
+
+## #41：B2 前置收紧（2026-10-14，本地规则层已验，服务重跑待协调者）
+
+- `compare.py` 只对明确 channel、事件/方向、完整字段路径归一；数组索引也参与路径。未知 HTTP/WS/SSE payload、错误嵌套位置的身份/时钟、timeline revision 与 generation 都按原值比。`GET /health` 仅归一顶层合法 ISO 时间、正整数 pid 和 instanceId；已知 WS kind/event 仅归一列出的身份和 timestamp。
+- `session-activity.activity.revision` 使用驱动在发 command 前请求的 `session-activity-snapshot`，验证活动已结束、revision 为唯一正整数，取 snapshot 最大值作独立基准；只有同 case/session 的后续活动允许比较增量。无基准比较绝对值；显式坏基准、不前进的 revision 直接 FAIL。此规则适用于 exp008 隔离的单用户、无并发夹具，B2 若扩大场景应提供相应独立基准，不能用被比较的首值作基准。`record_ws` 与 `equivalence` 均保留基准和发送帧。
+- 相同 wire body 的 ETag 逐字比较；不同 body 的 ETag 必须各自匹配 Express SHA1 body hash，保留 strong/weak 属性。只有 body 的结构比较也通过时，合法不同 digest 才不会产生差异。
+- `x-projects-revision` 仅对成功 `GET /api/projects` 允许墙钟归一；ASCII 正整数、落在记录的请求起止时间范围内（上界最多允许 1000ms 的 `max(Date.now(),previous+1)` 计数领先），并要求 proxy revision ≥ direct revision。缺时间/丢头/Unicode/超范围/旧快照均 FAIL；readonly 有同样的范围检查及显式顺序断言。
+- WS 上游请求克隆头并复用 `strip_hop_headers`，剥全部 Connection 提名头与 Proxy-Authorization 等，再生成握手；Authorization 与子协议保留。日志采用容量 8 的异步背压队列，先预留队列空间再编码 payload，单写线程按最多 8 条批量写入/flush，写失败使 relay 失败。
+- `controls.py` 为无监听离线对照，`compare.py --controls` 自动包含新增对照及 Rust 阳性单测；`--before` 可载入旧比较器验证“旧 PASS → 新 FAIL”。Rust 单测实际构造旧静态转发和旧无界队列，再验证违规注入被新断言拒绝，合规行为通过。
+
+协调者在沙箱外重录（不要用旧 r2 录制补造基准）：
+
+```sh
+cd /Users/da/ws/pilotdeck-rs/_build/wt-b2pre
+export CARGO_HOME="$PWD/_build/cargo-home"
+export CARGO_TARGET_DIR="$PWD/_build/exp008-target"
+cargo build --locked --offline --manifest-path scripts/exp008/proxy/Cargo.toml
+python3 scripts/exp008/run.py --out _tmp/20261014-exp008-issue41 --only readonly,compare,controls,equivalence,sse-resume,routes
+```
+
+本地原始输出与边界见本 worktree `_tmp/RESULT.md`；本次没有更新既有 `comparison.json`/`controls.json`，它们仍是 r2 历史结果。没有启动服务、修改冻结尺子、提交或修改 state。
+
+### #41 收紧后协调者重录（2026-10-14 上午，沙箱外）
+`run.py --only readonly,compare,controls,equivalence,sse-resume,routes`（隔离端口 13001/13002/13003/15180/28890，只绑 127.0.0.1）：compare **PASS、0 差异**；controls **46/46**（含 #41 新增的 35 条旧行为假通过对照）；equivalence 11 帧 PASS；sse-resume 四种续传 PASS；routes 运行时 263 / 静态 264。审计：监听全回环、五端口 released、自有进程组全部消失、cleanupErrors=[]。
