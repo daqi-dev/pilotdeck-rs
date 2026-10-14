@@ -1,22 +1,47 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """20 TS references -> 5 disjoint TS scoring runs -> TS gates -> 1 proxy.
 
 Use calibrate.sh to own /tmp/pdrs-parity.lock. REFUSED attempts are immutable;
 --batch B --retry ref7 replaces ONLY that refused slot, then --batch B resumes.
 The UTC day, apparatus, source and fixture path are pinned for the entire batch.
 """
-# Admit source-only apparatus before json or any local module can be imported.
+# Isolated bootstrap: verify the source loader before executing local code.
 import os as _boot_os
 import sys as _boot_sys
+if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
+        and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
+    print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
+    raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
     raise SystemExit(1)
-_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+import hashlib as _boot_hashlib
+import subprocess as _boot_subprocess
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+_boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
-    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+    _boot_bytes = _boot_file.read()
+try:
+    if _boot_os.path.isfile(_boot_manifest):
+        with open(_boot_manifest) as _boot_file:
+            _boot_pins = [line.split()[0] for line in _boot_file
+                          if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]
+        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
+            raise ValueError('apparatus bootstrap hash mismatch')
+    else:
+        _boot_trusted = _boot_subprocess.check_output(
+            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        if _boot_bytes != _boot_trusted:
+            raise ValueError('apparatus bootstrap differs from HEAD without manifest')
+except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
+    print(str(_boot_error), file=_boot_sys.stderr)
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap hash admission failed"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 import argparse
 from datetime import datetime, timezone
@@ -29,6 +54,8 @@ import subprocess
 import sys
 import uuid
 
+import hashlib
+from apparatus import git_admission, ApparatusUnsafe
 from common import ROOT, apparatus_hashes, source_hashes, validate_clock_check
 from multimodal import capture_identity
 
@@ -110,20 +137,54 @@ class Batch:
     def __init__(self, path, state):
         self.path, self.state = path, state
         self.slot = path / 'slot'
-        self.binary = ROOT / '_build/exp010-target/debug/pdrs-exp008-proxy'
+        self.target = path / 'cargo-target'
+        self.binary = self.target / 'debug/pdrs-exp008-proxy'
 
     def save(self):
         write(self.path / 'batch.json', self.state)
+
+    def build(self):
+        # Refuse even an empty pre-existing target: every batch starts from nothing.
+        try:
+            self.target.mkdir(exist_ok=False)
+        except FileExistsError as error:
+            raise ApparatusUnsafe('batch target already exists; never reuse a build') from error
+        env = dict(os.environ, CARGO_HOME=str(ROOT / '_build/cargo-home'),
+                   CARGO_TARGET_DIR=str(self.target))
+        for mode in ('fetch', 'build'):
+            with (self.path / (mode + '.log')).open('w') as output:
+                command = ['cargo', mode, '--locked', '--manifest-path',
+                           str(ROOT / 'scripts/exp008/proxy/Cargo.toml')]
+                if mode == 'build':
+                    command.append('--offline')
+                subprocess.run(command, cwd=ROOT, env=env, stdout=output,
+                               stderr=subprocess.STDOUT, check=True)
+            space_check(Path(self.state['resource_root']), Path(self.state['size_reference']), build=False)
+        self.state['build'] = {'target_dir': str(self.target), 'binary': str(self.binary),
+                               'sha256': hashlib.sha256(self.binary.read_bytes()).hexdigest()}
+        self.save()
+
+    def verify_build(self):
+        build = self.state.get('build', {})
+        if (build.get('target_dir') != str(self.target) or build.get('binary') != str(self.binary)
+                or self.target.is_symlink() or self.binary.is_symlink() or not self.binary.is_file()
+                or not self.binary.resolve().is_relative_to(self.target.resolve())
+                or hashlib.sha256(self.binary.read_bytes()).hexdigest() != build.get('sha256')):
+            raise ApparatusUnsafe('batch build missing/changed; never use old _build artifacts')
 
     def pin(self):
         return {'apparatus': apparatus_hashes(),
                 'source': source_hashes(Path(self.state['baseline']), self.binary)}
 
     def guard(self, remaining=0):
+        if not self.state.get('head'):
+            raise ApparatusUnsafe('batch HEAD absent; start a NEW batch')
+        git_admission(ROOT, self.state['head'])
+        self.verify_build()
         if utc_day() != self.state['utc_day']:
             raise ValueError('REFUSED: batch crossed UTC midnight; start a NEW batch without reusing these runs')
         if self.pin() != self.state['pinned']:
-            raise ValueError('REFUSED: apparatus/source changed; start a NEW batch, never edit capture metadata')
+            raise ApparatusUnsafe('FAIL: apparatus/source changed; start a NEW batch, never edit capture metadata')
         return space_check(Path(self.state['resource_root']), Path(self.state['size_reference']), remaining, build=False)
 
     def admit(self, name):
@@ -170,7 +231,8 @@ class Batch:
         log = self.path / 'attempts' / (attempt_id + '.log')
         print('capture ' + name + ' -> ' + str(log), flush=True)
         with log.open('w') as output:
-            code = subprocess.run([sys.executable, str(ROOT / 'scripts/ui-server-parity/run.py'),
+            code = subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/ui-server-parity/run.py'),
+                                   '--build-batch', str(self.path),
                                    '--baseline', self.state['baseline'], '--out', str(self.slot),
                                    '--side', 'proxy' if name == 'proxy' else 'direct', '--slot', 'direct'],
                                   cwd=ROOT, stdout=output, stderr=subprocess.STDOUT).returncode
@@ -206,7 +268,7 @@ class Batch:
         # Immutable report attempts: rerunning a gate never overwrites earlier evidence.
         tag = ('final-ruler' if proxy else 'ts-ruler') + '-' + str(uuid.uuid4())
         report_path = self.path / (tag + '.json')
-        command = [sys.executable, str(ROOT / 'scripts/ui-server-parity/check_ruler.py')]
+        command = [sys.executable, '-I', str(ROOT / 'scripts/ui-server-parity/check_ruler.py')]
         for i in range(1, 6):
             command.extend(['--round', str(self.path / f'ts{i}/direct')])
         command += ['--enumeration', str(self.path / 'ts1/enumeration/router-enumeration.json'),
@@ -225,19 +287,20 @@ class Batch:
         gate_report(report, proxy=proxy)
         return report
 
-    def summary(self, error=None):
+    def summary(self, error=None, verdict=None):
         checks = {}
         for name, entry in self.state['runs'].items():
             path = Path(entry['archive']) / 'direct/run-meta.json'
             checks[name] = read(path).get('clock_regression_check', {}).get('status', 'absent') if path.exists() else 'absent'
         report = read(Path(self.state['final_ruler'])) if self.state.get('final_ruler') else {}
-        result = {'verdict': 'INCOMPLETE' if error or not report else report['verdict'], 'error': error,
+        result = {'verdict': verdict or ('INCOMPLETE' if error or not report else report['verdict']), 'error': error,
                   'batch': str(self.path), 'utc_day': self.state['utc_day'],
                   'ts_pairs_pass': sum(p['verdict'] == 'PASS' for p in report.get('pairs', [])),
                   'ts_pairs_expected': 10, 'proxy': report.get('proxy_compare', {}).get('verdict'),
                   'clock_regression_check': checks,
                   'all_26_clocks_pass': len(checks) == 26 and all(v == 'PASS' for v in checks.values()),
                   'independent_review': None, 'frozen': False,
+                  'head': self.state.get('head'), 'build': self.state.get('build'),
                   'reports': {k: self.state[k] for k in ('ts_ruler', 'final_ruler') if k in self.state}}
         write(self.path / 'summary.json', result)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -254,6 +317,7 @@ def main():
     args = parser.parse_args()
     batch = None
     try:
+        head = git_admission(ROOT)
         resource = (args.resource_root or resource_root()).resolve()
         reference = (args.size_reference or default_reference(resource)).resolve()
         if args.preflight:
@@ -264,8 +328,6 @@ def main():
         if args.retry and not args.batch:
             raise ValueError('--retry requires --batch')
         baseline = (args.baseline or resource / 'resources/PilotDeck').resolve()
-        os.environ.update(CARGO_HOME=str(ROOT / '_build/cargo-home'),
-                          CARGO_TARGET_DIR=str(ROOT / '_build/exp010-target'), PYTHONDONTWRITEBYTECODE='1')
         if args.batch:
             path = args.batch.resolve()
             state = read(path / 'batch.json')
@@ -283,18 +345,12 @@ def main():
                 raise ValueError('requires Node v22')
             path = ROOT / '_tmp' / ('b2-calibration-' + utc_day() + '-' + str(uuid.uuid4()))
             (path / 'attempts').mkdir(parents=True)
-            state = {'schema': 1, 'root': str(ROOT), 'utc_day': utc_day(), 'baseline': str(baseline),
+            state = {'schema': 1, 'root': str(ROOT), 'head': head, 'utc_day': utc_day(), 'baseline': str(baseline),
                      'resource_root': str(resource), 'size_reference': str(reference), 'space_estimate': estimate, 'runs': {}}
             batch = Batch(path, state)
             batch.save()
             print('batch ' + str(path), flush=True)
-            for mode in ('fetch', 'build'):
-                with (path / (mode + '.log')).open('w') as output:
-                    command = ['cargo', mode, '--locked', '--manifest-path', str(ROOT / 'scripts/exp008/proxy/Cargo.toml')]
-                    if mode == 'build':
-                        command.append('--offline')
-                    subprocess.run(command, cwd=ROOT, stdout=output, stderr=subprocess.STDOUT, check=True)
-                space_check(resource, reference, build=False)
+            batch.build()
             state['pinned'] = batch.pin()
             batch.save()
             batch.guard()
@@ -310,6 +366,12 @@ def main():
             batch.ruler(proxy=True)
         batch.summary()
         return 0
+    except ApparatusUnsafe as error:
+        if batch:
+            batch.summary(str(error), verdict='FAIL')
+        else:
+            print(json.dumps({'verdict': 'FAIL', 'error': str(error)}, ensure_ascii=False), file=sys.stderr)
+        return 1
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         if batch:
             batch.summary(str(error))

@@ -1,6 +1,6 @@
 # B2 离线对照
 
-从仓库根运行 `python3 scripts/ui-server-parity/controls/run_all.py --out _tmp/controls.json`。不监听端口、不下载、不需要后端。每次在临时目录生成最小 schema-1 的 HTTP、多值头、WS 全帧、带外 activity、SSE 两阶段流和真实 home/project 文件，先要求完整夹具 direct/proxy PASS，再分别复制一份注入差异。
+从仓库根运行 `python3 -I scripts/ui-server-parity/controls/run_all.py --out _tmp/controls.json`。不监听端口、不下载、不需要后端。每次在临时目录生成最小 schema-1 的 HTTP、多值头、WS 全帧、带外 activity、SSE 两阶段流和真实 home/project 文件，先要求完整夹具 direct/proxy PASS，再分别复制一份注入差异。
 
 每条负例登记 expected_rule + expected_location；只有 FAIL 且命中该规则/字段位置才 passed=true。修改帧后重排录制 seq，保证「删帧」命中的是 ws.sequence，而不是偶然的日志缺号。截断 SSE 时重写完整 HTTP offsets/EOF，保证命中 sse.complete。整流缓冲保留原字节，只有到达时刻改变；snapshot/revision 同偏移同时修改 DUT 两种帧，带外内容保持独立。
 

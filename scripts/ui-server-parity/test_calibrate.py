@@ -1,16 +1,41 @@
 """Calibration safety tests with fake runner output; never build or listen."""
-# Admit source-only apparatus before json or any local module can be imported.
+# Isolated bootstrap: verify the source loader before executing local code.
 import os as _boot_os
 import sys as _boot_sys
+if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
+        and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
+    print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
+    raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
     raise SystemExit(1)
-_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+import hashlib as _boot_hashlib
+import subprocess as _boot_subprocess
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+_boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
-    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+    _boot_bytes = _boot_file.read()
+try:
+    if _boot_os.path.isfile(_boot_manifest):
+        with open(_boot_manifest) as _boot_file:
+            _boot_pins = [line.split()[0] for line in _boot_file
+                          if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]
+        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
+            raise ValueError('apparatus bootstrap hash mismatch')
+    else:
+        _boot_trusted = _boot_subprocess.check_output(
+            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        if _boot_bytes != _boot_trusted:
+            raise ValueError('apparatus bootstrap differs from HEAD without manifest')
+except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
+    print(str(_boot_error), file=_boot_sys.stderr)
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap hash admission failed"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 from datetime import datetime, timezone
 import json
@@ -41,7 +66,7 @@ class CalibrationControls(unittest.TestCase):
     def batch(self, tmp):
         root = Path(tmp)
         (root / 'attempts').mkdir()
-        state = dict(baseline='/readonly/baseline', utc_day=calibrate.utc_day(), runs={},
+        state = dict(head='test-head', baseline='/readonly/baseline', utc_day=calibrate.utc_day(), runs={},
                      pinned={'apparatus': {}, 'source': {'node': 'a' * 64, 'baseline': 'b' * 64,
                                                        'recorder_proxy': 'c' * 64}})
         return Batch(root, state)
@@ -103,9 +128,9 @@ class CalibrationControls(unittest.TestCase):
     def test_resume_rejects_day_or_source_change(self):
         with tempfile.TemporaryDirectory() as tmp:
             batch = self.batch(tmp)
-            with patch('calibrate.utc_day', return_value='other-day'), self.assertRaisesRegex(ValueError, 'UTC midnight'):
+            with patch('calibrate.git_admission'), patch.object(batch, 'verify_build'), patch('calibrate.utc_day', return_value='other-day'), self.assertRaisesRegex(ValueError, 'UTC midnight'):
                 batch.guard()
-            with patch.object(batch, 'pin', return_value={}), self.assertRaisesRegex(ValueError, 'source changed'):
+            with patch('calibrate.git_admission'), patch.object(batch, 'verify_build'), patch.object(batch, 'pin', return_value={}), self.assertRaisesRegex(ValueError, 'source changed'):
                 batch.guard()
 
     def test_pass_capture_with_missing_or_bad_clock_is_not_admitted(self):
@@ -154,3 +179,81 @@ class CalibrationControls(unittest.TestCase):
                     patch('calibrate.shutil.disk_usage', return_value=free):
                 report = calibrate.space_check(root, root / 'reference')
             self.assertEqual(report['projected_bytes'], 18_468_000_000)
+
+    def test_fresh_target_build_ignores_forged_old_binary_and_detects_new_drift(self):
+        import os
+        import shutil
+        import subprocess
+        import hashlib
+        if not shutil.which('cargo'):
+            self.skipTest('Cargo unavailable')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            manifest = root / 'scripts/exp008/proxy/Cargo.toml'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('[package]\nname="pdrs-exp008-proxy"\nversion="0.1.0"\nedition="2021"\n')
+            source = manifest.parent / 'src/main.rs'
+            source.parent.mkdir()
+            source.write_text('fn main() { println!("FRESH"); }\n')
+            old_target = root / '_build/exp010-target'
+            env = dict(os.environ, CARGO_HOME=str(root / '_build/cargo-home'), CARGO_TARGET_DIR=str(old_target))
+            subprocess.run(['cargo', 'generate-lockfile', '--offline', '--manifest-path', str(manifest)],
+                           env=env, check=True, capture_output=True)
+            subprocess.run(['cargo', 'build', '--locked', '--offline', '--manifest-path', str(manifest)],
+                           env=env, check=True, capture_output=True)
+            old_binary = old_target / 'debug/pdrs-exp008-proxy'
+            # Cargo may copy the deps executable back to debug even when fresh.
+            # Forge both outputs without changing the source/fingerprint timestamps.
+            outputs = [old_binary] + [p for p in (old_target / 'debug/deps').glob('pdrs_exp008_proxy-*')
+                                      if p.suffix == '']
+            for output in outputs:
+                old_stat = output.stat()
+                output.write_text('#!/bin/sh\necho FORGED\n')
+                output.chmod(0o755)
+                os.utime(output, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
+            subprocess.run(['cargo', 'build', '--locked', '--offline', '--manifest-path', str(manifest)],
+                           env=env, check=True, capture_output=True)
+            self.assertEqual(subprocess.check_output([str(old_binary)], text=True).strip(), 'FORGED')
+            batch_path = root / '_tmp/batch'
+            batch_path.mkdir(parents=True)
+            batch = self.batch(batch_path)
+            batch.state.update(resource_root=str(root), size_reference=str(root))
+            with patch.object(calibrate, 'ROOT', root), patch('calibrate.space_check'):
+                batch.build()
+                batch.verify_build()
+                self.assertEqual(subprocess.check_output([str(batch.binary)], text=True).strip(), 'FRESH')
+                self.assertEqual(batch.state['build']['sha256'], hashlib.sha256(batch.binary.read_bytes()).hexdigest())
+                self.assertNotEqual(batch.state['build']['sha256'], hashlib.sha256(old_binary.read_bytes()).hexdigest())
+                self.assertEqual(batch.state['build']['target_dir'], str(batch_path / 'cargo-target'))
+                with self.assertRaisesRegex(ValueError, 'target already exists'):
+                    batch.build()
+                original = batch.binary.read_bytes()
+                batch.binary.write_bytes(b'FORGED')
+                with self.assertRaisesRegex(ValueError, 'build missing/changed'):
+                    batch.verify_build()
+                batch.binary.write_bytes(original)
+                batch.state['build'].update(target_dir=str(old_target), binary=str(old_binary),
+                                             sha256=hashlib.sha256(old_binary.read_bytes()).hexdigest())
+                with self.assertRaisesRegex(ValueError, 'build missing/changed'):
+                    batch.verify_build()
+            print('CONTROL Cargo old target=FORGED; fresh batch target=FRESH; old/reused/changed batch build=FAIL')
+
+    def test_batch_guard_refuses_HEAD_change_before_capture(self):
+        from apparatus import ApparatusUnsafe
+        with tempfile.TemporaryDirectory() as tmp:
+            batch = self.batch(tmp)
+            with patch('calibrate.git_admission', side_effect=ApparatusUnsafe('batch HEAD changed')), \
+                    patch.object(batch, 'pin') as pin, self.assertRaisesRegex(ValueError, 'HEAD changed'):
+                batch.guard()
+            pin.assert_not_called()
+
+    def test_integrity_admission_failure_reports_FAIL_exit_1(self):
+        import contextlib
+        import io
+        from apparatus import ApparatusUnsafe
+        output = io.StringIO()
+        with patch('sys.argv', ['calibrate.py', '--preflight']), \
+                patch('calibrate.git_admission', side_effect=ApparatusUnsafe('dirty apparatus')), \
+                contextlib.redirect_stderr(output):
+            self.assertEqual(calibrate.main(), 1)
+        self.assertEqual(json.loads(output.getvalue())['verdict'], 'FAIL')

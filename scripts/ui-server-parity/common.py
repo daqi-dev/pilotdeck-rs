@@ -1,16 +1,41 @@
 """Version binding and capture-clock admission; never certify changed apparatus from cache."""
-# Admit source-only apparatus before json or any local module can be imported.
+# Isolated bootstrap: verify the source loader before executing local code.
 import os as _boot_os
 import sys as _boot_sys
+if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
+        and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
+    print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
+    raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
     raise SystemExit(1)
-_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+import hashlib as _boot_hashlib
+import subprocess as _boot_subprocess
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+_boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
-    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+    _boot_bytes = _boot_file.read()
+try:
+    if _boot_os.path.isfile(_boot_manifest):
+        with open(_boot_manifest) as _boot_file:
+            _boot_pins = [line.split()[0] for line in _boot_file
+                          if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]
+        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
+            raise ValueError('apparatus bootstrap hash mismatch')
+    else:
+        _boot_trusted = _boot_subprocess.check_output(
+            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        if _boot_bytes != _boot_trusted:
+            raise ValueError('apparatus bootstrap differs from HEAD without manifest')
+except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
+    print(str(_boot_error), file=_boot_sys.stderr)
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap hash admission failed"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 import hashlib
 from pathlib import Path
@@ -23,11 +48,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def apparatus_hashes():
     files = [Path(p) for p in scan(ROOT / 'scripts/ui-server-parity')]
-    scan(ROOT / 'scripts/exp008')
+    files += [Path(p) for p in scan(ROOT / 'scripts/exp008')]
     # The approval/hash manifest is not apparatus: filling its pending review
     # fields must not invalidate the captures used to approve this very ruler.
     files += [ROOT / 'specs/ui-server-parity' / name for name in SPEC_FILES]
-    files += [ROOT / 'scripts/exp008' / name for name in EXP008_FILES]
     return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 

@@ -1,17 +1,42 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """Verify all B2 hashes, including this checker; a valid draft remains DRAFT/2."""
-# Admit source-only apparatus before json or any local module can be imported.
+# Isolated bootstrap: verify the source loader before executing local code.
 import os as _boot_os
 import sys as _boot_sys
+if not (_boot_sys.flags.isolated and _boot_sys.flags.ignore_environment
+        and _boot_sys.flags.no_user_site and _boot_sys.pycache_prefix is None):
+    print('{"verdict":"FAIL","errors":["Python isolation required: use python3 -I; no pycache prefix"]}')
+    raise SystemExit(1)
 _boot_sys.dont_write_bytecode = True
 _boot_dir = _boot_os.path.dirname(_boot_os.path.abspath(__file__))
 _boot_source = _boot_os.path.join(_boot_dir, 'apparatus.py')
 if _boot_os.path.islink(_boot_dir) or _boot_os.path.islink(_boot_source):
     print('{"verdict":"FAIL","errors":["apparatus bootstrap symlink"]}')
     raise SystemExit(1)
-_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+import hashlib as _boot_hashlib
+import subprocess as _boot_subprocess
+_boot_root = _boot_os.path.dirname(_boot_os.path.dirname(_boot_dir))
+_boot_manifest = _boot_os.path.join(_boot_root, 'specs/ui-server-parity/FROZEN.md')
 with open(_boot_source, 'rb') as _boot_file:
-    exec(compile(_boot_file.read(), _boot_source, 'exec'), _boot_namespace)
+    _boot_bytes = _boot_file.read()
+try:
+    if _boot_os.path.isfile(_boot_manifest):
+        with open(_boot_manifest) as _boot_file:
+            _boot_pins = [line.split()[0] for line in _boot_file
+                          if line.rstrip().endswith('  ../../scripts/ui-server-parity/apparatus.py')]
+        if len(_boot_pins) != 1 or _boot_hashlib.sha256(_boot_bytes).hexdigest() != _boot_pins[0]:
+            raise ValueError('apparatus bootstrap hash mismatch')
+    else:
+        _boot_trusted = _boot_subprocess.check_output(
+            ['git', '-C', _boot_root, 'show', 'HEAD:scripts/ui-server-parity/apparatus.py'])
+        if _boot_bytes != _boot_trusted:
+            raise ValueError('apparatus bootstrap differs from HEAD without manifest')
+except (OSError, ValueError, _boot_subprocess.CalledProcessError) as _boot_error:
+    print(str(_boot_error), file=_boot_sys.stderr)
+    print('{"verdict":"FAIL","errors":["apparatus bootstrap hash admission failed"]}')
+    raise SystemExit(1)
+_boot_namespace = {'__file__': _boot_source, '__name__': '_apparatus_bootstrap'}
+exec(compile(_boot_bytes, _boot_source, 'exec'), _boot_namespace)
 _boot_namespace['preflight'](_boot_dir)
 import argparse
 import hashlib
@@ -19,6 +44,8 @@ import json
 from pathlib import Path
 import re
 import tempfile
+import subprocess
+import unicodedata
 from apparatus import scan, ApparatusUnsafe, SPEC_FILES, EXP008_FILES
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +55,7 @@ REQUIRED = set(SPEC_FILES)
 
 def apparatus_files(root):
     files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}
-    scan(root / 'scripts/exp008')
+    files.update(Path(p) for p in scan(root / 'scripts/exp008'))
     return files
 
 
@@ -55,14 +82,34 @@ def check(folder=SPEC, *, root=ROOT):
     bases = re.findall(r'^[ \t]*Approval-Basis:([^\n]*)$', raw, re.M)
 
     def concrete(value):
-        return bool(value.strip()) and not re.search(r'<|>|pending|null|待批准|待人批准|待定标', value, re.I)
+        return bool(value.strip()) and not re.search(r'<|>|TODO|pending|null|待批准|待人批准|待定标', value, re.I)
 
-    approved = len(approvals) == 1 and concrete(approvals[0])
+    def visible(value):
+        return all(char.isprintable() and unicodedata.category(char)[0] not in ('C', 'M')
+                   and ord(char) not in (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800)
+                   and not (0xFE00 <= ord(char) <= 0xFE0F or 0xE0100 <= ord(char) <= 0xE01EF)
+                   and not (char.isspace() and char != ' ') for char in value)
+
+    approved = (len(approvals) == 1 and concrete(approvals[0]) and visible(approvals[0])
+                and not re.search(r'Claude|GPT|GLM|Gemini|DeepSeek|Qwen|Doubao|ChatGPT|模型', approvals[0], re.I))
     if approved and re.search(r'AI|代批|待人复核', approvals[0], re.I):
         approved = approvals[0].strip() == 'AI 代批，待人复核（协调者）'
     # Both approval modes require one concrete basis: calibration report + two reviews.
     basis_paths = re.findall(r'(?:[^\s`+;,，；]+/)+[^\s`+;,，；]+\.(?:json|md|log|txt)', bases[0]) if len(bases) == 1 else []
-    approved = approved and len(bases) == 1 and concrete(bases[0]) and len(set(basis_paths)) >= 3
+    allowed = [root]
+    try:
+        common = subprocess.check_output(['git', '-C', str(root), 'rev-parse',
+                                         '--path-format=absolute', '--git-common-dir'],
+                                        text=True, stderr=subprocess.PIPE).strip()
+        allowed.append(Path(common).resolve().parent / '_tmp')
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    resolved_basis = [(root / name).resolve() for name in basis_paths]
+    valid_basis = (len(bases) == 1 and concrete(bases[0]) and visible(bases[0])
+                   and len(set(resolved_basis)) >= 3
+                   and all(path.is_file() and any(path.is_relative_to(base) for base in allowed)
+                           for path in resolved_basis))
+    approved = approved and valid_basis
     if not draft and not approved:
         errors.append('missing/invalid Approved-By or Approval-Basis (calibration report + two reviews)')
     entries = re.findall(r'^([0-9a-f]{64})  ([^\s]+)\s*$', raw, re.M)
@@ -104,6 +151,12 @@ def self_test():
             path = root / 'scripts/exp008' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(name)
+        subprocess.run(['git', 'init', '-q', str(root)], check=True)
+        subprocess.run(['git', '-C', str(root), 'add', 'scripts'], check=True)
+        for name in ('_tmp/batch/summary.json', '_tmp/review/claude.md', '_tmp/review/glm.md'):
+            evidence = root / name
+            evidence.parent.mkdir(parents=True, exist_ok=True)
+            evidence.write_text('test evidence')
         lines = [hashlib.sha256(p.read_bytes()).hexdigest() + '  ' +
                  str(Path('../../') / p.relative_to(root)) for p in sorted(required_files(root, folder))]
         manifest = folder / 'FROZEN.md'
@@ -121,7 +174,7 @@ def self_test():
         expect('draft', good.replace('# B2', '# B2（待定标）'), 'DRAFT')
         expect('ai-coordinator-approval', good.replace(approval, 'Approved-By: AI 代批，待人复核（协调者）'), 'PASS')
         expect('ai-approval-without-basis', good.replace(approval, 'Approved-By: AI 代批，待人复核（协调者）').replace(basis, ''), 'FAIL')
-        for value in ('', '  ', '<待人批准>', 'pending', 'null', '待批准', 'AI 代批，待人复核'):
+        for value in ('', '  ', '<待人批准>', 'TODO', 'Claude', 'GPT-6', 'GLM-5', 'Gemini', '测试\u200b人', '测试\x00人', '测试\ufe0f人', 'pending', 'null', '待批准', 'AI 代批，待人复核'):
             expect('invalid-approval-' + repr(value), good.replace(approval, 'Approved-By: ' + value), 'FAIL')
         expect('old-approval-field', good.replace('Approved-By:', 'Human-Approved-By:'), 'FAIL')
         expect('duplicate-approval', good + 'Approved-By: 第二人\n', 'FAIL')
@@ -130,6 +183,17 @@ def self_test():
         expect('duplicate-basis', good + basis + '\n', 'FAIL')
         expect('indented-duplicate-basis', good + '  ' + basis + '\n', 'FAIL')
         expect('incomplete-basis', good.replace(basis, 'Approval-Basis: _tmp/batch/summary.json'), 'FAIL')
+        expect('alias-basis', good.replace('_tmp/review/glm.md', './_tmp/review/claude.md'), 'FAIL')
+        expect('missing-basis-file', good.replace('_tmp/review/glm.md', '_tmp/review/absent.md'), 'FAIL')
+        outside_basis = root.parent / (root.name + '-outside.md')
+        outside_basis.write_text('outside')
+        try:
+            expect('outside-basis-file', good.replace('_tmp/review/glm.md', str(outside_basis)), 'FAIL')
+            link = root / '_tmp/review/escape.md'
+            link.symlink_to(outside_basis)
+            expect('symlink-basis-escape', good.replace('_tmp/review/glm.md', '_tmp/review/escape.md'), 'FAIL')
+        finally:
+            outside_basis.unlink()
         expect('placeholder-basis', good.replace(basis, 'Approval-Basis: <待定标及两家评审>'), 'FAIL')
         expect('missing-entry', good.replace(lines[0] + '\n', ''), 'FAIL')
         for name in EXP008_FILES:
