@@ -158,3 +158,15 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 | R7 | YAML 深嵌套 | 各形态取 Node v22 默认栈五次实测的最低阈值（flow 664 / block seq 782 / block map 738），超过即报同码同文的 RESOURCE_EXHAUSTION；灰区登记为残余风险 | Node 的阈值依赖 V8 栈且有抖动，无法逐字节对齐；宁可报错也不能让进程崩溃 | 取更高阈值：灰区里的输入 Rust 更常成功，但离栈溢出更近 |
 | R8 | F2「基线 spec 失效」 | 有证据证明基线 spec 本身已失效的用例（3 条：两条「Back to app」文案已被基线提交 f4afc71 替换、一条选择器转义缺陷）登记进 baseline-stale.json；照常执行、照常判 FAIL，新旧两侧在同一断言失败才记 MATCHED_FAIL；不计入守护覆盖 | 不改冻结 spec 就无法让它们通过，又不能删掉 | 改为允许我们修 spec：违反「基线只读」 |
 | R9 | F2 失效级联 | 失效用例在 serial 组中导致的后续跳过，机械推导为 STALE_CASCADE：不计执行、不计通过，两侧集合必须相同；旧侧的门 = 其余用例全部执行并 PASS | 旧前端上这些用例永远轮不到执行 | 拆开 serial 组单独跑：改变了基线的执行语义 |
+
+## 夜间 · 协调者自决·待复核（续）
+
+| # | 事项 | 决定 | 依据 | 若你不同意 |
+|---|---|---|---|---|
+| R10 | 账本校验器的防护边界 | 防诚实的错误（遗漏、锚点过时、归属错误、解析错位导致漏码、某类字段未核验）；不防刻意构造的绕过（故意伪造 origin 的虚构码），后者按 P2 | 评审连续几轮给出的都是构造型绕过；改成要求「真实基线例子」之后，后几轮挖出的全是真实漏码（137 + 3 种），账本确实在变准，第 8 轮两家都判无 P0/P1 | 要求防构造型绕过：需要对每条记录做语义证明，代价远超规划索引的价值 |
+| R11 | YAML 资源判据（更正 R7 后的口径） | 极端输入只查崩溃 / 挂死 / 内存失控；10–11 类输入族 × N/4N 与 Node 对比：耗时增长比 ≤1.5×Node，RSS **增量** ≤1.5×Node 增量，同规模 ≤3×Node | 原「RSS 增长比」惩罚基线小的一方（Node 自带约 100MB 固定 RSS）：Rust 6→16MB 被判 FAIL，而 Node 是 104→179MB；这是协调者判据写错，已更正 | 回到原始增长比：会让 Rust 为了「比值好看」而预占内存 |
+| R12 | 被测进程的 HOME | PilotDeck 的 server / gateway / vite 等被测服务：HOME、XDG、TMPDIR 全隔离，并设 PILOTDECK_SKIP_BROWSER_OPEN=1；Playwright 启动的 Chrome：保留真实 HOME 加临时 `--user-data-dir`（等同你自己打开一次 Chrome）；审计禁止 open / osascript 以及非 Playwright 启动的 `/Applications` 应用，用户已装的 GoogleUpdater（非 --install）和隔离 HOME 下的 soffice 探测除外 | old1–old6 未隔离 HOME：读过你真实的 `~/.pilotdeck/plugins`，可能拉起过插件，并打开过默认浏览器。隔离后 Chrome 改去执行 `GoogleUpdater --install`，风险更大 | 全部进程都隔离 HOME：Chrome 会尝试安装更新器 |
+
+### 夜间事故记录
+- **F2 real 编排未隔离 HOME（old1–old6）**：测试 server 扫描过你真实的 `~/.pilotdeck/plugins` 和 `plugins.json`，可能新建过 plugins 目录、可能拉起过已启用的插件；每次 server 启动都调用 `open http://127.0.0.1:3010`，用你的默认浏览器打开过页面。Claude 评审发现，GLM 漏了。已修，并写进记忆和派活模板。
+- **old7 `GoogleUpdater --install`**：最多 250ms 内被审计终止；是否已写入 launchd 未知，可查 `~/Library/LaunchAgents`。
