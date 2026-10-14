@@ -1,4 +1,7 @@
 import { baseline, root, requireUI, ownedPath, realOrigin } from './env.mjs';
+import { assertRealExecutionEnv } from './execution-env.mjs';
+import { realChromeLaunchOptions } from './real-browser.mjs';
+assertRealExecutionEnv(process.env);
 const output = ownedPath(process.env.FE_OUTPUT), runDir = ownedPath(process.env.PILOTDECK_E2E_RUN_DIR);
 const mode = process.env.PILOTDECK_E2E_MODE;
 if (process.env.FE_FRONTEND !== 'old' || !['ready', 'onboarding'].includes(mode)) throw new Error('Real native runtime currently supports old only');
@@ -14,9 +17,6 @@ export default requireUI('@playwright/test').defineConfig({
   use: { baseURL: realOrigin(mode), storageState: `${runDir}/storage-state.json`, channel: 'chrome', headless: true,
     viewport: { width: 1440, height: 900 }, trace: 'retain-on-failure', screenshot: 'only-on-failure',
     // Video would require Playwright's separate downloaded ffmpeg. Use trace/screenshots.
-    video: 'off', serviceWorkers: 'block', launchOptions: {
-      args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1', '--disable-background-networking'],
-      env: { ...process.env, NODE_OPTIONS: '', TMPDIR: `${output}/browser-tmp`, TMP: `${output}/browser-tmp`, TEMP: `${output}/browser-tmp` },
-    },
+    video: 'off', serviceWorkers: 'block', launchOptions: realChromeLaunchOptions(process.env),
   },
 });

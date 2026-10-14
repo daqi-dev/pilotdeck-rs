@@ -268,13 +268,14 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     execFileSync(process.execPath, ['--test', resolve(root, 'scripts/fe-parity/mock-llm.test.mjs')], { cwd: root, encoding: 'utf8' });
   });
   await check('real ready/onboarding configs register the exact disjoint D 28', async () => {
-    const { realExecutionEnv } = await import('./execution-env.mjs');
+    const { realExecutionEnv, prepareRealOSDirectories } = await import('./execution-env.mjs');
     const { validateRealRegistration } = await import('./real-runner.mjs');
     const { reportCases, PENDING_ORCHESTRATION } = await import('./accounting.mjs');
     const directory = await mkdtemp(resolve(root, '_tmp/fe-parity/real-list-'));
     try {
       for (const mode of ['ready', 'onboarding']) {
         const env = realExecutionEnv(process.env, { output: directory, runDir: resolve(directory, mode), mode });
+        await prepareRealOSDirectories(env);
         const raw = execFileSync(process.execPath, [requireUI.resolve('@playwright/test/cli'), 'test', '--config', resolve(root, 'scripts/fe-parity/real.config.mjs'), '--list', '--forbid-only', '--reporter=json'], { cwd: root, env, encoding: 'utf8' });
         const report = JSON.parse(raw);
         assert.deepEqual(report.errors || [], []);

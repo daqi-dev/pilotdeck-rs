@@ -3,6 +3,7 @@ import net from 'node:net';
 import { syncBuiltinESMExports } from 'node:module';
 import { appendFileSync } from 'node:fs';
 import { realPorts, REAL_TEST_KEY } from './env.mjs';
+import { assertRealExecutionEnv } from './execution-env.mjs';
 export function localFetchURL(input, center) {
   const url = new URL(input instanceof Request ? input.url : input);
   if (url.origin === 'https://api.openai.com' && ['/v1/models', '/models', '/v1/chat/completions', '/chat/completions'].includes(url.pathname)) {
@@ -49,4 +50,7 @@ export function installNetworkIsolation(env = process.env) {
   };
   syncBuiltinESMExports();
 }
-if (process.env.FE_REAL_RUNTIME === '1') installNetworkIsolation();
+if (process.env.FE_REAL_RUNTIME === '1') {
+  assertRealExecutionEnv(process.env);
+  installNetworkIsolation();
+}

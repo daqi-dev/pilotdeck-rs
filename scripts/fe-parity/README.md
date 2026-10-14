@@ -311,3 +311,74 @@ real 的 `STALE_CASCADE` 由 `serial-topology.mjs` 读取冻结五个 spec 的 A
 历史证明：`a5f1d1128bf716ea54f12042cd244bb503f74405`（2026-09-04）把 explorer 初值 false 改 true，并新增进入 Files 时折叠的 effect；`bed6177be...`（2026-09-05）引入顶部 Files ↔ chat 切换与 General 的 Files 隐藏；files.spec 最后修改 `e816fca4fc7e46feb1c550bcd600f4bc194d1be3`（2026-09-29），在 UI 提交之后。因此证据是冻结 spec 与当时已有 UI 契约不符，不能声称 spec 写在 UI 改动之前。有界 git log/blame/show、离线脚本结果及 old5 只读摘要见 `_tmp/round5-old5-evidence/`。
 
 serial AST 自动推出 Files 后三例 FIL-TREE-002 / FIL-EDIT-001 / FIL-PREVIEW-001；加上原 Session 6、Skills 2，共 11 STALE_CASCADE。期望总账为注册 28、执行/应执行/最低执行 17 = 13 PASS + 4 原始 FAIL、合法 skip 0、待编排 0、行为守护 13/13；ready 13 执行 = 9 PASS + 4 FAIL，onboarding 4 PASS。四条旧侧 MATCHED_FAIL 候选仍 UNPAIRED；两侧真实原件同位 FAIL 且级联集合相同才可确认配对。old6 命令把 output 设为 `_tmp/fe-parity/coordinator-real-old6`；唯一锁、原件保存、bridge/LLM/TCP 全审计继续由原 runner 执行。本轮不代跑、不起服务、不提交。
+
+## 第 6 轮：real 的 OS HOME 隔离与本机应用审计
+
+real 的 ready/onboarding 各有独立 `R=real-run/run-*/<mode>`：`HOME=USERPROFILE=R/home-os`，与 `PILOT_HOME=R/home` 分开；XDG config/data/cache 位于 home-os 内，`TMPDIR/TMP/TEMP=R/tmp`。目录在 --list 之前创建并检查 canonical ancestor，禁止 symlink 逃逸。real 入口的 inventory 子进程也使用 output/preflight 下的隔离环境。server、gateway、Vite、Playwright CLI/worker/Chrome 继承相同隔离 HOME；Playwright 自行创建临时 profile，仍使用已安装 Chrome。每模式的 `old-<mode>.isolation.json` 只记录隔离路径和断言结果。
+
+强制 `PILOTDECK_SKIP_BROWSER_OPEN=1`；启动前用 `os.userInfo().homedir` 核验 HOME 不等于操作者真实 home，并核验全部路径与 opt-out。real launcher、supervisor spawn 与 Node preload 再次断言。进程审计改用完整 `ps -ww ... args=`：看到 open、xdg-open、osascript 或非 Playwright 的 `/Applications/` 应用，先触发自有进程组 TERM / 5 秒后 KILL，再写 FAIL 证据，不等待 lsof。仅允许具备自有 Playwright CLI 祖先、`--remote-debugging-pipe`、本模式 tmp 内 `playwright_chromiumdev_profile-*` 的 Chrome；其固定 Chrome bundle helper 还须有该浏览器祖先。GoogleUpdater、server 自启 Chrome、LibreOffice 不获放行。审计观察到即失败；定期进程快照不构成全历史 OS 沙箱证明。
+
+冻结基线的 `ui/server`、`src`、`packages` 全检索有 113 个匹配行，逐项去向与源码 hash 见 `_tmp/round6-isolation-evidence/home-isolation-audit.md`。old1–old6 的影响分级及 old7 完整命令见 `_tmp/RESULT.md` 第 6 轮。本轮不启动服务/浏览器，不提交；不能将旧版 TCP PASS 当作 HOME 隔离或本机应用安全 PASS。若 old7 观察到 soffice/GoogleUpdater，应按此门失败并保留证据。
+
+## 第 7 轮：按进程区分 HOME，限制 updater / soffice
+
+本轮替代第 6 轮的“Chrome 也继承隔离 HOME”及一律禁止 updater / soffice 两项策略，其余服务隔离、原断言、记账和失败关闭保持。old7 原件仍为 FAIL：`tcp-connections.jsonl:98` 捕获 Chrome bundle 的 `Helpers/GoogleUpdater.app/.../GoogleUpdater --install`；不把它重算为获准的已有用户 updater。
+
+- server / gateway / Vite / setup / Playwright CLI 和 worker：`HOME=USERPROFILE=R/home-os`、隔离 XDG、`TMPDIR/TMP/TEMP=R/tmp`、`PILOT_HOME=R/home`、`PILOTDECK_SKIP_BROWSER_OPEN=1`。mock 现在是独立 Node 子进程，使用 `real-run/run-*/mock` 的同类隔离环境和网络 preload；通过 IPC 回传最终原统计，不改 HTTP 协议/响应/拒绝记账。launcher、supervisor spawn、preload、Vite、setup 入口继续或补充隔离断言。
+- Playwright 启动的本机 Chrome 及其子进程：仅 `launchOptions.env` 中 `HOME/USERPROFILE=os.userInfo().homedir`，移除服务侧 XDG 路径；TMP 仍在运行目录，NODE_OPTIONS 清空。globalSetup 和各测试 browser 共用同一 launchOptions。临时 `--user-data-dir` 仍由 Playwright 创建，CLI 本身不使用真实 HOME。
+- `real-browser.mjs` 经 `@playwright/test → playwright → playwright-core` 解析**实际依赖**，读取默认 Chromium switches，四个指定开关仅补缺项。当前 Playwright 1.60.0 已默认提供 `--disable-component-update`、`--disable-background-networking`、`--no-first-run`、`--no-default-browser-check`，本轮移除旧配置重复的 background 参数。无法解析默认列表即 FAIL；每模式 isolation.json 保存依赖版本/源码 SHA、默认与追加列表、浏览器 HOME/TMP。
+- Chrome 放行仍要求自有 Playwright CLI 祖先、remote-debugging-pipe、当前 tmp **直接子目录**中的 `playwright_chromiumdev_profile-*`，并核对真实 HOME 与四个开关各一次。固定 bundle helper 必须有核验 Chrome 祖先、实际 HOME 正确；以前已观察的 helper 可凭 PID+原命令+本次 HOME 复核处理 reparent。
+- GoogleUpdater 仅放行操作者真实 `~/Library/Application Support/Google/GoogleUpdater/<version>/GoogleUpdater`，且**当前**祖先链有已核验 Chrome/helper，HOME 为真实 home，无安装/注册/卸载或其他部署模式开关。拒绝 Helpers updater、不同 home、路径穿越、只有 Playwright worker/相同 group、任何 `--install`；已装 updater 不因安装路径正确而单独获准。
+- soffice / soffice.bin 仅放行自有 native supervisor 下、命令精确匹配冻结 server/index.js 的 server 后代，并核对 server 与 soffice 本次 HOME 都为该运行隔离目录；仅有 supervisor/gateway/CLI 祖先不够。open / xdg-open / osascript 一律 FAIL。
+
+实际 HOME 来自 `ps -ww -E -p <目标 PID> -o pid=,ppid=,pgid=,args=`，与首份 args 快照的 PID/PPID/PGID/完整 argv 匹配后仅抽取 HOME，证据只写 HOME、不写完整环境。结构性违规先 fatal，HOME 不符则在 lsof 前 fatal；环境不可读、缺失/歧义、命令变化或目标在两份快照间消失均 FAIL。本 worker 沙箱禁止 ps；本轮只有注入快照正负验证，old8 需在协调者侧执行真实观察。此审计仍是定时采样，不是全进程生命周期监控。
+
+server 的 LibreOffice `--version` 探测来自冻结 `ui/server/services/officePreview.js:235–240`，没有 env override 或独立 UserInstallation；它继承隔离 HOME。只读核对本机 `/Applications/LibreOffice.app/Contents/Resources/bootstraprc` 为 `UserInstallation=$SYSUSERCONFIG/LibreOffice/4`，版本 26.8，buildid `bce0998afefdbc355585ca324285661a2170ba77`。该版本 [HOME/configDir 源码](https://github.com/LibreOffice/core/blob/bce0998afefdbc355585ca324285661a2170ba77/sal/osl/unx/security.cxx#L315) 先用存在的 HOME，macOS configDir 在它下面加 `Library/Application Support`；[bootstrap 解析](https://github.com/LibreOffice/core/blob/bce0998afefdbc355585ca324285661a2170ba77/sal/rtl/bootstrap.cxx#L502) 将 SYSUSERCONFIG 取为 configDir。因此默认 profile 为 `R/home-os/Library/Application Support/LibreOffice/4/user`，处于运行目录中。service env 清除 UserInstallation/SYSUSERCONFIG/SYSUSERHOME/URE_BOOTSTRAP 的继承覆盖；HOME 预建以避免源码回退到账户目录。本轮未运行 soffice，不声称 --version 实际创建过 profile；真正转换的临时 `-env:UserInstallation` 仍按原源码处理。
+
+完整第 7 轮证据、21 组离线单测、自检与 old8 命令见 `_tmp/RESULT.md` 及 `_tmp/round7-process-home-evidence/`。不启动服务/Chrome，不提交；不据此宣称 old8 或双侧 real 已通过。
+
+## 第 8 轮：运行 bin 的真实 git 与 Xcode license 精确例外
+
+`real-git.mjs` 在 ready/onboarding 的 `--list` 前按 `/opt/homebrew/bin/git`、`/usr/local/bin/git` 顺序发现真实可执行文件，解析 realpath，拒绝 `/usr/bin/git` 与 `/Applications/Xcode.app/` 下的路径；已存在但不安全的候选立即 FAIL，不跳过违规安装。两处都缺失、不可执行、版本探测失败或输出非 `git version ...` 均失败关闭，没有系统 git 回退。只建立 `R/bin/node` 和 `R/bin/git` 两个链接，PATH 保持 `R/bin:/usr/bin:/bin:/usr/sbin:/sbin`，不增加整个 Homebrew bin。每模式 `isolation.json.git` 保存候选、realpath、version、探测 argv、链接与 PATH；runner 启动前和 launcher 入口复核链接。继承的 `GIT_*` 环境覆盖被清除，避免配置路径、工作树与 exec-path 逃离隔离环境。
+
+审计仅允许完整命令 `/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license check`：无额外参数、无 shell 包装，当前祖先链必须含本轮 runtime 下精确识别的 server 或 git/xcrun，核验来源进程与检查进程的 HOME 均为该 mode 的 home-os。记录 `readOnlySystemChecks` 后保留 PASS；同组、runner/Playwright/未知祖先或 orphan 不能获准。其他 xcodebuild 命令以及 xcrun 命令仍 FAIL；本轮没有增加任何 xcrun argv 放行项。路径及三元素 argv 用既有 `ps -ww args=` 完整文本匹配；沿用 ps 扁平文本、定时采样的验证限制，未声称内核级 argv 或全生命周期监控。
+
+old8 原件仍 FAIL，不追溯重算。冻结 git 调用回源见 `_tmp/round8-git-isolation-evidence/git-source-audit.md` 与 `git-callsites.json`：seed 项目操作指向 R/workspace；用户全局配置位于 R/home-os、插件位于 R/home-os/.pilotdeck/plugins；telemetry 启动 rev-parse 和 `/status` 则只读基线仓库。因此 **HOME 隔离不能证明所有 git 都只操作运行工作区**。更新服务在 real supervisor 的 dev 模式中先返回 development，再到任何 git；任意 API 请求的路径也不因 HOME 自动受限。当前 worker 两个指定 Git 安装位置都不存在，已验证 FAIL_CLOSED、未执行 shim/版本探测；协调者须在指定位置已有真实 Git 后才可执行 old9。
+
+第 8 轮未起服务/Chrome、未提交。指定三类负例、完整离线单测与自检、old8 SHA 复核、old9 命令见 `_tmp/RESULT.md` 第 8 轮及 `_tmp/round8-git-isolation-evidence/`。
+
+## 第 9 轮：hardened 应用环境不可读时的替代证据
+
+本轮替代第 7 轮“任何进程 ps -E 环境不可读均 FAIL”的条款。直接 spawn 的普通 Node（launcher、mock、Playwright CLI/--list）及以同一 Node 可执行文件运行的 server、gateway、Vite、setup/worker 后代全部必须读到 HOME，并匹配各自 ready/onboarding/mock 的隔离 home-os；协调者 runner 自身不属于这些服务。运行根的 HOME 由 spawn 元数据传给审计，不从应用的 argv 推测。Node 环境不可读、HOME 错误、运行根不明均在 lsof 前 fatal。Xcode license/git 的 HOME 条款也没有不可读例外。
+
+Chrome、固定 bundle Helpers/crashpad、已有用户 GoogleUpdater 与 soffice 仅在第二次快照 PID/PPID/PGID 和完整 argv 与首份完全相同，且 `ps -E` 只返回 argv 时，记为 `environment: "unreadable"`。环境可读则继续核对 HOME；可见环境中 HOME 缺失/为空/重复、argv 改变、进程消失、ps 命令执行失败均 FAIL。
+
+- Chrome 不可读：仍需当前自有 Playwright 祖先、临时 `--user-data-dir`、remote-debugging-pipe 与四个开关各一次；记录 Playwright 祖先 PID 和 profile。Helpers 不可读：当前祖先链必须回到此次核验的 Chrome/profile；只有以前缓存的 orphan 不能放行。环境可读的 reparented helper 保留第 7 轮的缓存复核规则。
+- soffice 不可读：当前祖先链必须含本 runtime 下精确 server argv，且 server 的 HOME 已实际读到并核对为该 mode 的 home-os。记录 server PID、继承的 HOME 及源码位置。冻结 `officePreview.js` 的版本探测（235–240）和转换（411–415）都不覆盖 env，离线执行原 probe 函数并检查两处 execFile options 作为继承依据。
+- GoogleUpdater 不可读：保留现有用户目录/版本路径、规范路径、禁止安装/注册等参数和当前核验 Chrome/helper 祖先规则，记录路径与祖先 PID。
+
+`tcp-connections.jsonl.environmentEvidence` 对可读进程只保存 HOME 和身份匹配来源，对不可读的获准应用保存替代证据；不记录完整环境或凭空填入应用的实际 HOME。采样仍有时间窗口，替代证据不构成读取了应用实际环境的证明。old10 的错误只定位到通用解析器，没有保存失败 PID，故 hardened 解释仍待现场确认。
+
+本沙箱对普通 Node 子进程执行 `ps -E -o args= -p <pid>` 返回 EPERM；Chrome 未启动，无法完成现场对照。协调者可对已存在的 Chrome PID 运行 `node _tmp/round9-environment-evidence/probe-ps-environment.mjs <ChromePID>`：脚本仅启动一个空闲普通 Node，比较两种 ps 输出形态并立即清理 Node，只打印脱敏摘要。
+
+协调者新增的 `/Library/Developer/CommandLineTools/usr/bin/git` 第三候选及测试期望已审阅保留；当前候选顺序是 Homebrew、/usr/local、CLT，三者全部缺失仍失败关闭。CLT 候选也执行同样的 realpath、可执行性、版本和 runtime 链接复核。本机 file 显示其为 Mach-O universal executable，未执行系统 Git shim。本轮完整验证和 old11 命令见 `_tmp/RESULT.md` 第 9 轮。
+
+## 第 10 轮：已安装用户 GoogleUpdater 的精确 wake 例外
+
+按协调者自决、待现场复核的裁定，替代第 7/9 轮 updater 的路径/参数/祖先范围：仅允许操作者真实 `~/Library/Application Support/Google/GoogleUpdater/<版本>/GoogleUpdater.app/Contents/MacOS/GoogleUpdater`，实际 realpath 必须与此规范路径相同；完整 ps argv 文本精确为 `path --wake` 或 `path --wake-all`。缺失/不可解析的 realpath、旧短路径、bundle Helpers updater、安装/注册/卸载及任何其他参数组合均 FAIL。
+
+直接父进程必须是**当前快照**核验通过的 Playwright Chrome 主进程，或同一路径、按本规则已放行的 `--wake-all` updater。先核验快照内主 Chrome，再迭代核验 updater 父链，不依赖历史缓存和 ps 排列；helper、其他中间进程、只有同组或 Playwright worker 都不能授权。可读环境继续核对真实 HOME；不可读继续执行第 9 轮身份/完整 argv 双快照绑定，并记录 canonical path、两元素 argv、直接 parentPid、chromeAncestorPid。updater 的独立 PGID 继续进入审计树、TCP 观察和失败清理组。
+
+本轮无服务/listen/Chrome 实跑、未提交。34 组离线单测、全量 self-check、old11 只读核验与 **old12** 命令见 `_tmp/RESULT.md` 第 10 轮。仍使用 ps 扁平 argv 和定期采样，未提供内核 NUL 分隔 argv 或全生命周期证明；old11 原 FAIL 不追溯改判。
+
+## 第 11 轮：Chrome 系列按当前祖先链核验，不做 HOME 环境核对
+
+按协调者「自决·待复核」裁定（AI 代批，待人复核），本节替代第 7/9 轮 Chrome、固定 bundle Helpers/crashpad 的环境及缓存放行条款。R12 的启动环境继续为操作者真实 HOME + Playwright 临时 profile；审计从 `environmentTargets` 移除这三类进程，不调用它们的 `ps -E`，也不以 `processHOME` 或完整 argv 跨快照不变作为身份前提。
+
+每次采样都从当前快照重新核验主 Chrome：固定 bundle 主 executable、自有 Playwright 祖先、当前运行 tmp 直接子目录的唯一 `playwright_chromiumdev_profile-*`、remote-debugging-pipe 和四个必需开关各一次。Helpers/crashpad 必须在同一当前快照沿祖先链回到已核验主 Chrome，绑定该主进程的 profile；helper 若显式带 `--user-data-dir`，必须唯一且与主进程一致。允许 helper 进程标题改变。两阶段均使用当前祖先链，历史 PID/argv 缓存、只有同组或 reparented orphan 不再授权任何 Chrome 系列进程。主进程无临时 profile、缺必需开关或 helper 断链继续 FAIL。
+
+`tcp-connections.jsonl.browserEvidence` 独立保存当前 Chrome/helper 的 PID、主 Chrome PID 与 profile，标记 `environment: "not-checked"`；它不声称读到了实际 HOME。`environmentEvidence` 保留 Node（必须可读）、soffice、GoogleUpdater（可读核对，不可读沿用精确双快照及替代证据），第 8 轮 git/Xcode license HOME 规则继续执行。TCP 观察和自有组清理范围保持不变。
+
+协调者新增的 launchd 收养 `--wake-all`（PPID 1）例外及三条断言已审阅保留：规范已安装用户 updater 路径、realpath、精确两元素 argv、HOME/不可读证据门仍须成立；同路径 wake 子进程可获准，PPID 1 的裸 `--wake` 或附加参数仍 FAIL。此例外只处理已经进入自有审计树的 updater。
+
+第 11 轮离线验证、old13 只读快照回放与 **old14** 命令见 `_tmp/RESULT.md` 第 11 轮。采样/ps 扁平 argv 的验证边界继续保留；old13 原 FAIL 不追溯改判。

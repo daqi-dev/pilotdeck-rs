@@ -3,10 +3,12 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile, readFile, realpath, open } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { baseline, root, realPorts, realOrigin, realRunRoot } from './env.mjs';
-import { realExecutionEnv } from './execution-env.mjs';
+import { realExecutionEnv, assertRealExecutionEnv, prepareRealOSDirectories, realOSPaths, realChromeEnv } from './execution-env.mjs';
 import { caseId, reportCases, reconcileReal } from './accounting.mjs';
-import { startMockLLM } from './mock-llm.mjs';
+import { startIsolatedMockLLM } from './real-mock.mjs';
+import { chromeDefaultsEvidence } from './real-browser.mjs';
 import { startTCPAudit } from './real-tcp-audit.mjs';
+import { prepareRealGitBin, assertRealGitBin } from './real-git.mjs';
 
 // Validate the nearest existing ancestor before mkdir, so symlinked missing
 // descendants cannot create runtime/output files outside the worktree.
@@ -50,6 +52,8 @@ export function validateRealRegistration(rows, inventory, mode) {
   return expected;
 }
 async function startRuntime(env, log, children) {
+  assertRealExecutionEnv(env);
+  await assertRealGitBin(env);
   const handle = await open(log, 'wx');
   const child = spawn(process.execPath, [resolve(root, 'scripts/fe-parity/real-launch.mjs')], {
     cwd: root, detached: true, stdio: ['ignore', handle.fd, handle.fd],
@@ -57,6 +61,7 @@ async function startRuntime(env, log, children) {
       NODE_OPTIONS: `--import=${resolve(root, 'scripts/fe-parity/real-network.mjs')}` },
   });
   children.add(child);
+  child.feRuntimeHome = env.HOME;
   let spawnError;
   child.once('error', error => { spawnError = error; });
   const exited = new Promise(done => child.once('close', done));
@@ -117,6 +122,11 @@ export async function runReal({ output, inventory, modes, command, children, isI
   try {
     audit = await startTCPAudit({ logFile: resolve(output, 'tcp-connections.jsonl'),
       groupRoots: () => [...children].map(child => child.pid),
+      playwrightRoots: () => [...children].filter(child => child.fePlaywright).map(child => child.pid),
+      browserTmpRoots: () => [...children].filter(child => child.fePlaywright).map(child => child.feBrowserTmp),
+      runtimeRoots: () => [...children].filter(child => child.feRuntimeHome).map(child => ({ pid: child.pid, home: child.feRuntimeHome })),
+      nodeRoots: () => [...children].filter(child => child.feServiceHome || child.feRuntimeHome)
+        .map(child => ({ pid: child.pid, home: child.feServiceHome || child.feRuntimeHome })),
       onFatal: (error, observedGroups) => {
         console.error(error.message);
         const groups = [...new Set([...observedGroups, ...[...children].map(child => child.pid).filter(Number.isInteger)])];
@@ -134,13 +144,21 @@ async function runRealAudited({ output, inventory, modes, command, children, isI
   await mkdir(realRunRoot, { recursive: true });
   if (await realpath(realRunRoot) !== realRunRoot || await realpath(output) !== output) throw new Error('Real run/output path has a symlink escape');
   const sessionRoot = await mkdtemp(resolve(realRunRoot, 'run-'));
-  await mkdir(resolve(output, 'browser-tmp'));
   const config = resolve(root, 'scripts/fe-parity/real.config.mjs');
   const envs = {}, executions = [], reports = {};
   // List both partitions before any listen or process spawn.
   for (const mode of modes) {
     audit.assertSafe();
     const env = realExecutionEnv(process.env, { output, runDir: resolve(sessionRoot, mode), mode });
+    await prepareRealOSDirectories(env);
+    const git = await prepareRealGitBin(env);
+    await writeFile(resolve(output, `old-${mode}.isolation.json`), JSON.stringify({
+      mode, runDir: env.PILOTDECK_E2E_RUN_DIR, ...realOSPaths(env.PILOTDECK_E2E_RUN_DIR),
+      PILOT_HOME: env.PILOT_HOME, PILOTDECK_SKIP_BROWSER_OPEN: env.PILOTDECK_SKIP_BROWSER_OPEN,
+      git,
+      browser: { HOME: realChromeEnv(env).HOME, TMPDIR: env.TMPDIR, profile: 'Playwright temporary playwright_chromiumdev_profile-*', ...chromeDefaultsEvidence() },
+      assertions: 'PASS: OS HOME differs from os.userInfo().homedir; exact paths and canonical ancestors checked',
+    }, null, 2) + '\n', { flag: 'wx' });
     envs[mode] = env;
     const list = await command(['test', '--config', config, '--list', '--forbid-only', '--reporter=json'], env);
     await writeFile(resolve(output, `old-${mode}.inventory.json`), list.stdout);
@@ -152,7 +170,14 @@ async function runRealAudited({ output, inventory, modes, command, children, isI
   }
   await assertRealPortsFree(); // never start on another process's ports
   await audit.checkpoint('before-runtime');
-  const mock = await startMockLLM(resolve(output, 'llm-requests.jsonl'));
+  const mockEnv = realExecutionEnv(process.env, { output, runDir: resolve(sessionRoot, 'mock'), mode: 'ready' });
+  await prepareRealOSDirectories(mockEnv);
+  await writeFile(resolve(output, 'mock.isolation.json'), JSON.stringify({
+    role: 'mock Node', runDir: mockEnv.PILOTDECK_E2E_RUN_DIR, ...realOSPaths(mockEnv.PILOTDECK_E2E_RUN_DIR),
+    PILOT_HOME: mockEnv.PILOT_HOME, PILOTDECK_SKIP_BROWSER_OPEN: mockEnv.PILOTDECK_SKIP_BROWSER_OPEN,
+    assertions: 'PASS: isolated service environment checked before spawn and at mock entrypoint',
+  }, null, 2) + '\n', { flag: 'wx' });
+  const mock = await startIsolatedMockLLM(mockEnv, children);
   try {
     for (const mode of modes) {
       audit.assertSafe();
