@@ -52,11 +52,13 @@ try {
  await page.locator('#composer').fill('你好');
  await compose('compositionstart','ni','true');
  await keydown({});assert.equal(await page.locator('#sent').textContent(),'0');
- assert.equal(await page.locator('#composer').inputValue(),'你好');
+ // Synthetic composition does not consume Chrome's default Enter newline.
+ const guardedDraft=await page.locator('#composer').inputValue();
+ assert(guardedDraft.startsWith('你好'));
  await compose('compositionend','你好','false');
  for(const options of [{isComposing:true},{keyCode:229},{shiftKey:true}]) {
   await keydown(options);assert.equal(await page.locator('#sent').textContent(),'0');
-  assert.equal(await page.locator('#composer').inputValue(),'你好');
+  assert.equal(await page.locator('#composer').inputValue(),guardedDraft);
  }
  await keydown({});await page.waitForFunction(()=>document.getElementById('sent').textContent==='1');
  assert.equal(await page.locator('#composer').inputValue(),'');
@@ -96,7 +98,8 @@ try {
  const server=mock.stats.streams[0];assert(server.elapsedMs>=60000);assert(1500/(server.elapsedMs/1000)>=20);
  result.checks.push({name:'>=20Hz 60s count/real frame seq/scroll',status:'PASS',received:1500,DOMFrames:stats.frames.length,sequenceSource:'data-seq = inbound Frame.seq',actualHz:1500/(server.elapsedMs/1000),geometry,readingStart,scrollRange:[Math.min(...stats.reader),Math.max(...stats.reader)],maxAnimationFrameGapMs:Math.max(...stats.paintGaps),jankVerdict:'Frame timings recorded; perceptible smoothness requires human review'});
  await writeFile(resolve(evidence,`${candidate}-browser-trace.json`),JSON.stringify(stats)+'\n');
- await page.screenshot({path:resolve(evidence,`${candidate}.png`),fullPage:true});
+ const screenshots=resolve(root,'_tmp/exp007/screenshots');await mkdir(screenshots,{recursive:true});
+ await page.screenshot({path:resolve(screenshots,`${candidate}.png`),fullPage:true});
  result.status='PASS_BROWSER_MACHINE_CHECKS';
 } catch(e) { result.status=context?'FAIL':mock?'BLOCKED_CHROME_LAUNCH':'BLOCKED_MOCK_START';result.error=e.stack;process.exitCode=context?1:2; }
 finally {if(context)await context.close();if(mock)await mock.close();await writeFile(resolve(evidence,`${candidate}-browser.json`),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result,null,2));}

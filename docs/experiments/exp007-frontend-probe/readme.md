@@ -207,6 +207,17 @@ node scripts/exp007/browser.mjs dioxus
 | 原样 `browser.mjs` | FAIL @ `browser.mjs:55` | FAIL @ `browser.mjs:55` |
 | 诊断副本（仅把 `:55` 草稿断言改为记录值，未入库） | **PASS_BROWSER_MACHINE_CHECKS**（4/4） | **PASS_BROWSER_MACHINE_CHECKS**（4/4） |
 
-`:55` 的失败两候选完全相同：组合期间的真实 Enter 两边都**未发送**（`sent=0`，`:54` 通过），但合成 composition 不会像真实 IME 那样吞掉 Enter 的默认动作，浏览器照常插入换行（草稿 `'你好\n'`）。这是探针断言与合成事件的口径问题，不是候选差异：真实 IME 下 Enter 由输入法消费。修法（待第 3 方评审确认）：该断言改为「未发送且草稿以 `你好` 开头」，或对组合内 Enter 断言 `defaultPrevented` 由候选负责——后者是产品语义选择，需人定。
+`:55` 的失败两候选完全相同：组合期间的真实 Enter 两边都**未发送**（`sent=0`，`:54` 通过），但合成 composition 不会像真实 IME 那样吞掉 Enter 的默认动作，浏览器照常插入换行（草稿 `'你好\n'`）。这是探针断言与合成事件的口径问题，不是候选差异：真实 IME 下 Enter 由输入法消费。两家第2轮评审确认 #42 修法：正式断言改为「sent=0 且草稿以 `你好` 开头」，并用该完整草稿作为后续合成键守卫的保持基值；候选不补 preventDefault，保持基线 IME Enter 直接 return 的行为。正式脚本需在协调者环境复跑。
 
-**结论**：在已测范围内两候选的 IME 守卫、xterm 生命周期、≥20Hz 流式与真实帧序号、滚动均无差别；选型依据只剩体积（gzip wasm Leptos 111,122 B vs Dioxus 210,103 B）与构建可用性。**暂选 Leptos（AI 代拍 #24'，待人复核）**。原件 `evidence/r2/browser-*-coordinator-{raw,diag}.json`。
+**结论**：在已测范围内两候选的 IME 守卫、xterm 生命周期、≥20Hz 流式与真实帧序号、滚动均无差别；选型依据只剩体积（gzip wasm Leptos 111,122 B vs Dioxus 210,103 B）与构建可用性。**暂选 Leptos（AI 代拍 a′，待人复核）**。原件 `evidence/r2/browser-*-coordinator-{raw,diag}.json`。
+
+## F2 前置 #42 修正与证据归档（2026-10-14）
+
+正式 browser.mjs 已保留 sent=0，并将 composition 内 Enter 的草稿断言改为前缀；后续 isComposing/keyCode229/Shift 必须保持 Enter 后完整草稿，不清理真实换行。候选源码未改。截图固定写 worktree `_tmp/exp007/screenshots/`，不入证据库、不做像素断言。
+
+r2 的4份协调者 raw/diag 原件 SHA256 已追加 [manifest](evidence/r2/manifest.json)，原件未改。诊断 diff 见 [patch](evidence/r2/browser-coordinator-diagnostic.patch) 与 [归档说明](evidence/r2/browser-coordinator-diagnostic.md)：原临时脚本已缺失，归档为明确标识的可复现重建版，不伪称原版逐字归档。正式 runner 不依赖诊断副本。
+
+正式浏览器验证由协调者依次执行 `node scripts/exp007/browser.mjs leptos`、`node scripts/exp007/browser.mjs dioxus`，预期4/4机器检查PASS；本轮 F2 worker 不监听、不运行 Chrome。当前 Leptos 定选以 decision.md 最后「a′ 定选」的人亲测结论为准，历史暂选记录保留其时点效力。
+
+## #42 修正后正式复跑（2026-10-14，协调者沙箱外，本机 Chrome）
+原样 `scripts/exp007/browser.mjs`（断言改为「sent=0 且草稿以『你好』开头」，候选不加 preventDefault）：**Leptos、Dioxus 均 PASS_BROWSER_MACHINE_CHECKS（4/4）**。原件 `evidence/r3/browser-*-coordinator.json`。

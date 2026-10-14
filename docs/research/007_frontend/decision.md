@@ -64,7 +64,7 @@
 
 - [x] 自有积累 —— 调研 002（边界与协议）、调研 003（旧迁移教训：父任务收不了口、探针先行）
 - [x] 他人积累 —— PilotDeck 基线逐条实测（gap §一–§四全部带行号）；旧迁移包只读（`decisions.md:11`、`roadmap.md:11`、`contracts/ui.md`、`risks.csv:6`、`tasks.yaml` UI-00）
-- [ ] 自己跑的 —— **还没有**。Leptos IME / 终端岛 / e2e 双跑，全部押在计划 004 Issue F1 探针上
+- [x] 自己跑的 —— F1 已有 DOM 与协调者 Chrome r2 记录，真实 OS IME 后续由人亲测后定 Leptos（见本卡末尾）；正式37例黑盒双跑仍未完成。
 
 ## 两把尺子
 
@@ -106,9 +106,9 @@
 
 **a′ 暂选 Leptos 0.8.17（AI 代批，待人复核）**：两候选真实 CSR wasm 在 DOM 降级层均通过 composition 合成事件（**synthetic composition only，未测 OS IME**）、≥20Hz/≥60s 接收与 DOM 更新计数、真 xterm 十次挂卸保留 DOM/缓冲/焦点/输入。Leptos 在相同发布 profile / wasm-bindgen 管线下 gzip wasm 更小（111,122 B vs Dioxus 0.7.9 的 210,103 B），第 2 轮插桩后 gzip wasm 为 113,050 B vs 210,521 B，仍为 Leptos 较小；其暂选依据是本探针的体积、构建可用性与其他已测项，**不是 islands SSR 论证，也不是“信号天然不卡”**。详情与 trace 见 [exp007](../../experiments/exp007-frontend-probe/readme.md)。
 
-**第 2 轮撤回协调者首轮「Dioxus IME FAIL → 选定 Leptos」结论**：Playwright `dispatchEvent` 派发了普通 Event，Dioxus 的 CompositionEvent handler 未触发，失败属于探针 bug；首轮 Chrome 原始记录保留在 exp007。修正后用真 CompositionEvent、handler 标记与 rAF 等待；isComposing/keyCode229 各自断言。流式另以 `data-seq = Frame.seq` 做真实帧序号对账，首轮 observer 的 seq 实为接收计数，不能独立证明真实序号连续。修正后的 Chrome 门留给协调者重跑，不把旧 PASS/FAIL 当作本轮浏览器验收。 本轮原版网络 DOM gates 还因 sandbox listen EPERM 未进入页面；两候选实际 wasm 的七组 DOM gates 通过另行明示的进程内 HTTP/WS 替代传输（1500 帧、≥60s、真实 seq 对账），不算本轮真实网络验证。
+**第 2 轮撤回协调者首轮「Dioxus IME FAIL → 选定 Leptos」结论**：Playwright `dispatchEvent` 派发了普通 Event，Dioxus 的 CompositionEvent handler 未触发，失败属于探针 bug；首轮 Chrome 原始记录保留在 exp007。修正后用真 CompositionEvent、handler 标记与 rAF 等待；isComposing/keyCode229 各自断言。流式另以 `data-seq = Frame.seq` 做真实帧序号对账，首轮 observer 的 seq 实为接收计数，不能独立证明真实序号连续。协调者后来已补跑修正后的 Chrome 门：两候选均因草稿严格等值断言失败，诊断副本均4/4通过，详见 exp007「协调者补跑 r2」。#42 已修正正式断言，正式脚本仍须复跑，诊断结果不替代正式验收。 本轮原版网络 DOM gates 还因 sandbox listen EPERM 未进入页面；两候选实际 wasm 的七组 DOM gates 通过另行明示的进程内 HTTP/WS 替代传输（1500 帧、≥60s、真实 seq 对账），不算本轮真实网络验证。
 
-系统 Chrome 在当前 sandbox 中 SIGABRT，真实绘制/滚动、浏览器跨壳状态与正式黑盒双跑尚未验证，**F1 不标完成，不凭暂选放行 F3 生产页面迁移**。两候选没有被证明全败；无需按“两败”条款重拍混合方向，需换到允许启动系统 Chrome 的环境补证据。
+F1 worker sandbox 当时无法启动系统 Chrome；协调者 r2 诊断副本后来记录了真实流式/帧序号/滚动机器检查PASS（正式断言 #42 修正后待复跑）。浏览器跨壳状态与正式黑盒双跑尚未验证，**F1 不标完成，不凭暂选放行 F3 生产页面迁移**。两候选没有被证明全败；无需按“两败”条款重拍混合方向，需换到允许启动系统 Chrome 的环境补证据。
 
 b 的探针结论：Caddy 2.10.2 前置反代 B 已用真实旧 Vite 入口 + 两 Rust 静态入口与 HTTP/WS 做实验，导航原语与 history traversal 拦截在 DOM 级覆盖。A 未搭真实 `ui/server` patch 环境；生产共存方式暂不定稿。D1–D5 以 [accepted-diffs 的 F1 追加表](accepted-diffs.md#f1-exp007-对账与修订2026-10-14追加当前有效口径) 为当前口径，均未以完整跨壳浏览器实测转正。
 
