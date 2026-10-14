@@ -111,3 +111,17 @@ BLOCKED 是环境失败，整轮作废，不归入原版不稳定；本批五轮
 原始目录：`/Users/da/ws/pilotdeck-rs/_tmp/20261014-ts5/r1` … `r5`；完成标记为同目录 `progress.txt` 的 DONE。五遍沿用相同运行输出目录，模型 prompt 路径一致，本批没有路径对齐。单份 trace、summary、上游代码与本仓代码的 sha256 记在本 worktree `_tmp/self-compare.json`。
 
 复算命令：`python3 scripts/parity/self_compare.py`。结果为 `_tmp/self-compare.json` 和 `_tmp/self-compare.md`；后者列出全部场景在三种口径下的状态。对照与边界见 [exp004](../../docs/experiments/exp004-ruler-recheck/readme.md) 和 [normalization](normalization.md)。独立评审仍待协调者填写；四项闸门未齐之前不宣称尺子已验收。
+
+## 原版多态场景
+
+Issue #35 的方案 B 已由人批准：仅对 [multimodal.md](multimodal.md) 登记的原版多态场景，改用「每一遍 Rust 都必须与 TS 参考池中至少一遍的冻结 G03 总判决为 PASS」，五遍全满足才算场景 PASS。参考池至少 20 遍，类别只由 TS 两两 G03 判决确定，每类至少两遍；单例类保守拒绝计分。具体登记状态仍为「待批」，由协调者评审后冻结。
+
+离线计分入口为 [scripts/parity/score.py](../../scripts/parity/score.py)，参数、JSON 证据和拒绝条件见登记文档。普通场景仍执行本文件原有的第 i 对第 i 判法；同路径、身份、oracle、E 规则、健康检查与 BLOCKED 整轮作废条件继续有效。多态场景仍进入分子与分母；分母保持 53 − 已批准的原版不稳定场景数，目前无此类排除，故为 53。上述例外覆盖原文中登记场景的逐遍配对要求，不修改原文或 G03。
+
+## 日期上下文一致前提（Issue #35 第 2 步）
+
+参考池必须与被测 Rust 轮次在**同一 UTC 日采集**。一轮回归的两侧各五遍不得跨 UTC 午夜（UTC+8 本地 **08:00**）；跨日的轮次**整轮作废重跑**，不得以部分遍数或 prompt 日期归一化补救。TS 参考池本身也不得跨 UTC 日。此项与 `normalization.md`「两侧输出路径必须一字不差」一样，是计分前提。
+
+[score.py](../../scripts/parity/score.py) 在场景比较前提取每份 trace 的 systemPrompt `now: YYYY-MM-DD` 日期；缺失时记录 null 和说明。普通场景同序号 TS/Rust 日期不同，或多态场景 Rust 遍与参考池日期不同，均判该遍及该场景 **REFUSED**，不能计作 PASS 或 FAIL。一侧日期为 null、另一侧有日期同样拒绝；双方均无日期时保留原 G03 检查，并如实注明无法从该 trace 推断采集日。多个 UTC 日期出现在一个 trace 或同一侧的五遍中，整轮拒绝并重跑；多日期参考池拒绝定标。
+
+一轮只要存在任何 REFUSED，就输出 `valid_score=false`、`verdict=REFUSED`、`score=null`，退出码 2；分母规则不变，不以拒绝场景缩小分母。日期与拒绝理由保留在逐场景/逐遍 JSON 中。上述前提由采集者保证，缺日期不是跨日采集的豁免；满足前提后，原请求体、prompt、G03、oracle、身份、健康与 E 规则仍完整检查。具体证据与两个日期负例见 [exp009](../../docs/experiments/exp009-multimodal-ruler/readme.md) 与 [controls/multimodal.py](../../scripts/parity/controls/multimodal.py)。
