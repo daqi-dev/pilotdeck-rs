@@ -125,3 +125,6 @@ codex 修了三轮没修好。第 3 轮推断的根因是：Rust 的 deadline wa
 | 6.1 | 红线按类别写，不按举例写 | `CLAUDE.md` 硬红线：不下载任何预编译二进制 |
 
 > 依据更正：上面「决策分级」最初引了 demo-3（科研向）的 L0–L4 判级，人指出开发应以 demo / demo-2 为准，已改引 demo-2 的确定性分流（`03-proto.md:106`）与「一次拍板 → 一条原则 → 一条断言」（`03-proto.md:126`）。
+
+### 3C 结果（2026-10-14 上午）
+人用真实拼音输入法亲测：Leptos、Dioxus 均正常 → 无反例，**定 Leptos**（写入 `docs/research/007_frontend/decision.md` a′ 定选）。
