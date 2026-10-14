@@ -4,6 +4,16 @@
 
 **结论：S1 最小 Rust 反代（HTTP / SSE / NDJSON / 整条 WS）与 S2 四进程编排成立；场景 1–4、6、8、9、10 通过。** 真 Chrome 经 Vite → Rust → TS 渲染出原版 PilotDeck 安装页并完成 register/login；只读 API、一轮 mock 模型对话、SSE/NDJSON 增量透传、直连/反代归一化帧序列、双注册/遮蔽探针均与直连一致；运行时枚举得 **263** 条唯一路由，与静态清单 264 条的差正好是未挂载的 `routes/update.js:112`。**场景 5（PTY）为本机沙箱阻塞，需在沙箱外跑**（见「未做」的哨兵命令）。**r1 补完（2026-10-14）**：`scripts/exp008/compare.py` 直连/反代录放比对（HTTP 7 / WS 11 / SSE 17，differences=[]）＋ 7 条阳性/等价对照全过——改 HTTP body 字段、改状态码、删 WS 帧、改 SSE 事件**每一种都判 FAIL 并指出是哪一处**；场景 7 的续传头/查询参数在反代层透传成立，真实 modules host 端到端续传因无 host fixture 未做（原因见下）。r1 编排 `run.py --only sse-resume,compare,controls` **退出码 0**。**r2 补完（2026-10-14）**：按 codex/GLM 两家评审逐条修——归一化按字段路径限定、头只剥可重算/逐跳并补改头/丢头/Set-Cookie/刷新令牌对照、反代转发上游 WS 端到端握手头（含 `Authorization`）、SSE 多行 data、`13003` 入端口审计、按进程组存活清理；`compare` HTTP 9 / 握手 1 / WS 11 / SSE 17 / close 1、`differences=[]`，`controls` 11/11，见下「r2 补完」。
 
+## Issue #72：更正 WS 握手与 close（2026-10-14）
+
+上述 B1 比较结果是旧尺子的历史结果，不能据此宣称 B2 零差异。B2 round6/round7 在七条 WS 连接上测得仅代理有 Date、客户端先 close 时下行多一条 close。根因是 Hyper 默认序列化补 Date，以及代理转发实际上游 close 回执后又 flush 了 tungstenite 自动排队的下游回执。
+
+本次禁用 Hyper 自动 Date（上游已有 Date 仍原样保留），透传客户端 challenge，使上游 accept 值一致；继续按 B1 剥逐跳头、保留同名多值和端到端头字节、附加 handler 标记。close 两个发起方向都等待并转发另一端真实回执，随后退出而不 flush 发起端自动回执。正常消息处理、大小限制、扩展策略保持原样；现有一秒回执等待预算用于双向收尾。Hyper 仍负责 HTTP 头名大小写和顺序序列化，这里保证的是头集合与值，不是整个头块的原始排列。
+
+最小 Node v22 实测脚本：`scripts/exp008/proxy/tests/node-ws-semantics.cjs <只读基线绝对路径>`，完全使用内存 Duplex、无 listen。实际 `http upgrade → ws.handleUpgrade` 的 101 无 Date；普通 `ServerResponse.writeHead(101)` 则有 Date。两方向、空 close、正常/自定义 code、UTF-8 reason 共八组，均各方向恰好一帧。Rust 内存测试另检验 Hyper 实际输出、重复 Set-Cookie/非 ASCII 头、上游已有 Date、旧双 close 阳性对照、真实回执与发起载荷不同及 EOF 无回执。
+
+本次未跑需要监听的 B2 全量对拍。PR #73 的草稿装置将 proxy 源码计入 apparatus，且 recorder 与 DUT 共用二进制并计入 source；修复后旧 live3 池不再适用于正式定标。协调者应在合入 #72/#73 后固定装置，按同一 UTC 日、同一固定 fixture 路径重新录制 TS 20 池、全新 k=5，先通过 TS 定标再录 proxy；不能用历史重放或修改账本代替。一次性取证、原始输出及可执行协调命令见本 worker `_tmp/triage.md`、`_tmp/RESULT.md`、`_tmp/validate-b2.sh`，清理 worktree 前须归档。
+
 ## 编号与端口
 
 - 实验编号 **exp008**（计划 003 里原先写的 `exp006-ui-server-proxy` 已改成 `exp008-ui-server-proxy`；`006_phase-b-ui-server/` 是调研目录名，不改）。之前 `docs/research/006_phase-b-ui-server/route-inventory.md` 里指向 `exp006` 的对账产物路径也一并改成 `exp008`。
@@ -22,7 +32,7 @@
 
 - **HTTP 全量反代**：method / path / query / 端到端头 / body 经 hyper 流式转发；只去逐跳头（含 `Connection` 点名的头），**不加任何 `X-Forwarded-*`**；上游 `Host` 改成上游 authority。请求/响应体是 `BoxBody` 流，不集中读入内存。
 - **SSE / NDJSON 不缓冲**：`Content-Type: text/event-stream`、`application/x-ndjson` 与 `X-Accel-Buffering: no` 原样保留；body 逐块转发。场景 6 用注入的两条测试流实测：首字节 <1ms 到达，终结事件在 ~602ms 后到达（span 601.8/601.9ms），**证明不是读完才返回**。
-- **整条 WS 反代**：任意 upgrade 路径（`/ws`、`/shell`、`/plugin-ws/*`）先连上游、成功后才回 101；上游 101 的端到端附加头保留、按下游 key 重算 `Sec-WebSocket-Accept`；text/binary/control 帧不解析不改写，close 双向传播（复用 A1 的「读 TS 真实 close reply 再写回」分支）。
+- **整条 WS 反代**：任意 upgrade 路径（`/ws`、`/shell`、`/plugin-ws/*`）先连上游、成功后才回 101；上游 101 的端到端附加头保留、下游 key 透传上游；应用消息有效载荷保留，close 双向传播（读取另一端真实回执，转发后不再 flush 自动回执，见 Issue #72 更正）。
 - **WS 全帧 tee**：每帧落 [ws-frames.jsonl](../../../_tmp/20261014-exp008/ws-frames.jsonl)，含全局单调 `seq`、方向 `c2u`/`u2c`、opcode、`raw`（text 原文，binary/ping/pong base64）、close code/reason。本轮 34 帧（9 上行 / 25 下行，28 text / 6 close）。
 - **处理侧标记**：所有经反代的 HTTP 响应与 WS 101 加 `X-PilotDeck-Handler: ts`（B1 全是 ts）。浏览器与直连证据都读它；直连 TS 无此头。这个头是 B2 覆盖检查的抓手。
 

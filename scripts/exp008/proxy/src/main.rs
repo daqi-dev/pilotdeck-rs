@@ -35,18 +35,12 @@ use hyper_util::{
     client::legacy::{connect::HttpConnector, Client},
     rt::{TokioExecutor, TokioIo},
 };
-use tokio::{io::AsyncWriteExt, net::TcpListener};
+use tokio::net::TcpListener;
 use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{
         handshake::derive_accept_key,
-        protocol::{
-            frame::{
-                coding::{Data, OpCode},
-                Frame,
-            },
-            Role, WebSocketConfig,
-        },
+        protocol::{Role, WebSocketConfig},
         ClientRequestBuilder, Message,
     },
     WebSocketStream,
@@ -163,7 +157,7 @@ async fn main() -> Result<(), ProxyError> {
                         let proxy = proxy.clone();
                         async move { Ok::<_, Infallible>(proxy.serve(request).await) }
                     });
-                    if let Err(error) = http1::Builder::new()
+                    if let Err(error) = downstream_http()
                         .serve_connection(TokioIo::new(socket), service)
                         .with_upgrades()
                         .await
@@ -356,7 +350,7 @@ impl Proxy {
         }
         let upstream = hyper::upgrade::on(&mut response);
         let downstream = hyper::upgrade::on(request);
-        let response = websocket_response(response.into_parts().0.headers, &accept)?;
+        let response = websocket_response(response.into_parts().0.headers)?;
         tokio::spawn(async move {
             let result = async {
                 let (upstream, downstream) = tokio::try_join!(upstream, downstream)?;
@@ -382,13 +376,13 @@ impl Proxy {
         request: &mut Request<Incoming>,
         id: u64,
     ) -> Result<Response<Body>, ProxyError> {
-        let Some(accept) = websocket_accept(request.method(), request.headers()) else {
+        if websocket_accept(request.method(), request.headers()).is_none() {
             return Ok(self.local_response(
                 id,
                 StatusCode::BAD_REQUEST,
                 "invalid websocket upgrade",
             ));
-        };
+        }
         let path = request
             .uri()
             .path_and_query()
@@ -398,10 +392,9 @@ impl Proxy {
         // authenticates `/ws` from `Authorization: Bearer` as well as `?token=`
         // (ui/server/index.js:490-496); building the upstream from the URL alone
         // dropped the header and turned a direct 101 into a proxy 502. The
-        // relay generates its own hop-by-hop / WS handshake headers, so those
-        // are skipped, and `Sec-WebSocket-Extensions` is not forwarded because
-        // this probe terminates WS framing on both legs and cannot honour a
-        // negotiated extension.
+        // relay rebuilds hop-by-hop headers but retains the client challenge.
+        // `Sec-WebSocket-Extensions` is not forwarded because this probe
+        // terminates WS framing on both legs and cannot honour an extension.
         let builder = websocket_request(url, request.headers())?;
         let config = websocket_config();
         let (mut upstream, upstream_response) = tokio::time::timeout(
@@ -435,35 +428,10 @@ impl Proxy {
                         Some(config),
                     )
                     .await;
-                    loop {
-                        let result = tokio::select! {
-                            frame = downstream.next() => {
-                                let closing = matches!(&frame, Some(Ok(Message::Close(_))));
-                                let result = relay(frame, &mut upstream, frames.as_deref(), "c2u").await;
-                                if closing && result.is_ok() {
-                                    if let Err(error) = relay_close_reply(&mut upstream, &mut downstream, frames.as_deref()).await {
-                                        eprintln!("WS close reply: {error}");
-                                    }
-                                }
-                                result
-                            },
-                            frame = upstream.next() => {
-                                relay(frame, &mut downstream, frames.as_deref(), "u2c").await
-                            },
-                        };
-                        // tungstenite queues an automatic Pong when it reads a
-                        // Ping. Flush both legs every round so a long idle link
-                        // does not leave that Pong buffered until close.
-                        let _ = upstream.flush().await;
-                        let _ = downstream.flush().await;
-                        match result {
-                            Ok(true) => continue,
-                            Ok(false) => break,
-                            Err(error) => {
-                                eprintln!("WS relay: {error}");
-                                break;
-                            }
-                        }
+                    if let Err(error) =
+                        relay_websocket(&mut upstream, &mut downstream, frames.as_deref()).await
+                    {
+                        eprintln!("WS relay: {error}");
                     }
                 }
                 Err(error) => eprintln!("downstream upgrade: {error}"),
@@ -474,7 +442,7 @@ impl Proxy {
                     .write(serde_json::json!({"kind":"ws_end", "connection":id}));
             }
         });
-        let mut response = websocket_response(upstream_response.into_parts().0.headers, &accept)?;
+        let mut response = websocket_response(upstream_response.into_parts().0.headers)?;
         if self.recorder.is_none() {
             if let Ok(value) = self.handler.parse() {
                 response.headers_mut().insert("x-pilotdeck-handler", value);
@@ -509,7 +477,10 @@ async fn tee_message(
     Ok(())
 }
 
-async fn relay_close_reply<U, D>(
+// Once either peer sends Close, never flush/read that leg's tungstenite again:
+// reading Close queues an automatic receipt. Only the other peer's actual reply
+// belongs on the wire; flushing the queued receipt would send a second close.
+async fn relay_websocket<U, D>(
     upstream: &mut WebSocketStream<U>,
     downstream: &mut WebSocketStream<D>,
     frames: Option<&FrameLog>,
@@ -518,29 +489,71 @@ where
     U: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     D: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
+    loop {
+        let keep_open = tokio::select! {
+            frame = downstream.next() => {
+                let closing = matches!(&frame, Some(Ok(Message::Close(_))));
+                let keep_open = relay(frame, upstream, frames, "c2u").await?;
+                if closing {
+                    relay_close_reply(upstream, downstream, frames, "u2c", Role::Server).await?;
+                }
+                keep_open
+            },
+            frame = upstream.next() => {
+                let closing = matches!(&frame, Some(Ok(Message::Close(_))));
+                let keep_open = relay(frame, downstream, frames, "u2c").await?;
+                if closing {
+                    relay_close_reply(downstream, upstream, frames, "c2u", Role::Client).await?;
+                }
+                keep_open
+            },
+        };
+        if !keep_open {
+            return Ok(());
+        }
+        // Preserve normal-message/Ping behaviour, but not automatic Close replies.
+        let _ = upstream.flush().await;
+        let _ = downstream.flush().await;
+    }
+}
+
+async fn relay_close_reply<S, T>(
+    source: &mut WebSocketStream<S>,
+    target: &mut WebSocketStream<T>,
+    frames: Option<&FrameLog>,
+    dir: &str,
+    role: Role,
+) -> Result<(), ProxyError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     tokio::time::timeout(Duration::from_secs(1), async {
-        while let Some(frame) = upstream.next().await {
+        // A write-only encoder bypasses target's queued automatic receipt. It
+        // still masks client-to-upstream frames with fresh random mask keys.
+        let mut writer =
+            WebSocketStream::from_raw_socket(target.get_mut(), role, Some(websocket_config()))
+                .await;
+        while let Some(frame) = source.next().await {
             let frame = frame?;
-            tee_message(frames, "u2c", &frame).await?;
+            tee_message(frames, dir, &frame).await?;
             let closing = frame.is_close();
-            let frame = match frame {
-                Message::Text(data) => Frame::message(data, OpCode::Data(Data::Text), true),
-                Message::Binary(data) => Frame::message(data, OpCode::Data(Data::Binary), true),
-                Message::Ping(data) => Frame::ping(data),
-                Message::Pong(data) => Frame::pong(data),
-                Message::Close(close) => Frame::close(close),
-                Message::Frame(frame) => frame,
-            };
-            let mut wire = Vec::new();
-            frame.format(&mut wire)?;
-            downstream.get_mut().write_all(&wire).await?;
+            writer.send(frame).await?;
             if closing {
                 return Ok::<_, ProxyError>(());
             }
         }
-        Err("upstream ended without a close reply".into())
+        Err("peer ended without a close reply".into())
     })
     .await?
+}
+
+// Hyper's default adds Date even to an upstream 101 that has none. A proxy
+// preserves upstream Date (including absence); it does not manufacture one.
+fn downstream_http() -> http1::Builder {
+    let mut builder = http1::Builder::new();
+    builder.auto_date_header(false);
+    builder
 }
 
 fn fatal_accept_error(error: &std::io::Error) -> bool {
@@ -583,19 +596,21 @@ fn websocket_request(
     for (name, value) in &forwarded {
         if matches!(
             name.as_str(),
-            "host" | "sec-websocket-key" | "sec-websocket-version" | "sec-websocket-extensions"
+            "host" | "sec-websocket-version" | "sec-websocket-extensions"
         ) {
             continue;
         }
-        request.headers_mut().append(name, value.clone());
+        if name == header::SEC_WEBSOCKET_KEY {
+            // Retain the challenge so the upstream accept value can pass unchanged.
+            request.headers_mut().insert(name, value.clone());
+        } else {
+            request.headers_mut().append(name, value.clone());
+        }
     }
     Ok(request)
 }
 
-fn websocket_response(
-    mut headers: hyper::HeaderMap,
-    accept: &str,
-) -> Result<Response<Body>, ProxyError> {
+fn websocket_response(mut headers: hyper::HeaderMap) -> Result<Response<Body>, ProxyError> {
     strip_hop_headers(&mut headers)?;
     headers.insert(
         header::UPGRADE,
@@ -604,10 +619,6 @@ fn websocket_response(
     headers.insert(
         header::CONNECTION,
         hyper::header::HeaderValue::from_static("Upgrade"),
-    );
-    headers.insert(
-        header::SEC_WEBSOCKET_ACCEPT,
-        accept.parse().expect("derived accept key"),
     );
     let mut response = Response::new(empty());
     *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
@@ -691,7 +702,324 @@ fn plain(status: StatusCode, message: &'static str) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+    use tokio_tungstenite::tungstenite::{
+        client::IntoClientRequest,
+        protocol::{frame::Frame, CloseFrame},
+    };
+
+    const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+
+    // Exercise Hyper's actual HTTP serialization over memory IO. Merely checking
+    // websocket_response().headers() would miss Hyper's implicit Date header.
+    async fn serialized_handshake(
+        upstream: hyper::HeaderMap,
+        automatic_date: bool,
+    ) -> hyper::HeaderMap {
+        let (client, server) = tokio::io::duplex(8192);
+        let task = tokio::spawn(async move {
+            let service = service_fn(move |_: Request<Incoming>| {
+                let response = websocket_response(upstream.clone());
+                async move { Ok::<_, Infallible>(response.unwrap()) }
+            });
+            let mut builder = downstream_http();
+            if automatic_date {
+                builder.auto_date_header(true);
+            }
+            builder
+                .serve_connection(TokioIo::new(server), service)
+                .with_upgrades()
+                .await
+                .unwrap();
+        });
+        let mut request = "ws://memory/ws".into_client_request().unwrap();
+        request
+            .headers_mut()
+            .insert(header::SEC_WEBSOCKET_KEY, KEY.parse().unwrap());
+        let (socket, response) = tokio_tungstenite::client_async(request, client)
+            .await
+            .unwrap();
+        drop(socket);
+        task.await.unwrap();
+        response.into_parts().0.headers
+    }
+
+    #[tokio::test]
+    async fn ws_101_serialized_headers_equal_upstream() {
+        for date in [None, Some("Wed, 14 Oct 2026 07:00:00 GMT")] {
+            let mut headers = hyper::HeaderMap::new();
+            headers.insert(header::CONNECTION, "Upgrade".parse().unwrap());
+            headers.insert(header::UPGRADE, "websocket".parse().unwrap());
+            headers.insert(
+                header::SEC_WEBSOCKET_ACCEPT,
+                derive_accept_key(KEY.as_bytes()).parse().unwrap(),
+            );
+            headers.append(header::SET_COOKIE, "first=a; HttpOnly".parse().unwrap());
+            headers.append(
+                header::SET_COOKIE,
+                "second=b; SameSite=Strict".parse().unwrap(),
+            );
+            headers.insert(
+                "x-bytes",
+                header::HeaderValue::from_bytes(b"\xffopaque").unwrap(),
+            );
+            if let Some(date) = date {
+                headers.insert(header::DATE, date.parse().unwrap());
+            }
+            let actual = serialized_handshake(headers.clone(), false).await;
+            assert_eq!(actual, headers);
+            assert_eq!(
+                actual
+                    .get_all(header::SET_COOKIE)
+                    .iter()
+                    .collect::<Vec<_>>(),
+                headers
+                    .get_all(header::SET_COOKIE)
+                    .iter()
+                    .collect::<Vec<_>>()
+            );
+            if date.is_none() {
+                let legacy = serialized_handshake(headers.clone(), true).await;
+                assert!(
+                    legacy.contains_key(header::DATE),
+                    "positive control: Hyper default adds Date"
+                );
+                assert_ne!(legacy, headers);
+            }
+            // B1 keeps its handler provenance marker; nominated/private hops
+            // must still disappear before serialization, even with duplicate Connection.
+            let mut with_hops = headers.clone();
+            with_hops.append(header::CONNECTION, "x-hop, keep-alive".parse().unwrap());
+            with_hops.insert("x-hop", "private".parse().unwrap());
+            with_hops.insert("keep-alive", "timeout=5".parse().unwrap());
+            with_hops.insert("x-pilotdeck-handler", "ts".parse().unwrap());
+            headers.insert("x-pilotdeck-handler", "ts".parse().unwrap());
+            assert_eq!(serialized_handshake(with_hops, false).await, headers);
+        }
+    }
+
+    fn close_wire(close: Option<CloseFrame>, masked: bool) -> Vec<u8> {
+        let mut frame = Frame::close(close);
+        if masked {
+            frame.header_mut().mask = Some([1, 2, 3, 4]);
+        }
+        let mut wire = Vec::new();
+        frame.format(&mut wire).unwrap();
+        wire
+    }
+
+    async fn read_close(socket: &mut DuplexStream, masked: bool) -> Vec<u8> {
+        let mut head = [0; 2];
+        socket.read_exact(&mut head).await.unwrap();
+        assert_eq!(head[0], 0x88);
+        assert_eq!(head[1] & 0x80 != 0, masked);
+        let len = usize::from(head[1] & 0x7f);
+        assert!(len <= 125);
+        let mut mask = [0; 4];
+        if masked {
+            socket.read_exact(&mut mask).await.unwrap();
+        }
+        let mut payload = vec![0; len];
+        socket.read_exact(&mut payload).await.unwrap();
+        if masked {
+            for (i, byte) in payload.iter_mut().enumerate() {
+                *byte ^= mask[i % 4];
+            }
+        }
+        payload
+    }
+
+    async fn close_roundtrip(
+        client_first: bool,
+        close: Option<CloseFrame>,
+        reply: Option<CloseFrame>,
+    ) {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let (mut browser, proxy_down) = tokio::io::duplex(4096);
+            let (proxy_up, mut server) = tokio::io::duplex(4096);
+            let task = tokio::spawn(async move {
+                let mut upstream = WebSocketStream::from_raw_socket(
+                    proxy_up,
+                    Role::Client,
+                    Some(websocket_config()),
+                )
+                .await;
+                let mut downstream = WebSocketStream::from_raw_socket(
+                    proxy_down,
+                    Role::Server,
+                    Some(websocket_config()),
+                )
+                .await;
+                relay_websocket(&mut upstream, &mut downstream, None)
+                    .await
+                    .unwrap();
+            });
+            let (initiator, peer) = if client_first {
+                (&mut browser, &mut server)
+            } else {
+                (&mut server, &mut browser)
+            };
+            initiator
+                .write_all(&close_wire(close.clone(), client_first))
+                .await
+                .unwrap();
+            assert_eq!(
+                read_close(peer, client_first).await,
+                close_wire(close, false)[2..]
+            );
+            // No proxy-generated receipt may reach the initiator before the peer replies.
+            let mut byte = [0];
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), initiator.read(&mut byte))
+                    .await
+                    .is_err()
+            );
+            peer.write_all(&close_wire(reply.clone(), !client_first))
+                .await
+                .unwrap();
+            assert_eq!(
+                read_close(initiator, !client_first).await,
+                close_wire(reply, false)[2..]
+            );
+            task.await.unwrap();
+            // Inspect raw IO, not a WS reader that might hide a duplicate close.
+            let mut extra = Vec::new();
+            browser.read_to_end(&mut extra).await.unwrap();
+            server.read_to_end(&mut extra).await.unwrap();
+            assert!(
+                extra.is_empty(),
+                "each direction must have exactly one close: {extra:?}"
+            );
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn client_close_one_upstream_one_downstream_receipt() {
+        for close in [
+            None,
+            Some(CloseFrame {
+                code: 1000.into(),
+                reason: "".into(),
+            }),
+            Some(CloseFrame {
+                code: 1001.into(),
+                reason: "离开".into(),
+            }),
+            Some(CloseFrame {
+                code: 4001.into(),
+                reason: "custom".into(),
+            }),
+        ] {
+            close_roundtrip(true, close.clone(), close).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn upstream_close_one_downstream_one_upstream_receipt() {
+        for close in [
+            None,
+            Some(CloseFrame {
+                code: 1000.into(),
+                reason: "".into(),
+            }),
+            Some(CloseFrame {
+                code: 1001.into(),
+                reason: "离开".into(),
+            }),
+            Some(CloseFrame {
+                code: 4001.into(),
+                reason: "custom".into(),
+            }),
+        ] {
+            close_roundtrip(false, close.clone(), close).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn forwards_actual_receipt_instead_of_echoing_initiator() {
+        for client_first in [true, false] {
+            close_roundtrip(
+                client_first,
+                Some(CloseFrame {
+                    code: 4001.into(),
+                    reason: "request".into(),
+                }),
+                Some(CloseFrame {
+                    code: 4002.into(),
+                    reason: "peer receipt".into(),
+                }),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_flush_after_forwarded_receipt_reproduces_duplicate_close() {
+        let close = Some(CloseFrame {
+            code: 1000.into(),
+            reason: "".into(),
+        });
+        let (mut browser, proxy_down) = tokio::io::duplex(4096);
+        let (proxy_up, mut server) = tokio::io::duplex(4096);
+        let mut downstream = WebSocketStream::from_raw_socket(proxy_down, Role::Server, None).await;
+        let mut upstream = WebSocketStream::from_raw_socket(proxy_up, Role::Client, None).await;
+        browser
+            .write_all(&close_wire(close.clone(), true))
+            .await
+            .unwrap();
+        let frame = downstream.next().await; // queues tungstenite's automatic receipt
+        relay(frame, &mut upstream, None, "c2u").await.unwrap();
+        assert_eq!(read_close(&mut server, true).await, [3, 232]);
+        server.write_all(&close_wire(close, false)).await.unwrap();
+        relay_close_reply(&mut upstream, &mut downstream, None, "u2c", Role::Server)
+            .await
+            .unwrap();
+        let _ = downstream.flush().await; // the pre-#72 loop did this unconditionally
+        drop(downstream);
+        assert_eq!(read_close(&mut browser, false).await, [3, 232]);
+        assert_eq!(read_close(&mut browser, false).await, [3, 232]);
+        let mut extra = Vec::new();
+        browser.read_to_end(&mut extra).await.unwrap();
+        assert!(extra.is_empty());
+    }
+
+    #[tokio::test]
+    async fn peer_eof_does_not_manufacture_close_receipt() {
+        for client_first in [true, false] {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let (mut browser, proxy_down) = tokio::io::duplex(4096);
+                let (proxy_up, mut server) = tokio::io::duplex(4096);
+                let task = tokio::spawn(async move {
+                    let mut upstream =
+                        WebSocketStream::from_raw_socket(proxy_up, Role::Client, None).await;
+                    let mut downstream =
+                        WebSocketStream::from_raw_socket(proxy_down, Role::Server, None).await;
+                    assert!(relay_websocket(&mut upstream, &mut downstream, None)
+                        .await
+                        .is_err());
+                });
+                let (initiator, peer) = if client_first {
+                    (&mut browser, &mut server)
+                } else {
+                    (&mut server, &mut browser)
+                };
+                initiator
+                    .write_all(&close_wire(None, client_first))
+                    .await
+                    .unwrap();
+                assert!(read_close(peer, client_first).await.is_empty());
+                peer.shutdown().await.unwrap();
+                task.await.unwrap();
+                let mut extra = Vec::new();
+                initiator.read_to_end(&mut extra).await.unwrap();
+                assert!(extra.is_empty());
+            })
+            .await
+            .unwrap();
+        }
+    }
 
     fn forbidden_headers(headers: &hyper::HeaderMap) -> Vec<&str> {
         [
@@ -771,7 +1099,7 @@ mod tests {
         assert_eq!(request.headers()[header::SEC_WEBSOCKET_PROTOCOL], "probe");
         assert_eq!(request.headers()[header::CONNECTION], "Upgrade");
         assert_eq!(request.headers()[header::UPGRADE], "websocket");
-        assert_ne!(
+        assert_eq!(
             request.headers()[header::SEC_WEBSOCKET_KEY],
             "downstream-key"
         );
