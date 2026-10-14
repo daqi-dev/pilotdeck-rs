@@ -6,11 +6,30 @@ use super::{
 };
 use crate::{
     nodes::{Node, NodeId, NodeKind},
-    parse::cst::{Token, TokenType::*},
+    parse::cst::{CollectionItem, Token, TokenType::*},
     string::slice,
 };
 use pilotdeck_protocol::JsString;
 pub(super) fn compose_node(ctx: &mut Context, token: &Token, props: &Props) -> NodeId {
+    compose_node_with_items(ctx, token, props, None)
+}
+/// An unshared document root can release each CST item as it is composed.
+/// Kept source tokens and recursive children continue through the borrowed path.
+pub(super) fn compose_owned_node(ctx: &mut Context, token: &mut Token, props: &Props) -> NodeId {
+    let items =
+        if !ctx.options.keep_source_tokens && matches!(token.kind, BlockMap | FlowCollection) {
+            Some(std::mem::take(&mut token.items))
+        } else {
+            None
+        };
+    compose_node_with_items(ctx, token, props, items)
+}
+fn compose_node_with_items(
+    ctx: &mut Context,
+    token: &Token,
+    props: &Props,
+    items: Option<Vec<CollectionItem>>,
+) -> NodeId {
     let id = match token.kind {
         Alias => {
             let id = compose_alias(ctx, token);
@@ -39,7 +58,7 @@ pub(super) fn compose_node(ctx: &mut Context, token: &Token, props: &Props) -> N
             // The guard runs after collection tag/props handling, so diagnostics
             // produced before the JS catch are kept. Err stands in for V8's
             // RangeError; Rust never deliberately exhausts the native stack.
-            let result = compose_collection(ctx, token, props);
+            let result = compose_collection(ctx, token, props, items);
             ctx.depth -= 1;
             match result {
                 Ok(id) => {
@@ -86,14 +105,19 @@ pub(super) fn compose_node(ctx: &mut Context, token: &Token, props: &Props) -> N
     let node = &mut ctx.nodes[id];
     node.space_before = props.space_before;
     if !props.comment.is_empty() {
-        if token.kind == Scalar && token.source.as_ref().is_some_and(JsString::is_empty) {
+        if token.kind == Scalar
+            && token
+                .source
+                .as_ref()
+                .is_some_and(|source| source.is_empty())
+        {
             node.comment = props.comment.clone();
         } else {
             node.comment_before = props.comment.clone();
         }
     }
     if ctx.options.keep_source_tokens && !matches!(token.kind, Error) {
-        node.src_token = Some(token.clone());
+        node.src_token = Some(std::sync::Arc::new(token.clone()));
     }
     id
 }
@@ -104,7 +128,7 @@ pub(super) fn compose_empty_node(
     props: &Props,
 ) -> NodeId {
     let mut token = Token::new(Scalar, empty_scalar_position(offset, before));
-    token.source = Some(JsString::default());
+    token.source = Some(Default::default());
     let id = compose_scalar(ctx, &token, props.tag.as_ref());
     if let Some(a) = &props.anchor {
         let anchor = slice(
@@ -148,6 +172,8 @@ fn compose_alias(ctx: &mut Context, token: &Token) -> NodeId {
     );
     let mut alias = Node::new(NodeKind::Alias(name));
     alias.range = [token.offset, value_end, re.offset];
-    alias.comment = re.comment;
+    if !re.comment.is_empty() {
+        alias.comment = re.comment;
+    }
     ctx.add(alias)
 }

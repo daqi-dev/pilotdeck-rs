@@ -42,7 +42,7 @@ pub(crate) fn resolve_block_scalar(ctx: &mut Context, scalar: &Token) -> Resolve
             JsString::default()
         };
         return ResolvedScalar {
-            value,
+            value: std::sync::Arc::new(value),
             style,
             comment: header.comment,
             range: [start, end, end],
@@ -151,7 +151,7 @@ pub(crate) fn resolve_block_scalar(ctx: &mut Context, scalar: &Token) -> Resolve
         _ => value.push(10),
     }
     ResolvedScalar {
-        value: JsString::from_utf16(value),
+        value: std::sync::Arc::new(JsString::from_utf16(value)),
         style,
         comment: header.comment,
         range: [start, end, end],

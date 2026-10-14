@@ -6,57 +6,62 @@ use crate::{
     errors::{Diagnostic, token_pos},
     parse::cst::{Token, TokenType::*},
     schema::Schema,
-    string::{append, concat, json, slice},
+    string::{append, concat, json},
 };
 use pilotdeck_protocol::JsString;
-fn parse_prelude(prelude: &[JsString]) -> (JsString, bool) {
-    let mut comment = JsString::default();
-    let mut at_comment = false;
-    let mut after_empty_line = false;
-    let mut i = 0;
-    while i < prelude.len() {
-        let source = &prelude[i];
+#[derive(Default)]
+struct Prelude {
+    comment: Vec<u16>,
+    at_comment: bool,
+    after_empty_line: bool,
+    after_directive: bool,
+}
+impl Prelude {
+    fn push(&mut self, source: std::sync::Arc<JsString>) {
+        // parsePrelude skips the token after a directive unless it is a comment.
+        if std::mem::take(&mut self.after_directive) && source.units().first() != Some(&35) {
+            return;
+        }
         match source.units().first() {
             Some(35) => {
-                if !comment.is_empty() {
-                    append(
-                        &mut comment,
-                        &if after_empty_line { "\n\n" } else { "\n" }.into(),
-                    );
+                if !self.comment.is_empty() {
+                    self.comment.push(10);
+                    if self.after_empty_line {
+                        self.comment.push(10);
+                    }
                 }
-                let c = if source.len_utf16() > 1 {
-                    slice(source, 1, source.len_utf16())
+                if source.len_utf16() > 1 {
+                    self.comment.extend_from_slice(&source.units()[1..]);
                 } else {
-                    " ".into()
-                };
-                append(&mut comment, &c);
-                at_comment = true;
-                after_empty_line = false;
+                    self.comment.push(32);
+                }
+                self.at_comment = true;
+                self.after_empty_line = false;
             }
             Some(37) => {
-                if prelude
-                    .get(i + 1)
-                    .is_none_or(|s| s.units().first() != Some(&35))
-                {
-                    i += 1;
-                }
-                at_comment = false;
+                self.after_directive = true;
+                self.at_comment = false;
             }
             _ => {
-                if !at_comment {
-                    after_empty_line = true;
+                if !self.at_comment {
+                    self.after_empty_line = true;
                 }
-                at_comment = false;
+                self.at_comment = false;
             }
         }
-        i += 1;
     }
-    (comment, after_empty_line)
+    fn take(&mut self) -> (JsString, bool) {
+        let prelude = std::mem::take(self);
+        (
+            JsString::from_utf16(prelude.comment),
+            prelude.after_empty_line,
+        )
+    }
 }
 pub(crate) struct Composer {
     doc: Option<Document>,
     at_directives: bool,
-    prelude: Vec<JsString>,
+    prelude: Prelude,
     errors: Vec<Diagnostic>,
     warnings: Vec<Diagnostic>,
     directives: Directives,
@@ -68,7 +73,7 @@ impl Composer {
         Self {
             doc: None,
             at_directives: false,
-            prelude: Vec::new(),
+            prelude: Prelude::default(),
             errors: Vec::new(),
             warnings: Vec::new(),
             directives: Directives::default(),
@@ -77,6 +82,12 @@ impl Composer {
             },
             output: Vec::new(),
         }
+    }
+    pub(crate) fn reserve_prelude(&mut self, count: usize) {
+        self.prelude.comment.reserve_exact(count);
+    }
+    pub(crate) fn reserve_documents(&mut self, count: usize) {
+        self.output.reserve_exact(count);
     }
     pub(crate) fn context(&mut self) -> Context {
         let mut directives = self.directives.at_document();
@@ -93,13 +104,13 @@ impl Composer {
             directives,
             schema,
             options: self.options,
-            nodes: Vec::new(),
+            nodes: Vec::with_capacity(1),
             errors: Vec::new(),
             warnings: Vec::new(),
         }
     }
     fn decorate(&mut self, doc: &mut Document, after_doc: bool) {
-        let (comment, after_empty_line) = parse_prelude(&self.prelude);
+        let (comment, after_empty_line) = self.prelude.take();
         if !comment.is_empty() {
             if after_doc {
                 if !doc.comment.is_empty() {
@@ -136,7 +147,6 @@ impl Composer {
             doc.errors = std::mem::take(&mut self.errors);
             doc.warnings = std::mem::take(&mut self.warnings);
         }
-        self.prelude.clear();
     }
     pub fn compose(
         mut self,
@@ -149,7 +159,7 @@ impl Composer {
         }
         self.end(force_doc, end_offset);
         let info = crate::doc::StreamInfo {
-            comment: parse_prelude(&self.prelude).0,
+            comment: self.prelude.take().0,
             directives: self.directives,
             errors: self.errors,
             warnings: self.warnings,
@@ -177,7 +187,7 @@ impl Composer {
             }
             Document => {
                 let ctx = self.context();
-                let mut doc = compose_doc(ctx, &token);
+                let mut doc = compose_doc(ctx, &mut token);
                 // onError is shared upstream: directive errors precede compose errors,
                 // while missing doc-start is reported after composition.
                 if self.at_directives && !doc.directives.doc_start {
@@ -229,7 +239,7 @@ impl Composer {
                     directives: doc.directives.clone(),
                     schema: doc.schema.clone(),
                     options: doc.options,
-                    nodes: Vec::new(),
+                    nodes: Vec::with_capacity(1),
                     errors: Vec::new(),
                     warnings: Vec::new(),
                 };
@@ -267,7 +277,7 @@ impl Composer {
             let ctx = self.context();
             let mut doc = Document {
                 contents: None,
-                nodes: Vec::new(),
+                nodes: Vec::with_capacity(1),
                 directives: ctx.directives,
                 schema: ctx.schema,
                 options: ctx.options,

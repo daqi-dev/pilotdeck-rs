@@ -7,7 +7,7 @@ pub struct Directives {
     pub doc_end: bool,
     pub explicit: bool,
     pub version: &'static str,
-    pub tags: Vec<(JsString, JsString)>,
+    pub tags: std::sync::Arc<Vec<(JsString, JsString)>>,
     at_next_document: bool,
 }
 impl Default for Directives {
@@ -17,7 +17,13 @@ impl Default for Directives {
             doc_end: false,
             explicit: false,
             version: "1.2",
-            tags: vec![("!!".into(), "tag:yaml.org,2002:".into())],
+            tags: {
+                static DEFAULT: std::sync::LazyLock<std::sync::Arc<Vec<(JsString, JsString)>>> =
+                    std::sync::LazyLock::new(|| {
+                        std::sync::Arc::new(vec![("!!".into(), "tag:yaml.org,2002:".into())])
+                    });
+                DEFAULT.clone()
+            },
             at_next_document: false,
         }
     }
@@ -65,10 +71,13 @@ impl Directives {
                     return errors;
                 }
             }
-            if let Some((_, prefix)) = self.tags.iter_mut().find(|(k, _)| *k == args[0]) {
+            if let Some((_, prefix)) = std::sync::Arc::make_mut(&mut self.tags)
+                .iter_mut()
+                .find(|(k, _)| *k == args[0])
+            {
                 *prefix = args[1].clone();
             } else {
-                self.tags.push((args[0].clone(), args[1].clone()));
+                std::sync::Arc::make_mut(&mut self.tags).push((args[0].clone(), args[1].clone()));
             }
         } else if name.equals_str("%YAML") {
             self.explicit = true;

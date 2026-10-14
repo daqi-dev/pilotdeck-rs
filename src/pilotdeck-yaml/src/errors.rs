@@ -38,7 +38,7 @@ impl Diagnostic {
 pub(crate) fn token_pos(token: &Token) -> [usize; 2] {
     [
         token.offset,
-        token.offset + token.source.as_ref().map_or(1, JsString::len_utf16),
+        token.offset + token.source.as_ref().map_or(1, |source| source.len_utf16()),
     ]
 }
 pub(crate) fn prettify_error(src: &JsString, lc: &LineCounter, error: &mut Diagnostic) {
@@ -56,33 +56,45 @@ pub(crate) fn prettify_error(src: &JsString, lc: &LineCounter, error: &mut Diagn
         .copied()
         .unwrap_or(0);
     let end = lc.line_starts.get(line).copied().unwrap_or(src.len_utf16());
-    let mut line_str = slice(src, start, end);
-    let trimmed = line_str
-        .units()
+    // Diagnostics display at most 80 units. Slice the borrowed source first;
+    // copying a whole long line for every error made this loop quadratic.
+    let raw = &src.units()
+        [start.min(src.len_utf16())..end.min(src.len_utf16()).max(start.min(src.len_utf16()))];
+    let trimmed = raw
         .iter()
         .rposition(|c| !matches!(c, 10 | 13))
         .map_or(0, |i| i + 1);
-    line_str = slice(&line_str, 0, trimmed);
-    if ci >= 60 && line_str.len_utf16() > 80 {
-        let trim_start = (ci - 39).min(line_str.len_utf16() - 79);
-        line_str = crate::string::concat(&[
-            &"…".into(),
-            &slice(&line_str, trim_start, line_str.len_utf16()),
-        ]);
+    let mut visible = &raw[..trimmed];
+    let mut display = Vec::new();
+    if ci >= 60 && visible.len() > 80 {
+        let trim_start = (ci - 39).min(visible.len() - 79);
+        visible = &visible[trim_start..];
+        display.push(0x2026);
         ci -= trim_start - 1;
     }
-    if line_str.len_utf16() > 80 {
-        line_str = crate::string::concat(&[&slice(&line_str, 0, 79), &"…".into()]);
+    let truncated = display.len() + visible.len() > 80;
+    let count = if truncated {
+        79 - display.len()
+    } else {
+        visible.len()
+    };
+    display.extend_from_slice(&visible[..count]);
+    if truncated {
+        display.push(0x2026);
     }
+    let mut line_str = JsString::from_utf16(display);
     if line > 1
         && line_str.units()[..ci.min(line_str.len_utf16())]
             .iter()
             .all(|c| *c == 32)
     {
-        let mut prev = slice(src, lc.line_starts[line - 2], lc.line_starts[line - 1]);
-        if prev.len_utf16() > 80 {
-            prev = crate::string::concat(&[&slice(&prev, 0, 79), &"…\n".into()]);
-        }
+        let prev_start = lc.line_starts[line - 2];
+        let prev_end = lc.line_starts[line - 1];
+        let prev = if prev_end - prev_start > 80 {
+            crate::string::concat(&[&slice(src, prev_start, prev_start + 79), &"…\n".into()])
+        } else {
+            slice(src, prev_start, prev_end)
+        };
         line_str = crate::string::concat(&[&prev, &line_str]);
     }
     if line_str.units().iter().any(|c| *c != 32) {

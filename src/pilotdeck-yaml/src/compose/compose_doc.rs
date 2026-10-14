@@ -1,7 +1,7 @@
 // Port of yaml@2.9.0 dist/compose/compose-doc.js (ISC).
 use super::{
     Context,
-    compose_node::{compose_empty_node, compose_node},
+    compose_node::{compose_empty_node, compose_owned_node},
     resolve_end::resolve_end,
     resolve_props::{PropOptions, resolve_props},
 };
@@ -9,14 +9,16 @@ use crate::{
     doc::Document,
     parse::cst::{Token, TokenType::*},
 };
-pub(super) fn compose_doc(ctx: Context, token: &Token) -> Document {
+pub(super) fn compose_doc(ctx: Context, token: &mut Token) -> Document {
     crate::stack::with_large_stack(token.nesting_depth_exceeds(64), || {
         compose_doc_inner(ctx, token)
     })
 }
-fn compose_doc_inner(mut ctx: Context, token: &Token) -> Document {
+fn compose_doc_inner(mut ctx: Context, token: &mut Token) -> Document {
     ctx.depth_limit = crate::stack::compose_limit(token);
-    let value = token.value.as_deref();
+    ctx.nodes
+        .reserve_exact(token.value.as_deref().map_or(1, Token::node_capacity));
+    let mut value = token.value.take();
     let end = token.end.as_deref().unwrap_or_default();
     let props = resolve_props(
         &mut ctx,
@@ -24,7 +26,7 @@ fn compose_doc_inner(mut ctx: Context, token: &Token) -> Document {
         PropOptions {
             flow: None,
             indicator: DocStart,
-            next: value.or_else(|| end.first()),
+            next: value.as_deref().or_else(|| end.first()),
             offset: token.offset,
             parent_indent: 0,
             start_on_newline: true,
@@ -32,7 +34,11 @@ fn compose_doc_inner(mut ctx: Context, token: &Token) -> Document {
     );
     if props.found.is_some() {
         ctx.directives.doc_start = true;
-        if value.is_some_and(|v| matches!(v.kind, BlockMap | BlockSeq)) && !props.has_newline {
+        if value
+            .as_deref()
+            .is_some_and(|v| matches!(v.kind, BlockMap | BlockSeq))
+            && !props.has_newline
+        {
             ctx.at(
                 props.end,
                 "MISSING_CHAR",
@@ -40,8 +46,8 @@ fn compose_doc_inner(mut ctx: Context, token: &Token) -> Document {
             );
         }
     }
-    let contents = if let Some(value) = value {
-        compose_node(&mut ctx, value, &props)
+    let contents = if let Some(value) = &mut value {
+        compose_owned_node(&mut ctx, std::sync::Arc::make_mut(value), &props)
     } else {
         compose_empty_node(&mut ctx, props.end, &token.start, &props)
     };

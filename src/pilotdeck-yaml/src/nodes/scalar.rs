@@ -5,7 +5,7 @@ pub enum ScalarValue {
     Null,
     Bool(bool),
     Number(f64),
-    String(JsString),
+    String(std::sync::Arc<JsString>),
     Binary(Vec<u8>),
     Timestamp(i64),
     Merge,

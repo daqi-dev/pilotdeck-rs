@@ -30,7 +30,7 @@ pub fn resolve_as_scalar(token: &Token) -> Option<ScalarResolution> {
         error.pos[1] = error.pos[0] + 1;
     }
     Some(ScalarResolution {
-        value: scalar.value,
+        value: scalar.value.as_ref().clone(),
         style: scalar.style,
         comment: scalar.comment,
         range: scalar.range,

@@ -118,35 +118,33 @@ fn tokens(v: &JsValue) -> Vec<Token> {
 }
 fn token(v: &JsValue) -> Token {
     let kind = kinds(string(prop(v, "type")));
-    Token {
-        kind,
-        offset: prop(v, "offset").as_number().unwrap() as usize,
-        indent: v.get("indent").map(|v| v.as_number().unwrap() as usize),
-        source: v.get("source").map(|v| string(v).clone()),
-        start: if kind == TokenType::Document {
-            tokens(prop(v, "start"))
-        } else {
-            Vec::new()
-        },
-        flow_start: if kind == TokenType::FlowCollection {
-            Some(std::sync::Arc::new(token(prop(v, "start"))))
-        } else {
-            None
-        },
-        items: v
-            .get("items")
-            .map(|v| {
-                let JsValue::Array(a) = v else {
-                    panic!("items")
-                };
-                a.iter().map(collection_item).collect()
-            })
-            .unwrap_or_default(),
-        props: v.get("props").map(tokens).unwrap_or_default(),
-        end: v.get("end").map(tokens),
-        value: v.get("value").map(|v| std::sync::Arc::new(token(v))),
-        message: v.get("message").map(|v| string(v).clone()),
+    let mut out = Token::new(kind, prop(v, "offset").as_number().unwrap() as usize);
+    out.indent = v.get("indent").map(|v| v.as_number().unwrap() as usize);
+    out.source = v
+        .get("source")
+        .map(|v| std::sync::Arc::new(string(v).clone()));
+    if kind == TokenType::Document {
+        out.start = tokens(prop(v, "start"));
     }
+    if kind == TokenType::FlowCollection {
+        out.flow_start = Some(std::sync::Arc::new(token(prop(v, "start"))));
+    }
+    if let Some(JsValue::Array(items)) = v.get("items") {
+        out.items = items.iter().map(collection_item).collect();
+    }
+    if let Some(props) = v.get("props") {
+        out.props = tokens(props);
+    }
+    if let Some(end) = v.get("end") {
+        out.end = Some(tokens(end));
+    }
+    if let Some(value) = v.get("value") {
+        out.value = Some(std::sync::Arc::new(token(value)));
+    }
+    if let Some(message) = v.get("message") {
+        out.message = Some(string(message).clone());
+    }
+    out
 }
 fn collection_item(v: &JsValue) -> CollectionItem {
     CollectionItem {
@@ -267,7 +265,10 @@ fn graph(g: &ValueGraph) -> JsValue {
             }
             YValue::String(v) => object(vec![
                 ("type", s("string")),
-                ("json", s(stringify_json(&s(v.clone())).unwrap().unwrap())),
+                (
+                    "json",
+                    s(stringify_json(&s(v.as_ref().clone())).unwrap().unwrap()),
+                ),
             ]),
             YValue::Symbol { description: v, .. } => object(vec![
                 ("type", s("symbol")),
@@ -610,6 +611,26 @@ fn all_document_values_and_metadata_match_recordings() {
                 ..Default::default()
             },
         );
+        let expected_lines = prop(case, "lineStarts");
+        let actual_lines = JsValue::Array(docs.first().map_or_else(Vec::new, |doc| {
+            doc.line_counter
+                .line_starts
+                .iter()
+                .map(|n| JsValue::Number(*n as f64))
+                .collect()
+        }));
+        if !docs.is_empty() {
+            assert_eq!(
+                diff(&actual_lines, expected_lines, "allDocumentLines"),
+                None
+            );
+            for doc in docs.iter().skip(1) {
+                assert!(std::sync::Arc::ptr_eq(
+                    &docs[0].line_counter,
+                    &doc.line_counter
+                ));
+            }
+        }
         let mut entries = vec![
             (
                 "documents",

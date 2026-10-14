@@ -3,7 +3,7 @@ use super::Context;
 use crate::{
     errors::token_pos,
     parse::cst::{Token, TokenType, TokenType::*},
-    string::{append, concat, slice},
+    string::concat,
 };
 use pilotdeck_protocol::JsString;
 #[derive(Clone, Debug, Default)]
@@ -39,7 +39,8 @@ pub(super) fn resolve_props(ctx: &mut Context, tokens: &[Token], opts: PropOptio
     let mut p = Props::default();
     let mut at_newline = start_on_newline;
     let mut has_space = start_on_newline;
-    let mut comment_sep = JsString::default();
+    let mut comment = Vec::new();
+    let mut comment_sep = Vec::new();
     let mut req_space = false;
     let mut tab: Option<&Token> = None;
     let mut start = None;
@@ -79,29 +80,26 @@ pub(super) fn resolve_props(ctx: &mut Context, tokens: &[Token], opts: PropOptio
                         "Comments must be separated from other tokens by white space characters",
                     );
                 }
-                let cb = if source.len_utf16() > 1 {
-                    slice(source, 1, source.len_utf16())
-                } else {
-                    " ".into()
-                };
-                if p.comment.is_empty() {
-                    p.comment = cb;
-                } else {
-                    append(&mut p.comment, &comment_sep);
-                    append(&mut p.comment, &cb);
+                if !comment.is_empty() {
+                    comment.extend_from_slice(&comment_sep);
                 }
-                comment_sep = JsString::default();
+                if source.len_utf16() > 1 {
+                    comment.extend_from_slice(&source.units()[1..]);
+                } else {
+                    comment.push(32);
+                }
+                comment_sep.clear();
                 at_newline = false;
             }
             Newline => {
                 if at_newline {
-                    if !p.comment.is_empty() {
-                        append(&mut p.comment, source);
+                    if !comment.is_empty() {
+                        comment.extend_from_slice(source.units());
                     } else if p.found.is_none() || indicator != SeqItemInd {
                         p.space_before = true;
                     }
                 } else {
-                    append(&mut comment_sep, source);
+                    comment_sep.extend_from_slice(source.units());
                 }
                 at_newline = true;
                 p.has_newline = true;
@@ -210,6 +208,7 @@ pub(super) fn resolve_props(ctx: &mut Context, tokens: &[Token], opts: PropOptio
     {
         ctx.token_error(tab, "TAB_AS_INDENT", "Tabs are not allowed as indentation");
     }
+    p.comment = JsString::from_utf16(comment);
     p.start = start.unwrap_or(p.end);
     p
 }

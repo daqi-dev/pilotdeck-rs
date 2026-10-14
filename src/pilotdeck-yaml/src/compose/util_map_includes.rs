@@ -14,3 +14,32 @@ pub(super) fn map_includes(ctx: &Context, items: &[Pair], search: NodeId) -> boo
             }
     })
 }
+
+#[derive(Hash, PartialEq, Eq)]
+enum PrimitiveKey {
+    Null,
+    Bool(bool),
+    Number(u64),
+    String(std::sync::Arc<pilotdeck_protocol::JsString>),
+}
+pub(super) struct MapKeys(Option<std::collections::HashSet<PrimitiveKey>>);
+impl MapKeys {
+    pub fn new(count: usize) -> Self {
+        Self((count >= 16).then(|| std::collections::HashSet::with_capacity(count)))
+    }
+    pub fn includes(&mut self, ctx: &Context, items: &[Pair], search: NodeId) -> bool {
+        let Some(keys) = &mut self.0 else {
+            return map_includes(ctx, items, search);
+        };
+        let key = match &ctx.nodes[search].kind {
+            NodeKind::Scalar(ScalarValue::Null) => PrimitiveKey::Null,
+            NodeKind::Scalar(ScalarValue::Bool(value)) => PrimitiveKey::Bool(*value),
+            NodeKind::Scalar(ScalarValue::String(value)) => PrimitiveKey::String(value.clone()),
+            NodeKind::Scalar(ScalarValue::Number(value)) if !value.is_nan() => {
+                PrimitiveKey::Number(if *value == 0.0 { 0 } else { value.to_bits() })
+            }
+            _ => return false,
+        };
+        !keys.insert(key)
+    }
+}
