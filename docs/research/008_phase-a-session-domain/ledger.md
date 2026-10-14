@@ -11,6 +11,10 @@ status: 静态账本完成；未闭合依赖显式 BLOCKED
 
 正本为 [ledger.json](../../../specs/gateway-coverage/ledger.json)，验证入口为 [check_ledger.py](../../../scripts/gateway-coverage/check_ledger.py)。本页只解释口径与更正，不复制逐方法数据。只读基线 `B/` 为 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck/`，已核实 HEAD 为冻结 commit `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`；未运行基线。
 
+**口径（自决·待复核）**：账本是**规划索引**。下游 A6/A7/A8 每个 PR 动手前必须复核所涉 method 的 provider/state/guard/error，并回写账本。校验器负责结构完整（集合、行号、领域码扫描、默认构造点）；单项语义细节由下游复核兜底，后续同类细节漏写按 P2 处理。
+
+**「默认」的唯一定义**：`B/src/cli/pilotdeck.ts:107`–`B/src/cli/pilotdeck.ts:116` 的 `createLocalGateway` 调用，只传 projectRoot/pilotHome/env/fallbackProjectRoot/initialAutomation/telemetry/sessionCatalog/sessionDataPlane。userDialogStore、alwaysOnStorageProvider、executionWorldBundleFactory 等宿主可选注入不算默认。provider 的默认声明必须有从此根追到的装配证据；仅有接口或测试构造不能作默认构造点。
+
 ## 分母与状态
 
 **总账为 101 项，不是 91 项。** 冻结 schema 的 `definitions.WsGatewayMethod.enum`、`gateway-methods.snapshot.json` 与研究 005 的 101 行清单集合完全相同，无缺项、额外项或重复项。分类为 **(a)10 + (b)46 + (c)4 + 待定41**。任务中的 91 是排除 A4 的 10 项后的剩余量；为满足全清单校验，本账本保留 A4 行，不更改冻结分类。
@@ -68,13 +72,13 @@ snapshot 证据：`B/src/storage/workspaceSnapshot.ts:25`、`B/src/storage/works
 
 17. **S1/S3 逐入口防护不同**：只有 session model set/clear 调用 `reserveTranscriptWrite`（`B/src/gateway/client/InProcessGateway.ts:2193`、`B/src/gateway/client/InProcessGateway.ts:2203`）。restore 用 `restoringSessionKeys`、session/active-turn 与 transcriptExists 检查（`B/src/cli/createLocalGateway.ts:995`、`B/src/cli/createLocalGateway.ts:1315`、`B/src/cli/createLocalGateway.ts:1367`）；Set 的检查和 add 之间存在 await，不称为原子 reservation。export 只有 active-turn 检查；delete 先 close；rename/tag 分别检查 busy 再写 metadata。fork 无统一 reservation；read_session_messages 用三次 epoch 同步，replace/finalize 才进入 replacement 事务。
 18. **领域码不能用 unavailable 代替**：restore 补 SESSION_BUSY / SESSION_RESTORE_CONFLICT / SESSION_RESTORE_UNSUPPORTED / INVALID_SESSION_ARCHIVE 等；export 补缺失、损坏、空 transcript 与 archive 校验；delete/rename/tag 补真实项目/会话码。默认 CLI 已注入这些 provider，IPG 的 CAPABILITY_UNAVAILABLE 仅对应自定义未注入装配。artifact 缺失实际抛出行是 `B/src/cli/createLocalGateway.ts:1228`（`B/src/cli/createLocalGateway.ts:1226` 是读取语句），已补 ARCHIVE_ARTIFACT_NOT_FOUND。
-19. **三项静态闭合**：user_dialog_release 依次为 live bus `B/src/gateway/user-dialog/GatewayUserDialogBus.ts:178` → CLI hosted adapter `B/src/cli/createLocalGateway.ts:1438` → registry `B/src/cli/ProjectRuntimeRegistry.ts:597` → file store `B/src/gateway/user-dialog/FileGatewayUserDialogStore.ts:175`，文件锁 finally 在 `B/src/gateway/user-dialog/FileGatewayUserDialogStore.ts:299`；background_tasks 真正查询逻辑在 `B/src/cli/ProjectRuntimeRegistry.ts:1729`，不是 stopAndWait；always_on_rerun_plan 经 Manager `B/src/always-on/runtime/AlwaysOnManager.ts:185`、Runtime `B/src/always-on/runtime/AlwaysOnRuntime.ts:317`、DiscoveryFire `B/src/always-on/runtime/DiscoveryFire.ts:332`，回收见 `B/src/always-on/runtime/AlwaysOnRuntime.ts:406`、`B/src/always-on/runtime/DiscoveryFire.ts:440`。这三行改 READY，表示可静态安排场景，不表示外部模型成功或动态时序通过。
+19. **三项 READY 经第3轮修正**：user_dialog_release 默认 bus 未命中后先解析项目，再因 store undefined 返回 released:false；FileGatewayUserDialogStore 只属宿主可选注入。background_tasks 调 registry.resolve，可能懒创建项目 runtime 并启动 watcher，也可能因配置或 disposed 报错。always_on_rerun_plan 的显式失败结果与无 catch 异常传播分别登记；只有已经进入 try 的 phase 才执行其 finally，可能残留 ready/executing 状态，跳过完成/history，workspace 不自动回收。修正后的 READY 仍只表示可安排下游夹具，不表示外部模型成功或动态时序通过。
 20. **GLM 两项 P2**：fork 的 bundle 入口改为 `B/src/cli/GatewaySessionHistoryBundle.ts:150`；`B/src/cli/GatewaySessionHistoryBundle.ts:137` 是 readSubagentMessages。输入哈希加入 gap.md（工作包来源）与 plan 005（owner 权威），owner=A6 或错配 owner 均 FAIL。
 21. **其余方法也回源**：上传、command catalog、模型选择、SDK settings、SOP/approval、skills HTTP/native 与 replacement 下游错误都按函数登记。源码中的动态 `errorByField` 映射人工展开；远端 response.code 与轮次 event.code 明记为动态集合，尖括号占位不是新的协议码。无业务错误的 resume_session/new_session/supported_agents/describe_server/active_turn_snapshot 不再凭运输兜底制造业务分支。
 
-## 第 2 轮：扫描范围与方法
+## 第 2 轮历史：扫描范围与方法（已由第3轮替代）
 
-本轮覆盖 **101/101 method**。每行的 `provider`、`state`、`guard` 是独立回源的说明；每个字段都有101个不同摘要，不使用工作包级模板。`source_audit.functions` 逐行列 handler/provider/callee 的**完整函数起止锚点、symbol、role、范围 sha256**，共1294个 method–函数关联、734个不同范围。起止同一行时只列一个锚点。分支记录共改动87个 method，其中76个新增错误/拒绝码记录，其余11个澄清普通异常与 string code 的运输区别；逐方法新增码与改动统计见 RESULT 第2轮及其 JSON 附件。
+第2轮覆盖 **101/101 method**。其自报范围/hash与同名 inline provider 检查存在可绕过边界：缩范围并重算 hash、删 callee、加虚构码可 PASS。以下是当轮方法记录，不是当前校验器保证。第3轮已替换扫描器。每行的 `provider`、`state`、`guard` 是独立回源的说明；每个字段都有101个不同摘要，不使用工作包级模板。`source_audit.functions` 逐行列 handler/provider/callee 的**完整函数起止锚点、symbol、role、范围 sha256**，共1294个 method–函数关联、734个不同范围。起止同一行时只列一个锚点。分支记录共改动87个 method，其中76个新增错误/拒绝码记录，其余11个澄清普通异常与 string code 的运输区别；逐方法新增码与改动统计见 RESULT 第2轮及其 JSON 附件。
 
 校验器只使用 Python 标准库，按以下顺序扫描：
 
@@ -86,6 +90,77 @@ snapshot 证据：`B/src/storage/workspaceSnapshot.ts:25`、`B/src/storage/works
 
 扫描边界必须清楚：这是固定源码的有界词法检查，**不是 TypeScript 类型/控制流/全调用图证明**。间接 callee 及普通 Error 被 catch 后的转换由回源审阅决定；`errorByField[field]`、`error.code`、Node errno、SDK/外部 provider 与模型轮次的动态错误集合不能仅靠字面量扫描枚举。账本已人工补字段映射与后备码，明确标出动态传播和仍缺的具体宿主证据。未来源码改变会先由 file/range hash 拦截；扩充扫描范围与传播结论后才可更新账本。运行时状态、外部部署、真实网络和竞态仍交 A5.2/A6 场景，本轮没有启动服务。
 
+## 第 3 轮：独立函数边界、默认装配与自动扫描
+
+校验器从源码构建 AST 和静态调用图，不读取账本的终点/hash来决定扫描范围。账本的完整范围、hash、provider 起点、构造点与深度只作交叉校验；缩到首行并重算 hash 仍 FAIL。Python 驱动只用标准库，解析现在使用冻结基线**已有**的 Node/TypeScript 5.9.3；不下载依赖、不执行/import 产品代码、不启动服务，依赖缺失或解析失败即 FAIL。这一依赖变化替代了第2轮「纯 Python 标准库」保证。
+
+1. **边界**：TypeScript parser 对函数声明、方法、箭头表达式、function expression 与 code-bearing Error 类求真实起止。字符串、模板插值、注释和正则字面量由 parser 处理；注释/正则中的伪括号与伪码不作为代码节点。source_audit 中自动扩展的函数按行压成一条完整 JSON 记录，便于审阅，数据未删减。
+2. **装配**：从 WS case 独立解析 method→IPG member；解引用 import/局部变量、属性简写、对象/spread、三元与 ??/||、new 的具体类、构造参数/this 字段、工厂返回值。IPG 的构造参数只使用 createLocalGateway 的构造点，createLocalGateway 的 options 只使用 CLI 上述调用。运行时 setter 采用显式、固定的静态规则追 setAlwaysOnControl/setPrepareWeixinLogin/updateSubsystems/publishGeneration；接口签名不作 provider，不从账本猜实现。
+3. **调用界限**：从 IPG handler 起固定 **8 跳**（账本不能改深度）。前两跳发现 provider 候选；余下层数覆盖 provider→registry→resolve/buildRuntime→resources.stage→loadPilotConfig→parser/validator 这类默认懒创建链。8 跳是静态扫描预算，不是全仓类型/控制流可达证明；回调与分支保守取并集，表达式解引用另有30节点循环护栏。到界限后不宣称所有远端/动态调用已闭合，仍交下游复核。账本另列的补充函数也独立求边界与扫字面量，删除自动发现 callee 会 FAIL；手工范围不能缩小自动扫描集合。
+4. **默认 provider**：101项中97项自动发现 provider；4项校验器内白名单与账本理由必须精确一致：manager_browsers（默认无宿主注入）、resume_session（纯身份返回）、new_session（UUID，node:crypto builtin）、supported_agents（静态返回）。删除白名单、加任意跳过项或清空理由均 FAIL。default_boot/default_constructions/automatic_providers 与 provider.default_refs 由源码独立派生，伪造 FileGatewayUserDialogStore 默认构造点 FAIL；该文件补充范围统一 optional:true。每个范围另有源码核定的 assembly：automatic_default/code_definition/optional_host/supplemental_review；补充或可选范围伪称默认会 FAIL。
+5. **领域码双向核验**：扫描所有声明了或继承 code 的 Error 类，按实际 constructor 参数位置识别；另扫描固定 code 字段/getter、this.code 赋值与条件/??/||后备字面量、super 的继承码、结构化 code 属性，以及 sopStateError/controlError/transportError/authorityError 与审批 failure/reject 工厂。扫到的码都须登记；登记的静态码都须在独立范围内有字面量。TOTALLY_FAKE_CODE FAIL。动态 error.code/response.code/event.code、Node errno，以及 N/A 无领域错误边界必须 dynamic:true 并提供 origin.refs 与该行真实 producing expression；缺位置、范围外位置或编造表达式均 FAIL。common WS handleRequest 是独立求界限的运输字面量/动态 origin 边界，不把整个 WS switch 的其他 method 领域码串到本项。
+6. **语义护栏**：自动图包含 IPG.closeSession/router.close/onSessionEvict 时 state.effects 必须列出其授权、permission mode、reconnect owner/dialog key 与 agent 逐出副作用；含 registry.resolve 时 lifecycle.effects 必须登记可能懒创建 runtime/watcher。漏项分别报 close_state_effects/lazy_runtime_lifecycle。这些结构字段同时有源码锚点与中文说明，不能代替后续动态验证。
+
+本轮 scope 扩张后，58项新增4045条 method–code 登记（207个不同 code，含2个显式动态边界）；新增项使用 `observed: lexical` 标识，说明是函数扫描观察，**内部 catch/转换、条件分支与 WS 可达性必须再复核**。不把配置检查/cron 内部事件全部声称为 RPC 顶层抛码。background_tasks 已包含 CONFIG_INVALID_VALUE、CONFIG_MEMORY_*、CONFIG_AGENT_SUBAGENTS_INVALID 等默认懒创建失败；update_settings 覆盖写盘后 reload 的配置失败。逐方法完整增补清单见 RESULT「第3轮」与其 round3-changes JSON。
+
+### Error 类清单
+
+全仓自有源码 grep 找到65条 `class …Error` 记录；排除3条生成/声明副本与非 Error 子类的 ToolRendererErrorBoundary 后，独立 AST 清单有61个 Error 类，其中39个声明或继承 code。所有61项均写入 ledger.error_classes 并校验源码位置、继承关系、code 标记与参数位置；换新类名不会落出手写正则。下表逐个列出39项。参数位置从1开始；「字段/对象/继承」通过类完整补充范围、构造函数与 code 属性规则识别，动态值保留 origin。
+
+| Error 类 | code 来源规则 | 声明锚点 |
+|---|---|---|
+| `ModelConfigError` | constructor 第1参 | `B/src/model/protocol/errors.ts:154` |
+| `ModelRequestError` | constructor 第1参 | `B/src/model/protocol/errors.ts:166` |
+| `NetworkFetchError` | constructor 第1参 | `B/src/network/fetch.ts:15` |
+| `SandboxUnavailableError` | 字段/对象参数/继承 super（动态或固定码） | `B/src/tool/execution-world/SandboxPort.ts:54` |
+| `AgentRuntimeError` | constructor 第1参 | `B/src/agent/protocol/errors.ts:25` |
+| `LspError` | constructor 第2参 | `B/src/lsp/protocol/errors.ts:11` |
+| `PilotDeckToolRuntimeError` | constructor 第1参 | `B/src/tool/protocol/errors.ts:27` |
+| `PilotDeckLifecycleRuntimeError` | constructor 第1参 | `B/src/lifecycle/protocol/errors.ts:1` |
+| `PilotSdkSessionSettingsError` | constructor 第1参 | `B/src/pilot/config/sdkSessionSettings.ts:67` |
+| `PilotLocalSettingsError` | constructor 第1参 | `B/src/pilot/config/updateLocalSettings.ts:89` |
+| `PilotConfigError` | constructor 第1参 | `B/src/pilot/config/types.ts:312` |
+| `RouterConfigError` | constructor 第1参 | `B/src/router/protocol/errors.ts:1` |
+| `RouterRuntimeError` | constructor 第1参 | `B/src/router/protocol/errors.ts:13` |
+| `SessionEventValidationError` | constructor 第1参 | `B/src/session/events/SessionEventLogValidation.ts:12` |
+| `SessionDomainValidationError` | constructor 第1参 | `B/src/session/events/SessionDomainValidation.ts:29` |
+| `NodeProjectSessionReplacementError` | constructor 第1参 | `B/src/session/replacement/NodeProjectSessionReplacementPort.ts:46` |
+| `AgentLoopResultUnknownError` | 字段/对象参数/继承 super（动态或固定码） | `B/src/agent/modules/transport/operationLedger.ts:77` |
+| `McpClientError` | constructor 第2参 | `B/src/mcp/client/McpClient.ts:61` |
+| `DialogGatewayError` | constructor 第1参 | `B/src/gateway/dialog/errors.ts:1` |
+| `SkillManagerError` | constructor 第1参 | `B/src/extension/skills/SkillManager.ts:489` |
+| `SkillValidationError` | 字段/对象参数/继承 super（动态或固定码） | `B/src/extension/skills/SkillManager.ts:501` |
+| `RunRegistryError` | constructor 第1参 | `B/src/gateway/run/RunRegistry.ts:34` |
+| `GatewayRequestError` | constructor 第1参 | `B/src/gateway/client/GatewayWsClient.ts:20` |
+| `HttpStoreValidationError` | constructor 第1参 | `B/src/gateway/user-dialog/HttpGatewayUserDialogStore.ts:571` |
+| `AlwaysOnError` | constructor 第1参 | `B/src/always-on/protocol/errors.ts:13` |
+| `ForkSessionError` | constructor 第1参 | `B/src/web/server/forkSession.ts:331` |
+| `ReplaceLastTurnError` | constructor 第1参 | `B/src/web/server/replaceLastTurn.ts:48` |
+| `SessionExecutionProviderError` | constructor 第2参 | `B/src/sandbox/SessionExecutionProvider.ts:88` |
+| `StaffDeckSopClientError` | constructor 第1参 | `B/src/sop/staffdeck/StaffDeckSopClient.ts:23` |
+| `StaffDeckSopDiscoveryClientError` | constructor 第1参 | `B/src/sop/staffdeck/StaffDeckSopDiscoveryClient.ts:5` |
+| `SessionStoreError` | constructor 第1参 | `B/packages/sdk/src/session-store.ts:26` |
+| `PilotDeckError` | 字段/对象参数/继承 super（动态或固定码） | `B/packages/sdk/src/types.ts:1165` |
+| `AbortError` | 字段/对象参数/继承 super（动态或固定码） | `B/packages/sdk/src/types.ts:1186` |
+| `ApprovalAuthorityError` | constructor 第2参 | `B/ui/server/staffdeck-approval-authority.mjs:2` |
+| `PublicKnowledgeModelError` | constructor 第1参 | `B/ui/server/public-knowledge-model-selection.mjs:4` |
+| `CopyError` | constructor 第2参 | `B/ui/server/routes/staffdeck-copy.js:7` |
+| `PublicCapabilityError` | constructor 第1参 | `B/ui/server/staffdeck-public-capabilities.mjs:3` |
+| `ApiError` | 字段/对象参数/继承 super（动态或固定码） | `B/ui/src/composition/modules/staffdeck/vendor/FormalApiError.ts:2` |
+| `SpreadsheetProtocolError` | constructor 第2参 | `B/skills/spreadsheets/scripts/spreadsheet_cli.mjs:70` |
+
+不带 code 的22类也受清单漂移检查；其 message/name 不作为领域码：`ModelProviderError`、`StreamIdleTimeoutError`、`IncompleteStreamError`、`MaxStreamingDurationError`、`RepeatedStreamingChunkError`、`BackgroundTaskSnapshotRecoveryError`、`BackgroundTaskStateUnknownError`、`WebFetchHttpError`、`GoalConflictError`、`TokenSaverTimeoutError`、`ProjectSessionCatalogUnavailableError`、`ProjectSessionForkUnavailableError`、`ProjectSessionReplacementUnavailableError`、`ProjectSessionSearchUnavailableError`、`SidecarInstanceRestartedError`、`SidecarAbortError`、`CompactionPersistenceError`、`WorkspaceBoundaryError`、`MemoryBundleValidationError`、`InvalidWorkflowDefinitionError`、`WorkflowRunBindingError`、`RestartTimeoutError`。
+
+### 第3轮已核语义更正
+
+- user_dialog_respond：默认 journal 位于 <transcriptPath>.dialogs.json，恢复写 transcript；注入 FileGatewayUserDialogStore 另列。live bus 的 lease_required 与 store lease 不符 false 后可 fallback/recover 分开；补 ephemeral/in-flight/session queue/purpose 去重，四种返回形态，PROJECT_NOT_FOUND 先于 peek，以及 consume 后 acknowledge 抛错时 pending 已丢失。A6.8 拟夹具必须断言这些基线行为。
+- user_dialog_release：默认 store undefined 的 released:false 路径、expired lease 即使 release=false 也可能通知；宿主文件 store 的 open(wx)/rm 文件锁据实登记。注入异常单列 dynamic_boundary。
+- mcp_server_reconnect：补 IPG.closeSession 删除会话授权、mode、reconnect owner/dialog key 与 router agent 逐出；success 锚点1290；CAPABILITY_UNAVAILABLE 仅 unconfigured。
+- update_settings：文件已改但 reload 失败 snapshot 未换；补配置码、mkdtemp try 外、临时 writeFile 包装、本方法 normalize 前置拦截、无更新锁、reload 合并，以及 SDK config hook/broadcast 锚点。
+- session_model_clear：reservation 最早可拒绝，随后项目→sessionKey→active turn；补共用写锁。state 改成关闭/逐出与清 mode，保留会话授权；缺 projectKey 的 Node ERR_INVALID_ARG_TYPE 为动态码；修 WS 锚点223/251。
+- background_tasks：可能创建/缓存 runtime/watcher，配置失败保留原码，disposed 普通异常走 WS 兜底。always_on_rerun_plan：补默认 native plan/state/cycle/report 与 workspace tool 审计；无 catch 的 phase 失败、状态残留、未执行 completion/history 与未回收 workspace；复用/legacy 跳过 cwd safety；workspace_unavailable 与 workspace_prepare_failed 分清。
+- elicitation_respond 的 delivered:false 移到成功/拒绝返回说明，error=[]；补 bus 与 reconnect 的双 binding 匹配。并修正 permission_decide/grant_session_permission 同类的非 code 返回值；project_file_read 改为默认 CLI inline provider，IPG 内建路径只属 fallback，new_session 的默认 uuid 明确为 node:crypto。
+
 ## 验证与维护
 
 ```sh
@@ -94,8 +169,26 @@ python3 scripts/gateway-parity/check_frozen.py
 git diff --check
 ```
 
-校验器只用标准库，默认从 checkout 及祖先目录寻找 `resources/PilotDeck`，也可传 `--baseline /path/to/PilotDeck`。缺少基线或源码漂移均 FAIL，不降级跳过。它验证三方 method 集合、重复、冻结类别、工作包及 owner 映射、必填字段、每个源码锚点边界、引用文件哈希及冻结协议源哈希，并检查场景确实在对应 A2 driver 分支中调用该 method。JSON 输出含 READY/BLOCKED、owner 与引用统计。
+校验器仍核三方 method 集合、冻结类别、owner、字段、每处锚点、引用文件与输入哈希、A2场景调用。默认从 checkout/祖先寻找只读 resources/PilotDeck，可显式 --baseline。每次验证执行38项内存负例，必须命中指定错误类型；另有6项共用生产规则的解析/改名 Error 夹具。第3轮新增缩范围+重算hash+删callee、删除callee、虚构码、改成原正则未覆盖的新code类/未定义类、白名单篡改、缺关闭副作用/懒创建、可选store伪称默认与缺动态origin。独立CLI副本负例的退出码另存 RESULT 附件。
 
-每次正常验证同时对内存副本做 **25 项负例**：原7项（删除/重复 method、行号越界、缺 owner、缺场景、改类别、虚构场景）；6种 owner 错配（含 A4、U9/U10 与禁用 A6）；provider 只剩未配置码、漏单个领域码；同段 prose 中有效引用混入无行号路径/裸文件名/零行号/坏后缀/越界行号；缺扫描字段、缩短函数范围、删除默认 provider 扫描；gap/plan 输入哈希漂移。每项必须命中预定错误类型，原账本与基线不写回。
+机器保证结构与扫描完整性；不证明每段中文语义、动态竞态或远端部署。下游每个 PR 前复核是规划索引的必要维护步骤。没有运行 A2/A5 服务对拍；READY/BLOCKED 仍为46/55。原始结果与完整新码清单在 `_tmp/RESULT.md` 第3轮。
 
-机器核实锚点、输入与源码未漂移，并在已核完整函数范围内比对错误码字面量；它仍不能代替“此行支持此结论”的源码审阅。动态交错、外部部署行为和全量成功路径仍按 BLOCKED/拟新增场景处理；没有运行 A2/A5 对拍或服务。A6 估算与本次验证原始结果放在任务交付 `_tmp/RESULT.md`。
+## 第4轮：去重后的账本格式
+
+`format_version=2` 只改变存储结构。以第3轮完整文件为参照，展开后所有字段、说明、锚点、动态 origin、数组顺序逐项相同；仍为101项、46 READY / 55 BLOCKED。账本由7,814,247字节降到1,453,876字节；去重未改变扫描的保守并集，也未把 lexical 观察升级为 WS 顶层错误。
+
+- `ranges` 按源文件分表，表内每个稳定 id 对应 `start/end/symbol/sha256`。文件名即该范围的 `file`；SHA256仍为完整函数范围的原值。method 的 `source_audit.functions` 存连续同角色关联的 id 列表、`role/assembly/optional`；连续段的顺序保留原扫描顺序。`provider.default_refs` 和 `automatic_providers` 同样引用范围 id，展开为该范围起点。
+- `error_code_groups` 根据错误记录锚点所在的最内层已登记 AST 函数范围自动分组。只有完整记录一致、产生函数集合一致、使用 method 集合一致的重复 lexical 记录才成组；没有按 CONFIG_/TOOLS_ 等码前缀手工归类。组名来自产生函数名，多个产生函数时带 `chain`；`source_ranges` 给出全部产生位置和函数入口。保留本方法独立说明的记录放在 `specific`。
+- `branches.error.groups` 引用组；`specific` 放其余完整记录。展开时先按引用顺序拼接各组，再接 `specific`；`order` 是此临时列表的下标排列，精确恢复第3轮错误分支的原顺序，不删码、不合并不同说明。
+- 重复构造点、审计说明也分别放入 `construction_points`、`audit_texts`。`error_summaries` 存从原说明逐字提取的前缀/后缀，`summary.template` 在展开时插入该记录的 `code`，得到原说明；没有改写文案。
+- 所有对象键稳定排序；嵌套缩进为2空格。完整证据对象、范围行、角色关联段和标量列表各占一行。id 由原内容或范围位置的 SHA256 前32位编码得到，生成器检查冲突，冲突会失败；不随方法遍历次序编号。
+
+转换工具为 `scripts/gateway-coverage/ledger_format.py`。下游 PR 可先展开到 `_tmp/` 修改受影响记录，再重新提取表与组；转换器在写出前要求无损往返。对账本直接改表或引用也可，但必须通过同一校验器。
+
+```sh
+python3 scripts/gateway-coverage/ledger_format.py --expand specs/gateway-coverage/ledger.json --output _tmp/ledger-expanded.json
+python3 scripts/gateway-coverage/ledger_format.py --compact _tmp/ledger-expanded.json --output specs/gateway-coverage/ledger.json
+python3 scripts/gateway-coverage/check_ledger.py
+```
+
+`check_ledger.py` 在执行第3轮的全部检查前展开引用，并拒绝不存在的组/范围、组来源冲突、虚构组内码、重复 JSON 键、遗漏或重复的 `order` 下标等。一次性第3轮对照用 `--compare-expanded _tmp/ledger-round3.json`；默认日常校验不依赖本地快照。完整结果与负例见 `_tmp/RESULT.md` 的「第4轮」。本轮未发现须另列的第3轮语义错误。
