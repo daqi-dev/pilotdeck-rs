@@ -697,6 +697,7 @@ async fn cjk_local_responses_match_node_without_upstream_requests() {
         "../../tests/fixtures/collation/cjk-node22.json"
     ))
     .unwrap();
+    crate::project_files::tests::assert_cjk_fixture_complete(&fixture);
     const CHILD: &str = "PDRS_CJK_PAIR_ROW";
     let rows = fixture["rows"].as_array().unwrap();
     let Ok(index) = std::env::var(CHILD) else {

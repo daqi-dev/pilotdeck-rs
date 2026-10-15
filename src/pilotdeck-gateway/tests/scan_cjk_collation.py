@@ -35,7 +35,7 @@ cmd=['rustc','--edition=2024',str(r/'probe.rs'),'-L','dependency='+str(Path(arti
 for crate in ('icu_collator','icu_locale_core','serde_json'):
  cmd+=['--extern',crate+'='+artifacts[crate]]
 subprocess.run(cmd,check=True)
-env={k:v for k,v in os.environ.items() if not k.startswith('LC_') and k!='LANG'}
+env={k:v for k,v in os.environ.items() if not k.startswith('LC_') and k not in ('LANG', 'PDRS_PROBE_LOCALE')}
 env.update(HOME=str(r/'isolation/home'),XDG_CONFIG_HOME=str(r/'isolation/xdg'),XDG_CACHE_HOME=str(r/'isolation/xdg'),XDG_DATA_HOME=str(r/'isolation/xdg'),TMPDIR=str(r/'isolation/tmp'),SKIP_BROWSER_OPEN='1',PILOTDECK_SKIP_BROWSER_OPEN='1')
 ranges={'Ext-A':(0x3400,0x4dbf),'Basic':(0x4e00,0x9fff),'Ext-B':(0x20000,0x2a6df),'Compatibility':(0xf900,0xfaff),'Compatibility-Supplement':(0x2f800,0x2fa1f),'Radicals-Supplement':(0x2e80,0x2eff),'Kangxi-Radicals':(0x2f00,0x2fdf)}
 inputs=[chr(cp) for a,b in ranges.values() for cp in range(a,b+1)]
