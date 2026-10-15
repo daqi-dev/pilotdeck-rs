@@ -4,6 +4,12 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-16 · D6新main最终验证通过（产品HEAD251da95）
+> **同步**：保留 `codex/d6-pre-main-sync@fb44bb3` 后rebase origin/main@a13a930；保留main YAML Undefined和R20及本候选R18/R19，未merge。原分支与旧证据保留。
+> **最终门**：fmt/clippy通过，gateway111lib+1bin=112通过；含22组真实Node byte→UTF16 CStr共用helper对照、原CJK108本地与新12项精确host边界。污染PDRS_PROBE_LOCALE=zh-TW后的19×71,731新扫描PASS，productionSourceSha256 `78c20b97239536968ce23eeacdd000a899aa0ae4b1ba302985e226d7faf9dd84` 匹配当前源码。
+> **A2-final**：exact Cargo standalone产物、独立target/2jobs/locked/offline；八场景/十readonly/七local PASS。binary前后SHA及runner一致，装置哈希前后相同；两侧自有进程allStopped，无残留/清理错误；仅撤本轮inode/device/target一致的绑定软链，固定路径已不存在。原件主仓 `_tmp/20261016-d6-resume/{final-summary.json,tests-final.log,clippy-final.log,scan-final/,a2-final/}`。
+> **剩余**：交独立GLM/DeepSeek增量终审；未推送/未称阶段完成。原生孤立UTF16 #132、Linux真实非法dirent #133均前置A8/#127；Mac EILSEQ92意味着真实非法dirent未验，22组单元证据不能替代。
+
 > ## 2026-10-16 · D6 R4解码单元补证准备
 > **范围**：新增独立22组Node原始byte→UTF16小fixture，native_entries实际CStr解码改用共用helper（行为仍to_string_lossy）。macOS建非法名EILSEQ92，未冒充真实dirent；Linux端到端#133与原生非良构UTF16#132均前置A8/#127。准备保留当前tip后rebase最新main，再统一最终suite/污染扫描/exact A2。
 
