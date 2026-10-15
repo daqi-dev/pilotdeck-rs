@@ -1203,16 +1203,25 @@ fn every_unmeasured_errno_forwards_entire_project_request_at_every_call_site() {
 fn native_cstr_dirent_decoding_matches_22_node_byte_sequences() {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../tests/fixtures/collation/invalid-utf8-node22.json"
-    )).unwrap();
+    ))
+    .unwrap();
     let cases = fixture["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 22);
     for case in cases {
-        let bytes: Vec<u8> = case["bytes"].as_array().unwrap().iter()
-            .map(|n| u8::try_from(n.as_u64().unwrap()).unwrap()).collect();
+        let bytes: Vec<u8> = case["bytes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| u8::try_from(n.as_u64().unwrap()).unwrap())
+            .collect();
         let name = std::ffi::CString::new(bytes).unwrap();
         let actual: Vec<u16> = node_dirent_name(&name).encode_utf16().collect();
-        let expected: Vec<u16> = case["utf16"].as_array().unwrap().iter()
-            .map(|n| u16::try_from(n.as_u64().unwrap()).unwrap()).collect();
+        let expected: Vec<u16> = case["utf16"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| u16::try_from(n.as_u64().unwrap()).unwrap())
+            .collect();
         assert_eq!(actual, expected, "{case}");
     }
 }
