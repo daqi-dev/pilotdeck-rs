@@ -26,7 +26,6 @@
 | 不追上游最新提交 | 参照物在动，对拍就没有意义。升级基线 = 单独一条 issue，整批升 |
 | 不照搬 TS 的模块内部结构（Bundle / 注入层层套）；**也不在移植一个模块的同时重构它** | 一致的是**协议和行为**，不是类图：模块边界与数据流照原样映射，内部按 Rust 习惯写。要重构放在移植前或移植后（`docs/research/001` 第二节第 1 条） |
 | 不自己发明协议、字段、错误格式 | 以基线 TS 实测输出为准；有疑问跑一次基线看，不猜 |
-|  |
 
 ## 真相源与权重
 
@@ -43,7 +42,7 @@
 
 - 目录：`src/` 是产品实现区；现有 Cargo workspace 包含 CLI、gateway 与 Sidecar crates，后续服务和前端按各自计划落地。
 - 交付形态：可组合运行的 Rust 后端、完整命令行入口和按计划重构的前端；现有桌面壳通过适用的启动编排接入。各阶段的代理/双壳共存只代表迁移中间状态，完整产品交付须满足下述完成条件。
-- 覆盖范围由**产品入口总账**枚举：基线两个 bin 的全部子命令、gateway method 与 HTTP/后台入口、`ui/server` 的 HTTP/WS/SSE，以及桌面编排和本地能力。每项必须有实现状态、所属阶段/任务和验收方式，独立基线枚举与账本集合对等；总账及阶段 D 计划仍是接续待办，不能当作已有产物。
+- 覆盖范围由[产品入口总账](../specs/product-coverage/README.md)枚举：基线两个 bin 的全部子命令、gateway method 与 HTTP/后台入口、`ui/server` 的 HTTP/WS/SSE，以及桌面编排和本地能力。每项有实现状态、所属阶段/任务和验收方式，独立基线枚举与账本集合对等；覆盖通过不代表行为或阶段验收通过。
 
 ### 各阶段怎么算合格
 
@@ -55,7 +54,7 @@
 | **A · Gateway** | A4 是只读方法本地化的中间验收，须有 Rust 应答与无上游转发证据；整阶段还须全部 method、HTTP/后台入口及宿主/会话能力完成，TS gateway 与内部 helper 退役，隔离切换、重启和回滚通过。技术退役与完整 Web 使用分别报告 | [Gateway规约](../specs/gateway-parity/acceptance.md)、[计划002](../docs/plan/002_phase-a-gateway.md)、[计划005](../docs/plan/005_phase-a-session-domain.md) |
 | **B · UI Server** | 全部路由、WS/SSE、鉴权和共享状态按对应规约通过；覆盖清单与实际处理侧对账，TS `ui/server` 退役；原版 UI 经新服务的真实使用与客户端恢复验收闭合。B2装置通过只证明尺子可用 | [UI Server规约](../specs/ui-server-parity/acceptance.md)、[计划003](../docs/plan/003_phase-b-ui-server.md) |
 | **前端** | 按既定方案完成业务页面与交互迁移；黑盒用例、流式/恢复/草稿行为及防 skip 对账通过，旧前端和临时双壳机制按计划退役。保留的第三方 JS 按批准范围列明；现有桌面壳 smoke 和真人会话（中文输入、终端、文件编辑）通过 | [计划004](../docs/plan/004_frontend.md)、[前端决策](../docs/research/007_frontend/decision.md)、[验收装置说明](../scripts/fe-parity/README.md) |
-| **D · CLI** | 全部命令及子命令由 Rust 承担；同参数、同输入下 stdout/stderr、退出码和落盘符合基线或已批准差异。TUI须有PTY交互验证，setup/update等外部副作用用mock验证。完整计划与装置尚待建立，当前候选CLI及其参数不能自动成为标准 | [CLI人定范围](../state/decisions-20261014.md)、阶段D计划与入口总账（待补） |
+| **D · CLI** | 全部命令及子命令由 Rust 承担；同参数、同输入下 stdout/stderr、退出码和落盘符合基线或已批准差异。TUI须有PTY交互验证，setup/update等外部副作用用mock验证。装置按计划建立，当前候选CLI及其参数不能自动成为标准 | [CLI人定范围](../state/decisions-20261014.md)、[计划006](../docs/plan/006_phase-d-cli.md)、[入口总账](../specs/product-coverage/README.md) |
 
 **已批准的依赖**：D5 已明确 **A8「gateway退役验证完成（不含UI自动恢复）」→ B3**，B1/B2自身前置仍须满足；完整UI恢复由B后续工作修复并以真实UI验收关闭。依赖独立Rust gateway的CLI子命令排在A8之后，可与B并行。详细任务依赖见[计划索引](../docs/plan/README.md)。
 
