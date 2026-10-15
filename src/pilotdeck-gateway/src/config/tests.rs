@@ -42,9 +42,21 @@ fn cases(raw: &str) -> Vec<JsValue> {
     };
     cases.clone()
 }
-fn verify(raw: &str) -> Vec<String> {
+fn assert_fixture_complete(tests: &[JsValue], expected_count: usize) {
+    assert_eq!(tests.len(), expected_count, "fixture count changed");
+    let mut ids = std::collections::HashSet::new();
+    for test in tests {
+        let id = text(field(test, "id")).expect("fixture id");
+        assert!(!id.is_empty(), "empty fixture id");
+        assert!(ids.insert(id.clone()), "duplicate fixture id: {id}");
+    }
+}
+fn verify(raw: &str, expected_count: usize, expected_host_count: usize) -> Vec<String> {
+    let tests = cases(raw);
+    assert_fixture_complete(&tests, expected_count);
     let mut failures = vec![];
-    for test in cases(raw) {
+    let mut host_count = 0;
+    for test in tests {
         let id = text(field(&test, "id")).unwrap();
         let yaml = text(field(&test, "yaml")).unwrap();
         let kind = text(field(&test, "sourceKind"));
@@ -135,6 +147,7 @@ fn verify(raw: &str) -> Vec<String> {
         ];
         if HOST_COLLATION_CASES.contains(&id.as_str()) {
             assert!(matches!(route, crate::dispatch::Route::Forward), "{id}");
+            host_count += 1;
             continue;
         }
         let actual = match route {
@@ -148,22 +161,47 @@ fn verify(raw: &str) -> Vec<String> {
             ));
         }
     }
+    assert_eq!(
+        host_count, expected_host_count,
+        "host collation count changed"
+    );
     failures
 }
 #[test]
 fn catalog_32_wire_and_load() {
-    let failures = verify(include_str!("../../tests/fixtures/config/catalog.json"));
+    let failures = verify(
+        include_str!("../../tests/fixtures/config/catalog.json"),
+        32,
+        0,
+    );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 #[test]
 fn configuration_diagnostics_and_catalog_wire() {
-    let failures = verify(include_str!("../../tests/fixtures/config/diagnostics.json"));
+    let failures = verify(
+        include_str!("../../tests/fixtures/config/diagnostics.json"),
+        2696,
+        17,
+    );
     let total = failures.len();
     assert!(
         failures.is_empty(),
         "{total} differences; first entries:\n{}",
         failures.into_iter().take(12).collect::<Vec<_>>().join("\n")
     );
+}
+
+#[test]
+fn config_fixture_completeness_rejects_empty_truncated_and_duplicate() {
+    let original = cases(include_str!("../../tests/fixtures/config/catalog.json"));
+    assert_fixture_complete(&original, 32);
+    let mut truncated = original.clone();
+    truncated.pop();
+    let mut duplicate = original.clone();
+    duplicate[1] = duplicate[0].clone();
+    for invalid in [vec![], truncated, duplicate] {
+        assert!(std::panic::catch_unwind(|| assert_fixture_complete(&invalid, 32)).is_err());
+    }
 }
 
 fn canonical(v: &JsValue) -> JsValue {
