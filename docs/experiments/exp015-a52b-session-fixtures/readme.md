@@ -187,3 +187,7 @@ rename 测的是操作前与真实操作完成后两个边界：没有模拟 OS 
 WS是**同一launcher自有Node进程内75次观测**，不是75个独立进程；历史launch记exit0/reaped=true。历史WS manifest缺fixtureFiles，仅能绑定原始输入、共同源码哈希和预注册哈希，不能宣称为当前HEAD重新执行。cold/sidecar/main/旧a52原件均在`_tmp/archive/wt-a52b-tmp/a52b/`及`_tmp/archive/wt-a52-tmp/a52/final-run/`，本次不伪造新cold或WS运行数。
 
 以上仅准备A5.4登记证据；未登记/冻结A19-HOST，未关闭#112或升级阶段/真人验收。
+
+### #112 汇总器反例收敛
+
+历史WS输入的两个manifest、150个WS/main观察原件及journal、启动审计以[ws-inputs.json](ws-inputs.json)为唯一哈希索引；报告仅保留索引路径和哈希，不再重复原始索引。汇总先验证完整15×5×两侧输入集合及每个原件哈希，再检查实际A/B连接与binding唯一性、每组稳定和逐字段一致。空来源、原件变化、差异或不稳定均失败，不以exit0留给人读数；真实75次仍全通过。原5项投影控制与新增历史字节、连接和汇总闸门控制共8项测试通过。此索引只绑定保留的历史采集，不能声称当前HEAD重新执行WS。
