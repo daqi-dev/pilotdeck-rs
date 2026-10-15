@@ -4,6 +4,16 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-16 · #118 双终审通过；D6扫描通过（root @c8133d0，待提交/CI）
+> **#118**：YAML33通过、prefix-router补响应侧/双编码回归后8/8、fmt/全目标clippy通过；Node86条逐字节一致。第12族真实复算N10/40、相对耗时增长1.199和增量RSS比1.258均PASS；Chrome old两协议流式/滚动/搜索8/8。廉价P2本轮修，双编码疑点用实际静态服务函数实测，交独立终审复核。报告`docs/reviews/004_p2-cleanup.md`，GLM/DeepSeek最终增量均P0/P1/P2=0；当前新代码/证据尚待提交与最终CI，不提前关issue；#91/#112保留。
+> **D6并行**：独立工作树94b72f6，产品64d4956；fmt/clippy、gateway108测试、19轮各71731输入的完整排序/锚点/相邻符号全部PASS。正走GLM simplify与DeepSeek三角色；原A2固定bin接入将按锁内缺失路径原子软链绑定独立Cargo exact产物、前后hash与仅自有链接回收，不改尺子。当前七local，archive三项仍透传，不冒认为A4 10/10。
+> **保全/限制**：五工作树，旧wt-p2c仍958ec6c且none73项hash不变；build+tmp约29.24GiB/46GiB。F5新前端与E1集成已有NOT_IMPLEMENTED仍在，真人使用待验，阶段C历史FAIL不升级。
+
+> ## 2026-10-16 · 首任务已合并；接续#118（main @5eeac27）
+> **已交付**：#131 rebase合并，CI `check`与`gateway-schema-baseline`均绿，#121自动关闭；接续文档、整体意向、678入口总账及阶段D计划均已在main。合并后核查确认GitHub服务端committer仍为真实主邮箱（既有账号隐私缺口，需人于账号Emails设置处理）；未改写main历史。
+> **当前持有**：Codex复用主工作树，新分支`codex/p2-cleanup-resume`从旧#118 tip 958ec6c建立并同步origin/main；旧fix/p2-cleanup-1本地分支和wt-p2c（含none/73项）保留，其他候选不删除。新证据`_tmp/20261016-p2-resume/`。先修旧RESULT/临时目录/README文案，复测#95第12族与适用回归，再走完整独立闸门/CI；#91不在本PR，#112保留，不提前核销。
+> **并行准备**：D6优先于archive，原ICU数据可复用；当前main新增session_model_get的非ASCII回退需一并适配。独立工作区仅编辑准备，资源缩放测量期间不并行编译/负载。archive安全差异与A4前置债务另按规约处理，不能只因候选已写就标A4完成。
+
 > ## 2026-10-16 · #121 增量审阅收尾：678条入口（两家终审通过，待CI）
 > **本轮修复**：676→678是补齐SMS自带HTTP监听与POST配置路径；后台start/watch/forward和各channel监听源码指针已改到实际调用。组引用/kind/坏类型元数据、未知Express receiver/动态链、Git与进程组超时均补规则与负对照。独立离线check PASS、6项测试PASS；逐条删除678项均FAIL，263 HTTP runtime对账通过。冻结规约及原工作树未改。
 > **独立闸门**：GLM完成simplify四视角；DeepSeek分别完成sibling/concurrency/boundary并留原件。初轮SMS P1及廉价P2均已修；实时GitHub保护含`check`和`gateway-schema-baseline`。最新尾差（坏组修复入index、678计数和监听/bin指针）已由两家最终独立复核，P0/P1/P2均为0；不把partial/超时当通过。报告入口`docs/reviews/003_product-entry-coverage.md`，原件`_tmp/20261016-entry-ledger/`及`.claude/notes/pr-ready/`。

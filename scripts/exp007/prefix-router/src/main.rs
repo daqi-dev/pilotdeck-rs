@@ -65,6 +65,7 @@ impl Routes {
     }
 
     fn prepare<B>(&self, request: &mut Request<B>) -> Result<bool, RouterError> {
+        reject_dot_segments(request.uri().path())?;
         let upgrade = request.headers().get(header::UPGRADE).cloned();
         let wants_upgrade = connection_tokens(request.headers())?
             .iter()
@@ -98,16 +99,51 @@ fn within(path: &str, prefix: &str) -> bool {
             .is_some_and(|tail| tail.starts_with('/'))
 }
 
+fn reject_dot_segments(path: &str) -> Result<(), RouterError> {
+    // Inspect one URL-decoding pass without changing the forwarded URI.
+    // Encoded separators also delimit segments after an upstream decode.
+    let mut decoded = Vec::with_capacity(path.len());
+    let bytes = path.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if let (Some(hi), Some(lo)) = (
+                bytes.get(index + 1).and_then(|b| (*b as char).to_digit(16)),
+                bytes.get(index + 2).and_then(|b| (*b as char).to_digit(16)),
+            ) {
+                decoded.push((hi * 16 + lo) as u8);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    if decoded
+        .split(|b| *b == b'/')
+        .any(|s| s == b"." || s == b"..")
+    {
+        return Err("dot path segment".into());
+    }
+    Ok(())
+}
+
 fn connection_tokens(headers: &hyper::HeaderMap) -> Result<Vec<String>, RouterError> {
     let mut tokens = Vec::new();
     for value in headers.get_all(header::CONNECTION) {
-        for name in value
-            .to_str()?
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            let name = header::HeaderName::from_bytes(name.as_bytes())?;
+        for part in value.as_bytes().split(|b| *b == b',') {
+            let start = part
+                .iter()
+                .position(|b| !matches!(b, b' ' | b'\t'))
+                .unwrap_or(part.len());
+            let end = part
+                .iter()
+                .rposition(|b| !matches!(b, b' ' | b'\t'))
+                .map_or(start, |p| p + 1);
+            if start == end {
+                return Err("empty Connection token".into());
+            }
+            let name = header::HeaderName::from_bytes(&part[start..end])?;
             tokens.push(name.as_str().to_owned());
         }
     }
@@ -257,6 +293,141 @@ mod tests {
             prefix: prefix.into(),
             old: "http://127.0.0.1:28373".into(),
             new: "http://127.0.0.1:28370".into(),
+        }
+    }
+
+    async fn rejected_in_memory(path: &str, connections: &[&str]) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let (client_io, server_io) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                let routes = routes("/probe");
+                let client = Client::builder(TokioExecutor::new()).build_http();
+                hyper::server::conn::http1::Builder::new()
+                    .serve_connection(
+                        TokioIo::new(server_io),
+                        service_fn(|request| async {
+                            Ok::<_, Infallible>(serve(&routes, &client, request).await)
+                        }),
+                    )
+                    .await
+                    .unwrap();
+            });
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(TokioIo::new(client_io))
+                    .await
+                    .unwrap();
+            let connection = tokio::spawn(connection);
+            let mut request = Request::builder().uri(path);
+            for value in connections {
+                request = request.header(header::CONNECTION, *value);
+            }
+            let response = sender
+                .send_request(request.body(Full::new(Bytes::new())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "{path} {connections:?}"
+            );
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                "invalid request headers or URI"
+            );
+            drop(sender);
+            connection.await.unwrap().unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn dot_segments_return_400_without_listening() {
+        for path in [
+            "/probe/../api",
+            "/./probe",
+            "/probe/.",
+            "/probe/..",
+            "/probe/%2e/api",
+            "/probe/%2E%2e/api",
+            "/probe/.%2E/api",
+            "/%2e./probe",
+            "/probe/a%2f..%2Fapi",
+        ] {
+            rejected_in_memory(path, &[]).await;
+        }
+        // Negative controls: dots within a name and query never form path segments.
+        for path in [
+            "/probe/a.b",
+            "/probe/..asset",
+            "/probe/%2efile",
+            "/probe/%2e%2efoo",
+            // Static servers decode once: these name literal percent directories.
+            "/probe/%252e%252e/asset",
+            "/probe/%252e%252e%252fasset",
+            "/probe/file?next=/../api",
+            "/api/v1.2",
+        ] {
+            let mut request = Request::builder().uri(path).body(()).unwrap();
+            assert!(routes("/probe").prepare(&mut request).is_ok(), "{path}");
+            assert_eq!(request.uri().path_and_query().unwrap().as_str(), path);
+        }
+    }
+
+    #[test]
+    fn upstream_response_rejects_empty_connection_tokens() {
+        for value in ["", "keep-alive,", "keep-alive,,upgrade", " \t"] {
+            let mut response = Response::builder()
+                .header(header::CONNECTION, value)
+                .body(())
+                .unwrap();
+            assert!(
+                strip_hop_headers(response.headers_mut()).is_err(),
+                "{value:?}"
+            );
+        }
+        let mut response = Response::builder()
+            .header(header::CONNECTION, "keep-alive, x-private-hop")
+            .header("x-private-hop", "private")
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(())
+            .unwrap();
+        strip_hop_headers(response.headers_mut()).unwrap();
+        assert!(!response.headers().contains_key(header::CONNECTION));
+        assert!(!response.headers().contains_key("x-private-hop"));
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "text/event-stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_connection_tokens_return_400_without_listening() {
+        for values in [
+            vec![""],
+            vec![" \t"],
+            vec![",upgrade"],
+            vec!["upgrade,"],
+            vec!["keep-alive,,upgrade"],
+            vec!["keep-alive, \t,upgrade"],
+            vec!["keep-alive", ""],
+        ] {
+            rejected_in_memory("/probe", &values).await;
+        }
+        for values in [
+            vec![],
+            vec![" \tkeep-alive\t "],
+            vec!["keep-alive, upgrade"],
+            vec!["keep-alive", "upgrade"],
+        ] {
+            let mut request = Request::builder().uri("/probe");
+            for value in values {
+                request = request.header(header::CONNECTION, value);
+            }
+            assert!(routes("/probe")
+                .prepare(&mut request.body(()).unwrap())
+                .is_ok());
         }
     }
 

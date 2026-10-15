@@ -2788,5 +2788,1649 @@
         }
       ]
     }
+  },
+  {
+    "id": "set-merge-1.1-22",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {ab: null, cd: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"b\""
+              }
+            ],
+            [
+              "\"c\"",
+              {
+                "type": "string",
+                "json": "\"d\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-23",
+    "yaml": "%YAML 1.1\n---\n[&s !!set {ab: null, cd: null}, {<<: *s}]\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            },
+            {
+              "type": "string",
+              "json": "\"cd\""
+            }
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"b\""
+              }
+            ],
+            [
+              "\"c\"",
+              {
+                "type": "string",
+                "json": "\"d\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-24",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {ab: null, ac: null}, a: explicit}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"explicit\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-25",
+    "yaml": "%YAML 1.1\n---\n{<<: [!!set {ab: null}, {a: later, z: 7}]}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"b\""
+              }
+            ],
+            [
+              "\"z\"",
+              {
+                "type": "number",
+                "value": "7"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-26",
+    "yaml": "%YAML 1.1\n---\n{<<: [{a: first}, !!set {ab: null}]}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"first\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-27",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {\"\": null, a: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"undefined\"",
+              {
+                "type": "undefined",
+                "value": "undefined"
+              }
+            ],
+            [
+              "\"a\"",
+              {
+                "type": "undefined",
+                "value": "undefined"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-28",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {abc: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"b\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-29",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {\"😀x\": null, \"\\uD800z\": null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"😀\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"\\ud800\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-30",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {? [x, z]: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"x\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-31",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {? []: null, ? [x]: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"undefined\"",
+              {
+                "type": "undefined",
+                "value": "undefined"
+              }
+            ],
+            [
+              "\"x\"",
+              {
+                "type": "undefined",
+                "value": "undefined"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-32",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {1: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "error": {
+      "name": "TypeError",
+      "message": ".for is not iterable"
+    }
+  },
+  {
+    "id": "set-merge-1.1-33",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {true: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "error": {
+      "name": "TypeError",
+      "message": ".for is not iterable"
+    }
+  },
+  {
+    "id": "set-merge-1.1-34",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {null: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "error": {
+      "name": "TypeError",
+      "message": ".for is not iterable"
+    }
+  },
+  {
+    "id": "set-merge-1.1-35",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {? {x: z}: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "error": {
+      "name": "TypeError",
+      "message": ".for is not iterable"
+    }
+  },
+  {
+    "id": "set-merge-1.1-36",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {ab: 7}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          19,
+          24
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 6:\n\n{<<: !!set {ab: 7}}\n     ^^^^^\n",
+        "pos": [
+          19,
+          24
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 6
+          },
+          {
+            "line": 3,
+            "col": 11
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"b\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-37",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": []
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-38",
+    "yaml": "%YAML 1.1\n---\n{<<: {ab: null, cd: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"ab\"",
+              {
+                "type": "null"
+              }
+            ],
+            [
+              "\"cd\"",
+              {
+                "type": "null"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-39",
+    "yaml": "%YAML 1.1\n---\n!!set {ab: null, cd: null}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            },
+            {
+              "type": "string",
+              "json": "\"cd\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-40",
+    "yaml": "%YAML 1.1\n---\n{\"<<\": !!set {ab: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-41",
+    "yaml": "%YAML 1.1\n---\n!!set {<<: !!set {ab: null}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: !!set {ab: null}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.1-42",
+    "yaml": "%YAML 1.1\n---\n{<<: !!set {? !!omap [x: 1, z: 2]: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"x,1\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "number",
+                "value": "2"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-22",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {ab: null, cd: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            },
+            {
+              "type": "string",
+              "json": "\"cd\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-23",
+    "yaml": "%YAML 1.2\n---\n[&s !!set {ab: null, cd: null}, {<<: *s}]\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 2
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            },
+            {
+              "type": "string",
+              "json": "\"cd\""
+            }
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-24",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {ab: null, ac: null}, a: explicit}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ],
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"explicit\""
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            },
+            {
+              "type": "string",
+              "json": "\"ac\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-25",
+    "yaml": "%YAML 1.2\n---\n{<<: [!!set {ab: null}, {a: later, z: 7}]}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 2
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 3
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            }
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"later\""
+              }
+            ],
+            [
+              "\"z\"",
+              {
+                "type": "number",
+                "value": "7"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-26",
+    "yaml": "%YAML 1.2\n---\n{<<: [{a: first}, !!set {ab: null}]}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "ref": 2
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "ref": 3
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"a\"",
+              {
+                "type": "string",
+                "json": "\"first\""
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-27",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {\"\": null, a: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"\""
+            },
+            {
+              "type": "string",
+              "json": "\"a\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-28",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {abc: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"abc\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-29",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {\"😀x\": null, \"\\uD800z\": null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"😀x\""
+            },
+            {
+              "type": "string",
+              "json": "\"\\ud800z\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-30",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {? [x, z]: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "ref": 2
+            }
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ],
+            [
+              "\"1\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-31",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {? []: null, ? [x]: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "ref": 2
+            },
+            {
+              "ref": 3
+            }
+          ]
+        },
+        {
+          "type": "[object Array]",
+          "entries": []
+        },
+        {
+          "type": "[object Array]",
+          "entries": [
+            [
+              "\"0\"",
+              {
+                "type": "string",
+                "json": "\"x\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-32",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {1: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "number",
+              "value": "1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-33",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {true: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "boolean",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-34",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {null: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "null"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-35",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {? {x: z}: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "ref": 2
+            }
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"x\"",
+              {
+                "type": "string",
+                "json": "\"z\""
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-36",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {ab: 7}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          19,
+          24
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 6:\n\n{<<: !!set {ab: 7}}\n     ^^^^^\n",
+        "pos": [
+          19,
+          24
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 6
+          },
+          {
+            "line": 3,
+            "col": 11
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-37",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": []
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-38",
+    "yaml": "%YAML 1.2\n---\n{<<: {ab: null, cd: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"ab\"",
+              {
+                "type": "null"
+              }
+            ],
+            [
+              "\"cd\"",
+              {
+                "type": "null"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-39",
+    "yaml": "%YAML 1.2\n---\n!!set {ab: null, cd: null}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            },
+            {
+              "type": "string",
+              "json": "\"cd\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-40",
+    "yaml": "%YAML 1.2\n---\n{\"<<\": !!set {ab: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"ab\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-41",
+    "yaml": "%YAML 1.2\n---\n!!set {<<: !!set {ab: null}}\n",
+    "errors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values",
+        "pos": [
+          14,
+          19
+        ]
+      }
+    ],
+    "warnings": [],
+    "prettyErrors": [
+      {
+        "name": "YAMLParseError",
+        "code": "TAG_RESOLVE_FAILED",
+        "message": "Set items must all have null values at line 3, column 1:\n\n---\n!!set {<<: !!set {ab: null}}\n^^^^^\n",
+        "pos": [
+          14,
+          19
+        ],
+        "linePos": [
+          {
+            "line": 3,
+            "col": 1
+          },
+          {
+            "line": 3,
+            "col": 6
+          }
+        ]
+      }
+    ],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "type": "string",
+              "json": "\"<<\""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "set-merge-1.2-42",
+    "yaml": "%YAML 1.2\n---\n{<<: !!set {? !!omap [x: 1, z: 2]: null}}\n",
+    "errors": [],
+    "warnings": [],
+    "prettyErrors": [],
+    "prettyWarnings": [],
+    "value": {
+      "root": {
+        "ref": 0
+      },
+      "nodes": [
+        {
+          "type": "[object Object]",
+          "entries": [
+            [
+              "\"<<\"",
+              {
+                "ref": 1
+              }
+            ]
+          ]
+        },
+        {
+          "type": "[object Set]",
+          "entries": [],
+          "set": [
+            {
+              "ref": 2
+            }
+          ]
+        },
+        {
+          "type": "[object Map]",
+          "entries": [],
+          "map": [
+            [
+              {
+                "type": "string",
+                "json": "\"x\""
+              },
+              {
+                "type": "number",
+                "value": "1"
+              }
+            ],
+            [
+              {
+                "type": "string",
+                "json": "\"z\""
+              },
+              {
+                "type": "number",
+                "value": "2"
+              }
+            ]
+          ]
+        }
+      ]
+    }
   }
 ]

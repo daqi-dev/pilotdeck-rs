@@ -204,6 +204,7 @@ impl Context<'_> {
                     continue;
                 }
                 Part::Value(v) => match v {
+                    Value::Undefined => "undefined".into(),
                     Value::Null => "null".into(),
                     Value::Bool(b) => if *b { "true" } else { "false" }.into(),
                     Value::Number(n) => number_string(*n),
@@ -219,7 +220,7 @@ impl Context<'_> {
                             active[*id] = true;
                             pending.push(Part::End(*id));
                             for (i, v) in items.iter().enumerate().rev() {
-                                if !matches!(v, Value::Null) {
+                                if !matches!(v, Value::Null | Value::Undefined) {
                                     pending.push(Part::Value(v));
                                 }
                                 if i > 0 {

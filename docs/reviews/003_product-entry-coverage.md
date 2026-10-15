@@ -1,6 +1,6 @@
 # #121 产品入口覆盖与阶段D计划审计
 
-作者：Codex/GPT；非作者模型：Z.AI Coding Plan GLM-5.3、DeepSeek Account Flash high。审阅固定基线cc7c4e6；按小批读取源代码、元数据及文档，后续轮只审增量。具体scope和独立实测在本机 `_tmp/20261016-entry-ledger/`；每个pr-ready角色均有独立原文，`.claude/notes/pr-ready/{sibling,concurrency,boundary}.md` 与各增量产物。原文是本地过程证据，不作为CI依赖。
+作者：Codex/GPT；非作者模型：Z.AI Coding Plan GLM-5.3、DeepSeek Account Flash high。审阅固定基线cc7c4e6；按小批读取源代码、元数据及文档，后续轮只审增量。具体scope和独立实测在本机 `_tmp/20261016-entry-ledger/`；每个pr-ready角色均有独立原文，`_tmp/20261016-entry-ledger/pr-ready/{sibling,concurrency,boundary}.md` 与各增量产物。原文是本地过程证据，不作为CI依赖。
 
 ## 不变量与证据
 

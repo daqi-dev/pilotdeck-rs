@@ -156,7 +156,10 @@ for (const protocol of STREAM_PROTOCOLS) {
         await expect(target).toHaveCount(1);
         await expect(target).toBeInViewport();
         await expect.poll(async () => (await metrics(surface(page))).distance).toBeGreaterThan(50);
-        if (query === 'f2-hidden-reference') await expect(target).toHaveAttribute('href', 'https://example.invalid/f2-hidden-reference');
+        if (query === 'f2-hidden-reference') {
+          await expect(target).toHaveAttribute('href', 'https://example.invalid/f2-hidden-reference');
+          await expect(page.locator('mark[aria-current="true"]')).toHaveCount(0);
+        }
       } finally {
         // Also retain failed navigation geometry; never scroll the target in test code.
         await testInfo.attach('search-dom-evidence', { body: JSON.stringify({ protocol, query, beforeSearch,

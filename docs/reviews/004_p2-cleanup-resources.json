@@ -1,0 +1,186 @@
+{
+  "method": "Release resource regression checks on macOS/Linux, against Node v22 yaml@2.9.0.\n\nRun from repo root:\n  CARGO_HOME=\"$PWD/_build/cargo-home\" python3 src/pilotdeck-yaml/tests/run_resource_scaling.py     --baseline /path/to/baseline --output _tmp/review-yaml/resources-round6.json\nOr use the ignored test with PILOTDECK_YAML_BASELINE and cargo test --release\n-p pilotdeck-yaml --test resource_scaling resource_scaling -- --ignored --exact --nocapture.\n\nN is calibrated using ONLY Node to 0.2-1s; 4N scales breadth/length/repetitions,\nnever nesting depth. Each sample gets a fresh process. Median of three timings,\nmaximum of three process-lifetime peak RSS measurements. No startup/input IO/drop\nin timings; input IO, runtime, parser, retained documents/values and teardown in RSS.\nPass: Rust/Node time and absolute RSS <=3 at BOTH sizes; time growth / Node\ntime growth <=1.5; Rust RSS(4N)-RSS(N) <=1.5 * (Node RSS(4N)-RSS(N)).\nNonzero exits/timeouts are failures, not omitted rows.\n",
+  "node": "v22.22.0",
+  "baseline": "/Users/da/ws/pilotdeck-rs/resources/PilotDeck",
+  "sizes": {
+    "anchors_merges": 10
+  },
+  "repeats": 3,
+  "host": "macOS-26.6.1-arm64-arm-64bit-Mach-O",
+  "baseline_commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "rows": [
+    {
+      "family": "anchors_merges",
+      "n": 10,
+      "samples": {
+        "1": {
+          "node": [
+            {
+              "seconds": 0.826806417,
+              "parse_seconds": 0.24515012499999997,
+              "documents": 1,
+              "errors": 0,
+              "warnings": 0,
+              "conversion_errors": 0,
+              "rss_bytes": 211304448
+            },
+            {
+              "seconds": 0.80405475,
+              "parse_seconds": 0.234802167,
+              "documents": 1,
+              "errors": 0,
+              "warnings": 0,
+              "conversion_errors": 0,
+              "rss_bytes": 210173952
+            },
+            {
+              "seconds": 0.8024997089999999,
+              "parse_seconds": 0.23752904199999997,
+              "documents": 1,
+              "errors": 0,
+              "warnings": 0,
+              "conversion_errors": 0,
+              "rss_bytes": 211615744
+            }
+          ],
+          "rust": [
+            {
+              "conversion_errors": 0,
+              "documents": 1,
+              "errors": 0,
+              "parse_seconds": 0.020834916,
+              "seconds": 0.487417125,
+              "warnings": 0,
+              "rss_bytes": 165937152
+            },
+            {
+              "conversion_errors": 0,
+              "documents": 1,
+              "errors": 0,
+              "parse_seconds": 0.022239292,
+              "seconds": 0.503742,
+              "warnings": 0,
+              "rss_bytes": 166166528
+            },
+            {
+              "conversion_errors": 0,
+              "documents": 1,
+              "errors": 0,
+              "parse_seconds": 0.021391,
+              "seconds": 0.473260917,
+              "warnings": 0,
+              "rss_bytes": 165658624
+            }
+          ]
+        },
+        "4": {
+          "node": [
+            {
+              "seconds": 3.1673379170000002,
+              "parse_seconds": 0.829198459,
+              "documents": 1,
+              "errors": 0,
+              "warnings": 0,
+              "conversion_errors": 0,
+              "rss_bytes": 594509824
+            },
+            {
+              "seconds": 3.206447583,
+              "parse_seconds": 0.839721833,
+              "documents": 1,
+              "errors": 0,
+              "warnings": 0,
+              "conversion_errors": 0,
+              "rss_bytes": 582959104
+            },
+            {
+              "seconds": 3.201519416,
+              "parse_seconds": 0.836224208,
+              "documents": 1,
+              "errors": 0,
+              "warnings": 0,
+              "conversion_errors": 0,
+              "rss_bytes": 584466432
+            }
+          ],
+          "rust": [
+            {
+              "conversion_errors": 0,
+              "documents": 1,
+              "errors": 0,
+              "parse_seconds": 0.085331209,
+              "seconds": 2.711574334,
+              "warnings": 0,
+              "rss_bytes": 647938048
+            },
+            {
+              "conversion_errors": 0,
+              "documents": 1,
+              "errors": 0,
+              "parse_seconds": 0.149161958,
+              "seconds": 2.326220208,
+              "warnings": 0,
+              "rss_bytes": 646479872
+            },
+            {
+              "conversion_errors": 0,
+              "documents": 1,
+              "errors": 0,
+              "parse_seconds": 0.085728667,
+              "seconds": 2.218035417,
+              "warnings": 0,
+              "rss_bytes": 647004160
+            }
+          ]
+        }
+      },
+      "metrics": {
+        "node_1n": {
+          "seconds": 0.80405475,
+          "rss_bytes": 211615744
+        },
+        "rust_1n": {
+          "seconds": 0.487417125,
+          "rss_bytes": 166166528
+        },
+        "node_4n": {
+          "seconds": 3.201519416,
+          "rss_bytes": 594509824
+        },
+        "rust_4n": {
+          "seconds": 2.326220208,
+          "rss_bytes": 647938048
+        }
+      },
+      "bytes_1n": 199784,
+      "sha256_1n": "d7fe3452a2ab5427d8b406fb155ef8ac84ccc2b2ed734066ea366f48e874999d",
+      "bytes_4n": 801824,
+      "sha256_4n": "d40393049fda824bc93f8bd840e9a80b58bda0ab9fc69692c64a21121f9a551d",
+      "rss_increment": {
+        "node_bytes": 382894080,
+        "rust_bytes": 481771520,
+        "rust_limit_bytes": 574341120.0,
+        "rust_node_ratio": 1.258237056054771,
+        "pass": true
+      },
+      "ratios": {
+        "seconds_rust_node_1n": 0.6061989248866448,
+        "seconds_rust_node_4n": 0.7265988131680287,
+        "rss_bytes_rust_node_1n": 0.7852276246515949,
+        "rss_bytes_rust_node_4n": 1.0898693711073142,
+        "seconds_node_growth": 3.9817181802607347,
+        "seconds_rust_growth": 4.772545092665753,
+        "seconds_relative_growth": 1.1986144866619448
+      },
+      "checks": {
+        "same_size_time": true,
+        "same_size_rss": true,
+        "time_growth": true,
+        "rss_increment": true,
+        "semantic_counts": true
+      },
+      "pass": true
+    }
+  ],
+  "failures": []
+}

@@ -244,6 +244,7 @@ fn graph(g: &ValueGraph) -> JsValue {
         seen: &mut std::collections::HashMap<usize, usize>,
     ) -> JsValue {
         match v {
+            YValue::Undefined => object(vec![("type", s("undefined")), ("value", s("undefined"))]),
             YValue::Null => object(vec![("type", s("null"))]),
             YValue::Bool(v) => object(vec![
                 ("type", s("boolean")),
@@ -925,7 +926,7 @@ fn set_merge_conversion_and_diagnostics_match_node_even_after_resolve_errors() {
     let JsValue::Array(cases) = &cases else {
         panic!("cases")
     };
-    assert_eq!(cases.len(), 44);
+    assert_eq!(cases.len(), 86);
     for case in cases {
         for pretty in [false, true] {
             let doc = parse_document(

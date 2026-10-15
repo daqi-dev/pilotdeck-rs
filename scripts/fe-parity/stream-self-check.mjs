@@ -13,6 +13,33 @@ import { streamContractSelfCheck } from './stream-contract-self-check.mjs';
 const exec = promisify(execFile);
 export async function streamSelfCheck(check) {
   await streamContractSelfCheck(check);
+  await check('hidden URL search executes zero-current-mark assertion; a highlight or missing assertion must FAIL', async () => {
+    const ts = requireUI('typescript');
+    const source = await readFile(resolve(root, 'scripts/fe-parity/tests/streaming-scroll.spec.mjs'), 'utf8');
+    const ast = ts.createSourceFile('streaming-scroll.spec.mjs', source, ts.ScriptTarget.Latest, true);
+    const branches = [];
+    function visit(node) {
+      if (ts.isIfStatement(node) && node.expression.getText(ast) === "query === 'f2-hidden-reference'") branches.push(node.thenStatement.getText(ast));
+      ts.forEachChild(node, visit);
+    }
+    visit(ast);
+    assert.equal(branches.length, 1);
+    async function execute(body, count) {
+      const calls = [];
+      const page = { locator(selector) { assert.equal(selector, 'mark[aria-current="true"]'); return { count }; } };
+      const target = { href: 'https://example.invalid/f2-hidden-reference' };
+      const expect = locator => ({
+        async toHaveAttribute(name, value) { assert.equal(locator[name], value); },
+        async toHaveCount(expected) { calls.push(expected); assert.equal(locator.count, expected); },
+      });
+      await new Function('page', 'target', 'expect', `return (async () => ${body})();`)(page, target, expect);
+      assert.deepEqual(calls, [0], 'hidden URL branch must await the zero-highlight assertion');
+    }
+    await execute(branches[0], 0);
+    await assert.rejects(() => execute(branches[0], 1), assert.AssertionError);
+    await assert.rejects(() => execute(branches[0].replace(/.*toHaveCount\(0\);/, ''), 0), assert.AssertionError);
+    await assert.rejects(() => execute(branches[0].replace('toHaveCount(0)', 'toHaveCount(1)'), 1), assert.AssertionError);
+  });
   await check('final textContent and innerText validators: missing, hidden, duplicate or reordered rounds must FAIL', () => {
     // Offline inputs for the same validator used by STREAM-002's textContent poll.
     // This tests completeness, not browser rendering or content-visibility behavior.

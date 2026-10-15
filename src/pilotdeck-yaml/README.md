@@ -129,6 +129,8 @@ python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
 
 判定同时检查耗时和 RSS：两个规模的 Rust/Node 耗时与绝对 RSS 均不得超过 3；耗时的 (Rust 4N/N) / (Node 4N/N) 不得超过 1.5；增量 RSS 满足 (Rust RSS@4N − Rust RSS@N) ≤ 1.5 × (Node RSS@4N − Node RSS@N)。RSS 不用原始增长比判定，以避免 Node 固定运行时内存影响缩放结论。`--sizes <previous.json>` 可以复用已记录的 Node 校准值，`--families` 可定位单个族，`--rust-bin` 供 ignore 测试复用已编译二进制；默认所有族都运行。JSON 保存每次原始测量、输入字节数/SHA、N、所有比值和通过/失败结果；同时核对两个规模全部样本的文档数、error/warning 数和转换错误数，双方不一致也判失败。
 
+2026-10-16 的 #95 复测只运行第12族 `anchors_merges`，沿用上述原判据、Node-only定规模和每规模三次独立进程。N=10、4N=40；Rust/Node中位耗时为0.606/0.727，绝对RSS比为0.785/1.090，相对耗时增长1.199、增量RSS比1.258，均通过；完整原始采样见[复算原件](../../docs/reviews/004_p2-cleanup-resources.json)。这是当前机器/规模的观察，旧测1.25–1.45的增长余量仍是提醒；以后改merge/alias路径须重跑此族，不因一次PASS放宽1.5阈值。本轮没有宣称其他11族已重测。
+
 内存表示的调整保持 UTF-16 值与位置：每个流的 `Document::line_counter` 是同一个 `Arc<LineCounter>`；schema 与 directive 标签表共享，实际扩展时采用 copy-on-write。CST 的常见字段保留在 Token，其他字段通过 `TokenData` 的 Deref/DerefMut 按需分配；构造 CST 使用 `Token::new`。Node 的可选装饰通过 `NodeMetadata` 按需分配，`src_token` 为 `Arc<Token>`。读字段和查询位置的方法保持原语义；外部源代码若用 Token struct literal，应改用构造函数。
 
 完整输入的 lexer 借用输入 UTF-16 并立即发送 lexeme，composer 立即消费 CST；增量 Lexer 仍拥有未完成的尾部。没有 keepSourceTokens 时，文档根的宽 map/flow CST 项随组合释放。注释循环累积 UTF-16，集合键保留片段至最外层一次展开。转换结束删除从根不可达的临时容器，并重映射全部引用，保留别名共享、环、Map/Set 顺序和 Symbol 身份。pretty-error 先截取显示范围，再复制字符，避免每条诊断重拷整条长行。
@@ -143,6 +145,6 @@ python3 src/pilotdeck-yaml/tests/run_resource_scaling.py \
 
 转换 Object/Map/Set 的 Vec 保留顺序，达到 16 项后建立私有索引；小表扫描最多 16 项。数值键使用 SameValueZero（NaN 等价、±0 合并），Ref/Symbol 按身份区分；merge 的 only-missing 与覆盖顺序不变。`!!omap` 标量去重也使用索引。alias 按 arena 前序遍历预先记录最近的前置同名 anchor，转换时按 NodeId 直接查找；集合键中已注册/局部 anchor 使用名称集合。Schema 只含有限的内置 tags，按默认匹配优先级扫描；未知 `%TAG` 不扩展 schema。tag 输出的 prefix 匹配仍按声明顺序遍历，属于有序前缀匹配而非按 key 查表。
 
-第 8 轮另有 44 条 `tests/fixtures/set-merge.json` 差分，不改原 3,099 条分片。YAML 1.1/1.2 下核对 `!!set`、bare/显式/quoted merge、alias、顺序、集合键、非 null 值诊断及转换异常；即使存在解析诊断也比较显式 `to_json()` 的结果。npm 以 YAMLSet nodeClass 组合 set 标签，resolve 失败时仍保留 Set；Rust 同样报告错误并保留类型。重录：`node tests/record_set_merge.mjs <baseline> tests/fixtures/set-merge.json`（从 crate 目录运行）。
+第 8 轮的 44 条 `tests/fixtures/set-merge.json` 差分在 #95 本批新增 42 条后共 86 条，不改原 3,099 条分片。YAML 1.1/1.2 下核对 `!!set`、bare/显式/quoted merge、alias、顺序、集合键、非 null 值诊断及转换异常；新增用例覆盖 Set 作 map merge 源、JS iterable 解构、缺项 undefined 和非 iterable 转换错误。即使存在解析诊断也比较显式 `to_json()` 的结果。npm 以 YAMLSet nodeClass 组合 set 标签，resolve 失败时仍保留 Set；Rust 同样报告错误并保留类型。重录：`node tests/record_set_merge.mjs <baseline> tests/fixtures/set-merge.json`（从 crate 目录运行）。
 
 转换期的宽 Object/Map/Set 索引仅保存随机哈希到槽位，碰撞通过容器内的原键及 SameValueZero 校验，不拥有键副本。完成对象构建及 merge 临时 Map 构建后删除索引；merge 临时 Map 的 entries 移入目标，立即释放累加器存储。原键插入序、显式覆盖与 merge 仅补缺失键的规则不变。

@@ -1,5 +1,6 @@
 // Additional Node v22 / yaml@2.9.0 oracles. Convert even with parse errors:
-// YAMLSet's nodeClass survives TAG_RESOLVE_FAILED and still merges keys.
+// YAMLSet's nodeClass survives TAG_RESOLVE_FAILED. As a merge source its
+// toJSON returns a Set; mergeValue destructures each iterable Set element.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -49,9 +50,32 @@ const inputs = [
   '!!set {<<: {.nan: 1, -0: 2, 0: 3}}',
   '!!set {<<: {? [x, z]: 1}, ? [x, z]: null}',
   '!!set [x, z]',
+  '{<<: !!set {ab: null, cd: null}}',
+  '[&s !!set {ab: null, cd: null}, {<<: *s}]',
+  '{<<: !!set {ab: null, ac: null}, a: explicit}',
+  '{<<: [!!set {ab: null}, {a: later, z: 7}]}',
+  '{<<: [{a: first}, !!set {ab: null}]}',
+  '{<<: !!set {"": null, a: null}}',
+  '{<<: !!set {abc: null}}',
+  '{<<: !!set {"😀x": null, "\\uD800z": null}}',
+  '{<<: !!set {? [x, z]: null}}',
+  '{<<: !!set {? []: null, ? [x]: null}}',
+  '{<<: !!set {1: null}}',
+  '{<<: !!set {true: null}}',
+  '{<<: !!set {null: null}}',
+  '{<<: !!set {? {x: z}: null}}',
+  '{<<: !!set {ab: 7}}',
+  '{<<: !!set {}}',
+  '{<<: {ab: null, cd: null}}', // Negative control: Map keys are not split.
+  '!!set {ab: null, cd: null}', // Negative control: standalone Set is unchanged.
+  '{"<<": !!set {ab: null}}', // Negative control: quoted key does not merge.
+  '!!set {<<: !!set {ab: null}}',
+  '{<<: !!set {? !!omap [x: 1, z: 2]: null}}',
 ];
 const cases=[];
-for (const version of ['1.1', '1.2']) for (const [i,body] of inputs.entries()) {
+// Keep the original 44 cases in place; append the new source-Set coverage.
+for (const expanded of [false, true]) for (const version of ['1.1', '1.2']) for (const [i,body] of inputs.entries()) {
+  if ((i >= 22) !== expanded) continue;
   const yaml=`%YAML ${version}\n---\n${body}\n`;
   const doc=parseDocument(yaml,{prettyErrors:false});
   const pretty=parseDocument(yaml,{prettyErrors:true});
