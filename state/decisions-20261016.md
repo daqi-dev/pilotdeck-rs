@@ -36,3 +36,5 @@
 - 选项与后果：猜PUA或替换会改语义；恢复全nonASCII退回会放弃已验证D6；选择仅多项filtered catalog或同sequence比较键含孤立surrogate才转发。
 - 建议与执行：采用精确宿主边界，保留paired supplementary、U+FFFD与CJK本地；原生illformed UTF16由主协调登记A8前置后续issue。
 - 原则与断言：只退回当前依赖尚不能表达的可达输入；真实Node新原件、本地正控与上游observer负控明确区分单项/过滤后单项/不同sequence，历史fixture原件不改。
+
+原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)，真实非法dirent未验，不能把单元解码核验视为真实文件系统验收。

@@ -187,6 +187,10 @@ pub(crate) fn has_unpaired_surrogate(value: &pilotdeck_protocol::JsString) -> bo
     char::decode_utf16(value.units().iter().copied()).any(|unit| unit.is_err())
 }
 
+fn node_dirent_name(name: &std::ffi::CStr) -> String {
+    name.to_string_lossy().into_owned()
+}
+
 // Generated ICU 78.2 / CLDR 48 collation data uses the pinned Node oracle's
 // Unihan root, with matching tailorings. Unsupported collation extensions
 // retain Node's fallback to the language default, then root.
@@ -212,7 +216,7 @@ pub(crate) fn native_entries(root: &Path, path: &Path) -> io::Result<Vec<(String
     let mut entries = Vec::new();
     for entry in dir {
         let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let name = node_dirent_name(entry.file_name());
         if name == "." || name == ".." {
             continue;
         }
