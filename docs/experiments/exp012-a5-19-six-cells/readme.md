@@ -23,15 +23,19 @@ Claude 指出的 P1 成立。**撤回“慢 status 让次序倒转”和“慢 a
 
 只测量、修装置和报告；未改产品、state、resources 或冻结尺子，未提交、未发 issue 评论。原任务依据仍为 [计划 005 A5.2](../../plan/005_phase-a-session-domain.md)、[gap §四](../../research/008_phase-a-session-domain/gap.md#四19宿主竞态的可定位部分与不可冒认部分)和 [D4](../../research/008_phase-a-session-domain/decision.md)。本轮根据 PR #71 第 2 轮任务处理装置 P1 和 GLM 的 G append 慢补测，不重新定修法、接受差异或评分口径。
 
-脚本：[six_cells.mts](../../../scripts/a5-19/six_cells.mts)。Node **v22.22.0**；只读基线 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck` @ `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。本轮工作树 HEAD 为 `c5ab36fb2884892366adf7923305fc0fe5130c46`，脚本 hash、524 个实际导入 TS 源文件 hash 和全部摘要见 [manifest.json](raw/manifest.json)。manifest 的每个来源仍采用对象分行写 `path`、`sha256`，保留 gitleaks 误报修法。
+现行入口：[run.py](../../../scripts/a5-19/run.py)，内部调用 [six_cells.mts](../../../scripts/a5-19/six_cells.mts)。后者要求 launcher 预先设置隔离环境，不能再直接运行。Node **v22.22.0**；只读基线 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck` @ `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。本轮工作树 HEAD 为 `c5ab36fb2884892366adf7923305fc0fe5130c46`，脚本 hash、524 个实际导入 TS 源文件 hash 和全部摘要见 [manifest.json](raw/manifest.json)。manifest 的每个来源仍采用对象分行写 `path`、`sha256`，保留 gitleaks 误报修法。
 
 ```sh
-cd /Users/da/ws/pilotdeck-rs/_build/wt-a5x
-node --check scripts/a5-19/six_cells.mts
-node scripts/a5-19/six_cells.mts
+python3 scripts/a5-19/run.py \
+  --baseline /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
+  --output _tmp/20261016-exp012-replay
 ```
 
-两条命令均 exit 0；最终输出 `DONE 280 measurements; 0 unstable variant/phase groups; 524 unchanged baseline source files.` 本轮日志为 `_tmp/20261014-a5-19/check-r2.log`、`run-r2.log`，快格对比记录为该目录的 `fast-comparison-r2.json`。Node 的 TypeScript / SQLite ExperimentalWarning 不算失败。脚本在导入基线前把 `PILOT_HOME` 指向新的 `_tmp/20261014-a5-19/run-*/home`。无 listen、模型请求、实际工具执行、sidecar 子进程或二进制下载；只读 git 子进程用于记录身份。
+上述入口从仓库根目录运行，输出目录必须未存在。launcher 在 Node 启动前隔离 HOME/XDG/TMPDIR/PILOT_HOME 并设两个 SKIP_BROWSER_OPEN，进程内夹具禁止 listen。它复跑当前 A5.2a 装置，当前规则和扩展对照见 [exp014](../exp014-a52-session-fixtures/readme.md)；不将新跑结果冒认为历史 exp012 原件。
+
+2026-10-15 P2 清账实际用上述入口复跑，exit 0：`DONE 360 measurements; 0 unstable variant/phase groups; 524 unchanged baseline source files.` 当前夹具新增的对照使次数为 360；历史第 2 轮 280 次原始证据继续保留。原始输出保存在受保护的旧工作树 `_build/wt-p2c/_tmp/exp012-replay/`：[启动审计](../../../_build/wt-p2c/_tmp/exp012-replay/launch.json)、[运行日志](../../../_build/wt-p2c/_tmp/exp012-replay/run.log)，测量在同目录 `raw/`，不 listen。这是历史复跑，当前接续未将它冒认为新 HEAD 的重测；后续 #112 的改装须重新录制。
+
+历史第 2 轮两条命令均 exit 0；最终输出 `DONE 280 measurements; 0 unstable variant/phase groups; 524 unchanged baseline source files.` 本轮日志为 `_tmp/20261014-a5-19/check-r2.log`、`run-r2.log`，快格对比记录为该目录的 `fast-comparison-r2.json`。Node 的 TypeScript / SQLite ExperimentalWarning 不算失败。脚本在导入基线前把 `PILOT_HOME` 指向新的 `_tmp/20261014-a5-19/run-*/home`。无 listen、模型请求、实际工具执行、sidecar 子进程或二进制下载；只读 git 子进程用于记录身份。
 
 ## 装置与真实串行化边界
 

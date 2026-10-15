@@ -2,6 +2,7 @@
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    Undefined,
     Null,
     Bool(bool),
     Number(f64),
@@ -125,6 +126,7 @@ impl ValueGraph {
     }
     fn convert(&self, value: &Value, active: &mut Vec<usize>) -> Result<JsValue, ConversionError> {
         Ok(match value {
+            Value::Undefined => JsValue::Undefined,
             Value::Null => JsValue::Null,
             Value::Bool(v) => JsValue::Bool(*v),
             Value::Number(v) => JsValue::Number(*v),

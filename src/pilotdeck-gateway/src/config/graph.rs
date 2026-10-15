@@ -174,7 +174,7 @@ fn convert(g: &ValueGraph, v: &Value, role: Role, active: &mut Vec<usize>) -> Js
         Value::Bool(b) => JsValue::Bool(*b),
         Value::Number(n) => JsValue::Number(*n),
         Value::String(s) => JsValue::String(s.as_ref().clone()),
-        Value::Symbol { .. } => JsValue::Undefined,
+        Value::Undefined | Value::Symbol { .. } => JsValue::Undefined,
         Value::Ref(id) => match &g.nodes[*id] {
             Container::Object(entries) => {
                 if matches!(role, Role::Root) && active.contains(id) {

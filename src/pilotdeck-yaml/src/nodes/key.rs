@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub(crate) enum Key {
+    Undefined,
     Null,
     Bool(bool),
     Number(u64),
@@ -36,6 +37,7 @@ impl Key {
 impl From<&Value> for Key {
     fn from(value: &Value) -> Self {
         match value {
+            Value::Undefined => Self::Undefined,
             Value::Null => Self::Null,
             Value::Bool(b) => Self::Bool(*b),
             Value::Number(n) => Self::number(*n),
