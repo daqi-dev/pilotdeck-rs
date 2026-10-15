@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **02:53 收尾增补**：协调者复现配置fixture空集合会假PASS；只改cfg(test)，锁定catalog32/host0、diagnostics2696/host17及唯一非空ID，空/截短/重复三项负控拒绝。定向config tests、fmt、gateway all-targets clippy通过；产品与固定fixture字节未变，复用已绑定的scan/A2原始证据。该增量须两家独立补审和新HEAD CI后才合并。
+
 > 开工先读 `CLAUDE.md` + **`.42cog/` 四份**（`intent` · `real` · `cog` · `meta`）+ 本文件 + `state/memory/MEMORY.md`。
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
