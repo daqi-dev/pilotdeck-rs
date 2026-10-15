@@ -37,7 +37,7 @@ jobs:
       - name: gateway 协议 schema 正负例（ajv）
         working-directory: scripts/gateway-parity
         run: |
-          npm ci --no-fund
+          npm ci --ignore-scripts --no-fund
           node validate_fixtures.mjs
 
   # A3 · 基线三角的第三边：按冻结 commit 浅克隆 OpenBMB/PilotDeck，再生成 schema 并与已提交产物
@@ -63,7 +63,7 @@ jobs:
           echo "基线 commit: $(git -C pilotdeck-baseline rev-parse HEAD)"
       - name: 安装钉死依赖
         working-directory: scripts/gateway-parity
-        run: npm ci --no-fund
+        run: npm ci --ignore-scripts --no-fund
       - name: 再生成检查（冻结基线 × 已提交产物，字节一致）
         run: node scripts/gateway-parity/export_schema.mjs --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline" --check
       - name: 基线核对 L1–L3（缺基线即 FAIL）
@@ -71,3 +71,7 @@ jobs:
           PDRS_REQUIRE_BASELINE=1 \
           PDRS_BASELINE="$GITHUB_WORKSPACE/pilotdeck-baseline" \
           python3 scripts/gateway-parity/check_schema.py
+      - name: 产品入口覆盖总账（独立枚举 × 任务归属）
+        run: python3 scripts/product-coverage/check.py --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline"
+      - name: 入口漏项/重复/无主负对照及 UI runtime 对账
+        run: python3 scripts/product-coverage/test_check.py --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline" -v
