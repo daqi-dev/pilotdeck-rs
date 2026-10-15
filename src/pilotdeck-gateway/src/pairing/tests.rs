@@ -691,56 +691,109 @@ async fn authenticated_native_requests_match_ts_bytes_and_never_reach_upstream()
 }
 
 #[tokio::test]
-async fn cjk_fallback_reaches_upstream_with_original_frames_and_relays_ts_responses() {
+async fn cjk_local_responses_match_node_without_upstream_requests() {
     use base64::Engine;
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../tests/fixtures/collation/cjk-node22.json"
     ))
     .unwrap();
-    let mut count = 0;
-    for row in fixture["rows"].as_array().unwrap() {
-        for case in row["cases"].as_array().unwrap() {
-            let mut metadata = crate::project_files::tests::snapshot_metadata(row);
-            if let Some(group) = case["tag"].as_str().unwrap().strip_prefix("catalog-") {
-                metadata
-                    .files
-                    .files
-                    .get_mut(&metadata.home.join("pilotdeck.yaml"))
-                    .unwrap()["base64"] = base64::engine::general_purpose::STANDARD
-                    .encode(row["yamls"][group].as_str().unwrap())
-                    .into();
+    const CHILD: &str = "PDRS_CJK_PAIR_ROW";
+    let rows = fixture["rows"].as_array().unwrap();
+    let Ok(index) = std::env::var(CHILD) else {
+        for (index, row) in rows.iter().enumerate() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args([
+                "--exact",
+                "pairing::tests::cjk_local_responses_match_node_without_upstream_requests",
+                "--nocapture",
+            ]);
+            for (key, _) in std::env::vars_os() {
+                if key.to_string_lossy().starts_with("LC_")
+                    || matches!(
+                        key.to_str(),
+                        Some("LANG" | "PILOT_HOME" | "PILOTDECK_CONFIG_PATH" | "PILOT_AGENT_MODEL")
+                    )
+                {
+                    command.env_remove(key);
+                }
             }
-            let (client, downstream) = tokio::io::duplex(1024 * 1024);
-            let (upstream, server) = tokio::io::duplex(1024 * 1024);
-            let mut pair = Pair {
-                client,
-                server,
-                task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
-            };
-            authenticate(&mut pair).await;
-            // Alternate non-minimal lengths. The upstream endpoint acts as an
-            // independent observer: payload, mask and frame encoding must match.
-            let request = client_frame(
-                0x81,
-                if count % 2 == 0 { 126 } else { 127 },
-                case["request"].as_str().unwrap().as_bytes(),
+            for (key, value) in row["env"].as_object().unwrap() {
+                command.env(key, value.as_str().unwrap());
+            }
+            let output = command.env(CHILD, index.to_string()).output().unwrap();
+            assert!(
+                output.status.success(),
+                "row {index}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
             );
-            write(&mut pair.client, &request).await;
-            read(&mut pair.server, &request).await;
-            silent(&mut pair.client).await;
-            let response = server_frame(1, case["response"].as_str().unwrap().as_bytes());
-            write(&mut pair.server, &response).await;
-            read(&mut pair.client, &response).await;
-            pair.server.shutdown().await.unwrap();
-            pair.finish().await;
-            count += 1;
         }
+        return;
+    };
+    let row = &rows[index.parse::<usize>().unwrap()];
+    let mut count = 0;
+    for case in row["cases"].as_array().unwrap() {
+        let mut metadata = crate::project_files::tests::snapshot_metadata(row);
+        if let Some(group) = case["tag"].as_str().unwrap().strip_prefix("catalog-") {
+            metadata
+                .files
+                .files
+                .get_mut(&metadata.home.join("pilotdeck.yaml"))
+                .unwrap()["base64"] = base64::engine::general_purpose::STANDARD
+                .encode(row["yamls"][group].as_str().unwrap())
+                .into();
+        }
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        // Non-minimal request lengths must still receive the exact local
+        // Node response; the independent upstream observer stays silent.
+        let request = client_frame(
+            0x81,
+            if count % 2 == 0 { 126 } else { 127 },
+            case["request"].as_str().unwrap().as_bytes(),
+        );
+        write(&mut pair.client, &request).await;
+        let response = server_frame(1, case["response"].as_str().unwrap().as_bytes());
+        read(&mut pair.client, &response).await;
+        silent(&mut pair.server).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+        count += 1;
     }
-    assert_eq!(count, 108);
+    assert_eq!(count, 12);
 }
 
 #[tokio::test]
-async fn same_catalog_method_can_reply_locally_then_forward_on_one_pair() {
+async fn same_catalog_method_replies_locally_for_ascii_and_unicode_on_one_pair() {
+    const CHILD: &str = "PDRS_CATALOG_MIXED_PAIR";
+    if std::env::var_os(CHILD).is_none() {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("LC_")
+                || matches!(
+                    key.to_str(),
+                    Some("LANG" | "PILOT_HOME" | "PILOTDECK_CONFIG_PATH" | "PILOT_AGENT_MODEL")
+                )
+            {
+                command.env_remove(key);
+            }
+        }
+        let output = command.args(["--exact", "pairing::tests::same_catalog_method_replies_locally_for_ascii_and_unicode_on_one_pair", "--nocapture"])
+            .env(CHILD, "1").env("LANG", "C").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     use crate::metadata::object;
     use base64::Engine;
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -813,11 +866,9 @@ async fn same_catalog_method_can_reply_locally_then_forward_on_one_pair() {
     silent(&mut pair.server).await;
     let unicode = client_frame(0x81, 126, case["request"].as_str().unwrap().as_bytes());
     write(&mut pair.client, &unicode).await;
-    read(&mut pair.server, &unicode).await;
-    silent(&mut pair.client).await;
     let response = server_frame(1, case["response"].as_str().unwrap().as_bytes());
-    write(&mut pair.server, &response).await;
     read(&mut pair.client, &response).await;
+    silent(&mut pair.server).await;
     pair.server.shutdown().await.unwrap();
     pair.finish().await;
 }

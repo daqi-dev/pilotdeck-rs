@@ -7,7 +7,7 @@ use base64::{
 use icu_casemap::CaseMapper;
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use icu_locale_core::{LanguageIdentifier, Locale};
-use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
@@ -181,22 +181,9 @@ fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> Strin
         .into_owned()
 }
 
-/// D6 option C (state/decisions-20261014.md on main): until root Han data
-/// matches Node, let TS own any sort containing non-ASCII UTF-16 units.
-/// Conservatively includes accents, emoji and isolated surrogates; no safe
-/// non-ASCII subset is assumed. Only the actual sort keys belong here.
-pub(crate) fn needs_ts_collation<'a>(strings: impl IntoIterator<Item = &'a JsString>) -> bool {
-    strings
-        .into_iter()
-        .any(|string| string.units().iter().any(|unit| *unit > 0x7f))
-}
-
-// The compiled ICU4X root uses implicit Han data, unlike the pinned Node
-// oracle's Unihan root. Locale selection alone cannot remove this difference;
-// see tests/fixtures/collation/README.md (candidate A4-CJK-ROOT-HAN-001).
-// Unsupported collation extensions fall back to the language's default in
-// Node. Keep a final root fallback for unavailable locale data; never panic in
-// dispatch, even if the compiled provider cannot construct either collator.
+// Generated ICU 78.2 / CLDR 48 collation data uses the pinned Node oracle's
+// Unihan root, with matching tailorings. Unsupported collation extensions
+// retain Node's fallback to the language default, then root.
 pub(crate) fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
     let mut preferences: CollatorPreferences = locale.clone().into();
     Collator::try_new(preferences, Default::default())
@@ -284,10 +271,7 @@ pub(crate) fn execute<F: Files>(
 fn local_result(result: Result<JsValue>) -> Option<Result<JsValue>> {
     if matches!(
         &result,
-        Err((
-            "gateway_request_failed" | "TS_COLLATION_REQUIRED" | "NODE_IO_REQUIRED",
-            _
-        ))
+        Err(("gateway_request_failed" | "NODE_IO_REQUIRED", _))
     ) {
         None
     } else {
@@ -580,13 +564,6 @@ fn list<F: Files>(
         entries: Vec::new(),
     };
     scan.walk(&root, 0)?;
-    if needs_ts_collation(
-        scan.entries
-            .iter()
-            .map(|entry| entry.get("relativePath").unwrap().as_string().unwrap()),
-    ) {
-        return Err(("TS_COLLATION_REQUIRED", String::new()));
-    }
     scan.entries.sort_by(|a, b| {
         scan.collator.compare(
             &text_field(a, "relativePath").unwrap(),
@@ -666,15 +643,6 @@ impl<F: Files> Scan<'_, F> {
             .files
             .project_entries(self.root, directory)
             .map_err(|e| fs_error("project_files_list", e, "scandir", directory))?;
-        // Traversal order can affect visited symlinks and resource limits even
-        // when query/includeDirs later removes these names from the result.
-        let names: Vec<JsString> = children
-            .iter()
-            .map(|(name, _)| name.as_str().into())
-            .collect();
-        if needs_ts_collation(&names) {
-            return Err(("TS_COLLATION_REQUIRED", String::new()));
-        }
         children.sort_by(|a, b| self.collator.compare(&a.0, &b.0));
         for (name, is_directory) in children {
             self.count += 1;

@@ -13,6 +13,10 @@
 > **已交付**：#131 rebase合并，CI `check`与`gateway-schema-baseline`均绿，#121自动关闭；接续文档、整体意向、678入口总账及阶段D计划均已在main。合并后核查确认GitHub服务端committer仍为真实主邮箱（既有账号隐私缺口，需人于账号Emails设置处理）；未改写main历史。
 > **当前持有**：Codex复用主工作树，新分支`codex/p2-cleanup-resume`从旧#118 tip 958ec6c建立并同步origin/main；旧fix/p2-cleanup-1本地分支和wt-p2c（含none/73项）保留，其他候选不删除。新证据`_tmp/20261016-p2-resume/`。先修旧RESULT/临时目录/README文案，复测#95第12族与适用回归，再走完整独立闸门/CI；#91不在本PR，#112保留，不提前核销。
 > **并行准备**：D6优先于archive，原ICU数据可复用；当前main新增session_model_get的非ASCII回退需一并适配。独立工作区仅编辑准备，资源缩放测量期间不并行编译/负载。archive安全差异与A4前置债务另按规约处理，不能只因候选已写就标A4完成。
+> ## 2026-10-16 · D6 A 接续候选（基于 main@5eeac27，验证待解禁）
+> **来源/隔离**：现有 wt-d6 持有 codex/d6-resume；重放旧 28a0ef2 的 baked 数据、PROVENANCE 与独立 datagen 工具，旧 feat/d6-unihan-collation tip 原样保留。project_files 适配保留当前 NODE_IO_REQUIRED 与 method-specific IO 映射。
+> **新增适配**：session_model_get 同 sequence 非 ASCII createdAt 恢复本地 Unihan 排序；既有 Node 响应原件只改路由期望 false，单元与 pairing 共用该案例验证完整响应/无转发。其他宿主 fallback 保持原义；archive 另接，冻结文件未改。
+> **验证边界**：仅静态差异/哈希核查；主协调 #95 测量期间未运行 cargo、扫描、配对、下载或 datagen。代码未获行为通过，待协调解禁后使用独立 CARGO_TARGET_DIR 验证。交接与命令见主仓 `_tmp/20261016-d6-resume/task.md`。
 
 > ## 2026-10-16 · #121 增量审阅收尾：678条入口（两家终审通过，待CI）
 > **本轮修复**：676→678是补齐SMS自带HTTP监听与POST配置路径；后台start/watch/forward和各channel监听源码指针已改到实际调用。组引用/kind/坏类型元数据、未知Express receiver/动态链、Git与进程组超时均补规则与负对照。独立离线check PASS、6项测试PASS；逐条删除678项均FAIL，263 HTTP runtime对账通过。冻结规约及原工作树未改。

@@ -1,6 +1,39 @@
-# PR #96：CJK 排序根因与 D6 方案 C 回退
+# D6 方案 A：Unihan 数据与 Node 排序对齐
 
-当前状态（第 3 轮）：D6 方案 C 已实现，含非 ASCII 排序键的请求原样转发给 TS。
+2026-10-15：人定方案 A 已实现。ICU4X source/export/collator 2.1.1 从官方
+ICU 78.2 icuexportdata 和 CLDR JSON 48.0.0 生成标准 baked 数据，使用
+`CollationRootHan::Unihan`，配套生成七种排序 marker。主工程只替换原有
+`icu_collator_data 2.1.1` 数据来源，没有增加 crate 或升级算法。
+独立工具、版本兼容说明、来源哈希和 Unicode License v3 登记分别见
+`tools/collation-datagen/README.md`、`tools/collation-datagen/sources.json` 和
+`src/PROVENANCE.md`。
+
+`needs_ts_collation` 与 `TS_COLLATION_REQUIRED` 已撤掉。下方第 3 轮的转发
+测试恢复为本地响应逐字节断言；既有 JSON 原件未改，没有登记豁免。
+108 条 CJK 请求全部本地逐字节一致；内存配对通道也重放全部 108 条原始请求，
+客户端收到原件字节、上游保持静默，包含非最小 126/127 帧长度。
+config 的 2,728 条 load/wire 原件和 project-files 原件继续通过。
+
+全量扫描扩为 71,712 个码位（含未分配位置）和 19 个混合字符串，覆盖
+基本区、Ext-A、Ext-B、两个兼容区、部首补充、康熙部首，以及 ASCII、重音、
+组合字符和 emoji。九种环境组合和十个显式 locale 共 19 轮，都检查完整排序
+输出、对“中”的比较符号、每对相邻排序项的比较符号（包括相等分组），零差异。
+完整结果与 A2 六个本地 method 回归命令见本 worktree `_tmp/RESULT.md`。
+在线 A2 回归需要 listen，由协调者执行。
+
+```sh
+python3 tools/collation-datagen/regenerate.py --check
+python3 src/pilotdeck-gateway/tests/scan_cjk_collation.py _tmp/d6-fresh-scan
+cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
+  cjk_requests_match_node_byte_for_byte --locked --offline
+cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
+  cjk_local_responses_match_node_without_upstream_requests --locked --offline
+```
+
+## 历史：PR #96 排序根因与方案 C
+
+
+PR #96 第 3 轮的历史状态：D6 方案 C 已实现，含非 ASCII 排序键的请求原样转发给 TS。
 以下根因、扫描统计与 74 PASS / 34 FAIL 是第 2 轮的历史实测，原件保持不变；
 它们不是第 3 轮的本地应答结果。A / B 仍等人定，未登记已接受差异。
 

@@ -1,0 +1,20 @@
+[
+  {
+    "url": "https://github.com/unicode-org/cldr-json/releases/download/48.0.0/cldr-48.0.0-json-full.zip",
+    "file": "cldr-48.0.0-json-full.zip",
+    "bytes": 82544758,
+    "sha256": "25ab2651a1a874dd62a727d3c213d7c6bf0fc269b09d2937f0499b82d99fa58e"
+  },
+  {
+    "url": "https://github.com/unicode-org/icu/releases/download/release-78.2/icu4x-icuexportdata-78.2.zip",
+    "file": "icu4x-icuexportdata-78.2.zip",
+    "bytes": 5858928,
+    "sha256": "188cfc25d20229cc67331b9fbf3699a8d6ed7b62bef9cf0e6e004163795e77f8"
+  },
+  {
+    "url": "https://github.com/unicode-org/icu/releases/download/release-78.2/LICENSE",
+    "file": "ICU-78.2-LICENSE",
+    "bytes": 27718,
+    "sha256": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af"
+  }
+]
