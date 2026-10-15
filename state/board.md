@@ -4,6 +4,29 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-16 · D6 R4解码单元补证准备
+> **范围**：新增独立22组Node原始byte→UTF16小fixture，native_entries实际CStr解码改用共用helper（行为仍to_string_lossy）。macOS建非法名EILSEQ92，未冒充真实dirent；Linux端到端#133与原生非良构UTF16#132均前置A8/#127。准备保留当前tip后rebase最新main，再统一最终suite/污染扫描/exact A2。
+
+> ## 2026-10-16 · R19孤立surrogate真实P1修复候选（待独立增量终审）
+> **行为边界**：ICU4X对非良构UTF16替换为U+FFFD，与Node真实权重不同；catalog仅filtered多项id含孤立surrogate、session仅同sequence组createdAt含孤立surrogate走JS_HOST_REQUIRED整帧回退。合法Unicode、paired补充面/U+FFFD、单项/filtered单项、distinct或未入同序组均保持本地；不宣称全输入原生化，后续原生支持由主协调登记A8前置债务。
+> **证据**：新真实基线Node WS独立12样本 `session-model/illformed-collation.json`；生产路径及pairing observer完整帧对拍，恰4项上游、8项本地，fence确认无额外上游帧。历史原件未改；现有diagnostics明确17个含孤立排序键case断言host，2728为2711本地wire+17host，全部load诊断仍核。原CJK108仍全本地。
+> **验证/后续**：fmt、gateway all-targets clippy -D warnings、全gateway110lib+1bin通过。首录catalog agent指向缺失ascii导致4个错误原件，已修录制器再录并保留失败原件与日志；最终12原件均真实Node成功响应。证据主仓 `_tmp/20261016-d6-resume/{tests-r2-fixed.log,clippy-r2.log,illformed-record-fixed.log}`。等待新main后统一最终suite/standalone A2，不推送；scalar扫描不声称覆盖surrogate。
+
+> ## 2026-10-16 · D6初审两条测量P1闭合候选（待两家增量复核）
+> **修复**：CJK本地与pairing共用9行×每行12/合计108完整性断言，父分支循环前即验证，防空跑；内存负对照分别删空rows、删一row、删一request，三项均被拒绝，录制JSON原件不动。扫描脚本主动清除继承PDRS_PROBE_LOCALE，显式locale仍由每轮矩阵赋值。
+> **验证**：fmt/check、gateway all-targets clippy -D warnings通过；相关cjk三测试通过（含上述三负控）。故意继承PDRS_PROBE_LOCALE=zh-TW后重跑19×71,731扫描exit0，首C环境仍en-US，全部order/anchor/adjacent一致；输入及scope哈希与前轮完全相同，生产排序源码哈希未变。证据主仓 `_tmp/20261016-d6-resume/{tests-r1-cjk.log,clippy-r1.log,scan-r1-polluted/,scan-r1-summary.json}`。
+> **后续**：本次仅改测试/扫描，不自动重跑A2；等待#118新main同步信号后，按主协调安排再做gateway suite和最终standalone A2。其余surrogate/非法UTF8边界由主协调另核，不在本轮扩大范围；未推送。
+
+> ## 2026-10-16 · D6 在线A2通过（exact产品构建HEAD94b72f6）
+> **结果**：原冻结装置direct/proxy各八场景DONE，十readonly成功，七local（含session_model_get）无上游请求，archive三项保持透传；comparison PASS。R18登记可撤回单文件绑定，不改尺子或评分。
+> **身份与收尾**：独立target `_build/20261016-020004` locked/offline standalone产物，Cargo compiler-artifact绑定；binary前后SHA256 `ec452ce9082442cf63ce3121f4f655fe5b72ba19e3ece8b04ce44b41e79df734`相同，运行器proxySha256一致。锁覆盖链接及两轮，finally核inode/device/target后仅撤自己的软链，固定路径已不存在；装置前后哈希相同，两个process audit全停且无cleanup错误。
+> **证据与边界**：主仓 `_tmp/20261016-d6-resume/a2-current/` 与 `a2-current.log`；独立GLM/DeepSeek及完整合并闸门待主协调安排，不记A4全十项或阶段验收完成。产品源码自64d4956未变。
+
+> ## 2026-10-16 · D6 A 接续候选（基于 main@5eeac27，本地验证通过，独立闸门待安排）
+> **来源/隔离**：现有 wt-d6 持有 codex/d6-resume；重放旧 28a0ef2 的 baked 数据、PROVENANCE 与独立 datagen 工具，旧 feat/d6-unihan-collation tip 原样保留。project_files 适配保留当前 NODE_IO_REQUIRED 与 method-specific IO 映射。
+> **新增适配**：session_model_get 同 sequence 非 ASCII createdAt 恢复本地 Unihan 排序；既有 Node 响应原件只改路由期望 false，单元与 pairing 共用该案例验证完整响应/无转发。其他宿主 fallback 保持原义；archive 另接，冻结文件未改。
+> **验证**：产品提交 64d4956 的 fmt、gateway all-targets clippy -D warnings、gateway 全测试通过（lib 107 + bin 1；0失败）；使用独立 `_build/20261016-020004`，2 jobs、locked/offline。原始日志见主仓 `_tmp/20261016-d6-resume/`。baked 11项SHA256通过，冻结README哈希不变；无下载、datagen、全码位扫描或在线A2。后续解禁的全码位扫描在 HEAD 4dae78e exit0：19轮×71,731输入，完整排序/锚点符号/相邻符号全一致，输入哈希与旧scan-final相同、生产源码哈希匹配。原件为同证据目录 scan-current/，汇总 scan-current-summary.json。独立评审及在线A2待协调安排，未记阶段完成。
+
 > ## 2026-10-16 · #118 双终审通过；D6扫描通过（root @c8133d0，待提交/CI）
 > **#118**：YAML33通过、prefix-router补响应侧/双编码回归后8/8、fmt/全目标clippy通过；Node86条逐字节一致。第12族真实复算N10/40、相对耗时增长1.199和增量RSS比1.258均PASS；Chrome old两协议流式/滚动/搜索8/8。廉价P2本轮修，双编码疑点用实际静态服务函数实测，交独立终审复核。报告`docs/reviews/004_p2-cleanup.md`，GLM/DeepSeek最终增量均P0/P1/P2=0；当前新代码/证据尚待提交与最终CI，不提前关issue；#91/#112保留。
 > **D6并行**：独立工作树94b72f6，产品64d4956；fmt/clippy、gateway108测试、19轮各71731输入的完整排序/锚点/相邻符号全部PASS。正走GLM simplify与DeepSeek三角色；原A2固定bin接入将按锁内缺失路径原子软链绑定独立Cargo exact产物、前后hash与仅自有链接回收，不改尺子。当前七local，archive三项仍透传，不冒认为A4 10/10。
@@ -13,10 +36,6 @@
 > **已交付**：#131 rebase合并，CI `check`与`gateway-schema-baseline`均绿，#121自动关闭；接续文档、整体意向、678入口总账及阶段D计划均已在main。合并后核查确认GitHub服务端committer仍为真实主邮箱（既有账号隐私缺口，需人于账号Emails设置处理）；未改写main历史。
 > **当前持有**：Codex复用主工作树，新分支`codex/p2-cleanup-resume`从旧#118 tip 958ec6c建立并同步origin/main；旧fix/p2-cleanup-1本地分支和wt-p2c（含none/73项）保留，其他候选不删除。新证据`_tmp/20261016-p2-resume/`。先修旧RESULT/临时目录/README文案，复测#95第12族与适用回归，再走完整独立闸门/CI；#91不在本PR，#112保留，不提前核销。
 > **并行准备**：D6优先于archive，原ICU数据可复用；当前main新增session_model_get的非ASCII回退需一并适配。独立工作区仅编辑准备，资源缩放测量期间不并行编译/负载。archive安全差异与A4前置债务另按规约处理，不能只因候选已写就标A4完成。
-> ## 2026-10-16 · D6 A 接续候选（基于 main@5eeac27，验证待解禁）
-> **来源/隔离**：现有 wt-d6 持有 codex/d6-resume；重放旧 28a0ef2 的 baked 数据、PROVENANCE 与独立 datagen 工具，旧 feat/d6-unihan-collation tip 原样保留。project_files 适配保留当前 NODE_IO_REQUIRED 与 method-specific IO 映射。
-> **新增适配**：session_model_get 同 sequence 非 ASCII createdAt 恢复本地 Unihan 排序；既有 Node 响应原件只改路由期望 false，单元与 pairing 共用该案例验证完整响应/无转发。其他宿主 fallback 保持原义；archive 另接，冻结文件未改。
-> **验证边界**：仅静态差异/哈希核查；主协调 #95 测量期间未运行 cargo、扫描、配对、下载或 datagen。代码未获行为通过，待协调解禁后使用独立 CARGO_TARGET_DIR 验证。交接与命令见主仓 `_tmp/20261016-d6-resume/task.md`。
 
 > ## 2026-10-16 · #121 增量审阅收尾：678条入口（两家终审通过，待CI）
 > **本轮修复**：676→678是补齐SMS自带HTTP监听与POST配置路径；后台start/watch/forward和各channel监听源码指针已改到实际调用。组引用/kind/坏类型元数据、未知Express receiver/动态链、Git与进程组超时均补规则与负对照。独立离线check PASS、6项测试PASS；逐条删除678项均FAIL，263 HTTP runtime对账通过。冻结规约及原工作树未改。
