@@ -25,12 +25,23 @@
       "stable": true
     }
   ],
-  "collectionTime": "2026-10-15T18:27:07.135Z",
+  "registration": {
+    "path": "scripts/a5-19/preregistration-sidecar-four.mjs",
+    "sha256": "555f26c929b809373144a96879b8062c5569727379cce38ea00c21a8a87bfc35",
+    "committedBytesMatch": true,
+    "headCommit": "656d6e39c99db5424025a05b930c3db8e6cda661",
+    "collectionStartedAt": "2026-10-15T18:39:34.165Z",
+    "historicalRuns": "POST_HOC: old SIDECAR_CASE registration covered only one cell"
+  },
   "measurements": 20,
   "evidence": [
     {
       "caseId": "sidecar/no-registry/fast/model",
       "repetition": 1,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:34.166Z",
+        "operationDeadline": "2026-10-15T18:41:37.622Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -38,10 +49,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-bh608nfn0tm",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-bh608nfn0tm-311eazd81gx-fktxezw16f8"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-8x9ogvquca9",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-8x9ogvquca9-4nt32pvuu1n-4qu3rkwhxny"
           },
-          "streamId": "stream-7j6b5f13e9w",
+          "streamId": "stream-dh05tei12i",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -200,20 +211,24 @@
       ],
       "exit": {
         "order": 82,
-        "pid": 69293,
+        "pid": 74755,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/model/1/observation.json",
-        "sha256": "59e8e5df4b791b0986a5b65e8ae24626d4050bcf786daca5f6928d9b3b82629f"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/model/1/observation.json",
+        "sha256": "40466f56ea8a8f73e82a5c82124efdc85310bd2de017d438c2f7c79ac313ebf7"
       },
-      "timelineSha256": "cf05539030ece9fb6cc34ef54585e1b37c2813da4d088fc6674ed68dcd970a9e"
+      "timelineSha256": "546356b64d6a3fc6cce717130e6215cc1c712540eb16960bbae490148c054d64"
     },
     {
       "caseId": "sidecar/no-registry/fast/model",
       "repetition": 2,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:34.663Z",
+        "operationDeadline": "2026-10-15T18:41:38.119Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -221,10 +236,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-7gglb1bnwdv",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-7gglb1bnwdv-twhxwlcwuyo-yaapmebtuqq"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-z5b2hw79v2b",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-z5b2hw79v2b-243wwupwxyn-kopffrs9zi"
           },
-          "streamId": "stream-64z940y28t",
+          "streamId": "stream-aw872i4qptg",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -383,20 +398,24 @@
       ],
       "exit": {
         "order": 82,
-        "pid": 69299,
+        "pid": 74762,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/model/2/observation.json",
-        "sha256": "0ce6c9ef5cafea359a3312598f8a1d3544fa0cc29e21f5470614db969dfad0da"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/model/2/observation.json",
+        "sha256": "22a60b385fdaff1cba6f5e9642adb062b72ccb3ebea019d3a7cef2a6ae5d7cff"
       },
-      "timelineSha256": "a70769cd94b0bddfbb440fdd888474a06443063a3fe3587bac79ba10be2000d3"
+      "timelineSha256": "d278743a14f6ebca0d933d66a473511f3ef04427e2c02966aa456b1dbe5786d5"
     },
     {
       "caseId": "sidecar/no-registry/fast/model",
       "repetition": 3,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:35.142Z",
+        "operationDeadline": "2026-10-15T18:41:38.598Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -404,10 +423,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-sxgvx9hrcrm",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-sxgvx9hrcrm-195pgzt3dmv-fhaqr3jkpvl"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-mquw3b3s5zi",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-mquw3b3s5zi-rswg2ambqno-kkvkcpn12j"
           },
-          "streamId": "stream-56rbfyvqg35",
+          "streamId": "stream-mqolkku5axb",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -566,20 +585,24 @@
       ],
       "exit": {
         "order": 82,
-        "pid": 69302,
+        "pid": 74768,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/model/3/observation.json",
-        "sha256": "50029e1ebd326b79c0741c287d4a341f0dd567ee0fa63b8fc029b9b41734cdf1"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/model/3/observation.json",
+        "sha256": "4b7a45ce668ab16b5b332cad2010970ded47dcb4088e5d2ddd20c3bfb242707f"
       },
-      "timelineSha256": "3c80a81bf4f85eb1e516cf38775bdcf6edcee1f293baabf0bed91aae40ecba67"
+      "timelineSha256": "9c7bd83c7db95b809ddc3a68ff4758f1e9b05d0296b3ae4ccdf859ba2627a440"
     },
     {
       "caseId": "sidecar/no-registry/fast/model",
       "repetition": 4,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:35.605Z",
+        "operationDeadline": "2026-10-15T18:41:39.061Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -587,10 +610,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-l61b4mukedl",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-l61b4mukedl-ochsp99p4xg-1z1vi10dun9"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-d2euii4lvjv",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-d2euii4lvjv-e0h1ue53ng-j7m3am7tpi"
           },
-          "streamId": "stream-tmzf65jyaji",
+          "streamId": "stream-p2hzqctyko",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -749,20 +772,24 @@
       ],
       "exit": {
         "order": 82,
-        "pid": 69304,
+        "pid": 74774,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/model/4/observation.json",
-        "sha256": "cf605463b5e21d13f75540c7a5154f36be3e2745a9a3eec2d6f553d8fbabe134"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/model/4/observation.json",
+        "sha256": "cb2ac2757f2922f0d7f350e31182640fe05fb5fea823059c3f505d0443a545e3"
       },
-      "timelineSha256": "ccf4f6f362cdab778353e289b89c511a8dc75e1d186fc330a78fb29a7dd30660"
+      "timelineSha256": "c3fc992e07922c9232bfecb5c39ed47a864013c757cfc7222a7cc6e632c57eb5"
     },
     {
       "caseId": "sidecar/no-registry/fast/model",
       "repetition": 5,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:36.070Z",
+        "operationDeadline": "2026-10-15T18:41:39.526Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -770,10 +797,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-vfosuxmfp7q",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-vfosuxmfp7q-ea7afvr08rm-lxmkuhnu5xi"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-kawg2vvzfn",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-kawg2vvzfn-bw7t9pc65o4-pub65fonrjm"
           },
-          "streamId": "stream-r5v12gpcv29",
+          "streamId": "stream-b3th4bevm2m",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -932,20 +959,24 @@
       ],
       "exit": {
         "order": 82,
-        "pid": 69305,
+        "pid": 74778,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/model/5/observation.json",
-        "sha256": "f5f24c88dc111e0432805372a6ce3b153d20bf1f3c7dae1c50247ba4a418c6e2"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/model/5/observation.json",
+        "sha256": "06b5d1d2b1b39ad4434864c54431694f872dde4f4f049771e801b4860d904f47"
       },
-      "timelineSha256": "507b01bf80eda01543e847a6220a810611c414f25518c52e4822a7e1bb96c067"
+      "timelineSha256": "abe1e9feb21423871068522ed70ac806d587d857c04ff9cca9a2f3ca096d92e1"
     },
     {
       "caseId": "sidecar/no-registry/fast/tool",
       "repetition": 1,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:36.540Z",
+        "operationDeadline": "2026-10-15T18:41:39.996Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -953,10 +984,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-8tt0f9i7ns9",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-8tt0f9i7ns9-b22n5100m6g-botoyj1qby4"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-t8s0fc54fk",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-t8s0fc54fk-bf84kr35yk-25f5hcopmts"
           },
-          "streamId": "stream-vl0mk99ery",
+          "streamId": "stream-vtia91wh32",
           "lastAppliedSequence": 8,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -1165,20 +1196,24 @@
       ],
       "exit": {
         "order": 121,
-        "pid": 69309,
+        "pid": 74780,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/tool/1/observation.json",
-        "sha256": "3c5637ac6f1519692be65f84cf5787cc3373220b88605b81a571d0b05a693224"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/tool/1/observation.json",
+        "sha256": "080d945a220984ef70a2ecff708c9eaf61ba19e496111958dc5a2f287b17c74b"
       },
-      "timelineSha256": "9329be0711f3e623d4e87e25dd632b04223b5f03a518411ac01de6044d6b4398"
+      "timelineSha256": "0640580c64376c9fa726af78f16d5478a6498a46356d97bd4bd9d1bb141b3ff7"
     },
     {
       "caseId": "sidecar/no-registry/fast/tool",
       "repetition": 2,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:37.521Z",
+        "operationDeadline": "2026-10-15T18:41:40.977Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -1186,10 +1221,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-nh8m3wt57gb",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-nh8m3wt57gb-8ej2veeq9sd-glv6aumgjj6"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-vvisi0itepg",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-vvisi0itepg-rqhksc0wc4n-vwol0ll46vc"
           },
-          "streamId": "stream-5te3bziz1ls",
+          "streamId": "stream-qyl38k1irn",
           "lastAppliedSequence": 8,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -1398,20 +1433,24 @@
       ],
       "exit": {
         "order": 121,
-        "pid": 69313,
+        "pid": 74788,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/tool/2/observation.json",
-        "sha256": "380da82f351664cdf93e445ff86f7467590894c47cbf6fc35530875d240d6e3c"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/tool/2/observation.json",
+        "sha256": "7d77e414a799fa92fdc4c6d1aad9e3703f292f9b635acd992c95fa55c0294d76"
       },
-      "timelineSha256": "f72f457a0029f22f86c3462a2cf0de2551517961758f50b139c09adc0895b932"
+      "timelineSha256": "8d2707858165e301c8eb053aec7dabfe22680d699ce8b63fcfb56900c7d7facd"
     },
     {
       "caseId": "sidecar/no-registry/fast/tool",
       "repetition": 3,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:38.549Z",
+        "operationDeadline": "2026-10-15T18:41:42.005Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -1419,10 +1458,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-jpstgpndxsn",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-jpstgpndxsn-iu9x5t1ve-mpw9o97grf"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-8b7ckib3ual",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-8b7ckib3ual-qynv4bxzbl8-6djsvew87p"
           },
-          "streamId": "stream-vj3amecsk9b",
+          "streamId": "stream-yqedw876qz8",
           "lastAppliedSequence": 8,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -1631,20 +1670,24 @@
       ],
       "exit": {
         "order": 121,
-        "pid": 69318,
+        "pid": 74816,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/tool/3/observation.json",
-        "sha256": "17fbf0c455f9fd12db7cbb4f676ac52a0052adaf2ea8b05b2eee7e0bcbf9958b"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/tool/3/observation.json",
+        "sha256": "4d61f9de564b4312b12c3c14d16c6c2f5a257d48bbfad267b5be47292de6f46d"
       },
-      "timelineSha256": "aa3f92c6f6447e334e104faf82ac63915e5d0146aadb9860dd9411e5150e121e"
+      "timelineSha256": "dff23273cdca43684d5b0f45e9b2e2f57da467442bc2a8267528917a51a50b4d"
     },
     {
       "caseId": "sidecar/no-registry/fast/tool",
       "repetition": 4,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:39.538Z",
+        "operationDeadline": "2026-10-15T18:41:42.994Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -1652,10 +1695,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-kshzwblltfa",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-kshzwblltfa-x7jcit0o2qk-el7jj69tqfg"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-w17shu3cpap",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-w17shu3cpap-a4c5q9inc1-kn6bypnebf"
           },
-          "streamId": "stream-y9yalqhsq38",
+          "streamId": "stream-0y6o8bw5y95d",
           "lastAppliedSequence": 8,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -1864,20 +1907,24 @@
       ],
       "exit": {
         "order": 121,
-        "pid": 69330,
+        "pid": 74829,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/tool/4/observation.json",
-        "sha256": "625ae97ca683f68909371ee7491bd829545ff24c1dca27cc0db46a692cab4fe3"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/tool/4/observation.json",
+        "sha256": "3a64e9674db87423e090436bd61558f67ef59e2a3e7f535589b4a63a7ad723a7"
       },
-      "timelineSha256": "b88394c1151b2e677727d7bd5799259f296afbc4539618bfe1848dda648ff4ee"
+      "timelineSha256": "220723794dd5501f23d0a6dd757f0805cd1e5d46a48201ac77d968cb863877f5"
     },
     {
       "caseId": "sidecar/no-registry/fast/tool",
       "repetition": 5,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:40.526Z",
+        "operationDeadline": "2026-10-15T18:41:43.982Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -1885,10 +1932,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-hvldv7gcuuf",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-hvldv7gcuuf-4feuegpj8o2-3g1mexcwwqu"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-kv6xg65s73a",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-kv6xg65s73a-2mankbymsf3-9rdjdaih2q"
           },
-          "streamId": "stream-57tcar2kfc",
+          "streamId": "stream-sydovbpq7ls",
           "lastAppliedSequence": 8,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -2097,20 +2144,24 @@
       ],
       "exit": {
         "order": 121,
-        "pid": 69334,
+        "pid": 74838,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/no-registry/fast/tool/5/observation.json",
-        "sha256": "9af6fe676047e45f858f5e7045fbd2662af33bfbd35c8e5b18ad052c87dde796"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/no-registry/fast/tool/5/observation.json",
+        "sha256": "acfb6c2956893b0977c80b027487fd0bc676011889d813b4fc2c51e1a91aa0ba"
       },
-      "timelineSha256": "fbc0b1e6be88d69a5123c843e34f73a36e5fa968ae61524d90b66a358d480679"
+      "timelineSha256": "671ed9787a37d381f44c22eea80fab7de9ced16232c5b3fc831b49dfc4a75174"
     },
     {
       "caseId": "sidecar/registry/fast/model",
       "repetition": 1,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:41.521Z",
+        "operationDeadline": "2026-10-15T18:41:44.977Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -2118,10 +2169,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-m9094tw9yd",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-m9094tw9yd-rpn5szjn4a-wnzpx63gstf"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-v3rn3qvqhc",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-v3rn3qvqhc-rwc9grtac0p-3y64mbgaaye"
           },
-          "streamId": "stream-y7mqej2er6a",
+          "streamId": "stream-zr88hzp3m0g",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -2187,12 +2238,12 @@
           "sessionKey": "session",
           "runId": "run",
           "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
+          "ownerPid": 74720,
           "state": "failed",
           "revision": 8,
           "lastSeq": 7,
-          "acceptedAt": "2026-10-15T18:27:14.431Z",
-          "updatedAt": "2026-10-15T18:27:14.856Z",
+          "acceptedAt": "2026-10-15T18:39:41.522Z",
+          "updatedAt": "2026-10-15T18:39:41.949Z",
           "result": {
             "type": "error",
             "runId": "run",
@@ -2257,7 +2308,7 @@
           "kind": "sidecar.observation"
         },
         {
-          "order": 68,
+          "order": 69,
           "observation": {
             "type": "module_call_received",
             "module": "model",
@@ -2277,20 +2328,24 @@
       ],
       "exit": {
         "order": 118,
-        "pid": 69338,
+        "pid": 74843,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/model/1/observation.json",
-        "sha256": "7d2b7a704e923a7d6955a66dbfecd29429e92ab46fb74753d05f7f10e674b6f5"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/model/1/observation.json",
+        "sha256": "d17e981f9e5c60e2fc8e2390e0ccfb5ae2d0a013f86b01672938fd324bc33c03"
       },
-      "timelineSha256": "748d7c0eb564e3c48776916a3fe3bca8b485424acfe4d93f5b5d054447247096"
+      "timelineSha256": "7b7b001206372beb0278b5ae7f07b10629ddf8ea9151ae9fb9f8253f6e0aba44"
     },
     {
       "caseId": "sidecar/registry/fast/model",
       "repetition": 2,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:41.991Z",
+        "operationDeadline": "2026-10-15T18:41:45.447Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -2298,10 +2353,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-ftfii1enr8n",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-ftfii1enr8n-zj2qbodff1a-25p12li9w6"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-rgj7n7iy3fb",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-rgj7n7iy3fb-07fgfyxfjbfq-6qjvxjbo76p"
           },
-          "streamId": "stream-ykv1dushjh",
+          "streamId": "stream-dg572nb3iig",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -2367,12 +2422,12 @@
           "sessionKey": "session",
           "runId": "run",
           "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
+          "ownerPid": 74720,
           "state": "failed",
           "revision": 8,
           "lastSeq": 7,
-          "acceptedAt": "2026-10-15T18:27:14.898Z",
-          "updatedAt": "2026-10-15T18:27:15.311Z",
+          "acceptedAt": "2026-10-15T18:39:41.991Z",
+          "updatedAt": "2026-10-15T18:39:42.426Z",
           "result": {
             "type": "error",
             "runId": "run",
@@ -2457,20 +2512,24 @@
       ],
       "exit": {
         "order": 118,
-        "pid": 69340,
+        "pid": 74844,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/model/2/observation.json",
-        "sha256": "c65e4dec1c6bc2100bfb297a2957f752bbeaa8d623bdcce58c5c01d796ceb4e6"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/model/2/observation.json",
+        "sha256": "c0bb526120f3244f636e25a02c250a208770c938eb2dc013928a39e6f9e34b76"
       },
-      "timelineSha256": "ef9263048fc15532bb8aee95c56fb835918eb53f602ee9f8824f75ced5c26b32"
+      "timelineSha256": "e1b887e7719fc3073195a57098d00e7e46e345847478c15094cbe964bf664b93"
     },
     {
       "caseId": "sidecar/registry/fast/model",
       "repetition": 3,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:42.468Z",
+        "operationDeadline": "2026-10-15T18:41:45.924Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -2478,10 +2537,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-y05vbph52cq",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-y05vbph52cq-wrwt1avc6t9-793swdjx0e7"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-ru1b79tm2wq",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-ru1b79tm2wq-dqxy6t7g25-rra8yimaz6s"
           },
-          "streamId": "stream-wet23eenn6",
+          "streamId": "stream-00bt20uxw9uii",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -2547,12 +2606,12 @@
           "sessionKey": "session",
           "runId": "run",
           "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
+          "ownerPid": 74720,
           "state": "failed",
           "revision": 8,
           "lastSeq": 7,
-          "acceptedAt": "2026-10-15T18:27:15.352Z",
-          "updatedAt": "2026-10-15T18:27:15.774Z",
+          "acceptedAt": "2026-10-15T18:39:42.469Z",
+          "updatedAt": "2026-10-15T18:39:42.895Z",
           "result": {
             "type": "error",
             "runId": "run",
@@ -2637,20 +2696,24 @@
       ],
       "exit": {
         "order": 118,
-        "pid": 69342,
+        "pid": 74861,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/model/3/observation.json",
-        "sha256": "26650cbbac57d272cd64aa78e2bf68114070b7002e709ea374e4f202a986bcf0"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/model/3/observation.json",
+        "sha256": "555ee6a933c27cfae57f4d59028e81239885bae3f52a4520c22b48aafdd61366"
       },
-      "timelineSha256": "c6bcfada85737fa2fb6b03bf7fee142eee889ef4c7d0026def2b8e22a96af577"
+      "timelineSha256": "d2d448ca798d733552123151ffc79d65c809a20ab0bab1461fc50d702f1832f2"
     },
     {
       "caseId": "sidecar/registry/fast/model",
       "repetition": 4,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:42.937Z",
+        "operationDeadline": "2026-10-15T18:41:46.393Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -2658,10 +2721,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-xvuoq52pvf",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-xvuoq52pvf-y4cta66wy7-59d28711plb"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-by7c9ljbe0e",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-by7c9ljbe0e-3j1ikly2wo6-o7mcg647kg"
           },
-          "streamId": "stream-ynda6j2y7fq",
+          "streamId": "stream-l1wsd8f77c9",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -2727,12 +2790,12 @@
           "sessionKey": "session",
           "runId": "run",
           "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
+          "ownerPid": 74720,
           "state": "failed",
           "revision": 8,
           "lastSeq": 7,
-          "acceptedAt": "2026-10-15T18:27:15.817Z",
-          "updatedAt": "2026-10-15T18:27:16.242Z",
+          "acceptedAt": "2026-10-15T18:39:42.937Z",
+          "updatedAt": "2026-10-15T18:39:43.354Z",
           "result": {
             "type": "error",
             "runId": "run",
@@ -2817,20 +2880,24 @@
       ],
       "exit": {
         "order": 118,
-        "pid": 69346,
+        "pid": 74863,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/model/4/observation.json",
-        "sha256": "a4fa6576b5fbecdc8f5ae72591e378471eb3ebc3171032b55705acadfe7f3c3c"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/model/4/observation.json",
+        "sha256": "35ff1f368a9a7ded822df853bd4031512e54889df49baeb0d0c1178fbe6b4815"
       },
-      "timelineSha256": "54a43a90d2c165af8e38fc1fe838af594942316413d7b20098cad77e333418a4"
+      "timelineSha256": "08ca25857f607ceb43a38834df96d169ba66f78aa1cbc5ec26fa68b0f2de1ce4"
     },
     {
       "caseId": "sidecar/registry/fast/model",
       "repetition": 5,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:43.394Z",
+        "operationDeadline": "2026-10-15T18:41:46.850Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -2838,10 +2905,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-gqikgmrmg1c",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-gqikgmrmg1c-6lzus7bkg2-s1pd8l5fwab"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-dsp9ufh4g4b",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-dsp9ufh4g4b-3ws06iws7bj-6qnld398hle"
           },
-          "streamId": "stream-ynno43wzz4",
+          "streamId": "stream-i1eht3027wq",
           "lastAppliedSequence": 2,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -2907,12 +2974,12 @@
           "sessionKey": "session",
           "runId": "run",
           "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
+          "ownerPid": 74720,
           "state": "failed",
           "revision": 8,
           "lastSeq": 7,
-          "acceptedAt": "2026-10-15T18:27:16.284Z",
-          "updatedAt": "2026-10-15T18:27:16.714Z",
+          "acceptedAt": "2026-10-15T18:39:43.395Z",
+          "updatedAt": "2026-10-15T18:39:43.825Z",
           "result": {
             "type": "error",
             "runId": "run",
@@ -2977,7 +3044,7 @@
           "kind": "sidecar.observation"
         },
         {
-          "order": 68,
+          "order": 69,
           "observation": {
             "type": "module_call_received",
             "module": "model",
@@ -2997,20 +3064,24 @@
       ],
       "exit": {
         "order": 118,
-        "pid": 69348,
+        "pid": 74864,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/model/5/observation.json",
-        "sha256": "8cd34e3199739625c2f14b25c135f1b4c2636186497c580ae78bc1213f52911b"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/model/5/observation.json",
+        "sha256": "4690765565ca2c955dd51cb9678ddd7ea783f61920e4d1bef7ca1a4311868917"
       },
-      "timelineSha256": "c8d46446b55362b83747bdab2d780b8f71b2ae40c7d6909189410b18a5da752e"
+      "timelineSha256": "be1f97be07858dbd232f22be475ee1853c46c69a56ffd386e8407fbc4fcc9b04"
     },
     {
       "caseId": "sidecar/registry/fast/tool",
       "repetition": 1,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:43.867Z",
+        "operationDeadline": "2026-10-15T18:41:47.323Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -3018,10 +3089,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-bho5qy8ua8",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-bho5qy8ua8-3a5ybe7jt7e-eziqv8a25bl"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-ps85wgu9qs",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-ps85wgu9qs-cmexpmddmih-23e7s5s0lil"
           },
-          "streamId": "stream-rxjmvwycuqo",
+          "streamId": "stream-u30ux8tm5j",
           "lastAppliedSequence": 8,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -3087,702 +3158,12 @@
           "sessionKey": "session",
           "runId": "run",
           "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
+          "ownerPid": 74720,
           "state": "failed",
           "revision": 9,
           "lastSeq": 8,
-          "acceptedAt": "2026-10-15T18:27:16.755Z",
-          "updatedAt": "2026-10-15T18:27:17.694Z",
-          "result": {
-            "type": "error",
-            "runId": "run",
-            "code": "gateway_submit_failed",
-            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-            "recoverable": false,
-            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
-          }
-        }
-      ],
-      "realtimeFrames": [
-        {
-          "type": "turn_started",
-          "runId": "run"
-        },
-        {
-          "type": "input_accepted",
-          "runId": "run"
-        },
-        {
-          "type": "model_request_started",
-          "model": "controlled",
-          "provider": "host-fixture",
-          "runId": "run"
-        },
-        {
-          "timeline": {
-            "version": 1,
-            "turnId": "run",
-            "id": "tool:held-tool",
-            "order": 0,
-            "revision": 2
-          },
-          "type": "tool_call_started",
-          "toolCallId": "held-tool",
-          "name": "fixture_hold",
-          "argsPreview": "{}",
-          "runId": "run"
-        }
-      ],
-      "moduleCalls": [
-        {
-          "order": 47,
-          "observation": {
-            "type": "module_call_received",
-            "module": "turn",
-            "operation": "drain_steer"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 51,
-          "observation": {
-            "type": "module_call_received",
-            "module": "capability",
-            "operation": "list_tools"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 55,
-          "observation": {
-            "type": "module_call_received",
-            "module": "event",
-            "operation": "emit"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 62,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "prepare"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 69,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 84,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 92,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 100,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 108,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 119,
-          "observation": {
-            "type": "module_call_received",
-            "module": "capability",
-            "operation": "execute_batch"
-          },
-          "kind": "sidecar.observation"
-        }
-      ],
-      "exit": {
-        "order": 163,
-        "pid": 69352,
-        "code": 0,
-        "signal": null,
-        "kind": "sidecar.exit"
-      },
-      "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/tool/1/observation.json",
-        "sha256": "b09dcc393cd7cdaf79d9ccbba7dcaf9297fac161537170436d9be4da72b8c604"
-      },
-      "timelineSha256": "276d0f3b3d86b09a5611d2db57597335fe47869fe063dc5910f27b27719194d9"
-    },
-    {
-      "caseId": "sidecar/registry/fast/tool",
-      "repetition": 2,
-      "terminal": [
-        {
-          "type": "agent_loop_operation_terminal",
-          "runId": "run",
-          "operationId": "run",
-          "requestId": "request-sidecar-4",
-          "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-4td38q1u17h",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-4td38q1u17h-01kot2d6b6d4-2evo18t2g2o"
-          },
-          "streamId": "stream-jqwaa21h9uh",
-          "lastAppliedSequence": 8,
-          "outcome": "result_unknown",
-          "code": "DEADLINE_EXCEEDED",
-          "error": {
-            "code": "DEADLINE_EXCEEDED",
-            "message": "Module execution deadline exceeded."
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 15,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-15",
-          "parentEntryId": "session-entry-14"
-        }
-      ],
-      "statuses": [
-        {
-          "type": "agent_status_message",
-          "event": "turn_timeout",
-          "kind": "error",
-          "text": "Turn exceeded the 123456ms timeout.",
-          "detail": {
-            "message": "Turn exceeded the 123456ms timeout.",
-            "code": "turn_timeout",
-            "severity": "error",
-            "visible": true,
-            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
-            "scope": "turn",
-            "source": "gateway",
-            "timeoutMs": 123456
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 14,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-14",
-          "parentEntryId": "session-entry-13"
-        },
-        {
-          "type": "agent_status_message",
-          "event": "gateway_submit_failed",
-          "kind": "error",
-          "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-          "detail": {
-            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-            "code": "gateway_submit_failed",
-            "severity": "error",
-            "visible": true,
-            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
-            "scope": "turn",
-            "source": "gateway"
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 16,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-16",
-          "parentEntryId": "session-entry-15"
-        }
-      ],
-      "registryRecords": [
-        {
-          "sessionKey": "session",
-          "runId": "run",
-          "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
-          "state": "failed",
-          "revision": 9,
-          "lastSeq": 8,
-          "acceptedAt": "2026-10-15T18:27:17.779Z",
-          "updatedAt": "2026-10-15T18:27:18.707Z",
-          "result": {
-            "type": "error",
-            "runId": "run",
-            "code": "gateway_submit_failed",
-            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-            "recoverable": false,
-            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
-          }
-        }
-      ],
-      "realtimeFrames": [
-        {
-          "type": "turn_started",
-          "runId": "run"
-        },
-        {
-          "type": "input_accepted",
-          "runId": "run"
-        },
-        {
-          "type": "model_request_started",
-          "model": "controlled",
-          "provider": "host-fixture",
-          "runId": "run"
-        },
-        {
-          "timeline": {
-            "version": 1,
-            "turnId": "run",
-            "id": "tool:held-tool",
-            "order": 0,
-            "revision": 2
-          },
-          "type": "tool_call_started",
-          "toolCallId": "held-tool",
-          "name": "fixture_hold",
-          "argsPreview": "{}",
-          "runId": "run"
-        }
-      ],
-      "moduleCalls": [
-        {
-          "order": 47,
-          "observation": {
-            "type": "module_call_received",
-            "module": "turn",
-            "operation": "drain_steer"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 51,
-          "observation": {
-            "type": "module_call_received",
-            "module": "capability",
-            "operation": "list_tools"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 55,
-          "observation": {
-            "type": "module_call_received",
-            "module": "event",
-            "operation": "emit"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 62,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "prepare"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 69,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 84,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 92,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 100,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 108,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 119,
-          "observation": {
-            "type": "module_call_received",
-            "module": "capability",
-            "operation": "execute_batch"
-          },
-          "kind": "sidecar.observation"
-        }
-      ],
-      "exit": {
-        "order": 163,
-        "pid": 69361,
-        "code": 0,
-        "signal": null,
-        "kind": "sidecar.exit"
-      },
-      "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/tool/2/observation.json",
-        "sha256": "5f0c96c0176fb9181c94d3de8977549b6849c874985349d70e1a0fa9b7843dbb"
-      },
-      "timelineSha256": "63944f58e45312bb79571978f6bfd774da71e2ee148352b432839397d3e96120"
-    },
-    {
-      "caseId": "sidecar/registry/fast/tool",
-      "repetition": 3,
-      "terminal": [
-        {
-          "type": "agent_loop_operation_terminal",
-          "runId": "run",
-          "operationId": "run",
-          "requestId": "request-sidecar-4",
-          "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-dvsthd4ilc",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-dvsthd4ilc-26mqnowdsdpi-lpi1xpcvfg"
-          },
-          "streamId": "stream-3k4zeeudnho",
-          "lastAppliedSequence": 8,
-          "outcome": "result_unknown",
-          "code": "DEADLINE_EXCEEDED",
-          "error": {
-            "code": "DEADLINE_EXCEEDED",
-            "message": "Module execution deadline exceeded."
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 15,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-15",
-          "parentEntryId": "session-entry-14"
-        }
-      ],
-      "statuses": [
-        {
-          "type": "agent_status_message",
-          "event": "turn_timeout",
-          "kind": "error",
-          "text": "Turn exceeded the 123456ms timeout.",
-          "detail": {
-            "message": "Turn exceeded the 123456ms timeout.",
-            "code": "turn_timeout",
-            "severity": "error",
-            "visible": true,
-            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
-            "scope": "turn",
-            "source": "gateway",
-            "timeoutMs": 123456
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 14,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-14",
-          "parentEntryId": "session-entry-13"
-        },
-        {
-          "type": "agent_status_message",
-          "event": "gateway_submit_failed",
-          "kind": "error",
-          "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-          "detail": {
-            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-            "code": "gateway_submit_failed",
-            "severity": "error",
-            "visible": true,
-            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
-            "scope": "turn",
-            "source": "gateway"
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 16,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-16",
-          "parentEntryId": "session-entry-15"
-        }
-      ],
-      "registryRecords": [
-        {
-          "sessionKey": "session",
-          "runId": "run",
-          "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
-          "state": "failed",
-          "revision": 9,
-          "lastSeq": 8,
-          "acceptedAt": "2026-10-15T18:27:18.761Z",
-          "updatedAt": "2026-10-15T18:27:19.689Z",
-          "result": {
-            "type": "error",
-            "runId": "run",
-            "code": "gateway_submit_failed",
-            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-            "recoverable": false,
-            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
-          }
-        }
-      ],
-      "realtimeFrames": [
-        {
-          "type": "turn_started",
-          "runId": "run"
-        },
-        {
-          "type": "input_accepted",
-          "runId": "run"
-        },
-        {
-          "type": "model_request_started",
-          "model": "controlled",
-          "provider": "host-fixture",
-          "runId": "run"
-        },
-        {
-          "timeline": {
-            "version": 1,
-            "turnId": "run",
-            "id": "tool:held-tool",
-            "order": 0,
-            "revision": 2
-          },
-          "type": "tool_call_started",
-          "toolCallId": "held-tool",
-          "name": "fixture_hold",
-          "argsPreview": "{}",
-          "runId": "run"
-        }
-      ],
-      "moduleCalls": [
-        {
-          "order": 47,
-          "observation": {
-            "type": "module_call_received",
-            "module": "turn",
-            "operation": "drain_steer"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 51,
-          "observation": {
-            "type": "module_call_received",
-            "module": "capability",
-            "operation": "list_tools"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 55,
-          "observation": {
-            "type": "module_call_received",
-            "module": "event",
-            "operation": "emit"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 62,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "prepare"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 69,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 84,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 92,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 100,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 108,
-          "observation": {
-            "type": "module_call_received",
-            "module": "model",
-            "operation": "stream_next"
-          },
-          "kind": "sidecar.observation"
-        },
-        {
-          "order": 119,
-          "observation": {
-            "type": "module_call_received",
-            "module": "capability",
-            "operation": "execute_batch"
-          },
-          "kind": "sidecar.observation"
-        }
-      ],
-      "exit": {
-        "order": 163,
-        "pid": 69371,
-        "code": 0,
-        "signal": null,
-        "kind": "sidecar.exit"
-      },
-      "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/tool/3/observation.json",
-        "sha256": "4d18ba6701b890f9b355ce330abbf5db4dfd4af93622923b634773904d9d3e08"
-      },
-      "timelineSha256": "13dec4e2b8d29874c59fcbd411576c193d1f05d991c06557588774193d0d0634"
-    },
-    {
-      "caseId": "sidecar/registry/fast/tool",
-      "repetition": 4,
-      "terminal": [
-        {
-          "type": "agent_loop_operation_terminal",
-          "runId": "run",
-          "operationId": "run",
-          "requestId": "request-sidecar-4",
-          "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-72cmujavf1b",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-72cmujavf1b-a0cihc63887-64f3v8dc1c"
-          },
-          "streamId": "stream-vwp9s7zva3a",
-          "lastAppliedSequence": 8,
-          "outcome": "result_unknown",
-          "code": "DEADLINE_EXCEEDED",
-          "error": {
-            "code": "DEADLINE_EXCEEDED",
-            "message": "Module execution deadline exceeded."
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 15,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-15",
-          "parentEntryId": "session-entry-14"
-        }
-      ],
-      "statuses": [
-        {
-          "type": "agent_status_message",
-          "event": "turn_timeout",
-          "kind": "error",
-          "text": "Turn exceeded the 123456ms timeout.",
-          "detail": {
-            "message": "Turn exceeded the 123456ms timeout.",
-            "code": "turn_timeout",
-            "severity": "error",
-            "visible": true,
-            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
-            "scope": "turn",
-            "source": "gateway",
-            "timeoutMs": 123456
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 14,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-14",
-          "parentEntryId": "session-entry-13"
-        },
-        {
-          "type": "agent_status_message",
-          "event": "gateway_submit_failed",
-          "kind": "error",
-          "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-          "detail": {
-            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
-            "code": "gateway_submit_failed",
-            "severity": "error",
-            "visible": true,
-            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
-            "scope": "turn",
-            "source": "gateway"
-          },
-          "sessionId": "session",
-          "turnId": "run",
-          "sequence": 16,
-          "createdAt": "2026-10-15T00:00:00.000Z",
-          "entryId": "session-entry-16",
-          "parentEntryId": "session-entry-15"
-        }
-      ],
-      "registryRecords": [
-        {
-          "sessionKey": "session",
-          "runId": "run",
-          "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
-          "state": "failed",
-          "revision": 9,
-          "lastSeq": 8,
-          "acceptedAt": "2026-10-15T18:27:19.750Z",
-          "updatedAt": "2026-10-15T18:27:20.689Z",
+          "acceptedAt": "2026-10-15T18:39:43.867Z",
+          "updatedAt": "2026-10-15T18:39:44.805Z",
           "result": {
             "type": "error",
             "runId": "run",
@@ -3917,20 +3298,24 @@
       ],
       "exit": {
         "order": 163,
-        "pid": 69376,
+        "pid": 74868,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/tool/4/observation.json",
-        "sha256": "144e0c3f618045ef83f4da158cb3deab2996dc97d8313edfc2e33f09422dde6a"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/tool/1/observation.json",
+        "sha256": "546478324ebf986fd5874acc5c00ae06763ba4363f44a7dad8b50a81bdaff6c5"
       },
-      "timelineSha256": "b9b687cfc4972b9cc4caf7e0004803bc993e43a758a9a29ad00c137f2304034f"
+      "timelineSha256": "0ab3edede59f7f927a9016ff193fba67e951755ebc81f6fa4e5fc41964d19a6a"
     },
     {
       "caseId": "sidecar/registry/fast/tool",
-      "repetition": 5,
+      "repetition": 2,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:44.864Z",
+        "operationDeadline": "2026-10-15T18:41:48.320Z"
+      },
       "terminal": [
         {
           "type": "agent_loop_operation_terminal",
@@ -3938,10 +3323,10 @@
           "operationId": "run",
           "requestId": "request-sidecar-4",
           "binding": {
-            "moduleInstanceId": "pilotdeck-agent-loop-instance-reynr6ehitm",
-            "connectionGeneration": "pilotdeck-agent-loop-instance-reynr6ehitm-ly81rvcg9n-5fgsta2q6hg"
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-75qsuh3sket",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-75qsuh3sket-947sh8b569q-rg2hts6fvq9"
           },
-          "streamId": "stream-otzwyr6lzt8",
+          "streamId": "stream-0xoz5fty07w",
           "lastAppliedSequence": 8,
           "outcome": "result_unknown",
           "code": "DEADLINE_EXCEEDED",
@@ -4007,12 +3392,12 @@
           "sessionKey": "session",
           "runId": "run",
           "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
-          "ownerPid": 69273,
+          "ownerPid": 74720,
           "state": "failed",
           "revision": 9,
           "lastSeq": 8,
-          "acceptedAt": "2026-10-15T18:27:20.750Z",
-          "updatedAt": "2026-10-15T18:27:21.714Z",
+          "acceptedAt": "2026-10-15T18:39:44.865Z",
+          "updatedAt": "2026-10-15T18:39:45.809Z",
           "result": {
             "type": "error",
             "runId": "run",
@@ -4147,22 +3532,724 @@
       ],
       "exit": {
         "order": 163,
-        "pid": 69381,
+        "pid": 74872,
         "code": 0,
         "signal": null,
         "kind": "sidecar.exit"
       },
       "observation": {
-        "path": "_tmp/20261016-a5-112/20261016-sidecar-terminal/raw/sidecar/registry/fast/tool/5/observation.json",
-        "sha256": "5adef28a2e6cf5df68246ae18740a322cdd99efd55a4579e1e6162f3cc6a58d8"
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/tool/2/observation.json",
+        "sha256": "62a1ef72d4910200116d6d3a6ee99a70a680f0fe89147b8625d76b3734be137a"
       },
-      "timelineSha256": "198ffb2b0937d5bd88e8d4899e375600b48ef813173e509408420865025f7869"
+      "timelineSha256": "ce621bcbdbec3586c68522183eb841a3281601b078beb6376400079c72c19bce"
+    },
+    {
+      "caseId": "sidecar/registry/fast/tool",
+      "repetition": 3,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:45.866Z",
+        "operationDeadline": "2026-10-15T18:41:49.322Z"
+      },
+      "terminal": [
+        {
+          "type": "agent_loop_operation_terminal",
+          "runId": "run",
+          "operationId": "run",
+          "requestId": "request-sidecar-4",
+          "binding": {
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-27yzg93fwsf",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-27yzg93fwsf-ytpuz115n6s-2nfhh5atp1k"
+          },
+          "streamId": "stream-bm6fmc8m5ja",
+          "lastAppliedSequence": 8,
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "error": {
+            "code": "DEADLINE_EXCEEDED",
+            "message": "Module execution deadline exceeded."
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 15,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-15",
+          "parentEntryId": "session-entry-14"
+        }
+      ],
+      "statuses": [
+        {
+          "type": "agent_status_message",
+          "event": "turn_timeout",
+          "kind": "error",
+          "text": "Turn exceeded the 123456ms timeout.",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 14,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-14",
+          "parentEntryId": "session-entry-13"
+        },
+        {
+          "type": "agent_status_message",
+          "event": "gateway_submit_failed",
+          "kind": "error",
+          "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 16,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-16",
+          "parentEntryId": "session-entry-15"
+        }
+      ],
+      "registryRecords": [
+        {
+          "sessionKey": "session",
+          "runId": "run",
+          "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
+          "ownerPid": 74720,
+          "state": "failed",
+          "revision": 9,
+          "lastSeq": 8,
+          "acceptedAt": "2026-10-15T18:39:45.866Z",
+          "updatedAt": "2026-10-15T18:39:46.797Z",
+          "result": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        }
+      ],
+      "realtimeFrames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "host-fixture",
+          "runId": "run"
+        },
+        {
+          "timeline": {
+            "version": 1,
+            "turnId": "run",
+            "id": "tool:held-tool",
+            "order": 0,
+            "revision": 2
+          },
+          "type": "tool_call_started",
+          "toolCallId": "held-tool",
+          "name": "fixture_hold",
+          "argsPreview": "{}",
+          "runId": "run"
+        }
+      ],
+      "moduleCalls": [
+        {
+          "order": 47,
+          "observation": {
+            "type": "module_call_received",
+            "module": "turn",
+            "operation": "drain_steer"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 51,
+          "observation": {
+            "type": "module_call_received",
+            "module": "capability",
+            "operation": "list_tools"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 55,
+          "observation": {
+            "type": "module_call_received",
+            "module": "event",
+            "operation": "emit"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 62,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "prepare"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 69,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 84,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 92,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 100,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 108,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 119,
+          "observation": {
+            "type": "module_call_received",
+            "module": "capability",
+            "operation": "execute_batch"
+          },
+          "kind": "sidecar.observation"
+        }
+      ],
+      "exit": {
+        "order": 163,
+        "pid": 74890,
+        "code": 0,
+        "signal": null,
+        "kind": "sidecar.exit"
+      },
+      "observation": {
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/tool/3/observation.json",
+        "sha256": "09d14e3b6f2928eb04b45af461f934fba6fabb3c09346ced12169e556b53e7f9"
+      },
+      "timelineSha256": "e487d409c3764c8638526f8ca7baa9625bc16249bbc65c732c60ae14fd1fc4bb"
+    },
+    {
+      "caseId": "sidecar/registry/fast/tool",
+      "repetition": 4,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:46.853Z",
+        "operationDeadline": "2026-10-15T18:41:50.309Z"
+      },
+      "terminal": [
+        {
+          "type": "agent_loop_operation_terminal",
+          "runId": "run",
+          "operationId": "run",
+          "requestId": "request-sidecar-4",
+          "binding": {
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-fn3sxrddhwl",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-fn3sxrddhwl-riq2yke2ow-3wgi1zgb4yj"
+          },
+          "streamId": "stream-604kkxqmgem",
+          "lastAppliedSequence": 8,
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "error": {
+            "code": "DEADLINE_EXCEEDED",
+            "message": "Module execution deadline exceeded."
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 15,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-15",
+          "parentEntryId": "session-entry-14"
+        }
+      ],
+      "statuses": [
+        {
+          "type": "agent_status_message",
+          "event": "turn_timeout",
+          "kind": "error",
+          "text": "Turn exceeded the 123456ms timeout.",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 14,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-14",
+          "parentEntryId": "session-entry-13"
+        },
+        {
+          "type": "agent_status_message",
+          "event": "gateway_submit_failed",
+          "kind": "error",
+          "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 16,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-16",
+          "parentEntryId": "session-entry-15"
+        }
+      ],
+      "registryRecords": [
+        {
+          "sessionKey": "session",
+          "runId": "run",
+          "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
+          "ownerPid": 74720,
+          "state": "failed",
+          "revision": 9,
+          "lastSeq": 8,
+          "acceptedAt": "2026-10-15T18:39:46.853Z",
+          "updatedAt": "2026-10-15T18:39:47.792Z",
+          "result": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        }
+      ],
+      "realtimeFrames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "host-fixture",
+          "runId": "run"
+        },
+        {
+          "timeline": {
+            "version": 1,
+            "turnId": "run",
+            "id": "tool:held-tool",
+            "order": 0,
+            "revision": 2
+          },
+          "type": "tool_call_started",
+          "toolCallId": "held-tool",
+          "name": "fixture_hold",
+          "argsPreview": "{}",
+          "runId": "run"
+        }
+      ],
+      "moduleCalls": [
+        {
+          "order": 47,
+          "observation": {
+            "type": "module_call_received",
+            "module": "turn",
+            "operation": "drain_steer"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 51,
+          "observation": {
+            "type": "module_call_received",
+            "module": "capability",
+            "operation": "list_tools"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 55,
+          "observation": {
+            "type": "module_call_received",
+            "module": "event",
+            "operation": "emit"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 62,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "prepare"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 69,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 84,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 92,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 100,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 108,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 119,
+          "observation": {
+            "type": "module_call_received",
+            "module": "capability",
+            "operation": "execute_batch"
+          },
+          "kind": "sidecar.observation"
+        }
+      ],
+      "exit": {
+        "order": 163,
+        "pid": 74895,
+        "code": 0,
+        "signal": null,
+        "kind": "sidecar.exit"
+      },
+      "observation": {
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/tool/4/observation.json",
+        "sha256": "d07d642ea9bf7b5f9e32e94a7fb45481267d3a6211b5a45f648694504dd41129"
+      },
+      "timelineSha256": "cb1f2fce8fbf5a77db6e1358715d0dae73fc0b90e60cbc62c1d9be2402861861"
+    },
+    {
+      "caseId": "sidecar/registry/fast/tool",
+      "repetition": 5,
+      "deadlineClock": {
+        "collectionTime": "2026-10-15T18:39:47.848Z",
+        "operationDeadline": "2026-10-15T18:41:51.304Z"
+      },
+      "terminal": [
+        {
+          "type": "agent_loop_operation_terminal",
+          "runId": "run",
+          "operationId": "run",
+          "requestId": "request-sidecar-4",
+          "binding": {
+            "moduleInstanceId": "pilotdeck-agent-loop-instance-y9new4ptlv",
+            "connectionGeneration": "pilotdeck-agent-loop-instance-y9new4ptlv-6k5516g8doa-nsvq7vcoaqj"
+          },
+          "streamId": "stream-jdxxs2ekxy",
+          "lastAppliedSequence": 8,
+          "outcome": "result_unknown",
+          "code": "DEADLINE_EXCEEDED",
+          "error": {
+            "code": "DEADLINE_EXCEEDED",
+            "message": "Module execution deadline exceeded."
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 15,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-15",
+          "parentEntryId": "session-entry-14"
+        }
+      ],
+      "statuses": [
+        {
+          "type": "agent_status_message",
+          "event": "turn_timeout",
+          "kind": "error",
+          "text": "Turn exceeded the 123456ms timeout.",
+          "detail": {
+            "message": "Turn exceeded the 123456ms timeout.",
+            "code": "turn_timeout",
+            "severity": "error",
+            "visible": true,
+            "userHint": "The turn exceeded its wall-clock limit. Retry with a smaller task or increase the timeout.",
+            "scope": "turn",
+            "source": "gateway",
+            "timeoutMs": 123456
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 14,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-14",
+          "parentEntryId": "session-entry-13"
+        },
+        {
+          "type": "agent_status_message",
+          "event": "gateway_submit_failed",
+          "kind": "error",
+          "text": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+          "detail": {
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "code": "gateway_submit_failed",
+            "severity": "error",
+            "visible": true,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs.",
+            "scope": "turn",
+            "source": "gateway"
+          },
+          "sessionId": "session",
+          "turnId": "run",
+          "sequence": 16,
+          "createdAt": "2026-10-15T00:00:00.000Z",
+          "entryId": "session-entry-16",
+          "parentEntryId": "session-entry-15"
+        }
+      ],
+      "registryRecords": [
+        {
+          "sessionKey": "session",
+          "runId": "run",
+          "requestMaterial": "{\"channelKey\":\"fixture\",\"message\":\"hold real sidecar model\",\"sessionKey\":\"session\",\"timeoutMs\":123456}",
+          "ownerPid": 74720,
+          "state": "failed",
+          "revision": 9,
+          "lastSeq": 8,
+          "acceptedAt": "2026-10-15T18:39:47.849Z",
+          "updatedAt": "2026-10-15T18:39:48.785Z",
+          "result": {
+            "type": "error",
+            "runId": "run",
+            "code": "gateway_submit_failed",
+            "message": "AgentLoop terminal outcome is result_unknown and host reconciliation found no final result.",
+            "recoverable": false,
+            "userHint": "PilotDeck failed before the agent turn could finish. Retry this message; if it repeats, check the gateway logs."
+          }
+        }
+      ],
+      "realtimeFrames": [
+        {
+          "type": "turn_started",
+          "runId": "run"
+        },
+        {
+          "type": "input_accepted",
+          "runId": "run"
+        },
+        {
+          "type": "model_request_started",
+          "model": "controlled",
+          "provider": "host-fixture",
+          "runId": "run"
+        },
+        {
+          "timeline": {
+            "version": 1,
+            "turnId": "run",
+            "id": "tool:held-tool",
+            "order": 0,
+            "revision": 2
+          },
+          "type": "tool_call_started",
+          "toolCallId": "held-tool",
+          "name": "fixture_hold",
+          "argsPreview": "{}",
+          "runId": "run"
+        }
+      ],
+      "moduleCalls": [
+        {
+          "order": 47,
+          "observation": {
+            "type": "module_call_received",
+            "module": "turn",
+            "operation": "drain_steer"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 51,
+          "observation": {
+            "type": "module_call_received",
+            "module": "capability",
+            "operation": "list_tools"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 55,
+          "observation": {
+            "type": "module_call_received",
+            "module": "event",
+            "operation": "emit"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 62,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "prepare"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 69,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 84,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 92,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 100,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 108,
+          "observation": {
+            "type": "module_call_received",
+            "module": "model",
+            "operation": "stream_next"
+          },
+          "kind": "sidecar.observation"
+        },
+        {
+          "order": 119,
+          "observation": {
+            "type": "module_call_received",
+            "module": "capability",
+            "operation": "execute_batch"
+          },
+          "kind": "sidecar.observation"
+        }
+      ],
+      "exit": {
+        "order": 163,
+        "pid": 74900,
+        "code": 0,
+        "signal": null,
+        "kind": "sidecar.exit"
+      },
+      "observation": {
+        "path": "_tmp/20261016-a5-112/20261016-review-sidecar-final/raw/sidecar/registry/fast/tool/5/observation.json",
+        "sha256": "66a3a9b501fc81b0e970253800258f9426efe8696c2321027be68304dfabb595"
+      },
+      "timelineSha256": "66774a2cd2bf237c4e7da2bd0fb363f40ad35cd5f0af612604cd8272b7a7df93"
     }
   ],
   "fixtureFiles": [
     {
       "path": "scripts/a5-19/sidecar-b.mts",
-      "sha256": "c26639604979fde6746ff24061ffe3dd41e06cca2f22bc18de433356c78ce22a"
+      "sha256": "a8e2281cd61a11d1a0d167e3ec94bcb8edabeb9d25e6d4710a3f467e07a4f2a5"
     },
     {
       "path": "scripts/a5-19/no-listen-child.mjs",
@@ -4179,6 +4266,14 @@
     {
       "path": "scripts/a5-19/run-b.py",
       "sha256": "5ab95cf41d8a9ecfdfda59c52b40e0aba286a3050194d336856411fd31561e18"
+    },
+    {
+      "path": "scripts/a5-19/cleanup-observer.mjs",
+      "sha256": "c2f69c000b4dd6e5f2912b05dbc846641d5cb7bac82976a6b1a1cf0e16fdee84"
+    },
+    {
+      "path": "scripts/a5-19/preregistration-sidecar-four.mjs",
+      "sha256": "555f26c929b809373144a96879b8062c5569727379cce38ea00c21a8a87bfc35"
     }
   ],
   "importedSources": [

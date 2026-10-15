@@ -34,6 +34,11 @@
 > **来源/隔离**：现有 wt-d6 持有 codex/d6-resume；重放旧 28a0ef2 的 baked 数据、PROVENANCE 与独立 datagen 工具，旧 feat/d6-unihan-collation tip 原样保留。project_files 适配保留当前 NODE_IO_REQUIRED 与 method-specific IO 映射。
 > **新增适配**：session_model_get 同 sequence 非 ASCII createdAt 恢复本地 Unihan 排序；既有 Node 响应原件只改路由期望 false，单元与 pairing 共用该案例验证完整响应/无转发。其他宿主 fallback 保持原义；archive 另接，冻结文件未改。
 > **验证**：产品提交 64d4956 的 fmt、gateway all-targets clippy -D warnings、gateway 全测试通过（lib 107 + bin 1；0失败）；使用独立 `_build/20261016-020004`，2 jobs、locked/offline。原始日志见主仓 `_tmp/20261016-d6-resume/`。baked 11项SHA256通过，冻结README哈希不变；无下载、datagen、全码位扫描或在线A2。后续解禁的全码位扫描在 HEAD 4dae78e exit0：19轮×71,731输入，完整排序/锚点符号/相邻符号全一致，输入哈希与旧scan-final相同、生产源码哈希匹配。原件为同证据目录 scan-current/，汇总 scan-current-summary.json。独立评审及在线A2待协调安排，未记阶段完成。
+> ## 2026-10-16 · #112 初轮闸门修复与预注册复采（待增量终审）
+> **runtime修复**：append原promise/同步throw不变，观察异常纳入drain显式失败；sidecar/six_cells逐资源cleanup后恢复taps/timeout，异常不吞。四格独立预注册ALONE提交656d6e3后再采；旧20次记事后观察。每run新clock、实际deadline记录，实测所有status/durable createdAt仍TIME，未增加时间归一。
+> **最终真运行**：`20261016-review-sidecar-final`20次、四组各精确5且stable，真实unknown/DEADLINE_EXCEEDED仍model2/tool8；20个自有child正常退出。`20261016-review-append-final`72组360/registry270/9负控，完整360语义字段与历史一致。manifest绑定实际新helper/预注册SHA；runtime故障控制通过。WS canonical inputs与8控制未回退，root已修并验证75全match。
+> **交接边界**：证据`_tmp/20261016-a5-112/`；报告/决策R21已更，未动冻结/产品/D6，不push/PR/关issue。root继续两家仅审delta与CI；#112/A5.4/真人验收均未冒充完成。
+
 > ## 2026-10-16 · #112 真实四格/append保真/WS75候选（基于3ac5e74，待独立闸门）
 > **#112候选**：真实stdio registry有/无×model/tool各5次，实际terminal全部result_unknown/DEADLINE_EXCEEDED；model sequence2、tool8，四格T→G、registry最终failed/G；20个自有child均code0退出，无listen。受控clock与第二次queue.close结算依据见R21，未预设unknown判据；未登记冻结A19-HOST、未关闭#112或标阶段完成。
 > **保真复算**：append返回原promise，72组360次（registry270）、9负控全过；360条完整投影与归档逐字段一致，无不稳定。历史WS精确15×5均与main匹配且组内稳定；历史同一Node进程75观测，非75独立进程，不冒认当前HEAD。报告exp014/015，原始/失败原件与hash在`_tmp/20261016-a5-112/`。WS投影5项负控过；纯TS变更未编译Rust。

@@ -180,7 +180,7 @@ rename 测的是操作前与真实操作完成后两个边界：没有模拟 OS 
 
 无registry实时为前缀→T status/error；有registry实时只有前缀，T/G的enqueue均在closed queue后。四格durable status均T→G；有registry最终failed/G，model revision=8/lastSeq=7、tool=9/8，与exp014快格对应语义一致。真实loop额外operation ledger/模块事件均保留，**不把真实ledger与受控loop全文冒认相同**。四组各5/5完整投影稳定，registry投影只排除record的acceptedAt/updatedAt/ownerPid；随机sidecar instance/generation/stream仍按原有一一映射。20个自有child均code=0退出；不listen，未调用外部模型。
 
-旧TIME=2026-10-15使今天的绝对operationDeadline在execute admission前已过期，首两次失败原件保留。修正只在本sidecar装置将生产gateway的`now`设为本次采集时间；该生产时钟同时决定operationDeadline和gateway status.createdAt，两类值保留原文并在manifest记录collectionTime，durable事件外壳/宿主依赖仍为原TIME，不归一全部时间。第三次在registry格暴露读面过早：session.submit退出先于gateway catch的registry append结算。现在等真实第二次queue.close后取三面，不增加生产路径等待。失败原件与最终采集均在 `_tmp/20261016-a5-112/`，未用admission失败替代目标阶段abort证据。
+旧TIME=2026-10-15使今天的绝对operationDeadline在execute admission前已过期，首两次失败原件保留。修正只在本sidecar装置将生产gateway的`now`设为本次采集时间；该生产时钟只改变本路径发送的绝对operationDeadline；实测gateway status与durable createdAt均仍为原TIME。每run记录collectionTime和实际operationDeadline，不归一任何新增时间字段。第三次在registry格暴露读面过早：session.submit退出先于gateway catch的registry append结算。现在等真实第二次queue.close后取三面，不增加生产路径等待。失败原件与最终采集均在 `_tmp/20261016-a5-112/`，未用admission失败替代目标阶段abort证据。
 
 历史WS原件按精确15case×5汇总，75条各自与coordinator-main同case/同遍的完整语义投影一致，15组各5/5稳定。汇总器 [summarize-ws-b.py](../../../scripts/a5-19/summarize-ws-b.py) 只排除registry record及其RPC读面acceptedAt/updatedAt/ownerPid，并按已知peer的实际binding映射connectionId及generation相对差；保留其余ID、时间、完整帧payload、durable、registry events/result、answer与abort。5项负控证明错误runId、非registry时间和终态不能被归一吞掉。结果含每份observation/journal SHA，见 [ws-results.json](ws-results.json)。
 
@@ -191,3 +191,13 @@ WS是**同一launcher自有Node进程内75次观测**，不是75个独立进程�
 ### #112 汇总器反例收敛
 
 历史WS输入的两个manifest、150个WS/main观察原件及journal、启动审计以[ws-inputs.json](ws-inputs.json)为唯一哈希索引；报告仅保留索引路径和哈希，不再重复原始索引。汇总先验证完整15×5×两侧输入集合及每个原件哈希，再检查实际A/B连接与binding唯一性、每组稳定和逐字段一致。空来源、原件变化、差异或不稳定均失败，不以exit0留给人读数；真实75次仍全通过。原5项投影控制与新增历史字节、连接和汇总闸门控制共8项测试通过。此索引只绑定保留的历史采集，不能声称当前HEAD重新执行WS。
+
+### #112 初轮独立评审后的复采
+
+最初20次四格仅复用旧单格SIDECAR_CASE，属于**事后观察**。现已新增不预设outcome的[独立四格预注册](../../../scripts/a5-19/preregistration-sidecar-four.mjs)，文件单独提交`656d6e3`后才采集。新manifest的registration记录该提交、文件SHA、提交字节匹配和collectionStartedAt；未更改旧预注册或冻结文件。
+
+最终原件为`_tmp/20261016-a5-112/20261016-review-sidecar-final/`，20个run各取新deadline clock并记录真实发送的operationDeadline，防止前几次耗时累计导致后面admission过期。20个clock独特，四组各精确5次且完整signature稳定才exit0；不存在组内不稳定仍报成功。实测durable/status createdAt全部仍为固定TIME；仅deadline日志动态，不新增时间归一。20个真实终态仍全部unknown/DEADLINE_EXCEEDED，model2/tool8，报告已绑定本批次完整path/hash。
+
+append观察提取为小helper，返回/追踪原Promise，原同步throw记failure后原样抛出；观察callback的读盘/解析异常被记录并在drain闸门抛AggregateError。采集等待原Promise与观察分支均结算，不留下ignored派生rejection。独立runtime controls验证原promise identity、原sync throw、原reject、成功/失败观察callback异常，以及cleanup三个位置失败仍逐步尝试并恢复。sidecar和six_cells均逐资源cleanup，失败显式报错；sidecar拆开dispose/shutdown/各writer/tap，避免一次a.close异常跳过其余资源。
+
+相应360次最终复算原件为`20261016-review-append-final/`，72组/registry270/9负控仍过；360条完整投影与历史原件无差异。两份manifest的fixtureFiles绑定所有实际新helper，sidecar另绑定四格预注册；原baseline源码哈希照常核验。初轮WS canonical输入索引/8控制保持有效，未回退。

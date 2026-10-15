@@ -1,5 +1,7 @@
 /** TS-only observation harness; no product oracle and no network listener. */
 import assert from 'node:assert/strict';
+import { appendObserver } from './append-observer.mjs';
+import { cleanupAll } from './cleanup-observer.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, appendFileSync } from 'node:fs';
 import { registerHooks, stripTypeScriptTypes } from 'node:module';
@@ -167,7 +169,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   const order = variant.order ?? 'timeout-first';
   let timer: any;
   let entryId = 0;
-  const appendPromises = new Set<Promise<void>>();
+  let drainObserver = async () => {};
   const activeQueue = new Set<any>();
   const oldEnqueue = AsyncQueue.prototype.enqueue;
   const oldClose = AsyncQueue.prototype.close;
@@ -302,21 +304,18 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     // Passive outer tap: call the real append immediately, with no gate or
     // failure before admission to the production mutationChain.
     const originalAppend = registry.append.bind(registry);
+    const observer = appendObserver(originalAppend, {
+      commit: (input: any) => j.add('registry.append.commit', {
+        key: label(input.event), event: input.event,
+        diskRecordAfterAppend: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
+      }),
+      failure: (input: any, error: any) => j.add('registry.append.failure', { key: label(input.event), error: errorData(error) }),
+    });
+    drainObserver = observer.drain;
     registry.append = (input: any) => {
       const key = label(input.event);
       j.add('registry.append.attempt', { key, event: input.event });
-      const write = originalAppend(input);
-      // Observe settlement without replacing the production promise or its
-      // synchronous throw/admission semantics. Both handlers consume only the
-      // observer branch; the caller still receives the original rejection.
-      void write.then(() => {
-        j.add('registry.append.commit', {
-          key, event: input.event, diskRecordAfterAppend: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
-        });
-      }, (error: any) => { j.add('registry.append.failure', { key, error: errorData(error) }); });
-      appendPromises.add(write);
-      void write.then(() => appendPromises.delete(write), () => appendPromises.delete(write));
-      return write;
+      return observer.append(input);
     };
   }
   const gateway = new InProcessGateway(router, {
@@ -340,7 +339,7 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
   const waitClose = () => j.wait(r => r.kind === 'queue.close');
   const waitCatchPublished = () => j.wait(r => r.kind === 'queue.enqueue' && r.key === 'error:gateway_submit_failed');
   const releaseUnknown = () => { j.add('control.release.unknown'); outcome.resolve('unknown'); };
-  const drainAppends = async () => { while (appendPromises.size) await Promise.allSettled([...appendPromises]); };
+  const drainAppends = () => drainObserver();
   try {
     // Reach the actual loop wait and consume all prefix frames. The client then
     // pauses at a generator yield, holding the outer completion fence current.
@@ -437,12 +436,16 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     }
     return observation;
   } finally {
-    await transcript.close();
-    gateway.dispose();
-    await router.shutdown();
-    globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
-    AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
-    console.warn = oldWarn; console.info = oldInfo;
+    await cleanupAll([
+      () => drainObserver(),
+      () => transcript.close(),
+      () => gateway.dispose(),
+      () => router.shutdown(),
+    ], () => {
+      globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
+      AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
+      console.warn = oldWarn; console.info = oldInfo;
+    });
   }
 }
 
@@ -537,7 +540,7 @@ const manifest = {
   preregisteredRules: RULES, expectedCases: cells.flatMap(c => c.variants.flatMap(v => ['model', 'tool'].map(phase => `${c.name}/${v.name}/${phase}`))),
   executedCases: summary.map(r => `${r.cell}/${r.variant}/${r.phase}`),
   isolation: Object.fromEntries(['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'TMPDIR', 'PILOTDECK_SKIP_BROWSER_OPEN', 'SKIP_BROWSER_OPEN'].map(k => [k, process.env[k]])), pilotHome: process.env.PILOT_HOME,
-  fixtureFiles: ['six_cells.mts', 'observation_rules.mjs', 'run.py'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: createHash('sha256').update(readFileSync(resolve(WORKTREE, 'scripts/a5-19', name))).digest('hex') })),
+  fixtureFiles: ['six_cells.mts', 'observation_rules.mjs', 'run.py', 'append-observer.mjs', 'cleanup-observer.mjs'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: createHash('sha256').update(readFileSync(resolve(WORKTREE, 'scripts/a5-19', name))).digest('hex') })),
   scriptSha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
   // 路径与哈希分两行写：文件名含 token / credential 时，同一行的 64 位哈希会被 gitleaks 误判为密钥。
   importedSources: [...importedSources].map(([path, hash]) => ({ path: relative(BASELINE, path), sha256: hash })),
