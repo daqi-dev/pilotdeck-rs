@@ -1,0 +1,1239 @@
+{
+  "scope": "historical-ws-75",
+  "cases": [
+    "dual/permission/owner-first",
+    "dual/permission/other-first",
+    "dual/permission/handoff-double",
+    "dual/question/owner-first",
+    "dual/question/other-first",
+    "dual/question/handoff-double",
+    "dual/distinct-run",
+    "dual/same-run",
+    "dual/sdk-control",
+    "multi/A-first",
+    "multi/B-first",
+    "dual/reattached-same-run",
+    "dual/reattached-distinct-run",
+    "dual/permission/raced-double",
+    "dual/question/raced-double"
+  ],
+  "repeats": 5,
+  "manifests": [
+    {
+      "role": "ws",
+      "path": "raw/manifest.json",
+      "sha256": "63bec2a3526e028c4397fb88fc09094893bb7659f1f13f3959cb12d955d26b94"
+    },
+    {
+      "role": "main",
+      "path": "raw/manifest.json",
+      "sha256": "2d48ff7b9fdbd06354cbf83da63a948799c161fd34393329d748a4cbc4c16741"
+    }
+  ],
+  "observations": [
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/owner-first/1/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 1,
+      "sha256": "e66191aeab28196115e9d3a650877c2a631c218490553d982db9da5cd5979e0e",
+      "journalSha256": "dadd4e8073b7b54621deb14daf37198595c6361634870d707bfed3a056fd0bb6"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/owner-first/1/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 1,
+      "sha256": "fa09627d33b12a5fceb4854f6ed3f4b8bf35023f613c670a325eecf41059aadd",
+      "journalSha256": "e6b379f3b66046f05fe9f21522b01bd555309aa0254aac7cdad6fa069849ddb0"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/owner-first/2/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 2,
+      "sha256": "b7b5e213aa3d4e878097a3fc70bf1658f1b4d56c7348a8ef38fe5d001bac7522",
+      "journalSha256": "056a8914a0fe181300ab631b33f3621d7e34feede3643b172d002e9d081e2495"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/owner-first/2/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 2,
+      "sha256": "75f199443066d35638078a7ec365153222b63ca705641b06d23510e9122a2686",
+      "journalSha256": "e70c590a03276dfcc7ba576e13fa3401dfec3748905e0d89783968dcdd4ec7bc"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/owner-first/3/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 3,
+      "sha256": "47a32f41e0383b90bf9bc3cd3885ce2ae0480305eb0dafc48e144c725f5b53e5",
+      "journalSha256": "72f4bac4f1ec18c07a78e2bfaadf7c7c5c135166bde0be1af63c3893e09d2bb3"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/owner-first/3/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 3,
+      "sha256": "f23b2a677630f0bf7bc6acdfcb8549841b9ca94cbc485f972103ddd0f919c33c",
+      "journalSha256": "ba13a1f5c4e9dd87540d82a48ac0179b43bc47b29b43a1eae0262750cf7a5113"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/owner-first/4/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 4,
+      "sha256": "24eb4dd6d2b244e554299d4fff5b28652a35266875b091a7954b86a4f5a62ec9",
+      "journalSha256": "974a88806dbf566ed0bce3d8fe910c10dc393cee8d6d0b88c61ef31ff4b8035a"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/owner-first/4/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 4,
+      "sha256": "cd28203fabbc3a91fcda54f99e3e884e454b9021976b06aef87ea6a4700e5ad6",
+      "journalSha256": "936a17580b7122d52eee058c1b7c9554c39e42c04299f836d2cb2af7ec2589fc"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/owner-first/5/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 5,
+      "sha256": "2c01c477080d2194df807be082f26415430922958a9974a42fe133ef7f83ff01",
+      "journalSha256": "5b9bf72e7475dde8adb79ba3aad15afa2b7afb6dc0339842569fee32430c02d7"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/owner-first/5/observation.json",
+      "caseId": "dual/permission/owner-first",
+      "repetition": 5,
+      "sha256": "57b0d0fae8f369ff7a9465ecc3681f4d234ff0682b6c9c7c722adea86e616c54",
+      "journalSha256": "da18abb894d46d6ef3c6f3dbdac50cfbd04dfc1e3c0edbbad3099220c383d7c9"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/other-first/1/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 1,
+      "sha256": "f61e85ac8a11e43894003d973f7cacc2e44e6fdbc4f90d34649ef50deaa86fd9",
+      "journalSha256": "f2b2297173bc58926a7ec2dd5fef567e609391c2f29057f399954ad1a21474f7"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/other-first/1/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 1,
+      "sha256": "7423d7c5c3e0f04a8adead39a733db957372ad2e7cfc808a40d037f8ecbfd1a4",
+      "journalSha256": "2c7bb9323c266e79900504af9993fc74a89c6ed9708b4d7e54d7a75c0aac482d"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/other-first/2/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 2,
+      "sha256": "7e694b0686400fc0b5f5903c65ecfdcd0a6d5d7869b884c52148d4137cd0bf0b",
+      "journalSha256": "24e9471014a699414c8b33d5ca2005b4011db80ac3afd84de2afd9f2ff1befc6"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/other-first/2/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 2,
+      "sha256": "0d99f40728cb0f481a02f66681e764f563469482dea9f9009a2da20836ea960d",
+      "journalSha256": "4e7906dba0fe27f1f91cf76d7311a9ae327e30862d352763ec7e9d239af4e263"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/other-first/3/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 3,
+      "sha256": "45c8d3d5f499b9bdab7c5df251dc1b9b01dfb2d2f3d06a614ce344828e454565",
+      "journalSha256": "b482a4135111906d96ed0927f5ff8969fcb1afde0e24cdcce53ea970b20d333b"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/other-first/3/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 3,
+      "sha256": "2ec49bb3d5b929ed0c1f2ccb418b779bd976cf4ddc10c8e3e84a4b5f032e2399",
+      "journalSha256": "05df242b4ca9be95f8d4f915783ee5b9201bdae59b99a123881b607e11163b11"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/other-first/4/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 4,
+      "sha256": "a418c191fb143d5330e46cf613e5e297ba026d5c6b3b533dc03436550849bc33",
+      "journalSha256": "28b5e32c1c26461eefd3af80ebee047099903bfcc6deea5fa3604e38f0d1c476"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/other-first/4/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 4,
+      "sha256": "b0455d3e89b2484db9a0c4f3ad86a11711fefaae1f70e0ac0ca0ac052ac85764",
+      "journalSha256": "1c465c224a943e526fc050b624ba1432279f03ba86e5157061877d9fa9dc0ea0"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/other-first/5/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 5,
+      "sha256": "b3066816be60e50a0863648d40aadb10adadf5ede97586ed89b1a7001a6bfe35",
+      "journalSha256": "ed32d2c8263a0683135c9f7e55ec5306560086466b6efd86d3f5fcfd6a2f5341"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/other-first/5/observation.json",
+      "caseId": "dual/permission/other-first",
+      "repetition": 5,
+      "sha256": "eb43ef5a2a64090e2d9d4b2da869301570019ecba498676dc452604adbc3d429",
+      "journalSha256": "37086ec2bf1d0b99f49c30a1d679b31ed0c40c356f6089f8dfb3fb05ed6171f8"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/handoff-double/1/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 1,
+      "sha256": "a93cae7bda31e93dbee7964fc4c327dbb1bc7ec6b9050a415f08e5d5bc57de9a",
+      "journalSha256": "a75bfe0ada0e18a29ebb52a6853ed521e3bea1ef9026b6fa09e5690ac429c6b8"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/handoff-double/1/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 1,
+      "sha256": "8bd8c912b9fd9bac13bafbcffd16597ee2fad4da7b044a972a55575e8a237392",
+      "journalSha256": "e215973b7b440ce6a741d48595a6dc828caf612a47d1f878d0170bfe05113752"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/handoff-double/2/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 2,
+      "sha256": "b848156109fd6b3eb1cbfc2ac36e853573017c3fa681aa1b4138ac904e1ecd3a",
+      "journalSha256": "df56d729cce14b45235505c201e63c4e504bd56e60716cf46badaee2064d7a4a"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/handoff-double/2/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 2,
+      "sha256": "e5dc3c4c2b9533ea44f47e3bc79e604db586526d9dc20aef268324fd39b8bf2f",
+      "journalSha256": "88996dbba52690662b2e5c86ba01dd70e5ce8a1d827ff3ef49759465221ca672"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/handoff-double/3/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 3,
+      "sha256": "3ae53396f4094ac28a101f0ee3f0eea9fddabc1b42cc6ffe9bc8243fa59c88b8",
+      "journalSha256": "05472eebb0cec19cb7b152d9f1b29b7fa4949f5b4bc74bcc06bdee84bda92ce7"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/handoff-double/3/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 3,
+      "sha256": "e77b69cd780629ad8973c87667ba43bae498ded1844468e00094c918db6c7040",
+      "journalSha256": "89c1fecde3a3c08cc481eeedc0d68c62e38136d64c5c5b454dc12d3dac886140"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/handoff-double/4/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 4,
+      "sha256": "ca2225818057987f1149e0ba95890ac9a4e64398ba47f87859ba0c9fcd1e4c94",
+      "journalSha256": "4fb9b3b766e92441d48a0d30a6fc2d8d1bfa4db431704266a45bec691e4fd853"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/handoff-double/4/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 4,
+      "sha256": "f57c3908ed46fda190c25f71cecd0a8c56910b470df3552780521c60d704933f",
+      "journalSha256": "2727f4e1b57eb587a834ec8f43921fc9c8426099ebe7d79cb6adfd08f1fdbfeb"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/handoff-double/5/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 5,
+      "sha256": "5cc6b17eed3db90f77c164459383760f66f2ae6d6d19c03972c4a14c9d9fd47f",
+      "journalSha256": "3d9bca0272228808b2f25805628761d652181a80296e23a3a76d31197d799e34"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/handoff-double/5/observation.json",
+      "caseId": "dual/permission/handoff-double",
+      "repetition": 5,
+      "sha256": "21a9a85210577c2ae719cf39b5f4a3f4c41661bfadb783cd0749d4aab9b05753",
+      "journalSha256": "741ea02e429c180392e9c1137d84e5e79834528fd5a66348dc85457322036b1c"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/owner-first/1/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 1,
+      "sha256": "320bc683df02097b3cba27974f3ca6fbafd2230c0e4f6082f0d33b935470d7b0",
+      "journalSha256": "191c464b21530c01ef64d4d8ab1e2c5b441097b9e9961644b45e800ec84fab47"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/owner-first/1/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 1,
+      "sha256": "535b6a88c2d8a2388ecbd5640286fd249a1af0701af7327d2995f1a27ac2ce99",
+      "journalSha256": "e42f747154579c93ba609457c3dc09a4df677a42e3802924a2de981ef5e1aff3"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/owner-first/2/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 2,
+      "sha256": "1861a02ec5d5d6d3db17679bd47cb606903d0e8bdf79f64d4f33480ccb65b3f5",
+      "journalSha256": "3b0ea32dd8e89342c3bf15c163e1b57e712b47307327b59a78aa7de85aa279e7"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/owner-first/2/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 2,
+      "sha256": "b1d285ed714e27d3266b71f560062f3e5f871f511907ee59f850952e459ca87a",
+      "journalSha256": "aa356a7306c99bc67d273accd1b783e7e59d9187e64c31193dcca44055401347"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/owner-first/3/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 3,
+      "sha256": "4dbad41a3fd2897fd32df1d55b341350959c210536ab7b448226dfe6964350cb",
+      "journalSha256": "cea850af261ab623aefc14d59878e2fa5e13d7d64a22e9e5407954344e51581a"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/owner-first/3/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 3,
+      "sha256": "99fc13578f1d205db93fbc41823885a3e664954cff0f804c0dd0d4de27a48ce6",
+      "journalSha256": "2dc1391e46bea4f8f1fcb1dacc24e5dd008c53969055010c51e3de55de389533"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/owner-first/4/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 4,
+      "sha256": "7dfe486ffcf9baa42d46c8b0766c91e076d85f8972c1d63a8a2745ddcf95c965",
+      "journalSha256": "d16b23bde3902c405a892a96142dc1d80595bb084991a847c31f53e671c5c477"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/owner-first/4/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 4,
+      "sha256": "4011fc94ff7c2c940dc7b69adf5348a73631f7c6c0be94986cb7bb6c254f68dc",
+      "journalSha256": "5bf66d74c7300d2876878bae6c89b99fa5a62d552b5958d20a3d004b346149fc"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/owner-first/5/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 5,
+      "sha256": "cbe7c7f97fb033d619691cdc3e8f6db17a0424e08872c9535b8d33729ff00a65",
+      "journalSha256": "a8f1e95c08d82da6ceb1d26f3dda3f31297bd733f259050b741e6bc83c82e088"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/owner-first/5/observation.json",
+      "caseId": "dual/question/owner-first",
+      "repetition": 5,
+      "sha256": "61aa9225a7c8ed78dc2a82ded8620302350a3dd72c69bf60559abdb6384313c7",
+      "journalSha256": "3ba46ddef8155fb353a3efa8741f5b96e5736b3630b3463e1ae1b923da951d24"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/other-first/1/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 1,
+      "sha256": "5af7a5ad7e5e16b78f4aed520b0321efff79724254af8f477dce2033a06b2148",
+      "journalSha256": "1a94d8d27ae4e3a1f893a106ac58ea075a88eb81cd87edf4b8f2d9f0af2eae96"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/other-first/1/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 1,
+      "sha256": "0bafc411ed5637335bde7e3c347cfe8df9d2d1ebbd729f01f3b4967961b53473",
+      "journalSha256": "31a3ee35281250b27fc776396725167ef3e61cd3c3cb7af59d1c5c37acdb7e35"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/other-first/2/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 2,
+      "sha256": "a235a29dc0076ad865089741957f592e28f78fc2b8b79d82e5490032e4d3b6c0",
+      "journalSha256": "563725f6fc1c4015f0a68fc50087ab3051bce325744eba5f974efadde2b1adbe"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/other-first/2/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 2,
+      "sha256": "199e4f5aedb6c0e6f80f8fff48f1d20d4a182d621a88ffbf0aa15d704dfe8a98",
+      "journalSha256": "ec881a0777346b45d6932c4599bf375038b28b683f41c10fcb2ce52298262730"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/other-first/3/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 3,
+      "sha256": "729ef32acc80122d3b111a2378f21298eb96693ab80bce37b077d09f20e4dd36",
+      "journalSha256": "fc1e78fc3ed8d4cd46db2f939ff24e97a305830c9f9ba135398bfddacf814763"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/other-first/3/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 3,
+      "sha256": "abb5f8b66ae4509333d61229b00f26668ae72200173bfe317c15abd25ec02626",
+      "journalSha256": "38efee6417a1736d9e90a7f85334c436161b60583d4189a70e1114ba713ba9b2"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/other-first/4/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 4,
+      "sha256": "ec89bb2243659e298db077c8212cabef20eac1bd4de71f18ad690e0d21f5a058",
+      "journalSha256": "f6027d6c343287a707428e6db35d3d547dcb590018f73750a7a462339a940dc5"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/other-first/4/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 4,
+      "sha256": "68907c35304867be26845e72c6e696cd4795d1c2f369991aebdc71bb75aa1fae",
+      "journalSha256": "0b7caa9a684a4a66dd8f941962a203ae7148c10e72ff0e2396c509b6b32fca98"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/other-first/5/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 5,
+      "sha256": "c07106e790b88ed254552c1522a498fb4d3377fe70b08a5b5beccad03524717b",
+      "journalSha256": "9309fa6df6ba9440401f66d00896c18769ad967f6742155b2502acac3a1f509c"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/other-first/5/observation.json",
+      "caseId": "dual/question/other-first",
+      "repetition": 5,
+      "sha256": "d0f9b91c34afb07d10ab47330988be922b405f4cf1e60a9a055bec40e9afd5d7",
+      "journalSha256": "7a1518d66d0c307f9dac673c6abdc5f50df71af7ec22932ac4c187c0966fb159"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/handoff-double/1/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 1,
+      "sha256": "b90fe1ce963635da333a43928d9e6a3a2f1c52aacd5e8c41a978a691c38ba32a",
+      "journalSha256": "02c28d1580223a8a2f0cf678011a6cc3248c296c68799a0ba1163e8dc1d52991"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/handoff-double/1/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 1,
+      "sha256": "243fe7161a1f420fd16275153ce5abbebc7887e3bad77ac977d62d529dec9671",
+      "journalSha256": "0eef930c926be7df1507f38ef212409be981c05d24c7d930e1caf2a2c665e0d7"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/handoff-double/2/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 2,
+      "sha256": "be11843f95fb7d9809a724200734a5b451cfb3eec062ac5fceeb2bedf346a333",
+      "journalSha256": "0ac2ea586384387af6b4db40060141494c41ef1585517f57b9bd8f597a097bb0"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/handoff-double/2/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 2,
+      "sha256": "e8d924b42e376f8436c4e03f9a7f1ed37b3a396c8427b045da37cb9273757614",
+      "journalSha256": "8aafafff595f932380767bd7c55bb0efcb9f4d8a9c2c76e4e283777faa628815"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/handoff-double/3/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 3,
+      "sha256": "c3ab07a218e0000bf96694974d16f06c7b04733fee7fcd4e936b9531cce3314e",
+      "journalSha256": "5f730e50644aec5f3df2fed5c0bbfc5cfa015fa7d6db337602783fc857b94091"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/handoff-double/3/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 3,
+      "sha256": "2ca56ac83daecf1ef41445ac7918a670fc67df2b277fbd4a619032c84c5e0aca",
+      "journalSha256": "15fc11f654cf31be9fd0867a4a1bdff6212b35eb1ddf54104ed73eda48bbeeb3"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/handoff-double/4/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 4,
+      "sha256": "cedb7da656b17c62a1ab669321cd31405ec0df3d89571f75929a4a8f3f297d06",
+      "journalSha256": "038ba33170e5b166dd623798a78255566824e5b58e2865b6a9580e85aa510549"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/handoff-double/4/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 4,
+      "sha256": "8c6a9335ef7af3f127f8a0a2aef2ab408cff7c4e2040849f59c4006976b8c114",
+      "journalSha256": "5cb574a70e8f1e9312305bcd9b515343aedf23edd47cfd1221c911a1ab43b987"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/handoff-double/5/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 5,
+      "sha256": "9e3b77121c1af4a664f23db566ed38961aa0f77052341368d517a2b3ccd8f042",
+      "journalSha256": "7524859e86716fc3f10c045a373be123139e6d8fcf1e478647baed2f654c6ff1"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/handoff-double/5/observation.json",
+      "caseId": "dual/question/handoff-double",
+      "repetition": 5,
+      "sha256": "663a7602e8e02e369a2080635f2681a65d6a0ae3676ad61b10a3a390a9be6c43",
+      "journalSha256": "45e8c73d998c9c5b4dc211d7b15380a3e379fa4f4949f45eb436456d8bf73c89"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/distinct-run/1/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 1,
+      "sha256": "9028c52ee468e9993af4214546b617ce3e7e172245cb1bfafa2438439e38c1f5",
+      "journalSha256": "aca7e4e84d3c13166e7d262c8fb025fd9fe5840e1ad778446d613acb3fd5453f"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/distinct-run/1/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 1,
+      "sha256": "cc220dcfd600150e8435d7bb3a19b29e12bfcfc586fc2258c9ce679a03bf1344",
+      "journalSha256": "56e315d1f783b2bbfd2ed03d56f347d71402a97448d827ba1524d8ef92c95fc4"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/distinct-run/2/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 2,
+      "sha256": "950e4d964e89ce4cdf48c2be5fa949171b65a042ee4ed1f760669137ef1565bc",
+      "journalSha256": "e50340091c27ffb85e160d831921a3dc010c20a993b60a6e4b354073a1744c10"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/distinct-run/2/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 2,
+      "sha256": "d11136558bd67239534103f2770f788fbeb0df7a723ce5107f52a9edf10c6a07",
+      "journalSha256": "d9e6b23bffd97a8853b4467656a63e687bf5e60a3ad7a4b63b6dbc553dc59cde"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/distinct-run/3/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 3,
+      "sha256": "d0bbd750529104f4e9de83a883aab457483e5c9413c35e4264b0bdc48c7f3002",
+      "journalSha256": "c043441a34fa1ca443044a90e18c65a39e625963ef460dc8ba0d00b853776038"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/distinct-run/3/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 3,
+      "sha256": "e412112f7000854c84656bbb83c6746f0570d9fee98d78e8239e5fd6bca29147",
+      "journalSha256": "c766d3a2fd46bcdf2705d481a8a2aaea384ed0411cef5b56ef7a3ee5b5410fa7"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/distinct-run/4/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 4,
+      "sha256": "d1587c5d568d3ea2956c635529a7ccf74f9c9718fb1062d07bac307f1ea79b79",
+      "journalSha256": "ff28eacc31fafbd9a782ebd1b396e3e17020b7490b1af20291328adb8d0d2e68"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/distinct-run/4/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 4,
+      "sha256": "fdebc807aece22a92e2d70b96cfecc6e9e0615751d622539bf816925d42e75d6",
+      "journalSha256": "cef0b47d8c75c6601de0bfb7953e6f714930416221f913e904509cb82dec5a29"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/distinct-run/5/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 5,
+      "sha256": "90b4480eeb2133950530f76a59d7615f2e2285e7c5edaeac4075c27c7e723920",
+      "journalSha256": "4fa1bca2641bbbbe1cd6617d741dcf510ede41fb5c1fab1dec7072e1bbccca6f"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/distinct-run/5/observation.json",
+      "caseId": "dual/distinct-run",
+      "repetition": 5,
+      "sha256": "56a8698cc7cbf8c66a51d6de6f4f092f835bd10ae8f4a15264724d37608279e2",
+      "journalSha256": "0aa495dc691b35ac36104dbde9bfe8fb948440d75ca3dedaeea024f01c2ac637"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/same-run/1/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 1,
+      "sha256": "abcfd88176f2002a748b57907ceefaa771bf92e0e8766365638abd3717c34db1",
+      "journalSha256": "bd404604c8d1cc9a2e7c4f8673c04dac9c71e5e92fa975065ba4cdd927e2c0fa"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/same-run/1/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 1,
+      "sha256": "73752ee273dd5987b7c985076943283724cd9d54c09cc8dc9e68237371231558",
+      "journalSha256": "f02d670d78afb812ed4e852d45e245656981554168b4442ca7590154423f9a81"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/same-run/2/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 2,
+      "sha256": "3da43db95f9baa2f8eeeddae5f62cc62319c8c201a06509eae56354b92a7ab6b",
+      "journalSha256": "e89a04994933bdca74124d37e41c43a2110ca500c31dc179a8d42fe0c9e7b578"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/same-run/2/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 2,
+      "sha256": "9cc653d9d1aad155d1e0f8fa4b04e2918aea338226a99f3432aea59d181112a0",
+      "journalSha256": "db3a0d2c7aa8c9b753636f01b29a6afe32c1599883f32bbf66d81effb358ffd9"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/same-run/3/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 3,
+      "sha256": "45fefeb726fcdf22edfd6c0d48414bd50dbf7580510836eaac7486d70d364e9a",
+      "journalSha256": "5c6eba59e10d42f76ab0b4200490ce652ccffb2c029b040b7203c1be7b9c6b49"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/same-run/3/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 3,
+      "sha256": "fe4940b3720499935622518ee744a1429b9aa261fcedc976b57afb42e31bb1cb",
+      "journalSha256": "46943ff5fa620e736d115d1330918564015bd0478d6ebf75702cf4342be84b64"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/same-run/4/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 4,
+      "sha256": "52adf9867c2ef9279abf64b613a5e91b1ca936b542a6a467fafabf84a7fde8cc",
+      "journalSha256": "4ca762f4d53e8e60cba4255007f33378bfb4659cd05e9fbfaa790f3482038c70"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/same-run/4/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 4,
+      "sha256": "2df36ca9c5e2a8f792310f373c199f31000a38ae4c3e4b0dac514b9a868a75aa",
+      "journalSha256": "3c0d4efead636a5263734d6c7707156f9fc856cc40d9490fe97e311147583c8d"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/same-run/5/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 5,
+      "sha256": "3df4b08a67a2dad04c674cb102eef938c264973f60855d8f62e5794bdc108a4a",
+      "journalSha256": "e5a35774a0ea26009b3315384b99bb7117b1ce87d9e229a258eb54f671508d99"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/same-run/5/observation.json",
+      "caseId": "dual/same-run",
+      "repetition": 5,
+      "sha256": "ab3578ab228523cb218db4aa2aa12f202f5c920ef4c39c12bd5d33af51777dcd",
+      "journalSha256": "dd3b3473a2292de92f91a5ac6d03d525b041ebad5dbe44f17ad48886b7bab5cf"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/sdk-control/1/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 1,
+      "sha256": "69c6ff7244bc754dace7f722b50a5908f8c23b73016cfa50a7930bd5f4ef41c6",
+      "journalSha256": "00c2a2a684bb18d2ce125a9518b7abdddd35b23d90a7bfc3c464ad133e5cf762"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/sdk-control/1/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 1,
+      "sha256": "14b69c5242584ad78d59ee20d4fb5afa8909483c3c23fd6a474842f1e98929fc",
+      "journalSha256": "f25cf5c1abc3613c90c8812df27e19df0b2c8f404bb2faeeadcdce17e83e1ff3"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/sdk-control/2/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 2,
+      "sha256": "ff8e30c51096e79d33d9611d9e14e2f8ad4ed6fd36dbcef9b230bb9927f18647",
+      "journalSha256": "92e6238ab3b7a9a75f7d851048c967a122b557b7b6c2c906a091822e1dd02f73"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/sdk-control/2/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 2,
+      "sha256": "ee4f6b84b4a1a898f7263dca537d7df470b77e373ddfda11585d51418d10343d",
+      "journalSha256": "6a43e551b6de361fa28d9d22049447e95bd653265c54983ad281c4e1385a6ebd"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/sdk-control/3/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 3,
+      "sha256": "de17c183a10c9bbce3dce87caea5907e54ea8cd4540007737c4a4d34d545ab31",
+      "journalSha256": "2bc61d995b8a06022c8eae23cc193a9ca327d9a7c0391c0c267d47ebae6d8767"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/sdk-control/3/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 3,
+      "sha256": "907e7d9cb533932ca40fc2a54af5ad7071c7a051e584a8fa07a52096dc9deb99",
+      "journalSha256": "7d5fd94d34a9e983bc0a6a831015db77727e94e4c841e0e1126939c1616d381a"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/sdk-control/4/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 4,
+      "sha256": "f78ac701862c9ce6d7c560e1b3335fd1ec370c3bdd652f19c8f3e7ee212e4ea5",
+      "journalSha256": "7dc582c4bb8c63373a7acb5e249f7002cdcc9b7cd3b9d612e57a38124bcdb7c1"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/sdk-control/4/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 4,
+      "sha256": "6c09bc36c4e95c3d76a9672041e3beab2a8fb7f8eb770d1a198248bf0019430b",
+      "journalSha256": "cc18005c7e41eca65558e23850db221b496087edd61eb76e1adc3eff07ffe519"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/sdk-control/5/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 5,
+      "sha256": "487aed5a49173b1a867d7dbe5feac144de313972cf08727c273d93c07f5a3971",
+      "journalSha256": "ecc7cdeb89fa70e8ffcfd7d4030503b5e5afe18760a8f918e4566d3f15e12cc2"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/sdk-control/5/observation.json",
+      "caseId": "dual/sdk-control",
+      "repetition": 5,
+      "sha256": "fcbbda419436bb56ba1638085b5681db0b3295e944810124f36b02f1674b43e5",
+      "journalSha256": "0fc08eef9b3a04a42a2d9eb6d4e87462b229769095c67e5829fccead588a04a2"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/A-first/1/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 1,
+      "sha256": "f63006b175357976eeac390076fb62bf239e3578688e566cfc9458902c70fc9d",
+      "journalSha256": "38de7329da2eccfc3845d4f394298fe5d5c6a31e3874d0fab7e1468ccf06c6ac"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/A-first/1/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 1,
+      "sha256": "eebc838395836d29d2acf1fe16bfec074b7030c5841e45be5e2be4e524d6abec",
+      "journalSha256": "95f1084a7db56b832def19019bd84aa2352bccec18be05b909aff4305ec7537a"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/A-first/2/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 2,
+      "sha256": "fc594102ba3c891840881fb01b1e5c122ea45766600e9d5b06b274d6bc151629",
+      "journalSha256": "a9d1e642847a81a3fed2eba3c878a2d275710db8eb55bf4db3e5d753b360db15"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/A-first/2/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 2,
+      "sha256": "878b5217c894f95921fd2ae04106cc8a54bea8ffb5a0c797c88b897a359366e5",
+      "journalSha256": "33f2c0237c364ee3b8895a090110f8c7f99650aae9182a86dd0d17c7c09ee989"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/A-first/3/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 3,
+      "sha256": "13662902521498980c279e457ae156b13b782324c23d480ab7e4c7a9fe98f94c",
+      "journalSha256": "299c4577c880a6d28215c449cd73285d28313f9c7a8dbe2726d1688cce19ccd6"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/A-first/3/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 3,
+      "sha256": "164b5763e917f39fde730353c5376a6d9ca2feec6ac92f142e8992069a7e8873",
+      "journalSha256": "96f42886dac56965bbc0a5e24421d6cc011ebe9abc1e117e40bba9ecaafd064c"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/A-first/4/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 4,
+      "sha256": "361eb8c8824fb14530aeed68c4ea30413cba34e46f48605f339e0936496cf038",
+      "journalSha256": "26ae2579fc6e5f0d3055809b4ca4e2f06b3e638e6df085fc53951e21fc0b0d75"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/A-first/4/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 4,
+      "sha256": "0088faff90505bc898bb999e62ecd79a9bccf508be73e3d03e10b77da3cba2f6",
+      "journalSha256": "0b827a62e5682b67ca6b7397ba68038aac4369ae008a1762fdad9edd26033c69"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/A-first/5/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 5,
+      "sha256": "119bb7c0357f0d1b547645ac07ef441052de873329f8cea1edb1517733a9c2e3",
+      "journalSha256": "d0457fafb7b7b483ece88cf9d89d10b1d878d71a61402513b1edd31072185c9d"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/A-first/5/observation.json",
+      "caseId": "multi/A-first",
+      "repetition": 5,
+      "sha256": "cf9a019adc7ed8506bd1979c9205e242d68c8e86b2c7b16a761a4e55e2f68338",
+      "journalSha256": "0c0ff19a2e80a00ca77af10a52d8b0634609dc044b896873d69ccd6723dc0d52"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/B-first/1/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 1,
+      "sha256": "2fc9db8acfb51565b0c247e86d3bf9fc41e50a3bda523c36370a99f380593632",
+      "journalSha256": "664f2fb8065753f8498cc35b9602232d4acd6b9c3bfef2694cbad2b17500eff0"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/B-first/1/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 1,
+      "sha256": "776c30d5de67e9d157ed73a98977316c271496ca9adccd6a00361ba9e06452ac",
+      "journalSha256": "608ed982ac719a0825239a50aef46c04fcb36f252715573cab244e9d17e31789"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/B-first/2/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 2,
+      "sha256": "b22ad7088a3e56afc81f49ebaaccab6dd067dc00659fe5473cc56392db6bb101",
+      "journalSha256": "d21d5f2fcd782a26d4d7051d462b6dfbab31e4eaee37768fe44e184e3abef635"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/B-first/2/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 2,
+      "sha256": "9de1f735582a0729bb377e56474c6c5c0869f00fb30a7a64e520e95d477c64b1",
+      "journalSha256": "3938d01a55e23b71298575049d8b36cc1afd389dfe1732b0bb7b974000b47a8c"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/B-first/3/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 3,
+      "sha256": "550c57a0435551162a37cb8a97c608abd320f78563129296802274f69d7d4e71",
+      "journalSha256": "b18ef65d06db9101f57b133d5b8df6778f4087d51034617ab782a8d16fe104eb"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/B-first/3/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 3,
+      "sha256": "e7e589d6a2b76ba4be0e52288fdfcb7f29c35acfdf5d81578e08e884d16c9518",
+      "journalSha256": "ed751f26afe234d066327efce85e8d007c49721d05dd65ee3cde1491643734cf"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/B-first/4/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 4,
+      "sha256": "8459becf975b06842f7714da8a3e430f0af3ef6a05dee57e5ef8fbfd82e673d2",
+      "journalSha256": "9b805c6575f6cf5af1c2ba2f2fd59d60aebd98b5c5bb9582c055850e2ab5e748"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/B-first/4/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 4,
+      "sha256": "7daefa24a2f2ad6d6f6bba17465b82e083680849af32192e4e39a3352a894537",
+      "journalSha256": "11def1198aba98f5110d355dbc7e1cdbcf1a7c2236868cbd26466662673e5008"
+    },
+    {
+      "role": "ws",
+      "path": "raw/multi/B-first/5/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 5,
+      "sha256": "e38eac913d1fe8b19170a2b5d9bd4870a7bf2f0d70cf3cde697e237ce6d75cad",
+      "journalSha256": "ef0dab4124dfc7e814de7b00ba36490a4a786d248cc322a1f114cd4220d91676"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/multi/B-first/5/observation.json",
+      "caseId": "multi/B-first",
+      "repetition": 5,
+      "sha256": "08aa338cdcefb21c92cf667df0a01a03e20e941b901e39598c54eeacb8cb57cb",
+      "journalSha256": "adb8b6b19c11b52cd0f47e2fb97a1b7f7cd7186bda85ecdba161b17b3c35d5ae"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-same-run/1/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 1,
+      "sha256": "85d241731e22efbf55af4c08e5d5e61cc2c8dfdb68ff2507d8360914e7629005",
+      "journalSha256": "afcac3312af73f348abace7cf152470292c0ffe7ef106b1a22cd19b743ba58e4"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-same-run/1/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 1,
+      "sha256": "0fc20f9a7a87b28d5fd670846c80bcc8b60fd87a2a3543d268744c451f9e3c58",
+      "journalSha256": "86aa56d9b192ceb40c9745fd0e242b1159813fc66dea956985d2b279355fb73d"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-same-run/2/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 2,
+      "sha256": "4151b001e2f6c2f71177e723b2104a91125362c92f8277429c53c439f246884b",
+      "journalSha256": "baaa0ef0fa2e847ea145717147923be6ea46cc617ae5e8fcb1b153a8be950bee"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-same-run/2/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 2,
+      "sha256": "96c0774a356fed91ada77e3e335f294eaeb62640c18fa9e1188ab0c69e25d561",
+      "journalSha256": "8a4bb544a777ba13d6de65343de9b401a933154b22dd67ddeca0ed4bdf51f7eb"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-same-run/3/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 3,
+      "sha256": "65dfcd82e81c6a58c0a4a61186b2ace95aae9a94a274a5fa1fe49639fa38c0b7",
+      "journalSha256": "8818d9694b7a885d7281b25c1a5bf5a7f331178fc26178325f10b12dd45e5fba"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-same-run/3/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 3,
+      "sha256": "a704eb9ab2186f6c05fec0734150d07b72153a088caf11f3c01638ad3278b287",
+      "journalSha256": "5450026fe17c3a1ccd26fad0b4d71483d1d6696060a6a2da8fb8646c9d8e96ad"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-same-run/4/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 4,
+      "sha256": "64c9de99a63f75325b54e7ed4ebb1fe3b7c61dee9753d6e03e59063ce473fd51",
+      "journalSha256": "181ccdf3eced23614808daadeeaf9aa1bf2b7b153727638224953ec23d850dea"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-same-run/4/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 4,
+      "sha256": "1581f5c212390b7aff94a9ddfeb160cf42b84db620cc2331ade311039088f490",
+      "journalSha256": "e61b4b4a9d5c19dcc41a29b6d6189f83ea388d3283d4267b0df4621fcb90c440"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-same-run/5/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 5,
+      "sha256": "14b2f8caea61012a11a1ed256322dda2584aec82a8a34629d88227c1c8c30062",
+      "journalSha256": "9cbb4a0f0d9509d0b7ea90815823baa87af2c200b3b429b82cf381e587cdb164"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-same-run/5/observation.json",
+      "caseId": "dual/reattached-same-run",
+      "repetition": 5,
+      "sha256": "a27942dd4b4c99c3df107ab9e6146b2561ad160a3e82a40f9f8605ab0e9caede",
+      "journalSha256": "d8a9352ab322b658d3e47a06cf4011ef12b59e241f95c5a38f7369d13693ca73"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-distinct-run/1/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 1,
+      "sha256": "b199fad2a28bccd2b9846cecdb7b8dc58c6353580873bcd732d114fdb0177130",
+      "journalSha256": "415ad123b159aa24312c63d5f533d92474419a63f2f851c844f7345bfb07a89c"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-distinct-run/1/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 1,
+      "sha256": "d6a0c4d6b272a33945ae7f8d5dc79a75ba56f7b2091da174a682b8698cd8046d",
+      "journalSha256": "52570a45470f6db9c21eb38a67858cca339d58a43785e489707afb3c642d47ba"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-distinct-run/2/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 2,
+      "sha256": "26fd53f952bf6f31b50629353eb6674b00281da330a6b5df0573c1b06f53dc35",
+      "journalSha256": "0e7476129c55d712857d9e1a3dd6abac612bcefc718854719c49a331c2d2c391"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-distinct-run/2/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 2,
+      "sha256": "375b93b3dd427d961422d681401493ef331cef4fb36cec4e1885d965f6346af2",
+      "journalSha256": "23090801da9c740da229a8f56189ea50ef64bc5cc1cef1be46d032568cfb5a07"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-distinct-run/3/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 3,
+      "sha256": "91c0fe565880434923f20f87c04fe4bd255e19d0cd9ff5677b4121d9e789f7ea",
+      "journalSha256": "edd16f7f9a1de85f6bb7e667904a67e771db0705c3eacd9373d89c18b35a5f0a"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-distinct-run/3/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 3,
+      "sha256": "d18a4c0415e6be8721024a1fe581424143aa7c266bf998500a678d7bab7c6565",
+      "journalSha256": "569bf13cd603ac628576b95d0e5620826c427ace541d7a65afa32c81d03cfa49"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-distinct-run/4/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 4,
+      "sha256": "c0fa1dd04197016fb703142b3a9b15560d4bb0b38171fe180ad2949439a3c663",
+      "journalSha256": "ca0d894934a140368c1fd626aad60195aa46fa3bbad1a6177f95896bdd492d4e"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-distinct-run/4/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 4,
+      "sha256": "1e6d7ca56df5375eddb0fd996efea4f6c21c5d038e6b60c42daa5d5d9b5726ad",
+      "journalSha256": "61d34a97312471d05819477e44a46ec3b769769377706e70c9747aca99331687"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/reattached-distinct-run/5/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 5,
+      "sha256": "cfc9c17412e0a3b0c40f28c807766aa6e06e49fd3277423a97826a0cdfd3ab2c",
+      "journalSha256": "f2f1eb026bce173b1e21d5f453f2de07c8a3b07d153221f0bec1110e8963ab35"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/reattached-distinct-run/5/observation.json",
+      "caseId": "dual/reattached-distinct-run",
+      "repetition": 5,
+      "sha256": "cecaab90c15dd77f271b631288cfc3818f069bff70ac0c104cc690e3b37f6be9",
+      "journalSha256": "270704fa4bff1c71daf1702a1c8f6ca5ff4cd7e1a7ee740b4f454243137e3765"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/raced-double/1/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 1,
+      "sha256": "f3954cd771db2fee397a331580bb38ef959d3d08b1c82a163e22020a895855a3",
+      "journalSha256": "4cbbb1871286e9a9f0e3b245bfa13b05e45ec10731c592b289315e76daa91602"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/raced-double/1/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 1,
+      "sha256": "afdeaca1f1f890e41c75b4c22e1f3358c637ed63caed628163aa3a846e426547",
+      "journalSha256": "9fe5af55fa7b30c724a5f4807b2443baf758a06fbba91799c38d3dd4b9453eab"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/raced-double/2/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 2,
+      "sha256": "f553c97d58ac634382bf6a10af1ca34686948bed45311f38058245ca478b63da",
+      "journalSha256": "3841a2fe06ea993ed5463ac68fdb4cbdbd22cb902944143bc9ec4aaa3b29014c"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/raced-double/2/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 2,
+      "sha256": "b1e4961620de035ce5c237ecdc4e8270b8dc68d548d3c7b866f2c51fa7439aa6",
+      "journalSha256": "430135019350998c2568d9550bf9ed65cef0fdb1dcd366f79351e8caf2cf9ee4"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/raced-double/3/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 3,
+      "sha256": "22e1f80e4e64530b3538e74da1c48e6d330d66d40e7961065d7b5114e1c47b68",
+      "journalSha256": "953285e98d5baef41d5adc69b8aa0de0a367b94f814f907cc12ea0a8ebfeb883"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/raced-double/3/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 3,
+      "sha256": "c3e1be486967c68e76959f0b93b6fd83ed01b5f08bf4880e50639ae0718b0d04",
+      "journalSha256": "f9c236ee497ea3b1ad95c6d032fbde23f64d85385adc9929a83fd9821860c190"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/raced-double/4/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 4,
+      "sha256": "99daf7c7c41bef22b2e99c027ad6a9c21e9579bd57b61c53e8844d28649341e5",
+      "journalSha256": "3975001c705358c38db0a3411baec46a0e7b713e7b2fd91be1e908fbb7b61a63"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/raced-double/4/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 4,
+      "sha256": "6f02c9def3521487686865fead1529e2ba9007f3d3b88439378f74514f695a71",
+      "journalSha256": "9e8829cafd8208f1767ae7e61f1beb0cc9835e93e179db9fcf93d2f5f2f2f6be"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/permission/raced-double/5/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 5,
+      "sha256": "08e0992e3b72aad62a798ff7cb3cf838606318b09fe06f69ba051f226a3896eb",
+      "journalSha256": "6a2a308050ca35038b034325ab2e46b270491d23521647bdc592db842612ecbf"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/permission/raced-double/5/observation.json",
+      "caseId": "dual/permission/raced-double",
+      "repetition": 5,
+      "sha256": "be704ff844e205d9e399a8f056759845b917913410be18bd77c19affceb5cabe",
+      "journalSha256": "97b321fc0ff70759631e6b176a7930b2572ef8cdfd2ecede52086e885ad3b332"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/raced-double/1/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 1,
+      "sha256": "3dcc1efcb6c5b89aa5227c7af7ce327585b62a8f92a01e84583ca643c810059d",
+      "journalSha256": "589076c62550517bebaf5f3c0ef5f378cdf13918bb09934fc23c7fdb612e2ada"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/raced-double/1/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 1,
+      "sha256": "ec70f7535b0fb9ac92d66aceb046f9d2f309916c417ec11a4100bcebbbe79c85",
+      "journalSha256": "518a4a2aabfa7cfacf60f8c59bcb86b1e9d81467c661f1487f835621130c447b"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/raced-double/2/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 2,
+      "sha256": "1e25235e0fcc58e104669a8b7ad3358d7aae71fb8e9111fb965f96423d8e5570",
+      "journalSha256": "9f54467ceb8272400b00432d5ab842d6289631de4acc97c1fc5cc64a6c1034d4"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/raced-double/2/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 2,
+      "sha256": "92c70ff128aa606edf858da1787a71da94cf497228f0b128555cb241b413af74",
+      "journalSha256": "a451f341fc4cf5772b36b859d320110fb58a8425a52697dc9ca5ff96551ae90b"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/raced-double/3/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 3,
+      "sha256": "7a9c862de7d2934abfd18c6d355ce0dbe4a9fa861605d0a4854b49fdd26ed291",
+      "journalSha256": "7cba7346f741bcda789bc0a94e6057615261faf4d9d0175145e90db312dc7db0"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/raced-double/3/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 3,
+      "sha256": "f51c4c49be57d3c710086b817728cf6ef8bd48579e136004534c3ff7cc821278",
+      "journalSha256": "3b041eee7e9147e12cfeba154f03e1d2eab5bbccc283466931bec6510da06146"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/raced-double/4/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 4,
+      "sha256": "05476614372ba6ec2a5bd46b916cffbac6b0efa1feeb9a8497220e9d50ec26d0",
+      "journalSha256": "3db231d13b85df9c5cd689e1944c20e0f0c5e63a97aeeb60ae554bdd2d6d71cc"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/raced-double/4/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 4,
+      "sha256": "d6283f2af7ecdf764b9776e405d5a5a8e24ad4f0f18c66c634afde2c99d0907a",
+      "journalSha256": "68acb404359ed191225880cb2170de34962fd89054dcc107277a01e3a393717b"
+    },
+    {
+      "role": "ws",
+      "path": "raw/dual/question/raced-double/5/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 5,
+      "sha256": "6ac2cf2d5ce0ba58ab8251989f988a3a9df1fe992ba330e8db52581ddc4b3c6b",
+      "journalSha256": "76c63e56991ba0da9254123725e6a14217e835b2dd5e83214bdeef77a0903693"
+    },
+    {
+      "role": "main",
+      "path": "raw/measurements/dual/question/raced-double/5/observation.json",
+      "caseId": "dual/question/raced-double",
+      "repetition": 5,
+      "sha256": "f8f2d75311ba867bd481d65d2d2e9e3abe6787161e5447531959756105cac1fc",
+      "journalSha256": "59b6659c974a99f88de13f1892312ddfdbbe350cb4244a560ed064492a349aff"
+    }
+  ],
+  "launch": {
+    "path": "launch.json",
+    "sha256": "bcbfedb2fc7be07befdfb0229559e99b71dfa64b133ab5b750e1fdf661886d2f"
+  }
+}
