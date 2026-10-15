@@ -305,15 +305,15 @@ async function measure(cell: typeof cells[number], variant: Variant, phase: stri
     registry.append = (input: any) => {
       const key = label(input.event);
       j.add('registry.append.attempt', { key, event: input.event });
-      const write = (async () => {
-        try {
-          await originalAppend(input);
-          j.add('registry.append.commit', {
-            key, event: input.event, diskRecordAfterAppend: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
-          });
-        }
-        catch (error) { j.add('registry.append.failure', { key, error: errorData(error) }); throw error; }
-      })();
+      const write = originalAppend(input);
+      // Observe settlement without replacing the production promise or its
+      // synchronous throw/admission semantics. Both handlers consume only the
+      // observer branch; the caller still receives the original rejection.
+      void write.then(() => {
+        j.add('registry.append.commit', {
+          key, event: input.event, diskRecordAfterAppend: JSON.parse(readFileSync(registryPath, 'utf8')).records[0],
+        });
+      }, (error: any) => { j.add('registry.append.failure', { key, error: errorData(error) }); });
       appendPromises.add(write);
       void write.then(() => appendPromises.delete(write), () => appendPromises.delete(write));
       return write;

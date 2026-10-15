@@ -173,3 +173,17 @@ rename 测的是操作前与真实操作完成后两个边界：没有模拟 OS 
 | 完整 E1 校准 / D4 评分 | 未接入冻结 scorer，未登记 accepted diff，未关闭 #19/#67 或替人定评分口径 |
 
 全 workspace fmt/clippy/test、两套 check_frozen、ledger（105 个自检）、schema 与 diff 检查通过；test 为 820 passed / 0 failed / 2 个源码既定 ignored。完整命令、隔离与失败尝试、提交顺序和外部剩余项见 RESULT。协调者移除 worktree 前应归档证据；Cargo cache/target 是可重建验证缓存，不需混入原始证据档案。
+
+## 2026-10-16 · #112 真实四格与历史 WS 汇总
+
+四格补证入口仍为 `run-b.py --sidecar`，明确枚举 registry有/无 × model/tool，各k=5。每次实际到达目标 Module call/宿主barrier、消费者停在前缀后才人工触发宿主 timeout；真实cancel到达子进程并被ACK，随后释放宿主port，观察真实operation terminal，不预设unknown断言。tool由模型返回结构化call进入真实capability `execute_batch`（生产dispatcher同时支持execute）；宿主executeAll只持住barrier，不执行真实工具。20次均实际得到result_unknown/DEADLINE_EXCEEDED，model的lastAppliedSequence=2、tool=8。原始terminal与完整三面见 [sidecar-four-results.json](sidecar-four-results.json)。
+
+无registry实时为前缀→T status/error；有registry实时只有前缀，T/G的enqueue均在closed queue后。四格durable status均T→G；有registry最终failed/G，model revision=8/lastSeq=7、tool=9/8，与exp014快格对应语义一致。真实loop额外operation ledger/模块事件均保留，**不把真实ledger与受控loop全文冒认相同**。四组各5/5完整投影稳定，registry投影只排除record的acceptedAt/updatedAt/ownerPid；随机sidecar instance/generation/stream仍按原有一一映射。20个自有child均code=0退出；不listen，未调用外部模型。
+
+旧TIME=2026-10-15使今天的绝对operationDeadline在execute admission前已过期，首两次失败原件保留。修正只在本sidecar装置将生产gateway的`now`设为本次采集时间；该生产时钟同时决定operationDeadline和gateway status.createdAt，两类值保留原文并在manifest记录collectionTime，durable事件外壳/宿主依赖仍为原TIME，不归一全部时间。第三次在registry格暴露读面过早：session.submit退出先于gateway catch的registry append结算。现在等真实第二次queue.close后取三面，不增加生产路径等待。失败原件与最终采集均在 `_tmp/20261016-a5-112/`，未用admission失败替代目标阶段abort证据。
+
+历史WS原件按精确15case×5汇总，75条各自与coordinator-main同case/同遍的完整语义投影一致，15组各5/5稳定。汇总器 [summarize-ws-b.py](../../../scripts/a5-19/summarize-ws-b.py) 只排除registry record及其RPC读面acceptedAt/updatedAt/ownerPid，并按已知peer的实际binding映射connectionId及generation相对差；保留其余ID、时间、完整帧payload、durable、registry events/result、answer与abort。5项负控证明错误runId、非registry时间和终态不能被归一吞掉。结果含每份observation/journal SHA，见 [ws-results.json](ws-results.json)。
+
+WS是**同一launcher自有Node进程内75次观测**，不是75个独立进程；历史launch记exit0/reaped=true。历史WS manifest缺fixtureFiles，仅能绑定原始输入、共同源码哈希和预注册哈希，不能宣称为当前HEAD重新执行。cold/sidecar/main/旧a52原件均在`_tmp/archive/wt-a52b-tmp/a52b/`及`_tmp/archive/wt-a52-tmp/a52/final-run/`，本次不伪造新cold或WS运行数。
+
+以上仅准备A5.4登记证据；未登记/冻结A19-HOST，未关闭#112或升级阶段/真人验收。

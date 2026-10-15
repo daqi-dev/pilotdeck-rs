@@ -132,3 +132,9 @@ timeout 使用固定 gateway now 与 `timeoutMs=123456` 的原 callback；捕获
 完整命令、原始输出、资源与失败尝试记录见 [`_tmp/RESULT.md`](../../../_tmp/RESULT.md) 和 [`_tmp/a52/`](../../../_tmp/a52/)。本次实测全部 360 次完成，expectedCases=executedCases，无空组、隐式 skip 或非稳定组。全 workspace fmt/clippy/test、两套冻结检查、ledger check 与 diff 检查最终均通过；test 为 809 passed / 0 failed，另有源码既定的 2 个 release-only resource tests ignored。命令、失败缓存尝试与最终日志由 RESULT 记录。
 
 没有提交，没有改 state/specs/冻结脚本/基线。D4 第二步仍由人依据实测决定差异与评分；未改 accepted-diffs 或回算阶段 C 分数。双连接、多会话、cold-restart 留给 A5.2b；真实 sidecar 与完整 E1 定标也未宣称完成。故障仅切在 status 底层 append 前及 registry snapshot persist 前，未测部分写入、rename 途中、断电、跨进程锁或 fsync/crash consistency。协调者移除 worktree 前须归档 `_tmp/a52/`，否则本文件指向的完整原始证据会随 worktree 丢失。
+
+## 2026-10-16 · #112 append promise 保真复算
+
+`registry.append` 观察层改为直接调用原方法并返回同一 Promise；旁路 `then(success, failure)` 只记提交/失败，不向调用者替换 Promise、不重抛、不新增入场前 await。pending 集合跟踪原 Promise，生产 mutationChain/FIFO 入场与同步 throw 保持原调用路径。
+
+重新执行72组、360次（registry270次），无不稳定组，9项负控与原件相同。360条完整投影逐字段一致：实时帧、durable status entries、registry record/events/result，以及 close 后 enqueue payload；沿用原 signature 仅排除 registry acceptedAt/updatedAt/ownerPid 和 detail.errorId。72组summary也与已发布 results.json 和归档 final-run 精确一致。原始证据与比较脚本：`_tmp/20261016-a5-112/20261016-append-regression/`、`20261016-regression-comparison.json`、`20261016-compare.py`；未改原 results.json 或冻结尺子。

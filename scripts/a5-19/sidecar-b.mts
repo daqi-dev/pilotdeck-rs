@@ -4,18 +4,23 @@ import fs from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { Apparatus, OUTPUT, ROOT, BASELINE, TIME, deferred, clone, upstream, sha, verifySources } from './runtime-b.mts';
 import { isDeepStrictEqual } from 'node:util';
-import { REPEATS, SIDECAR_CASE } from './preregistration-b.mjs';
-import { checkStatus, requireRule } from './rules-b.mjs';
+import { REPEATS } from './preregistration-b.mjs';
+import { checkStatus, checkRegistry, requireRule } from './rules-b.mjs';
 const { createAgentSession } = await upstream('agent/session/createAgentSession');
 const { createAgentLoopSidecarRuntimeFactory } = await upstream('agent/modules/transport/agentLoopSidecarClient');
 const { createStdioAgentLoopSidecarConnectionFactory } = await upstream('agent/modules/transport/stdioAgentLoopSidecarConnection');
 const { createDefaultPermissionContext } = await upstream('permission/index');
 const { AsyncQueue } = await upstream('gateway/util/AsyncQueue');
 const TIMEOUT_MS = 123456;
+// The sidecar validates absolute deadlines against its real clock. A historical
+// transcript timestamp must not make execute expire before the controlled wait.
+const collectionTime = new Date().toISOString();
 const observations: any[] = [];
 fs.mkdirSync(OUTPUT, { recursive: true });
-for (let repetition = 1; repetition <= REPEATS; repetition++) {
-  const a = new Apparatus(resolve(OUTPUT, String(repetition)));
+for (const withRegistry of [false, true]) for (const phase of ['model', 'tool']) for (let repetition = 1; repetition <= REPEATS; repetition++) {
+  const caseId = `sidecar/${withRegistry ? 'registry' : 'no-registry'}/fast/${phase}`;
+  const a = new Apparatus(resolve(OUTPUT, caseId, String(repetition)));
+  a.gateway.now = () => new Date(collectionTime);
   const heldModel = deferred(), modelStarted = deferred();
   const childConnections: any[] = [];
   const oldEnqueue = AsyncQueue.prototype.enqueue, oldClose = AsyncQueue.prototype.close;
@@ -37,7 +42,7 @@ for (let repetition = 1; repetition <= REPEATS; repetition++) {
     for (const connection of childConnections) connection.child.kill('SIGTERM');
     process.exit(2);
   }, 20000);
-  a.gateway.options.runRegistry = undefined;
+  if (!withRegistry) a.gateway.options.runRegistry = undefined;
   const originalCreate = a.createSession.bind(a);
   a.createSession = (session: string) => {
     originalCreate(session); const s = a.sessions.get(session);
@@ -70,18 +75,22 @@ for (let repetition = 1; repetition <= REPEATS; repetition++) {
     const model = {
       async prepare({ request }: any) { return { request, provider: request.provider, model: request.model }; },
       async *stream() {
-        a.j.barrier('module:model-held'); modelStarted.resolve();
-        await heldModel.promise;
+        if (phase === 'model') { a.j.barrier('module:model-held'); modelStarted.resolve(); await heldModel.promise; }
         yield { type: 'message_start', role: 'assistant' };
-        yield { type: 'text_delta', text: 'late host model' };
-        yield { type: 'message_end', finishReason: 'stop' };
+        if (phase === 'tool') {
+          yield { type: 'tool_call_start', id: 'held-tool', name: 'fixture_hold' };
+          yield { type: 'tool_call_end', toolCall: { id: 'held-tool', name: 'fixture_hold', input: {} } };
+        } else yield { type: 'text_delta', text: 'late host model' };
+        yield { type: 'message_end', finishReason: phase === 'tool' ? 'tool_call' : 'stop' };
       },
     };
+    const descriptors = [{ name: 'fixture_hold', description: 'Controlled host barrier', inputSchema: { type: 'object', properties: {} } }];
+    const executeAll = async (calls: any[]) => { a.j.barrier('module:tool-held'); modelStarted.resolve(); await heldModel.promise; return calls.map(call => ({ toolCallId: call.id ?? call.toolCallId, name: call.name, result: { type: 'text', text: 'released' }, isError: false })); };
     const agent = createAgentSession({ sessionId: session, transcript: s.writer, collectFileArtifacts: false,
       config: { provider: 'host-fixture', model: 'controlled', cwd: a.dir, permissionMode: 'default',
         permissionContext: createDefaultPermissionContext({ cwd: a.dir, canPrompt: false }) },
-      dependencies: { router: {}, now: () => new Date(TIME), ports: { model, tools: { list: () => [], executeAll: async () => [] } },
-        tools: { registry: { list: () => [] }, scheduler: { executeAll: async () => [] } } },
+      dependencies: { router: {}, now: () => new Date(TIME), ports: { model, tools: { list: () => descriptors, executeAll } },
+        tools: { registry: { list: () => descriptors }, scheduler: { executeAll } } },
       agentLoopFactory: factory,
     });
     s.agent = agent;
@@ -92,7 +101,7 @@ for (let repetition = 1; repetition <= REPEATS; repetition++) {
   const frames: any[] = [];
   try {
     const iterator = a.gateway.submitTurn({ sessionKey: 'session', channelKey: 'fixture', runId: 'run', message: 'hold real sidecar model', timeoutMs: TIMEOUT_MS })[Symbol.asyncIterator]();
-    while (true) { const next = await iterator.next(); assert.equal(next.done, false); frames.push(clone(next.value)); if (next.value.type === 'model_request_started') break; }
+    while (true) { const next = await iterator.next(); assert.equal(next.done, false); frames.push(clone(next.value)); if (next.value.type === (phase === 'model' ? 'model_request_started' : 'tool_call_started')) break; }
     await modelStarted.promise; a.j.barrier('consumer:paused');
     assert.ok(timer && !timer.cancelled); a.j.add('timer.fire'); timer.callback();
     await a.j.wait(r => r.kind === 'queue.close'); a.j.barrier('timeout:queue-closed');
@@ -104,26 +113,37 @@ for (let repetition = 1; repetition <= REPEATS; repetition++) {
     await a.j.wait(r => r.kind === 'sidecar.stdout' && r.message.inReplyTo === cancel.message.messageId && r.message.kind === 'response');
     heldModel.resolve(); a.j.barrier('module:model-released');
     await a.j.wait(r => r.kind === 'session.submit.exit');
+    await a.j.wait(r => r.kind === 'queue.close' && r.closed);
     while (true) { const next = await iterator.next(); if (next.done) break; frames.push(clone(next.value)); }
-    const observation = await a.observe(SIDECAR_CASE.id, repetition, [], ['module:model-held', 'consumer:paused', 'timeout:queue-closed', 'module:model-released']);
+    const observation = await a.observe(caseId, repetition, [], [`module:${phase}-held`, 'consumer:paused', 'timeout:queue-closed', 'module:model-released']);
     observation.realtimeFrames = frames;
-    observation.registry = { applicable: false, reason: 'runRegistry deliberately not configured for no-registry cell' };
+    if (!withRegistry) observation.registry = { applicable: false, reason: 'runRegistry deliberately not configured for no-registry cell' };
+    else checkRegistry(observation);
     checkStatus(observation);
     const j = a.j.rows;
-    const unknown = observation.durable.flatMap(d => d.entries).filter(e => e.type === 'agent_loop_operation_terminal' && e.outcome === 'result_unknown');
+    const targetCall = j.find(r => r.kind === 'sidecar.observation' && r.observation.type === 'module_call_received'
+      && r.observation.module === (phase === 'model' ? 'model' : 'capability')
+      && (phase === 'model' ? r.observation.operation === 'stream_next' : ['execute', 'execute_batch'].includes(r.observation.operation)));
+    assert.ok(targetCall && targetCall.order < j.find(r => r.kind === 'timer.fire').order, 'target Module call precedes explicit timeout');
+    const unknown = observation.durable.flatMap(d => d.entries).filter(e => e.type === 'agent_loop_operation_terminal');
     const proof = j.some(r => r.kind === 'sidecar.observation' && r.observation.type === 'handshake_completed')
-      && j.some(r => r.kind === 'sidecar.observation' && r.observation.type === 'module_call_received' && r.observation.module === 'model');
+      && j.some(r => r.kind === 'sidecar.observation' && r.observation.type === 'module_call_received' && r.observation.module === (phase === 'model' ? 'model' : 'capability'));
     requireRule(proof && j.some(r => r.kind === 'sidecar.spawn') && unknown.length > 0, 'SIDECAR_IDENTITY');
     const rawPublications = j.filter(r => r.kind === 'queue.enqueue' && !r.closed).map(r => r.event);
     requireRule(isDeepStrictEqual(frames, rawPublications), 'FRAME_RAW');
     const childLoaded = fs.readFileSync(resolve(a.dir, 'child-loaded.ndjson'), 'utf8').trim().split('\n').map(JSON.parse);
     for (const loaded of childLoaded) assert.equal(sha(fs.readFileSync(loaded.path)), loaded.sha256, `child source changed: ${loaded.path}`);
     observation.childLoaded = childLoaded;
-    observation.sidecarProof = { handshakeAndRealModule: proof, unknownEntries: unknown, ownsOnlySpawnedChildren: true };
+    observation.sidecarProof = { handshakeAndRealModule: proof, terminalEntries: unknown, unknownEntries: unknown.filter(e => e.outcome === 'result_unknown'), ownsOnlySpawnedChildren: true };
     fs.writeFileSync(resolve(a.dir, 'observation.json'), JSON.stringify(observation, null, 2)); observations.push(observation);
   } finally {
     heldModel.resolve();
     for (const connection of childConnections) await connection.close('fixture_cleanup');
+    const completed = observations.at(-1);
+    if (completed?.caseId === caseId && completed.repetition === repetition) {
+      completed.timeline = a.j.rows;
+      fs.writeFileSync(resolve(a.dir, 'observation.json'), JSON.stringify(completed, null, 2));
+    }
     await a.close(); realClearTimeout(watchdog);
     globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
     AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
@@ -141,18 +161,23 @@ function signature(o: any) {
       return [key, names.get(original)];
     }));
   };
-  return normalize({ realtimeFrames: o.realtimeFrames, durableEntries: o.durable[0].entries, registry: o.registry,
+  const records = o.registry.applicable ? o.registry.records.map((r: any) => { const copy = { ...r }; for (const k of ['acceptedAt', 'updatedAt', 'ownerPid']) delete copy[k]; return copy; }) : undefined;
+  return normalize({ realtimeFrames: o.realtimeFrames, durableEntries: o.durable[0].entries, registry: o.registry.applicable ? { records, events: o.registry.events } : o.registry,
     droppedEnqueues: o.timeline.filter(r => r.kind === 'queue.enqueue' && r.closed).map(r => r.event) });
 }
-const distinct = new Set(observations.map(o => JSON.stringify(signature(o)))).size;
-const manifest = { caseId: SIDECAR_CASE.id, repeats: REPEATS, measurements: observations.length, importedSources: verifySources(),
+const expectedCases = ['sidecar/no-registry/fast/model', 'sidecar/no-registry/fast/tool', 'sidecar/registry/fast/model', 'sidecar/registry/fast/tool'];
+assert.deepEqual([...new Set(observations.map(o => o.caseId))], expectedCases);
+assert.equal(observations.length, expectedCases.length * REPEATS);
+const groups = expectedCases.map(caseId => { const runs = observations.filter(o => o.caseId === caseId); const distinct = new Set(runs.map(o => JSON.stringify(signature(o)))).size; return { caseId, measurements: runs.length, distinct, stable: distinct === 1 }; });
+const distinct = Math.max(...groups.map(g => g.distinct));
+const manifest = { expectedCases, groups, repeats: REPEATS, measurements: observations.length, importedSources: verifySources(),
   preregistrationSha256: sha(fs.readFileSync(resolve(ROOT, 'scripts/a5-19/preregistration-b.mjs'))),
   preregistrationCommit: JSON.parse(process.env.A52B_PREREGISTRATION_STATUS!),
   fixtureFiles: ['sidecar-b.mts', 'no-listen-child.mjs', 'runtime-b.mts', 'rules-b.mjs', 'run-b.py'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: sha(fs.readFileSync(resolve(ROOT, 'scripts/a5-19', name))) })),
-  stable: distinct === 1, distinct,
-  observations: observations.map(o => ({ repetition: o.repetition, realtimeFrames: o.realtimeFrames,
+  collectionTime, stable: distinct === 1, distinct,
+  observations: observations.map(o => ({ caseId: o.caseId, repetition: o.repetition, realtimeFrames: o.realtimeFrames,
     statuses: o.durable[0].entries.filter(e => e.type === 'agent_status_message'),
-    unknownEntries: o.sidecarProof.unknownEntries, sidecarEvents: o.timeline.filter(r => r.kind === 'sidecar.observation'),
-    evidence: relative(ROOT, resolve(OUTPUT, String(o.repetition), 'observation.json')) })) };
+    terminalEntries: o.sidecarProof.terminalEntries, unknownEntries: o.sidecarProof.unknownEntries, sidecarEvents: o.timeline.filter(r => r.kind === 'sidecar.observation'),
+    evidence: relative(ROOT, resolve(OUTPUT, o.caseId, String(o.repetition), 'observation.json')) })) };
 fs.writeFileSync(resolve(OUTPUT, 'manifest.json'), JSON.stringify(manifest, null, 2));
 console.log(`DONE real sidecar cross-check ${observations.length}`);
