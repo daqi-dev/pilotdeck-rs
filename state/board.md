@@ -6,6 +6,13 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-16 · 本轮交付与两小时接续点（随PR135）
+> **已合入main**：#131入口总账/阶段D计划（678条、263 HTTP独立对账）；#118四组P2清账（main a13a930，#101/#95/#76/#105已关闭）；D6 #136于02:55以rebase合入 `eb76e4a`，候选a3a39b2的check与gateway-schema-baseline均绿、GLM/DeepSeek最终P0/P1/P2为0。合并后核邮箱，服务端committer隐私缺口仍在，未改main历史。
+> **#112随PR135交付**：20次真实stdio四格均unknown/DEADLINE_EXCEEDED（model2/tool8）、append72组360条完整字段等价、历史WS15×5稳定且与main对应；来源/空集/差异/不稳定失败闸门、观察错误与cleanup控制均完成。两家实际simplify/三角色后终审零问题；原始证据`_tmp/20261016-a5-112/`及exp014/015。原ecf6fa5已本地/远端保留，四提交rebase新main仅冲突合并board/决策；脚本/报告/记忆14文件与原tip逐字节相同、D6产品与新main相同。新HEAD续审及两项CI以PR135实时记录为准，本段不替代合并闸门。
+> **D6实测边界**：合法Unicode/CJK本地，108真实CJK帧、19×71731污染locale扫描、exact Cargo standalone A2八场景/十readonly/七local通过；17个非良构UTF16排序键仍精确host回退，真实12例4host/8local。配置集合32/2696及host0/17、唯一ID与三负控已锁定。Mac EILSEQ不能充当Linux真实dirent，#132/#133均前置A8。原件`_tmp/20261016-d6-resume/`；A4仍7/10，archive三项未接管。
+> **下一任务**：按依赖继续archive普通路径适配/真实安全探针及A5.4准备，可独立推进；archive架构与债务核对`_tmp/20261016-archive-resume/{architecture-plan,dependency-handoff}.md`。#134新安全差异仅登记缺口，未经精确冻结授权不登记差异或合并依赖该差异的archive；既有默认装配/分母10/D4/D5决定不再问。A5.4除#112还必须清#65混合批次/并发应答顺序，不因D6清非ASCII而整单关闭。#56、#120前两项前置A4；#91及#120容量/47漏项前置A6首次账本回写/相关方法。
+> **验收与现场**：A19-HOST尚未登记冻结；#19 deadline两场景留A7，阶段C历史51/53仍FAIL，B/前端/CLI与真人使用均未验收。已有E1 NOT_IMPLEMENTED属于后续接线，未冒充完成。五树全部保留，build7.6G+tmp22G低于46G；D6 exact临时bin链接已撤、自有进程全停。主树与wt-d6现由root持有，其他旧分支/未跟踪证据不清理。会话到两小时按规约交接，持续开发授权保留；新会话按本段和PR实际状态接续，不重跑初始化或已验证的大测。
+
 > ## 2026-10-16 · D6新main最终验证通过（产品HEAD251da95）
 > **同步**：保留 `codex/d6-pre-main-sync@fb44bb3` 后rebase origin/main@a13a930；保留main YAML Undefined和R20及本候选R18/R19，未merge。原分支与旧证据保留。
 > **最终门**：fmt/clippy通过，gateway111lib+1bin=112通过；含22组真实Node byte→UTF16 CStr共用helper对照、原CJK108本地与新12项精确host边界。污染PDRS_PROBE_LOCALE=zh-TW后的19×71,731新扫描PASS，productionSourceSha256 `78c20b97239536968ce23eeacdd000a899aa0ae4b1ba302985e226d7faf9dd84` 匹配当前源码。

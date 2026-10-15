@@ -48,3 +48,7 @@
 - 选项后果：保留旧clock只能证明过期admission拒绝，无法回答#112；修改真实child时钟会掩盖生产行为。采用生产gateway可注入clock，真实child时钟不改，并等真实第二次queue.close再观察settled三面。
 - 原则：跨进程绝对deadline必须在采集时有效；目标阶段barrier与Module call先于人工fire才算该格；registry读面须在gateway pump最终close之后采集。断言已落入sidecar-b，terminal只记录实际值。
 - 初轮复核更正：真实路径status.createdAt仍为固定TIME，原先“deadline clock同时改变status.createdAt”的说明不成立，已按原件纠正。改为每run独立clock只解决绝对deadline入场，不剥任何新增语义时间；新四格预注册656d6e3先提交后复采，旧20次明确事后观察。各组精确k5且稳定才通过；cleanup与observer异常显式失败。最终20/360原件见exp015/exp014追加说明。
+
+## R22 #112接续D6的线性同步（自决）
+
+卡在哪：并行候选均已独立收敛，D6先合main使PR135落后；谁受影响：112提交身份及接续状态，可撤回。沿R20证据保全原则，先保存本地codex/a5-112-pre-d6与远端codex/a5-112-preserved-ecf6fa5，再将四提交rebase到eb76e4a，冲突只保留并接合双方board/R18–R21；不动意向、冻结或实测语义。旧ecf6fa5的14项脚本/报告/记忆逐字节相同，D6非状态文件与新main相同；已有真实数据适用，不重复360/20/扫描/A2。新元数据交两家原session续审，PR分支仅在远端仍为ecf6fa5时exact lease更新，main不强推。原则：源码与输入未变才复用验证，提交身份变化仍重跑最终CI；断言见rebase-final-proof.json。
