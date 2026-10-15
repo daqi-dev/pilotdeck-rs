@@ -34,6 +34,10 @@
 > **来源/隔离**：现有 wt-d6 持有 codex/d6-resume；重放旧 28a0ef2 的 baked 数据、PROVENANCE 与独立 datagen 工具，旧 feat/d6-unihan-collation tip 原样保留。project_files 适配保留当前 NODE_IO_REQUIRED 与 method-specific IO 映射。
 > **新增适配**：session_model_get 同 sequence 非 ASCII createdAt 恢复本地 Unihan 排序；既有 Node 响应原件只改路由期望 false，单元与 pairing 共用该案例验证完整响应/无转发。其他宿主 fallback 保持原义；archive 另接，冻结文件未改。
 > **验证**：产品提交 64d4956 的 fmt、gateway all-targets clippy -D warnings、gateway 全测试通过（lib 107 + bin 1；0失败）；使用独立 `_build/20261016-020004`，2 jobs、locked/offline。原始日志见主仓 `_tmp/20261016-d6-resume/`。baked 11项SHA256通过，冻结README哈希不变；无下载、datagen、全码位扫描或在线A2。后续解禁的全码位扫描在 HEAD 4dae78e exit0：19轮×71,731输入，完整排序/锚点符号/相邻符号全一致，输入哈希与旧scan-final相同、生产源码哈希匹配。原件为同证据目录 scan-current/，汇总 scan-current-summary.json。独立评审及在线A2待协调安排，未记阶段完成。
+> ## 2026-10-16 · #112 真实四格/append保真/WS75候选（基于3ac5e74，待独立闸门）
+> **#112候选**：真实stdio registry有/无×model/tool各5次，实际terminal全部result_unknown/DEADLINE_EXCEEDED；model sequence2、tool8，四格T→G、registry最终failed/G；20个自有child均code0退出，无listen。受控clock与第二次queue.close结算依据见R21，未预设unknown判据；未登记冻结A19-HOST、未关闭#112或标阶段完成。
+> **保真复算**：append返回原promise，72组360次（registry270）、9负控全过；360条完整投影与归档逐字段一致，无不稳定。历史WS精确15×5均与main匹配且组内稳定；历史同一Node进程75观测，非75独立进程，不冒认当前HEAD。报告exp014/015，原始/失败原件与hash在`_tmp/20261016-a5-112/`。WS投影5项负控过；纯TS变更未编译Rust。
+> **接续**：root确认#118已合main a13a930，check与gateway-schema绿；#101/#95/#76/#105已关闭，#91/#112仍OPEN。实现交回后root rebase onto origin/main，再走GLM/DeepSeek独立闸门与CI。D6树未动，五树保留，真人验收待验。
 
 > ## 2026-10-16 · #118 双终审通过；D6扫描通过（root @c8133d0，待提交/CI）
 > **#118**：YAML33通过、prefix-router补响应侧/双编码回归后8/8、fmt/全目标clippy通过；Node86条逐字节一致。第12族真实复算N10/40、相对耗时增长1.199和增量RSS比1.258均PASS；Chrome old两协议流式/滚动/搜索8/8。廉价P2本轮修，双编码疑点用实际静态服务函数实测，交独立终审复核。报告`docs/reviews/004_p2-cleanup.md`，GLM/DeepSeek最终增量均P0/P1/P2=0；当前新代码/证据尚待提交与最终CI，不提前关issue；#91/#112保留。

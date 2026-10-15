@@ -38,3 +38,12 @@
 - 原则与断言：只退回当前依赖尚不能表达的可达输入；真实Node新原件、本地正控与上游observer负控明确区分单项/过滤后单项/不同sequence，历史fixture原件不改。
 
 原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)，真实非法dirent未验，不能把单元解码核验视为真实文件系统验收。
+
+## R21 · #112 真实sidecar绝对deadline与读面结算（AI代批，待人复核）
+
+- 卡在哪：旧固定TIME构造的operationDeadline今天已过期；session.submit退出也早于gateway catch写完registry，原无registry格没暴露后者。
+- 谁受影响：仅scripts/a5-19/sidecar-b真实四格证据；产品/冻结尺子不变。
+- 可撤回：可以；所有失败原件保留在`_tmp/20261016-a5-112/`。
+- 尺子/意向：均不动，不预设实际terminal；本次gateway.now采用采集时刻，只让绝对deadline可进入实际model/tool，保留其同时产生的status.createdAt原文；其他固定fixture时钟不改。
+- 选项后果：保留旧clock只能证明过期admission拒绝，无法回答#112；修改真实child时钟会掩盖生产行为。采用生产gateway可注入clock，真实child时钟不改，并等真实第二次queue.close再观察settled三面。
+- 原则：跨进程绝对deadline必须在采集时有效；目标阶段barrier与Module call先于人工fire才算该格；registry读面须在gateway pump最终close之后采集。断言已落入sidecar-b，terminal只记录实际值。
