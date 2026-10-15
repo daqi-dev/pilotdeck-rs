@@ -14,9 +14,10 @@
   它们不计入本地 wire 对拍通过数量。每个原型案例使用独立 Node，避免基线
   deepFreeze 对共享 Object.prototype 的影响污染其他案例。
 
-D6 A 候选恢复全部 2,728 个 catalog/diagnostics 原件的逐字节本地对拍断言，
-包括原先因非 ASCII 排序而转发的 32 个案例；全部 load 诊断仍核对。
-18 个宿主 intrinsic 边界继续单独断言转发。原件内容未改；本轮执行结果见状态板。
+D6 A 候选对2,728个catalog/diagnostics原件核load诊断：2,711个wire本地逐字节对拍，
+17个过滤后多项id含孤立surrogate的明确case经JS_HOST_REQUIRED转发（固定ID见config/tests.rs）。
+这是Node与ICU4X非良构UTF16权重不同的精确宿主边界；合法Unicode/CJK继续本地。
+18个宿主intrinsic边界另行断言转发。历史JSON原件未改；新真实原件见session-model/illformed-collation.json。
 
 Rust 测试对本地请求逐字节比较完整 response 字符串；诊断对象仅统一属性顺序后比较，
 保留数组顺序、字段有无、文本、code/path/source/hint/recoverable。

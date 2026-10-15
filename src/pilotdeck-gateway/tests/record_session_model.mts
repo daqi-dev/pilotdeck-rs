@@ -117,6 +117,27 @@ add('session-nul-registered',{sessionValue:'web:\0'});
 add('project-nul',{projectNul:true});
 add('config-path-nul',{env:{PILOTDECK_CONFIG_PATH:'bad\0.yaml'}});
 add('binding-nul-path',{env:staff,binding:{status:'bound',bindingId:'b\0'},sops:{sops:[{id:'sop'}]}});
+// Separate ill-formed UTF-16 oracle set; never rewrite historical recordings.
+if(process.argv[5]==='--illformed-collation'){
+ cases.splice(0);
+ const catalogYaml=(models:string[])=>'schemaVersion: 1\nagent: {model: '+JSON.stringify('parity/'+models[0])+'}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: https://example.invalid/v1\n      apiKey: mock-only\n      models:\n'+models.map(m=>'        '+JSON.stringify(m)+': {}\n').join('');
+ for(const [id,keys,forward,params] of [
+  ['catalog-high',['\ufffd','\ud801','\ud800'],true,{}],
+  ['catalog-low',['\ufffd','\udc01','\udc00'],true,{}],
+  ['catalog-paired',['\ufffd','😀','𠀀'],false,{}],
+  ['catalog-single',['\ud800'],false,{}],
+  ['catalog-filtered-single',['\ud800','ascii'],false,{query:'ascii'}],
+  ['catalog-filtered-surrogate',['\ud800','ascii'],false,{query:'\ud800'}],
+ ] as any[])add(id,{method:'model_catalog_list',yaml:catalogYaml(keys),forward,params});
+ for(const [id,keys,sequences,forward] of [
+  ['session-high',['\ufffd','\ud801','\ud800'],[1,1,1],true],
+  ['session-low',['\ufffd','\udc01','\udc00'],[1,1,1],true],
+  ['session-paired',['\ufffd','😀','𠀀'],[1,1,1],false],
+  ['session-distinct',['\ud800','\udc00'],[1,2],false],
+  ['session-single',['\ud800'],[1],false],
+  ['session-untied-surrogate',['\ud800','A','Z'],[1,2,2],false],
+ ] as any[])add(id,{entries:keys.map((key:string,i:number)=>entry('session_metadata',{metadata:{modelSelection:i===1?{mode:'auto'}:explicit}},sequences[i],key)),forward});
+}
 cases.sort((a,b)=>Number(a.lock==='dead')-Number(b.lock==='dead'));
 const results:any[]=[];let routerCalls=0;let dead=false;
 try{

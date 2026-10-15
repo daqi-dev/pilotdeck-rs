@@ -26,3 +26,13 @@
 - 选项与后果：写共享target会污染来源；改运行器涉及冻结变更；缺失固定文件名临时绑定独立exact二进制可保留原装置和产物身份。
 - 建议与执行：采用主协调认可的a2-plan外层脚本；lock覆盖软链和direct/proxy两轮，记录Cargo artifact、源码HEAD、前后binary SHA、装置哈希和process audit。
 - 原则与断言：产物位置绑定须可撤回且身份可核验；绑定无主、前后SHA/装置不变、仅七method无转发、两轮全场景DONE/comparison PASS、自有进程全停、自己的链接已撤才算本轮通过。任何不满足保留失败，不改判据。
+
+## R19 非良构UTF16排序的精确宿主边界（AI代批，待人复核）
+
+- 卡在哪：真实Node与ICU4X compare_utf16对孤立surrogate/U+FFFD不同；YAML模型键和JSONL同序createdAt均可达，属于行为P1。
+- 谁受影响：实际参与locale排序的catalog id及同sequence组createdAt；合法Unicode继续原生。
+- 能否撤回：精确检查后走既有JS_HOST_REQUIRED/requires_host整请求转发，可后续以原生比较实现替换。
+- 动不动尺子/意向：不动冻结评分或差异豁免；这是已存在宿主边界的兼容性保全，不能宣称全输入原生化。
+- 选项与后果：猜PUA或替换会改语义；恢复全nonASCII退回会放弃已验证D6；选择仅多项filtered catalog或同sequence比较键含孤立surrogate才转发。
+- 建议与执行：采用精确宿主边界，保留paired supplementary、U+FFFD与CJK本地；原生illformed UTF16由主协调登记A8前置后续issue。
+- 原则与断言：只退回当前依赖尚不能表达的可达输入；真实Node新原件、本地正控与上游observer负控明确区分单项/过滤后单项/不同sequence，历史fixture原件不改。

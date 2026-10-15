@@ -7,7 +7,7 @@ pub(crate) mod tests;
 use crate::{
     config::{self, Env, Error},
     metadata::{Files, Metadata, object, resolve, text_field},
-    project_files::{node_collator, node_locale},
+    project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
 use std::cmp::Ordering;
@@ -183,6 +183,13 @@ fn execute<F: Files>(
         *counts
             .entry(if n == 0.0 { 0 } else { n.to_bits() })
             .or_insert(0usize) += 1;
+    }
+    if entries.iter().any(|entry| {
+        let n = field(entry, "sequence").as_number().unwrap();
+        counts[&if n == 0.0 { 0 } else { n.to_bits() }] > 1
+            && has_unpaired_surrogate(field(entry, "createdAt").as_string().unwrap())
+    }) {
+        return Err(config::collation_host_error());
     }
     if entries.len() > 1 {
         let collator = if counts.values().any(|count| *count > 1) {

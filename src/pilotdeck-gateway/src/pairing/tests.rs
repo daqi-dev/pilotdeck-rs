@@ -1241,6 +1241,45 @@ async fn session_selection_requests_match_node_frames_with_an_independent_upstre
     assert!(count > 50);
 }
 
+#[tokio::test]
+async fn illformed_collation_preserves_exact_upstream_boundaries_and_node_frames() {
+    let fixture = crate::session_model::tests::illformed_fixture();
+    let rows = fixture["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 12);
+    let mut forwarded = 0;
+    for row in rows {
+        let metadata = crate::session_model::tests::snapshot(row);
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        let request = client_frame(0x81, 127, row["request"].as_str().unwrap().as_bytes());
+        let expected = server_frame(1, row["response"].as_str().unwrap().as_bytes());
+        write(&mut pair.client, &request).await;
+        if row["forward"].as_bool() == Some(true) {
+            forwarded += 1;
+            read(&mut pair.server, &request).await;
+            write(&mut pair.server, &expected).await;
+        }
+        read(&mut pair.client, &expected).await;
+        silent(&mut pair.server).await;
+        let sentinel = client_frame(
+            0x81,
+            127,
+            br#"{"type":"request","id":"illformed-fence","method":"describe_server"}"#,
+        );
+        write(&mut pair.client, &sentinel).await;
+        read(&mut pair.server, &sentinel).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+    }
+    assert_eq!(forwarded, 4);
+}
+
 struct UnknownIo(i32);
 impl crate::metadata::Files for UnknownIo {
     fn entries(&self, _: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {

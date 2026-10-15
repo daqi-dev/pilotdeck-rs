@@ -98,6 +98,18 @@ fn env(row: &serde_json::Value) -> Env {
         .map(|(k, v)| (k.clone(), v.as_str().unwrap().into()))
         .collect()
 }
+pub(crate) fn illformed_fixture() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/session-model/illformed-collation.json"
+    ))
+    .unwrap()
+}
+#[test]
+fn illformed_collation_has_precise_host_boundaries_and_node_responses() {
+    let fixture = illformed_fixture();
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 12);
+    verify_responses(&fixture);
+}
 #[test]
 fn complete_default_provider_matches_node_wire_fixtures() {
     verify_responses(&fixture());

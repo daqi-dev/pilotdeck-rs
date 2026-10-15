@@ -181,6 +181,12 @@ fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> Strin
         .into_owned()
 }
 
+// ICU4X replaces ill-formed UTF-16 with U+FFFD; Node localeCompare retains
+// distinct weights. Preserve the host boundary only for actual sorting keys.
+pub(crate) fn has_unpaired_surrogate(value: &pilotdeck_protocol::JsString) -> bool {
+    char::decode_utf16(value.units().iter().copied()).any(|unit| unit.is_err())
+}
+
 // Generated ICU 78.2 / CLDR 48 collation data uses the pinned Node oracle's
 // Unihan root, with matching tailorings. Unsupported collation extensions
 // retain Node's fallback to the language default, then root.
