@@ -10,6 +10,8 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 
 # 阶段 A 深水区计划（A5 起）
 
+> **现行决策（2026-10-16 接续校正）**：D4→B、D5→A 均已有人批准，依据见[决策记录](../../state/decisions-20261014.md)。下文起草时的“D4/D5 待批／未决”不再是等待条件。D4 仍须在 A5.4 登记 A19-HOST 逐格期望、评审冻结，再由 A7 实现与验证；D5 以 A8「gateway退役验证完成（不含UI自动恢复）」满足 B3 的 A 侧前置，完整 UI 恢复由 B 后续真实验收闭合。批准不等于实施或验收已经完成，A8 全套技术证据与 B1/B2 前置均保留。
+
 ## Context
 
 承接计划 002 的“A5 起·深水区”：现在要迁走的是拥有状态的 gateway 宿主，包含会话接纳、agent 宿主能力、binding、交互、历史/运行登记、项目配置与其它入口。架构依据集中在 [调研 008](../research/008_phase-a-session-domain/must-know.md)，91 个未本地化 method 的工作包映射和 #19 因果链在 [gap](../research/008_phase-a-session-domain/gap.md)，决策分级在 [decision](../research/008_phase-a-session-domain/decision.md)。计划 002 对后续编号“003”的占位由本 **005** 承接；003 已用于阶段 B，本轮不重排旧编号，仅在其相关段末追加 D5 待批解环建议，未批准前维持原闸门。

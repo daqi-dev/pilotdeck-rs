@@ -10,6 +10,8 @@ related: [research/006_phase-b-ui-server, research/005_phase-a-gateway, research
 
 # 阶段 B 计划
 
+> **现行阶段门（2026-10-16 接续校正）**：D5→A 已有人批准；B3 的 A 侧前置为计划005的 A8「gateway退役验证完成（不含UI自动恢复）」，另须满足 B1/B2 前置。完整 UI 恢复由 B 后续工作修复并以真实 UI 验收关闭。下文保留的旧“D5待批／未批准”描述不再是等待条件，批准依据见本文末尾记录及[决策正本](../../state/decisions-20261014.md)。
+
 ## Context
 
 为什么这样设计见 `docs/research/006_phase-b-ui-server/`（`must-know` / `gap` / `decision` / `route-inventory`，行号均已回源核对）。一句话：**浏览器 `ui/src` 一行不改**，Rust 以反代站上浏览器唯一入口（默认 3001；实验一律高位端口），**逐路由**从 TS `ui/server` 手里接管；未接管的 HTTP / SSE 与整条 WS 连接反代给跑在私有回环端口的 TS `ui/server`。取舍卡九条代拍（切法 / WS 切法 / 38 处 `src/` / 装置 / 鉴权 / 编排 / 迁移分组 / 分母与覆盖率 / 阶段门）均为 **AI 代拍，待人复核**（`006/decision.md`）。
