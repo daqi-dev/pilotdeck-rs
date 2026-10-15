@@ -976,6 +976,38 @@ fn ascii_and_non_ascii_file_lists_stay_local() {
     }
 }
 
+pub(crate) fn assert_cjk_fixture_complete(fixture: &Value) {
+    let rows = fixture["rows"].as_array().expect("CJK rows array");
+    assert_eq!(rows.len(), 9, "CJK environment rows");
+    let mut total = 0;
+    for row in rows {
+        let count = row["cases"].as_array().expect("CJK cases array").len();
+        assert_eq!(count, 12, "CJK requests per environment");
+        total += count;
+    }
+    assert_eq!(total, 108, "CJK total requests");
+}
+
+#[test]
+fn cjk_fixture_rejects_empty_or_truncated_rows_and_requests() {
+    let fixture = cjk_fixture();
+    assert_cjk_fixture_complete(&fixture);
+    for mutation in 0..3 {
+        let mut broken = fixture.clone();
+        let rows = broken["rows"].as_array_mut().unwrap();
+        match mutation {
+            0 => rows.clear(),
+            1 => {
+                rows.pop();
+            }
+            _ => {
+                rows[0]["cases"].as_array_mut().unwrap().pop();
+            }
+        }
+        assert!(std::panic::catch_unwind(|| assert_cjk_fixture_complete(&broken)).is_err());
+    }
+}
+
 #[test]
 fn cjk_requests_match_node_byte_for_byte() {
     cjk_matrix("project_files::tests::cjk_requests_match_node_byte_for_byte");
@@ -984,6 +1016,7 @@ fn cjk_requests_match_node_byte_for_byte() {
 fn cjk_matrix(test_name: &str) {
     const CHILD: &str = "PDRS_CJK_ROW";
     let fixture = cjk_fixture();
+    assert_cjk_fixture_complete(&fixture);
     let rows = fixture["rows"].as_array().unwrap();
     let Ok(index) = std::env::var(CHILD) else {
         for (index, row) in rows.iter().enumerate() {
