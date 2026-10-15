@@ -2,7 +2,7 @@
 use crate::{
     config::{self, Env},
     metadata::{Files, Metadata, object},
-    project_files::{needs_ts_collation, node_collator, node_locale},
+    project_files::{node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsString, JsValue, stringify_json};
 static UNDEFINED: JsValue = JsValue::Undefined;
@@ -154,15 +154,6 @@ pub(crate) fn execute<F: Files>(
                 ]),
             ));
         }
-    }
-    if needs_ts_collation(items.iter().map(|(id, _)| id)) {
-        return Err(config::Error {
-            code: "TS_COLLATION_REQUIRED".into(),
-            message: JsString::default(),
-            diagnostics: vec![],
-            name: "Error",
-            requires_host: true,
-        });
     }
     let collator = node_collator(&locale).map_err(|(code, msg)| config::Error {
         code: code.into(),

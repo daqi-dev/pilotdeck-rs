@@ -348,3 +348,80 @@ OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
 TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 ```
+
+
+## D6：Unihan root collation 数据（2026-10-15）
+
+基线 Node v22.22.0 / ICU 78.2 / CLDR 48.0 / Unicode 17.0。算法仍是
+`icu_collator=2.1.1`，只替换已有 `icu_collator_data=2.1.1` 数据来源；主 Cargo.lock
+没有新增 package、依赖边或版本变更。独立生成器的来源是 crates.io 的
+`icu_provider_source=2.1.1`、`icu_provider_export=2.1.1`，完整源码依赖和 SHA-256
+锁定在 `../tools/collation-datagen/Cargo.lock`，不进入主 workspace。
+
+### 源数据
+
+| 官方下载 URL | 版本 | 字节数 | SHA-256 |
+|---|---|---:|---|
+| https://github.com/unicode-org/icu/releases/download/release-78.2/icu4x-icuexportdata-78.2.zip | ICU 78.2 | 5858928 | `188cfc25d20229cc67331b9fbf3699a8d6ed7b62bef9cf0e6e004163795e77f8` |
+| https://github.com/unicode-org/cldr-json/releases/download/48.0.0/cldr-48.0.0-json-full.zip | CLDR JSON 48.0.0 | 82544758 | `25ab2651a1a874dd62a727d3c213d7c6bf0fc269b09d2937f0499b82d99fa58e` |
+| https://github.com/unicode-org/icu/releases/download/release-78.2/LICENSE | ICU 78.2 许可原文 | 27718 | `e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af` |
+
+CLDR archive 内 `LICENSE`：2033 bytes，SHA-256
+`220ba0e1c43b99530d2d5bdb892a99dca0989414f51ab695ecd90163eaa1ec3b`。
+归档仅作为数据读取，没有执行归档内脚本。下载和构建只含源数据、crate 源码；
+没有下载预编译工具。源包不入仓，用完清理。
+
+ICU 78.2 官方 release 使用 CLDR 48.1，属于无结构变更的维护版；这里以 Node
+实测版本分别选择 ICU 78.2 导出包与 CLDR JSON 48.0.0。
+ICU4X source 2.1.1 上游测试常量是 `release-78.1rc` / `48.0.0`，本仓以实际
+生成七种 marker、加载、全量对拍确认对 78.2 导出格式的兼容性，没有擅自升级。
+版本判断和生成范围详见
+[生成器说明](../tools/collation-datagen/README.md)。
+
+### 生成与加载
+
+一条命令逐字节重现和检查（从源码构建，有自己的 Cargo.lock）：
+
+```sh
+python3 tools/collation-datagen/regenerate.py --check
+```
+
+生成到新目录：
+
+```sh
+python3 tools/collation-datagen/regenerate.py --output _tmp/d6/new-collation-data
+```
+
+内部固定 `CollationRootHan::Unihan`；只导出 `icu_collator::provider::MARKERS`
+七种排序 marker，全部实际可选 locale 的 sort tailoring 与 fallback，maximal
+去重、不导出 search。gateway locale 来自环境，没有缩成 en/zh/ja 白名单。
+输出标准 baked provider，静态加载，无运行时数据文件、blob 解码依赖或额外
+主工程 crate。主 Cargo 的 `[patch.crates-io]` 将现有 data crate 指向
+`data/icu_collator_data`，原 `Collator::try_new` 构造器读取这些宏。
+
+生成物共 12 文件、4,535,991 bytes，所有文件哈希在
+[data/icu_collator_data/SHA256SUMS](data/icu_collator_data/SHA256SUMS)。清单自身
+SHA-256：`9997a5b93555b8d603abc904df9a668eea8be8e43d81762f5c8b602e0e68a491`。
+核心文件：
+
+| 生成物 | SHA-256 |
+|---|---|
+| `data/collation_root_v1.rs.data` | `6e00250737ab225074e4f63222345de174f8bbddee69287b3f101db5e9bd11b4` |
+| `data/collation_tailoring_v1.rs.data` | `1fe4ac14e08c961fefb48ad3371d8ffd37d078899e9962e923a681ac9efec559` |
+| `data/mod.rs` | `df660443574e2dbbd8ae8b66ea3116aa47d6e2119c219baec0f68df7ad0e95c1` |
+| `lib.rs` | `ba88382fe948caf2131efef54172f1ec464d2f5ae6002f77862c053c92c9b296` |
+| `LICENSE` | `fcb15c285cbecdec35ea0ff785acc8a5948ab3e3e88b15c70407144c848219d9` |
+
+### 许可与 AGPL
+
+源数据、ICU4X 生成的数据宏按 Unicode License v3（SPDX `Unicode-3.0`）分发。
+完整 ICU license 及附带声明、CLDR 的原始版权与许可文字保存在生成物 `LICENSE`，
+工具目录也保存各自的许可原文。没有删除来源版权，也没有把 Unicode 数据的
+许可替换成项目的 AGPL。
+
+[Unicode License v3](https://www.unicode.org/license.txt) 允许使用、修改、组合与
+再分发，要求附带版权和许可声明，并限制借版权所有者名称做宣传；这些许可
+要求可与本项目 AGPL-3.0-only 的源码分发要求同时履行。生成数据保持上述许可，
+本仓自写生成器和 gateway 代码仍按 AGPL-3.0-only 分发；分发整体时一并保留
+Unicode notices 与 AGPL 对应源代码。兼容说明依据许可条文的条件，未声称
+Unicode 数据改为 AGPL 授权。

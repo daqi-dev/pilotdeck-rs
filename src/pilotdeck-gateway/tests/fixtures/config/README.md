@@ -14,9 +14,9 @@
   它们不计入本地 wire 对拍通过数量。每个原型案例使用独立 Node，避免基线
   deepFreeze 对共享 Object.prototype 的影响污染其他案例。
 
-按 D6 C，2,728 个 catalog/diagnostics 原件中 2,696 个仍逐字节本地对拍，
-另 32 个排序 id 含非 ASCII 的原件改为断言 Forward；全部 load 诊断仍核对。
-18 个宿主 intrinsic 边界继续单独断言转发。原件内容未改。
+D6 A 候选恢复全部 2,728 个 catalog/diagnostics 原件的逐字节本地对拍断言，
+包括原先因非 ASCII 排序而转发的 32 个案例；全部 load 诊断仍核对。
+18 个宿主 intrinsic 边界继续单独断言转发。原件内容未改；本轮执行结果见状态板。
 
 Rust 测试对本地请求逐字节比较完整 response 字符串；诊断对象仅统一属性顺序后比较，
 保留数组顺序、字段有无、文本、code/path/source/hint/recoverable。

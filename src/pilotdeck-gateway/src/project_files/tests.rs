@@ -118,25 +118,6 @@ fn raw_ts_responses_match_byte_for_byte() {
     let (metadata, fixture) = fixture();
     for case in fixture["cases"].as_array().unwrap() {
         let request = case["request"].as_str().unwrap();
-        let frame = parse(request.as_bytes()).unwrap();
-        // This archived project has non-ASCII root dirents. Valid lists reach
-        // the traversal sort and must forward, even if query/page is ASCII.
-        let expected: Value = serde_json::from_str(case["response"].as_str().unwrap()).unwrap();
-        if frame
-            .get("method")
-            .unwrap()
-            .as_string()
-            .unwrap()
-            .equals_str("project_files_list")
-            && expected["ok"] == true
-            && case["tag"] != "depth-64"
-        {
-            assert!(
-                matches!(route_with_metadata(&frame, Some(&metadata)), Route::Forward),
-                "{request}"
-            );
-            continue;
-        }
         let Route::LocalResponse(actual) =
             route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
         else {
@@ -474,17 +455,6 @@ fn native_check_against_freshly_recorded_tree_when_requested() {
     };
     for case in fixture["cases"].as_array().unwrap() {
         let request = parse(case["request"].as_str().unwrap().as_bytes()).unwrap();
-        let expected: Value = serde_json::from_str(case["response"].as_str().unwrap()).unwrap();
-        if text_field(&request, "method").as_deref() == Some("project_files_list")
-            && expected["ok"] == true
-            && case["tag"] != "depth-64"
-        {
-            assert!(matches!(
-                route_with_metadata(&request, Some(&metadata)),
-                Route::Forward
-            ));
-            continue;
-        }
         let Route::LocalResponse(actual) = route_with_metadata(&request, Some(&metadata)) else {
             panic!("forwarded")
         };
@@ -785,31 +755,36 @@ fn node_round3_cursor_dispatch_preserves_surrogates_and_offset() {
             )
         })
         .collect();
-    for probe in probes["cursorProbe"].as_array().unwrap() {
+    let original = parse_json(include_str!(
+        "../../tests/fixtures/project-files/node-runtime-round3.json"
+    ))
+    .unwrap();
+    let JsValue::Array(original_probes) = original.get("cursorProbe").unwrap() else {
+        panic!("cursorProbe")
+    };
+    for (probe, original_probe) in probes["cursorProbe"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(original_probes)
+    {
         let request = format!(
             r#"{{"type":"request","id":{},"method":"project_files_list","params":{{"projectKey":{},"limit":2,"cursor":{}}}}}"#,
             probe["response"]["id"],
             probes["root"],
             probe["cursor"].as_str().unwrap(),
         );
-        if probe["response"]["ok"] == true {
-            assert!(
-                matches!(
-                    route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata)),
-                    Route::Forward
-                ),
-                "{}",
-                probe["variant"]
-            );
-            continue;
-        }
         let Route::LocalResponse(response) =
             route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&metadata))
         else {
             panic!("cursor forwarded")
         };
-        let actual: Value = serde_json::from_slice(&response).unwrap();
-        assert_eq!(actual, probe["response"], "{}", probe["variant"]);
+        assert_eq!(
+            response,
+            encode(original_probe.get("response").unwrap()).as_bytes(),
+            "{}",
+            probe["variant"]
+        );
     }
 }
 
@@ -917,7 +892,7 @@ fn cjk_fixture() -> Value {
 }
 
 #[test]
-fn ascii_lists_stay_local_and_non_ascii_traversal_names_forward() {
+fn ascii_and_non_ascii_file_lists_stay_local() {
     let temp = Temp::new();
     let metadata = native_metadata(&temp);
     let root = temp.0.join("project");
@@ -955,7 +930,7 @@ fn ascii_lists_stay_local_and_non_ascii_traversal_names_forward() {
             assert!(
                 matches!(
                     route_with_metadata(&request(query), Some(&metadata)),
-                    Route::Forward
+                    Route::LocalResponse(_)
                 ),
                 "{name}: {query}"
             );
@@ -991,7 +966,7 @@ fn ascii_lists_stay_local_and_non_ascii_traversal_names_forward() {
         std::os::unix::fs::symlink(".git/é", root.join("alias")).unwrap();
         assert!(matches!(
             route_with_metadata(&request("alias"), Some(&metadata)),
-            Route::Forward
+            Route::LocalResponse(_)
         ));
         // The non-ASCII target does not participate in either sort when filtered.
         assert!(matches!(
@@ -1002,27 +977,8 @@ fn ascii_lists_stay_local_and_non_ascii_traversal_names_forward() {
 }
 
 #[test]
-fn collation_guard_includes_all_non_ascii_utf16_units() {
-    assert!(!needs_ts_collation(&[]));
-    assert!(!needs_ts_collation(&["".into(), "A/z~\u{7f}".into()]));
-    for units in [
-        vec![0x80],
-        vec![0xe9],
-        vec![0x4e2d],
-        vec![0xd83d, 0xde00],
-        vec![0xd800],
-        vec![0xdc00],
-    ] {
-        assert!(needs_ts_collation(&[
-            "ascii".into(),
-            JsString::from_utf16(units)
-        ]));
-    }
-}
-
-#[test]
-fn cjk_requests_forward_to_ts() {
-    cjk_matrix("project_files::tests::cjk_requests_forward_to_ts");
+fn cjk_requests_match_node_byte_for_byte() {
+    cjk_matrix("project_files::tests::cjk_requests_match_node_byte_for_byte");
 }
 
 fn cjk_matrix(test_name: &str) {
@@ -1079,9 +1035,13 @@ fn cjk_matrix(test_name: &str) {
         } else {
             route_with_metadata(&request, Some(&metadata))
         };
-        assert!(
-            matches!(route, Route::Forward),
-            "row {index}: {tag} must reach TS"
+        let Route::LocalResponse(bytes) = route else {
+            panic!("row {index}: {tag} forwarded");
+        };
+        assert_eq!(
+            bytes,
+            case["response"].as_str().unwrap().as_bytes(),
+            "row {index}: {tag}"
         );
     }
 }

@@ -57,9 +57,10 @@ NUL 错误的 inspect 截断与路径替换不可交换。录制器先保存原�
 边界；全部 `_kill` 调用被注入接管，所以不探测任何真实 PID。最大 int32 被接受，
 2147483648、4294967296 以及安全整数上限等被 Node 在 syscall 前拒绝。
 
-排序遵循 D6 C：同 sequence 的 createdAt 才是 localeCompare 排序键；任一需比较
-的时间戳非 ASCII 则原始帧交 TS。不同 sequence 的非 ASCII 时间戳继续本地。
-历史 reasoning 恢复调用全局 catalog，继承其 D6 与 JS_HOST_REQUIRED 回退。
+排序遵循 D6 A：同 sequence 的 createdAt 使用与 Node ICU 对齐的 Unihan
+本地排序，包括非 ASCII 时间戳。`equal-sequence-nonascii` 的 Node 响应原件未改，
+仅将路由期望更新为本地；单元与 pairing 均逐字节对照响应，pairing 独立观察无上游帧。
+历史 reasoning 恢复仍调用全局 catalog；JS_HOST_REQUIRED 等其他宿主回退保持原义。
 这些内部路由信号不进入 wire；未加排序差异豁免。
 
 复现（仓根运行，选全新 scratch；不下载依赖）：

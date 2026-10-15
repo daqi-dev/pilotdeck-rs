@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan five CJK blocks without downloading data or adding dependencies.
+"""Scan CJK blocks, radicals and mixed names against an isolated Node oracle.
 Usage: python3 tests/scan_cjk_collation.py NEW_OUTPUT_DIRECTORY
 Builds locked/offline, then extracts the production node_locale/node_collator
 functions into a temporary Rust probe with the exact Cargo build artifacts.
@@ -17,11 +17,11 @@ source=(workspace/'src/pilotdeck-gateway/src/project_files.rs').read_text()
 locale=source[source.index('pub(crate) fn node_locale('):source.index('fn lowercase(')]
 collator=source[source.index('pub(crate) fn node_collator('):source.index('pub(crate) fn native_entries(')]
 (r/'probe.rs').write_text("use icu_collator::{Collator,CollatorBorrowed,CollatorPreferences};\nuse icu_locale_core::Locale;\ntype Result<T> = std::result::Result<T, (&'static str,String)>;\n"+locale+collator+"""fn main() {
- let locale=node_locale(|k|std::env::var(k).ok());
+ let locale=std::env::var("PDRS_PROBE_LOCALE").ok().map(|s|s.parse().unwrap()).unwrap_or_else(||node_locale(|k|std::env::var(k).ok()));
  let collator=node_collator(&locale).unwrap();
  let input:Vec<String>=std::io::stdin().lines().map(|s|s.unwrap()).collect();
  let mut order=input.clone();order.sort_by(|a,b|collator.compare(a,b));
- println!("{}",serde_json::json!({"locale":locale.to_string(),"order":order,"anchorSigns":input.iter().map(|s|match collator.compare(s,"中"){std::cmp::Ordering::Less=>-1,std::cmp::Ordering::Equal=>0,_=>1}).collect::<Vec<_>>()}));
+ println!("{}",serde_json::json!({"locale":locale.to_string(),"order":order,"adjacentSigns":order.windows(2).map(|pair|match collator.compare(&pair[0],&pair[1]){std::cmp::Ordering::Less=>-1,std::cmp::Ordering::Equal=>0,_=>1}).collect::<Vec<_>>(),"anchorSigns":input.iter().map(|s|match collator.compare(s,"中"){std::cmp::Ordering::Less=>-1,std::cmp::Ordering::Equal=>0,_=>1}).collect::<Vec<_>>()}));
 }
 """)
 build=subprocess.run(['cargo','build','--manifest-path',str(workspace/'src/Cargo.toml'),'-p','pilotdeck-gateway','--locked','--offline','--message-format=json'],capture_output=True,text=True,check=True)
@@ -37,10 +37,11 @@ for crate in ('icu_collator','icu_locale_core','serde_json'):
 subprocess.run(cmd,check=True)
 env={k:v for k,v in os.environ.items() if not k.startswith('LC_') and k!='LANG'}
 env.update(HOME=str(r/'isolation/home'),XDG_CONFIG_HOME=str(r/'isolation/xdg'),XDG_CACHE_HOME=str(r/'isolation/xdg'),XDG_DATA_HOME=str(r/'isolation/xdg'),TMPDIR=str(r/'isolation/tmp'),SKIP_BROWSER_OPEN='1',PILOTDECK_SKIP_BROWSER_OPEN='1')
-ranges={'Ext-A':(0x3400,0x4dbf),'Basic':(0x4e00,0x9fff),'Ext-B':(0x20000,0x2a6df),'Compatibility':(0xf900,0xfaff),'Compatibility-Supplement':(0x2f800,0x2fa1f)}
+ranges={'Ext-A':(0x3400,0x4dbf),'Basic':(0x4e00,0x9fff),'Ext-B':(0x20000,0x2a6df),'Compatibility':(0xf900,0xfaff),'Compatibility-Supplement':(0x2f800,0x2fa1f),'Radicals-Supplement':(0x2e80,0x2eff),'Kangxi-Radicals':(0x2f00,0x2fdf)}
 inputs=[chr(cp) for a,b in ranges.values() for cp in range(a,b+1)]
+inputs+=['a','A','z','Z','ä','e','é','e\u0301','😀','👩‍💻','中a','a中','中é','中😀','㐀a','𠀀é','中文','é中','😀中']
 (r/'scan-input.json').write_text(json.dumps(inputs,ensure_ascii=False))
-(r/'scan.mjs').write_text("import fs from 'node:fs';const x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));console.log(JSON.stringify({versions:process.versions,resolved:new Intl.Collator().resolvedOptions(),order:x.slice().sort((a,b)=>a.localeCompare(b)),anchorSigns:x.map(s=>Math.sign(s.localeCompare('中')))}));")
+(r/'scan.mjs').write_text("import fs from 'node:fs';const x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const compare=(a,b)=>a.localeCompare(b,process.argv[3] || undefined);const order=x.slice().sort(compare);console.log(JSON.stringify({versions:process.versions,resolved:new Intl.Collator(process.argv[3] || undefined).resolvedOptions(),order,adjacentSigns:order.slice(1).map((s,i)=>Math.sign(compare(order[i],s))),anchorSigns:x.map(s=>Math.sign(s.localeCompare('中',process.argv[3] || undefined)))}));")
 def compress(cps):
  out=[]
  for cp in cps:
@@ -48,26 +49,33 @@ def compress(cps):
   else:out.append([cp,cp])
  return [[f'U+{a:04X}',f'U+{b:04X}'] for a,b in out]
 rows=[]
-for lang in ['C','en_US.UTF-8','zh_CN.UTF-8','zh_TW','ja_JP']:
- e={**env,'LANG':lang}
- node=json.loads(subprocess.check_output([shutil.which('node'),str(r/'scan.mjs'),str(r/'scan-input.json')],env=e,text=True))
+matrix=[{'LANG':lang} for lang in ['C','en_US.UTF-8','zh_CN.UTF-8','zh_TW','ja_JP']]
+matrix += [{}, {'LANG':'en_US.UTF-8','LC_MESSAGES':'zh_TW'}, {'LANG':'zh_CN.UTF-8','LC_MESSAGES':'ja_JP','LC_ALL':'C'}, {'LANG':'C','LC_ALL':'zh_CN.UTF-8'}]
+matrix += [{'PDRS_PROBE_LOCALE':locale} for locale in ['en-US','und','en-US-u-co-unihan','zh-CN','zh-u-co-pinyin','zh-TW','zh-u-co-stroke','ja-JP','ja-u-co-unihan','zh-u-co-unihan']]
+for index,variables in enumerate(matrix):
+ lang=variables.get('LANG',variables.get('PDRS_PROBE_LOCALE','default'))
+ e={**env,**variables}
+ node=json.loads(subprocess.check_output([shutil.which('node'),str(r/'scan.mjs'),str(r/'scan-input.json'),variables.get('PDRS_PROBE_LOCALE','')],env=e,text=True))
  rust=json.loads(subprocess.check_output([str(r/'rust-probe')],env=e,text=True,input='\n'.join(inputs)+'\n'))
  node_rank={s:i for i,s in enumerate(node['order'])}
- inversions=[(ord(a),ord(b)) for a,b in zip(rust['order'],rust['order'][1:]) if node_rank[a]>node_rank[b]]
- summary={'env':{'LANG':lang},'locale':node['resolved']['locale'],'corpusSize':len(inputs),'rustAdjacentPairsReversedInNode':len(inversions),'firstInversions':[[f'U+{a:04X}',f'U+{b:04X}'] for a,b in inversions[:20]],'blocks':{}}
+ inversions=[(a,b) for a,b in zip(rust['order'],rust['order'][1:]) if node_rank[a]>node_rank[b]]
+ summary={'env':variables,'locale':node['resolved']['locale'],'corpusSize':len(inputs),'rustAdjacentPairsReversedInNode':len(inversions),'firstInversions':[[a,b] for a,b in inversions[:20]],'orderEqual':node['order']==rust['order'],'anchorSignsEqual':node['anchorSigns']==rust['anchorSigns'],'adjacentSignsEqual':node['adjacentSigns']==rust['adjacentSigns'],'rustLocale':rust['locale'],'blocks':{}}
  for name,(a,b) in ranges.items():
-  block=[(i,ord(c)) for i,c in enumerate(inputs) if a<=ord(c)<=b]
+  block=[(i,ord(c)) for i,c in enumerate(inputs) if len(c)==1 and a<=ord(c)<=b]
   different=[cp for i,cp in block if node['anchorSigns'][i]!=rust['anchorSigns'][i]]
   summary['blocks'][name]={'range':[f'U+{a:04X}',f'U+{b:04X}'],'scanned':len(block),'compareToZhongSignDifferences':len(different),'differentRanges':compress(different)}
  rows.append(summary)
  def block(c):
-  return next(k for k,(a,b) in ranges.items() if a<=ord(c)<=b)
+  return next((k for k,(a,b) in ranges.items() if len(c)==1 and a<=ord(c)<=b),'Mixed')
  by_block={};examples={}
  for a,b in zip(rust['order'],rust['order'][1:]):
   if node_rank[a]>node_rank[b]:
    key=block(a)+' / '+block(b);by_block[key]=by_block.get(key,0)+1
    if len(examples.get(key,[]))<2:examples.setdefault(key,[]).append([a,b])
  summary['outputAdjacentIndexReversalsByBlock']=by_block;summary['examplesByBlock']=examples
- print(lang,summary['rustAdjacentPairsReversedInNode'],{k:v['compareToZhongSignDifferences'] for k,v in summary['blocks'].items()})
- (r/f'scan-{lang}.json').write_text(json.dumps({'node':node,'rust':rust},ensure_ascii=False))
-(r/'scope.json').write_text(json.dumps({'node': node['versions']['node'], 'icu': node['versions']['icu'], 'cldr': node['versions']['cldr'], 'rustCollator': '2.1.1', 'rustCompiledData': '2.1.1; CLDR 48.0.0; ICU release-78.1rc', 'productionSourceSha256': hashlib.sha256(source.encode()).hexdigest(), 'note':'Every scalar in these blocks, including unassigned positions; differences are signs vs U+4E2D, not an exhaustive pairwise classification.', 'rows':rows},ensure_ascii=False,indent=2)+'\n')
+ print(lang,summary['rustAdjacentPairsReversedInNode'],{k:v['compareToZhongSignDifferences'] for k,v in summary['blocks'].items()},flush=True)
+ (r/f'scan-{index:02}.json').write_text(json.dumps({'node':node,'rust':rust},ensure_ascii=False))
+(r/'scope.json').write_text(json.dumps({'node': node['versions']['node'], 'icu': node['versions']['icu'], 'cldr': node['versions']['cldr'], 'rustCollator': '2.1.1', 'rustCompiledData': '2.1.1; CLDR JSON 48.0.0; ICU 78.2; Unihan', 'productionSourceSha256': hashlib.sha256(source.encode()).hexdigest(), 'note':'All scalars including unassigned positions in the seven blocks, plus mixed names; exact sorted order and every comparison sign vs U+4E2D and between adjacent sorted names checked. Not an exhaustive pairwise classification.', 'rows':rows},ensure_ascii=False,indent=2)+'\n')
+
+if any(not row["orderEqual"] or not row["anchorSignsEqual"] or not row["adjacentSignsEqual"] for row in rows):
+ sys.exit(1)

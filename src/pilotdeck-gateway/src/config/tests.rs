@@ -111,31 +111,7 @@ fn verify(raw: &str) -> Vec<String> {
         let frame = parse_json(&request).unwrap();
         assert!(crate::dispatch::is_local(&frame));
         assert!(crate::dispatch::needs_files(&frame));
-        // The recorded TS response identifies the keys that survived filtering.
-        // D6 C gives these requests to TS, including lone UTF-16 surrogates.
-        let expected = parse_json(&response).unwrap();
-        let expects_forward = expected
-            .get("result")
-            .and_then(|v| v.get("items"))
-            .and_then(|v| match v {
-                JsValue::Array(items) => Some(items),
-                _ => None,
-            })
-            .is_some_and(|items| {
-                items.iter().any(|item| {
-                    field(item, "id")
-                        .as_string()
-                        .unwrap()
-                        .units()
-                        .iter()
-                        .any(|u| *u > 127)
-                })
-            });
         let route = crate::dispatch::route_catalog(&frame, Some(&metadata), &env);
-        if expects_forward {
-            assert!(matches!(route, crate::dispatch::Route::Forward), "{id}");
-            continue;
-        }
         let actual = match route {
             crate::dispatch::Route::LocalResponse(bytes) => bytes,
             _ => panic!("catalog must terminate locally"),
@@ -218,7 +194,7 @@ fn host_intrinsics_keep_upstream_ownership() {
 }
 
 #[test]
-fn catalog_collation_fallback_uses_filtered_ids_only() {
+fn catalog_unicode_ids_and_filtered_lists_stay_local() {
     use crate::dispatch::{Route, route_catalog};
     for (provider, model) in [
         ("parity", "中"),
@@ -252,7 +228,7 @@ fn catalog_collation_fallback_uses_filtered_ids_only() {
         assert!(
             matches!(
                 route_catalog(&request(object([])), Some(&metadata), &env),
-                Route::Forward
+                Route::LocalResponse(_)
             ),
             "{provider}/{model}"
         );

@@ -7,7 +7,7 @@ pub(crate) mod tests;
 use crate::{
     config::{self, Env, Error},
     metadata::{Files, Metadata, object, resolve, text_field},
-    project_files::{needs_ts_collation, node_collator, node_locale},
+    project_files::{node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
 use std::cmp::Ordering;
@@ -51,11 +51,6 @@ fn property<'a>(v: &'a JsValue, k: &str) -> Result<&'a JsValue, Error> {
 }
 fn is(v: &JsValue, s: &str) -> bool {
     v.as_string().is_some_and(|v| v.equals_str(s))
-}
-fn requires_host() -> Error {
-    let mut e = error("TS_COLLATION_REQUIRED", "");
-    e.requires_host = true;
-    e
 }
 pub(crate) fn response<F: Files>(
     request: &JsValue,
@@ -180,24 +175,14 @@ fn execute<F: Files>(
             }
         }
     }
-    // D6 C: only equal-sequence comparisons call localeCompare. Single entries
-    // and non-ASCII timestamps at distinct sequences do not need TS collation.
+    // Only equal-sequence comparisons call localeCompare. The baked Unihan
+    // data also handles non-ASCII timestamps locally.
     let mut counts = std::collections::HashMap::new();
     for e in &entries {
         let n = field(e, "sequence").as_number().unwrap();
         *counts
             .entry(if n == 0.0 { 0 } else { n.to_bits() })
             .or_insert(0usize) += 1;
-    }
-    let tied = entries
-        .iter()
-        .filter(|e| {
-            let n = field(e, "sequence").as_number().unwrap();
-            counts[&if n == 0.0 { 0 } else { n.to_bits() }] > 1
-        })
-        .filter_map(|e| field(e, "createdAt").as_string());
-    if needs_ts_collation(tied) {
-        return Err(requires_host());
     }
     if entries.len() > 1 {
         let collator = if counts.values().any(|count| *count > 1) {

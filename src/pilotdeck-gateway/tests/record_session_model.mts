@@ -41,7 +41,7 @@ add('accepted-invalid-selection-ignored',{entries:[selected(explicit),entry('acc
 add('snapshot-does-not-clear-selection',{entries:[selected(explicit),entry('session_metadata',{metadata:{isSnapshot:true,title:'snapshot'}},2)]});
 add('out-of-order-sequence',{entries:[entry('session_metadata',{metadata:{modelSelection:{mode:'auto'}}},2),selected(explicit)]});
 add('equal-sequence-ascii',{entries:[entry('session_metadata',{metadata:{modelSelection:{mode:'auto'}}},1,'z'),entry('session_metadata',{metadata:{modelSelection:explicit}},1,'A')]});
-add('equal-sequence-nonascii',{entries:[entry('session_metadata',{metadata:{modelSelection:{mode:'auto'}}},1,'中'),entry('session_metadata',{metadata:{modelSelection:explicit}},1,'国')],forward:true});
+add('equal-sequence-nonascii',{entries:[entry('session_metadata',{metadata:{modelSelection:{mode:'auto'}}},1,'中'),entry('session_metadata',{metadata:{modelSelection:explicit}},1,'国')]});
 add('distinct-sequence-nonascii',{entries:[entry('session_metadata',{metadata:{modelSelection:explicit}},1,'中'),entry('session_metadata',{metadata:{title:'ok'}},2,'国')]});
 add('stable-equal-timestamps',{entries:[selected(explicit),selected({mode:'auto'})]});
 add('invalid-lines-and-shape',{transcript:'bad\nnull\n{}\n[]\n'+JSON.stringify(selected(explicit))+'\n{"type":"session_metadata"\n'});
