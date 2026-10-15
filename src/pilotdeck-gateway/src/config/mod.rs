@@ -364,6 +364,11 @@ fn source_error(
 #[cfg(test)]
 mod tests;
 
+pub(crate) fn collation_host_error() -> Error {
+    let mut error = Error::new("JS_HOST_REQUIRED", "");
+    error.requires_host = true;
+    error
+}
 fn host_io_error() -> Error {
     let mut error = Error::new("NODE_IO_REQUIRED", "");
     error.requires_host = true;

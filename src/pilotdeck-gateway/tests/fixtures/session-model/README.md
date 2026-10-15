@@ -200,3 +200,9 @@ ENAMETOOLONG/ELOOP，均来自第 4/5 轮生产原件；已有 73 项 RPC/loader
 11 个 fs 边界的必跑转发控制从三种未知错误扩成所有「已映射但无 method
 原件」的 errno，加 EDQUOT、123456 和无 errno 错误；实际 pairing 另验证
 EIO 的原始帧转发与 TS 回包透传。白名单与生产原件观测集合相等有独立断言。
+
+## R19：非良构 UTF-16 排序键
+
+`illformed-collation.json` 是独立新增的12个真实Node WS原件；基线/Node/ICU及完整请求、响应、文件快照随文件记录。用原录制器第五参数 `--illformed-collation` 在全新隔离scratch输出到新文件，不改历史cases.json。
+
+catalog过滤后多于一项且排序id含孤立高/低surrogate、session同sequence组createdAt含孤立surrogate时，ICU4X会替换为U+FFFD而Node保留不同排序权重，故经JS_HOST_REQUIRED整帧转发。4个host案例由pairing独立观察完整原请求并回放真实Node响应；8个本地正控逐字节比响应且上游静默，并发sentinel形成观察因果。U+FFFD与paired补充面本地，单项/过滤后单项catalog、不同sequence和未入同序组的孤立surrogate均本地。全输入原生化仍有边界，待后续原生UTF16实现；未登记排序差异豁免。

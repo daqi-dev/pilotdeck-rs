@@ -2,7 +2,7 @@
 use crate::{
     config::{self, Env},
     metadata::{Files, Metadata, object},
-    project_files::{node_collator, node_locale},
+    project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsString, JsValue, stringify_json};
 static UNDEFINED: JsValue = JsValue::Undefined;
@@ -154,6 +154,9 @@ pub(crate) fn execute<F: Files>(
                 ]),
             ));
         }
+    }
+    if items.len() > 1 && items.iter().any(|(id, _)| has_unpaired_surrogate(id)) {
+        return Err(config::collation_host_error());
     }
     let collator = node_collator(&locale).map_err(|(code, msg)| config::Error {
         code: code.into(),

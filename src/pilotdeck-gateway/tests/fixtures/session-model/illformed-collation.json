@@ -1,0 +1,1232 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "routerCalls": 0,
+  "cases": [
+    {
+      "id": "catalog-high",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"catalog-high\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"catalog-high\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/\\ud800\",\"provider\":\"parity\",\"model\":\"\\ud800\",\"displayName\":\"\\ud800\",\"available\":true,\"capabilities\":{}},{\"id\":\"parity/\\ud801\",\"provider\":\"parity\",\"model\":\"\\ud801\",\"displayName\":\"\\ud801\",\"available\":true,\"capabilities\":{}},{\"id\":\"parity/�\",\"provider\":\"parity\",\"model\":\"�\",\"displayName\":\"�\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"�\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 237,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiAicGFyaXR5L++/vSJ9Cm1vZGVsOgogIHByb3ZpZGVyczoKICAgIHBhcml0eToKICAgICAgcHJvdG9jb2w6IG9wZW5haQogICAgICB1cmw6IGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL3YxCiAgICAgIGFwaUtleTogbW9jay1vbmx5CiAgICAgIG1vZGVsczoKICAgICAgICAi77+9Ijoge30KICAgICAgICAiXHVkODAxIjoge30KICAgICAgICAiXHVkODAwIjoge30K"
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": true,
+      "loadForward": false
+    },
+    {
+      "id": "catalog-low",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"catalog-low\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"catalog-low\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/\\udc00\",\"provider\":\"parity\",\"model\":\"\\udc00\",\"displayName\":\"\\udc00\",\"available\":true,\"capabilities\":{}},{\"id\":\"parity/\\udc01\",\"provider\":\"parity\",\"model\":\"\\udc01\",\"displayName\":\"\\udc01\",\"available\":true,\"capabilities\":{}},{\"id\":\"parity/�\",\"provider\":\"parity\",\"model\":\"�\",\"displayName\":\"�\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"�\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 237,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiAicGFyaXR5L++/vSJ9Cm1vZGVsOgogIHByb3ZpZGVyczoKICAgIHBhcml0eToKICAgICAgcHJvdG9jb2w6IG9wZW5haQogICAgICB1cmw6IGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL3YxCiAgICAgIGFwaUtleTogbW9jay1vbmx5CiAgICAgIG1vZGVsczoKICAgICAgICAi77+9Ijoge30KICAgICAgICAiXHVkYzAxIjoge30KICAgICAgICAiXHVkYzAwIjoge30K"
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": true,
+      "loadForward": false
+    },
+    {
+      "id": "catalog-paired",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"catalog-paired\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"catalog-paired\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/😀\",\"provider\":\"parity\",\"model\":\"😀\",\"displayName\":\"😀\",\"available\":true,\"capabilities\":{}},{\"id\":\"parity/𠀀\",\"provider\":\"parity\",\"model\":\"𠀀\",\"displayName\":\"𠀀\",\"available\":true,\"capabilities\":{}},{\"id\":\"parity/�\",\"provider\":\"parity\",\"model\":\"�\",\"displayName\":\"�\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"�\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 233,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiAicGFyaXR5L++/vSJ9Cm1vZGVsOgogIHByb3ZpZGVyczoKICAgIHBhcml0eToKICAgICAgcHJvdG9jb2w6IG9wZW5haQogICAgICB1cmw6IGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL3YxCiAgICAgIGFwaUtleTogbW9jay1vbmx5CiAgICAgIG1vZGVsczoKICAgICAgICAi77+9Ijoge30KICAgICAgICAi8J+YgCI6IHt9CiAgICAgICAgIvCggIAiOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "catalog-single",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"catalog-single\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"catalog-single\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/\\ud800\",\"provider\":\"parity\",\"model\":\"\\ud800\",\"displayName\":\"\\ud800\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"\\ud800\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 201,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiAicGFyaXR5L1x1ZDgwMCJ9Cm1vZGVsOgogIHByb3ZpZGVyczoKICAgIHBhcml0eToKICAgICAgcHJvdG9jb2w6IG9wZW5haQogICAgICB1cmw6IGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL3YxCiAgICAgIGFwaUtleTogbW9jay1vbmx5CiAgICAgIG1vZGVsczoKICAgICAgICAiXHVkODAwIjoge30K"
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "catalog-filtered-single",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"catalog-filtered-single\",\"method\":\"model_catalog_list\",\"params\":{\"query\":\"ascii\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"catalog-filtered-single\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/ascii\",\"provider\":\"parity\",\"model\":\"ascii\",\"displayName\":\"ascii\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"\\ud800\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 221,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiAicGFyaXR5L1x1ZDgwMCJ9Cm1vZGVsOgogIHByb3ZpZGVyczoKICAgIHBhcml0eToKICAgICAgcHJvdG9jb2w6IG9wZW5haQogICAgICB1cmw6IGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL3YxCiAgICAgIGFwaUtleTogbW9jay1vbmx5CiAgICAgIG1vZGVsczoKICAgICAgICAiXHVkODAwIjoge30KICAgICAgICAiYXNjaWkiOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "catalog-filtered-surrogate",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"catalog-filtered-surrogate\",\"method\":\"model_catalog_list\",\"params\":{\"query\":\"\\ud800\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"catalog-filtered-surrogate\",\"ok\":true,\"result\":{\"items\":[{\"id\":\"parity/\\ud800\",\"provider\":\"parity\",\"model\":\"\\ud800\",\"displayName\":\"\\ud800\",\"available\":true,\"capabilities\":{}}],\"defaultSelection\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"\\ud800\"},\"router\":{\"enabled\":false,\"autoAvailable\":false}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 221,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiAicGFyaXR5L1x1ZDgwMCJ9Cm1vZGVsOgogIHByb3ZpZGVyczoKICAgIHBhcml0eToKICAgICAgcHJvdG9jb2w6IG9wZW5haQogICAgICB1cmw6IGh0dHBzOi8vZXhhbXBsZS5pbnZhbGlkL3YxCiAgICAgIGFwaUtleTogbW9jay1vbmx5CiAgICAgIG1vZGVsczoKICAgICAgICAiXHVkODAwIjoge30KICAgICAgICAiYXNjaWkiOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "session-high",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"session-high\",\"method\":\"session_model_get\",\"params\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-high\",\"ok\":true,\"result\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\",\"saved\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"effective\":{\"provider\":\"parity\",\"model\":\"deterministic\",\"source\":\"session\"}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 233,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9CiAgICAgICAgYWx0ZXJuYXRlOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 537,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiLvv70iLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0KeyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJcdWQ4MDEiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoiYXV0byJ9fX0KeyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJcdWQ4MDAiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0K"
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": true,
+      "loadForward": false
+    },
+    {
+      "id": "session-low",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"session-low\",\"method\":\"session_model_get\",\"params\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-low\",\"ok\":true,\"result\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\",\"saved\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"effective\":{\"provider\":\"parity\",\"model\":\"deterministic\",\"source\":\"session\"}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 233,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9CiAgICAgICAgYWx0ZXJuYXRlOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 537,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiLvv70iLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0KeyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJcdWRjMDEiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoiYXV0byJ9fX0KeyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJcdWRjMDAiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0K"
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": true,
+      "loadForward": false
+    },
+    {
+      "id": "session-paired",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"session-paired\",\"method\":\"session_model_get\",\"params\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-paired\",\"ok\":true,\"result\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\",\"saved\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"effective\":{\"provider\":\"parity\",\"model\":\"deterministic\",\"source\":\"session\"}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 233,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9CiAgICAgICAgYWx0ZXJuYXRlOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 533,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiLvv70iLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0KeyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiLwn5iAIiwibWV0YWRhdGEiOnsibW9kZWxTZWxlY3Rpb24iOnsibW9kZSI6ImF1dG8ifX19CnsidHlwZSI6InNlc3Npb25fbWV0YWRhdGEiLCJzZXNzaW9uSWQiOiJ3ZWI6Zml4dHVyZSIsInR1cm5JZCI6InR1cm4iLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0Ijoi8KCAgCIsIm1ldGFkYXRhIjp7Im1vZGVsU2VsZWN0aW9uIjp7Im1vZGUiOiJtb2RlbCIsInByb3ZpZGVyIjoicGFyaXR5IiwibW9kZWwiOiJkZXRlcm1pbmlzdGljIn19fQo="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "session-distinct",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"session-distinct\",\"method\":\"session_model_get\",\"params\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-distinct\",\"ok\":true,\"result\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\",\"saved\":{\"mode\":\"auto\"},\"effective\":{\"provider\":\"parity\",\"model\":\"deterministic\",\"source\":\"default\"}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 233,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9CiAgICAgICAgYWx0ZXJuYXRlOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 83,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 345,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJcdWQ4MDAiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0KeyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoyLCJjcmVhdGVkQXQiOiJcdWRjMDAiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoiYXV0byJ9fX0K"
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "session-single",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"session-single\",\"method\":\"session_model_get\",\"params\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-single\",\"ok\":true,\"result\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\",\"saved\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"effective\":{\"provider\":\"parity\",\"model\":\"deterministic\",\"source\":\"session\"}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 233,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9CiAgICAgICAgYWx0ZXJuYXRlOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 84,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 195,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJcdWQ4MDAiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0K"
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "session-untied-surrogate",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"session-untied-surrogate\",\"method\":\"session_model_get\",\"params\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-untied-surrogate\",\"ok\":true,\"result\":{\"projectKey\":\"/fixture/project\",\"sessionKey\":\"web:fixture\",\"saved\":{\"mode\":\"model\",\"provider\":\"parity\",\"model\":\"deterministic\"},\"effective\":{\"provider\":\"parity\",\"model\":\"deterministic\",\"source\":\"session\"}}}",
+      "load": {
+        "ok": true,
+        "diagnostics": []
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ],
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/pilotdeck.yaml": {
+          "directory": false,
+          "size": 233,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9CiAgICAgICAgYWx0ZXJuYXRlOiB7fQo="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 84,
+          "bytes": "L2ZpeHR1cmUvcHJvamVjdAo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 530,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJcdWQ4MDAiLCJtZXRhZGF0YSI6eyJtb2RlbFNlbGVjdGlvbiI6eyJtb2RlIjoibW9kZWwiLCJwcm92aWRlciI6InBhcml0eSIsIm1vZGVsIjoiZGV0ZXJtaW5pc3RpYyJ9fX0KeyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6IndlYjpmaXh0dXJlIiwidHVybklkIjoidHVybiIsInNlcXVlbmNlIjoyLCJjcmVhdGVkQXQiOiJBIiwibWV0YWRhdGEiOnsibW9kZWxTZWxlY3Rpb24iOnsibW9kZSI6ImF1dG8ifX19CnsidHlwZSI6InNlc3Npb25fbWV0YWRhdGEiLCJzZXNzaW9uSWQiOiJ3ZWI6Zml4dHVyZSIsInR1cm5JZCI6InR1cm4iLCJzZXF1ZW5jZSI6MiwiY3JlYXRlZEF0IjoiWiIsIm1ldGFkYXRhIjp7Im1vZGVsU2VsZWN0aW9uIjp7Im1vZGUiOiJtb2RlbCIsInByb3ZpZGVyIjoicGFyaXR5IiwibW9kZWwiOiJkZXRlcm1pbmlzdGljIn19fQo="
+        },
+        "/fixture/project": {
+          "directory": true,
+          "size": 64,
+          "entries": []
+        }
+      },
+      "process": {
+        "pid": 64640,
+        "alive": true,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    }
+  ]
+}
