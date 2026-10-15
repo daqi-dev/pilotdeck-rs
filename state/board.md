@@ -4,6 +4,16 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-15 晚 · 接续核对与本地候选处置（产品基线 main @ 1440be0）
+> **当前停点**：用户要求先对齐流程并处置今天的本地改动，暂不继续产品开发。本段在本地文档分支 `codex/handoff-disposition`；不代表 main 已合入这些文档。本轮由 Codex 协调；下方旧“在跑 / 下一步”及 CLI 分支旧状态板均为历史记录，不是当前发车指令。下一条开发任务尚未选定。
+> **已核事实与边界**：#108 已合并，A4 清单 **7/10**；model_catalog_list、project_files_list 的非 ASCII 排序仍会整请求回退 TS，不能称全输入原生完成。#116 测试修复已合并。阶段 C 历史 51/53 的总判是 **FAIL**，不是当前 HEAD 重测；B2 冻结的是装置，B/F 局部实测也不等于整件产品验收。main 独立 gateway 已能运行，CLI 包装不是继续迁移的运行前置。
+> **已有人定，沿用原件**：[决策记录](decisions-20261014.md) 末尾的 D4→B、D6→A、归档三项保留 (a) 类/分母 10、CLI 一等公民、#68→A、#94 字符串审批风险接受，以及 P2 折中不再重复提问；AI 代批待复核与建议仍保持各自状态。旧常规 Git 操作授权不改变本轮暂停开发的范围。
+> **CLI 候选**：`codex/cli-server@1fdb99b` 原样保留（`_build/20261015-100000-cli-server`，main 外 4 个提交），无该分支 PR/远端 CI；不整包合入，也不因已投入工作而优先接续。产品/测试提交 `1bf9445/cac9fcd` 有限定范围的评审，最终定向测试 8 项通过；较早 847 项通过不能冒充最终 HEAD 全量重跑。临时代理参数、parser 及其测试不构成最终 TS CLI 标准，后续可选取、改写或舍弃。
+> **旧工作保留**：`feat/a4-native-archive@9589be4`（`_build/wt-a4m3`）、`feat/d6-unihan-collation@28a0ef2`（`_build/wt-d6`）、`fix/p2-cleanup-1@958ec6c`（`_build/wt-p2c`）均不删除或改写；P2 工作树的未跟踪 `none/` 原样保留。#118 是本次查询唯一 open PR，CI 绿仍需核最终差异、过期 RESULT 和债务关闭范围。恢复写入前另核任务持有人。
+> **前置债务**：2026-10-15 22:09（上海）快照为 24 open Issue，其中实际 P2 跟进 18 项、仅 11 项有 P2 标签；超过 10 项触发集中核销，不等于全部阻挡当前任务。节点：A4 收尾核 #56/#65/#120 前两项；A5.4 冻结前 P1 #112；B3 前 #113 及 #94 剩余注释/PyYAML；C 收尾 #119；A6 首次账本回写 #91/#120 第三项。下一轮先补产品入口总账/阶段 D 任务归属，再按依赖选工作，尚未授权自动执行此建议。
+> **产物隔离已做**：共享 `src/target/debug/pilotdeck` 与 `pilotdeck-gateway` 均含 CLI 工作树编译路径；确认未占用后已移存至 `_tmp/20261015-disposition/binaries/` 并核对 SHA-256，不能认作 main 产物，也不能确定 exact HEAD。清单 `_tmp/20261015-disposition/manifest.json` 记来源、哈希与去向；同一保留目录下 `snapshot/branches.bundle` 保存处置前五条分支，`snapshot/untracked/` 保存 P2 未跟踪文件副本。旧 `pilotdeck.d` 保留原处，属过期依赖记录；gateway depfile 原本缺失。后续恢复构建须给所选工作树独立 `CARGO_TARGET_DIR` 并登记来源；此轮未重建或改全局配置。
+> **方法试验与索引**：CLI 分支的 evolve 首点及原始 FAIL 证据保留；1053 是静态标记数，无改善趋势。通用 7 目录/600 行/15% 阈值未成为本项目新准入门槛，不据此拆文件。工具经验见 [model-runners](memory/20261015-model-runners.md)；完整课程/历史审计和前后快照在本机 `/Users/da/ws/Auto/notes/2026-10-15-aias-pilotdeck/07-workflow-handoff-audit.md` 与 `08-disposition-*.json`。这些本机路径是辅助证据，不是可移植 CI 依赖。
+
 > ## 2026-10-15 凌晨 · A4 6/10、共存方案 B 落地、B2 重新冻结（main @ 472e0a2）
 > **合并**：#83 pilotdeck-yaml、#87 F2 D 类（real 审计，old24–27 全 PASS）、#97 B2 重新冻结（批次 d3879d24）、#100 F1 双壳共存方案 B（prefix-router + 原样 exp008，浏览器 PASS）、#96 **A4 第 6 个：配置加载 + model_catalog_list**（3 轮；含 D6 方案 C：排序键含非 ASCII 时整请求转发 TS，同时修补 main 上 project_files_list）。A2 在线回归 6 方法本地 PASS。P2 跟进 #95 #98 #101，#65 追加 3 条。
 > **在跑**：A4 第 7 个 session_model_get（wt-a4m6）· A5.2a #19 六格实测夹具（wt-a52，产出供 D4 第二步拍板）。
