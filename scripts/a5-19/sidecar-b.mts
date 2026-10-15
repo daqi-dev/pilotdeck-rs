@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { Apparatus, OUTPUT, ROOT, BASELINE, TIME, deferred, clone, upstream, sha, verifySources } from './runtime-b.mts';
 import { isDeepStrictEqual } from 'node:util';
+import { SIDECAR_FOUR } from './preregistration-sidecar-four.mjs';
+import { cleanupAll } from './cleanup-observer.mjs';
+import { execFileSync } from 'node:child_process';
 import { REPEATS } from './preregistration-b.mjs';
 import { checkStatus, checkRegistry, requireRule } from './rules-b.mjs';
 const { createAgentSession } = await upstream('agent/session/createAgentSession');
@@ -14,11 +17,16 @@ const { AsyncQueue } = await upstream('gateway/util/AsyncQueue');
 const TIMEOUT_MS = 123456;
 // The sidecar validates absolute deadlines against its real clock. A historical
 // transcript timestamp must not make execute expire before the controlled wait.
-const collectionTime = new Date().toISOString();
+const registrationPath = 'scripts/a5-19/preregistration-sidecar-four.mjs';
+const registrationBytes = fs.readFileSync(resolve(ROOT, registrationPath));
+const registrationHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+assert.deepEqual(execFileSync('git', ['show', `${registrationHead}:${registrationPath}`], { cwd: ROOT }), registrationBytes, 'four-cell registration must be committed before collection');
+const collectionStartedAt = new Date().toISOString();
 const observations: any[] = [];
 fs.mkdirSync(OUTPUT, { recursive: true });
 for (const withRegistry of [false, true]) for (const phase of ['model', 'tool']) for (let repetition = 1; repetition <= REPEATS; repetition++) {
   const caseId = `sidecar/${withRegistry ? 'registry' : 'no-registry'}/fast/${phase}`;
+  const collectionTime = new Date().toISOString();
   const a = new Apparatus(resolve(OUTPUT, caseId, String(repetition)));
   a.gateway.now = () => new Date(collectionTime);
   const heldModel = deferred(), modelStarted = deferred();
@@ -117,6 +125,8 @@ for (const withRegistry of [false, true]) for (const phase of ['model', 'tool'])
     while (true) { const next = await iterator.next(); if (next.done) break; frames.push(clone(next.value)); }
     const observation = await a.observe(caseId, repetition, [], [`module:${phase}-held`, 'consumer:paused', 'timeout:queue-closed', 'module:model-released']);
     observation.realtimeFrames = frames;
+    observation.deadlineClock = { collectionTime, operationDeadline: a.j.rows.find(r => r.kind === 'sidecar.send' && r.message.method === 'execute')?.message.operationDeadline };
+    assert.equal(observation.deadlineClock.operationDeadline, new Date(Date.parse(collectionTime) + TIMEOUT_MS).toISOString());
     if (!withRegistry) observation.registry = { applicable: false, reason: 'runRegistry deliberately not configured for no-registry cell' };
     else checkRegistry(observation);
     checkStatus(observation);
@@ -138,15 +148,26 @@ for (const withRegistry of [false, true]) for (const phase of ['model', 'tool'])
     fs.writeFileSync(resolve(a.dir, 'observation.json'), JSON.stringify(observation, null, 2)); observations.push(observation);
   } finally {
     heldModel.resolve();
-    for (const connection of childConnections) await connection.close('fixture_cleanup');
-    const completed = observations.at(-1);
-    if (completed?.caseId === caseId && completed.repetition === repetition) {
-      completed.timeline = a.j.rows;
-      fs.writeFileSync(resolve(a.dir, 'observation.json'), JSON.stringify(completed, null, 2));
-    }
-    await a.close(); realClearTimeout(watchdog);
-    globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
-    AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
+    await cleanupAll([
+      ...childConnections.map(connection => () => connection.close('fixture_cleanup')),
+      () => {
+        const completed = observations.at(-1);
+        if (completed?.caseId === caseId && completed.repetition === repetition) {
+          completed.timeline = a.j.rows;
+          fs.writeFileSync(resolve(a.dir, 'observation.json'), JSON.stringify(completed, null, 2));
+        }
+      },
+      // Expand Apparatus.close so a dispose/shutdown/writer failure cannot
+      // prevent another owned resource or filesystem tap from being restored.
+      () => a.gateway.dispose(),
+      () => a.router.shutdown(),
+      ...[...a.sessions.values()].map(session => () => session.writer.close()),
+      () => a.tap.restore(),
+    ], () => {
+      realClearTimeout(watchdog);
+      globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
+      AsyncQueue.prototype.enqueue = oldEnqueue; AsyncQueue.prototype.close = oldClose;
+    });
   }
 }
 function signature(o: any) {
@@ -165,19 +186,23 @@ function signature(o: any) {
   return normalize({ realtimeFrames: o.realtimeFrames, durableEntries: o.durable[0].entries, registry: o.registry.applicable ? { records, events: o.registry.events } : o.registry,
     droppedEnqueues: o.timeline.filter(r => r.kind === 'queue.enqueue' && r.closed).map(r => r.event) });
 }
-const expectedCases = ['sidecar/no-registry/fast/model', 'sidecar/no-registry/fast/tool', 'sidecar/registry/fast/model', 'sidecar/registry/fast/tool'];
+const expectedCases = SIDECAR_FOUR.cases;
+assert.equal(REPEATS, SIDECAR_FOUR.repeats);
 assert.deepEqual([...new Set(observations.map(o => o.caseId))], expectedCases);
 assert.equal(observations.length, expectedCases.length * REPEATS);
 const groups = expectedCases.map(caseId => { const runs = observations.filter(o => o.caseId === caseId); const distinct = new Set(runs.map(o => JSON.stringify(signature(o)))).size; return { caseId, measurements: runs.length, distinct, stable: distinct === 1 }; });
+for (const group of groups) assert.equal(group.measurements, SIDECAR_FOUR.repeats, `incomplete group ${group.caseId}`);
 const distinct = Math.max(...groups.map(g => g.distinct));
 const manifest = { expectedCases, groups, repeats: REPEATS, measurements: observations.length, importedSources: verifySources(),
   preregistrationSha256: sha(fs.readFileSync(resolve(ROOT, 'scripts/a5-19/preregistration-b.mjs'))),
   preregistrationCommit: JSON.parse(process.env.A52B_PREREGISTRATION_STATUS!),
-  fixtureFiles: ['sidecar-b.mts', 'no-listen-child.mjs', 'runtime-b.mts', 'rules-b.mjs', 'run-b.py'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: sha(fs.readFileSync(resolve(ROOT, 'scripts/a5-19', name))) })),
-  collectionTime, stable: distinct === 1, distinct,
+  fixtureFiles: ['sidecar-b.mts', 'no-listen-child.mjs', 'runtime-b.mts', 'rules-b.mjs', 'run-b.py', 'cleanup-observer.mjs', 'preregistration-sidecar-four.mjs'].map(name => ({ path: `scripts/a5-19/${name}`, sha256: sha(fs.readFileSync(resolve(ROOT, 'scripts/a5-19', name))) })),
+  registration: { path: registrationPath, sha256: sha(registrationBytes), committedBytesMatch: true, headCommit: registrationHead, collectionStartedAt, historicalRuns: 'POST_HOC: old SIDECAR_CASE registration covered only one cell' },
+  stable: distinct === 1, distinct,
   observations: observations.map(o => ({ caseId: o.caseId, repetition: o.repetition, realtimeFrames: o.realtimeFrames,
-    statuses: o.durable[0].entries.filter(e => e.type === 'agent_status_message'),
+    deadlineClock: o.deadlineClock, statuses: o.durable[0].entries.filter(e => e.type === 'agent_status_message'),
     terminalEntries: o.sidecarProof.terminalEntries, unknownEntries: o.sidecarProof.unknownEntries, sidecarEvents: o.timeline.filter(r => r.kind === 'sidecar.observation'),
     evidence: relative(ROOT, resolve(OUTPUT, o.caseId, String(o.repetition), 'observation.json')) })) };
 fs.writeFileSync(resolve(OUTPUT, 'manifest.json'), JSON.stringify(manifest, null, 2));
+assert.ok(groups.every(g => g.stable), 'unstable sidecar group; manifest retained');
 console.log(`DONE real sidecar cross-check ${observations.length}`);

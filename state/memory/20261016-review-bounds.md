@@ -11,3 +11,5 @@ type: feedback
 ### 结构化原件输出（第三次同类大输出后固化）
 
 检查JSON先用正向白名单取keys、计数、哈希和有限叶路径；未知字典不能用“排除几个大字段”后整块打印。含rawText/内嵌JSON的文件不用裸rg或全文输出：必须加`--max-columns 200 --max-columns-preview`，或在Python中只输出命中路径和前120字符。一次只读需要的有界片段；原件保留在文件，避免工具截断掩盖真正证据。
+
+执行派发：给已完成或idle的worker新任务必须用`followup_task`；`send_message`只用于正在运行任务的steer。dispatch后核running状态或首条进度，queued消息不代表已经开工。2026-10-16协调中第三次出现idle消息只排队，故固化为执行规则。

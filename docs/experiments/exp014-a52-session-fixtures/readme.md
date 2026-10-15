@@ -138,3 +138,5 @@ timeout 使用固定 gateway now 与 `timeoutMs=123456` 的原 callback；捕获
 `registry.append` 观察层改为直接调用原方法并返回同一 Promise；旁路 `then(success, failure)` 只记提交/失败，不向调用者替换 Promise、不重抛、不新增入场前 await。pending 集合跟踪原 Promise，生产 mutationChain/FIFO 入场与同步 throw 保持原调用路径。
 
 重新执行72组、360次（registry270次），无不稳定组，9项负控与原件相同。360条完整投影逐字段一致：实时帧、durable status entries、registry record/events/result，以及 close 后 enqueue payload；沿用原 signature 仅排除 registry acceptedAt/updatedAt/ownerPid 和 detail.errorId。72组summary也与已发布 results.json 和归档 final-run 精确一致。原始证据与比较脚本：`_tmp/20261016-a5-112/20261016-append-regression/`、`20261016-regression-comparison.json`、`20261016-compare.py`；未改原 results.json 或冻结尺子。
+
+初轮独立评审后补观察callback故障闸门和逐资源cleanup；最终重新运行`_tmp/20261016-a5-112/20261016-review-append-final/`，72组360次/registry270/9负控仍通过，360条完整投影逐字段与历史一致。manifest现同时绑定append-observer.mjs及cleanup-observer.mjs。观察分支异常必在drain非零失败，原promise/同步throw不变；runtime-controls.mjs验证这些边界。最终比较脚本/结果为`20261016-review-compare.py`和`20261016-review-regression-comparison.json`。
