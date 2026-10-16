@@ -89,3 +89,6 @@ R61真实失败与1607原件保留；已安装tsx源码显式TSX_DISABLE_CACHE�
 ## R67 有真实工具前提变化的caller一次新窗（自决，待R66完整门）
 
 旧R61失败原件/超量/EPERM未抹；R66若完成实证禁磁盘tsx cache，则新PDRS_ORDER_LOADER身份可让同f793精确产物现有Off caller回归在有界输出内运行。不重复旧loader条件，也不改默认业务或任何冻结评分。任务`_tmp/20261016-debt-cleanup/order-architecture/native-finish-r67-cacheoff-qmgy0ni2/task.md`只准备，须root核R66正式index/runner/source与freshdu后authority一次；8MiB/提前6/.20reserve，native child90/total120/流1MiB，六caller仅收尾证据。source800/基线1000/指定旧原件前后同，失败不PASS，原中央独立评审不替作者裁定F17。原则：外部可核前提改变才是新诊断，不以缩范围/换词重试挂起项。
+
+
+R67实际入口落实：R66 index9e3d224248c889f84a9f19a0da52ce279699ee8ebc496261480b4a49961385f2、supplement e0487392a96a8c7702f3a764ab2bafa961f078986158db12718720662c083834 已实证tiny typed42/0磁盘cache/exit0/reaped。原q/185817只是准备且全保；唯一可执行新入口为 order-architecture/native-finish-r67-cleanup-190100/controller.py SHA4f1376539726c41cb22d91cc7d76dc562e92897dc7b0555d8410aa87aba9131e，prepareindex74f8caeb…；根任务仍q/task.md，新增cleanup为先实查组、每具体signal意图/结果独立落盘，5内存控制含EPERM/ps/wait失败，不冒产品验收。资源8MiB/early6/.20与各判据不变；root核新权源后仅该入口一次，旧候选不得启动。
