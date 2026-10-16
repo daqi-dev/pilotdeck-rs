@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **15:56 独立任务按依赖继续**：Astra已独立解码134原件并给65唯一下一依赖，按R50交GPT-6.1在空闲a4准备TS真实list OutcomeOwned→显式接纳门→原RPC H1的小映射源码，先预登记/15min/1MiB，不发Node/Cargo新窗、不动资源基线/生产Rust/冻结、不核销65。与CLI的GLM identity候选、中央必要独立审阅各自隔离；共享派发仍原owner。中央新dispatcher独立24控制抓两P2a（父子写lease、监视异常后过早free），当前owner同轮修，暂不扩新派发，原在途/历史保留；并发能力已实际重叠不抹成无缺口。
+
 > **15:48 五树规则同步完成，实际已三任务重叠**：root724742e/wt-d6规则60738e9/CLI规则ad8f1c3/p2规则e92a8dd/a4规则c4013b9的CLAUDE/AGENTS共同SHA20518046，proof reviews/policy-sync-zrxjbpzs/all-five-synchronized.json；root其余人手dirty材料SHA不变。a4先封存绑定9df实验134原件index9424fb05（root逐SHA核）再仅同步CLAUDE，target153955/artifact3ed94674及产品源保留，身份未倒填。R48八格：前后A1/A2四健康实际各1pass；M1/M2/M4具体原validator拒，M3两个414B同SHA真实W0/C0后driver先拒、后置validator未跑；独立外审仍待，65/P3/A5.4未核销。最终完整du45.298779/46GiB，自有9PGID无残留。
 > 中央实际15:46:39重叠为GLM identity实现候选与两个DS独立必要callee，root只读registry并ps核三provider确在途；证据reviews/concurrent-job-first-overlap.json。GLM已从只审扩展到源码/永久测试候选生成（硬0文本），CLI唯一写lease归该job，后续DS+独立GPT审GLM新增delta。原中央持有人更新model_jobs.py/run_model_job.py/原子多job状态，初始GLM2/DS2可配置、按实际限流调整，三scope依赖/session分开，未杀在途/未解held。ledger_fidelity只在自有fixture独立核派发安全，Astra只读复核65实际负控与下一依赖；这两者不发provider/不建第二dispatcher。root继续状态PR的独立角色与适用CI后交付。
 
