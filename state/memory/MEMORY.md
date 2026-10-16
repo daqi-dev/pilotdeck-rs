@@ -16,3 +16,5 @@
 - [外审执行权限](20261016-review-permissions.md) — no-tools/plan不等于只读；派发前核真实空registry或无工具执行器，越界运行不充验收。
 
 - [测试宿主能力的独立判据](20261016-test-oracles.md) — 权限不可达先用原生探针交叉核对，包装吞EACCES的变异必须失败。
+
+- [资源预算与硬链接](20261016-resource-budget.md) — 清cache按最后硬链接的allocated块估算并完整du复核，保护所有非cache证据。
