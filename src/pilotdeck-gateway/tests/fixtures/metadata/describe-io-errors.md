@@ -60,8 +60,9 @@ state/board.md 和 state/memory/20261016-runner-home.md 维护，不以本说明
 复现护栏补强（PR141增量）：录制器在第一次动态 import 前和采集结束后，逐字节
 绑定固定 cc7c4e6 的全部 `src/` Git blob；缺文件、改字节、源码树内未登记/ignored
 影子文件、同内容 symlink 都拒绝。只核 HEAD 不足以证明实际执行源码；`node --test
-src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs` 用自有 Git fixture 验证七种
-正负控，不修改 resources。源码树之外的依赖闭合仍由 #85 跟进。
+src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs` 用自有 Git fixture 验证
+guard 的正负分支；控制数量以对应源码版本的执行日志和证据索引为准，不修改 resources。
+源码树之外的依赖闭合仍由 #85 跟进。
 
 驱动只继承 locale/普通临时目录白名单，剥除调用者的 RUSTFLAGS/CARGO_*/NODE_OPTIONS
 等注入；Node/Git 固定实际可执行位置，Rust 四 wrapper 仍明确空串。所有列明 source
@@ -74,8 +75,20 @@ src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs` 用自有 Git fixtur
 
 finally 除退出码外，读取 owner/restored=3 的严格回执，并对三处实际权限逐一 stat；
 缺/错回执和 no-op 都失败。恢复命令复用收集时相同 watcher/tsx loader。恢复后只能
-重放固定 facts。CI 跑纯源绑定与环境/receipt/恢复/watchdog 负控；本机十项受限目录
-Native 与 pairing 实测证据另存主仓 revision-verified，不由 CI mock 代填。
+重放固定 facts。CI 的 Node 控制用自有 Git fixture 验证 source guard，Python 控制
+覆盖环境/receipt/恢复/watchdog；这些控制不代表真实基线源码或受限目录已经复算。
+本机真实 Node、受限目录 Native 与 pairing 完整链的当前证据为主仓
+`_tmp/20261016-debt-cleanup/metadata/snapshot-verified/verification.json`，执行时的
+十二源文件 SHA 逐项绑定 `07b20537bae029d5bc596e492c9a62a964620177` Git blob，见
+`snapshot-head-binding.json` 与 `snapshot-handoff-index.json`。早前 `revision-verified`、
+`revision-tail-verified` 等原件保留，分别对应各自历史源码，不能视作最新版本复算。
+
+`fce91709506c95ea0c66ec3b0591a379b99039bb` 仅追加 sourceHead 身份控制尾差，验证见
+`head-handoff-index.json`；`1c90ff5f3d4e81472f6f8654081a5e555952c02b` 仅追加 Python
+捕获顺序和输出超限恢复控制，验证见 `capture-handoff-index.json`。两段尾差各有 Python/
+Node 控制及十二源 SHA 绑定，未重新执行完整 Rust 链；不能将07b真实链宣称为最新 HEAD
+完整复算。当前文档澄清的源码范围与证据索引见 `doc-handoff-index.json`，各次控制计数
+以各自绑定日志为准，不由 CI mock 代填本机真实证据。
 
 
 BND2输入交接：录制器每次真实chmod前先同步写出原path/mode计划到驱动pipe，写全后才改权限；最后将一次序列化的完整oracle同样送入pipe。驱动保留至多1MiB输出在内存，完整oracle与三项原permission计划必须一致，工作文件只作被验证副本。replay/Native前后、cleanup及最终报告前逐字节核对；文件改目标、改mode或删除都FAIL，仍按内存原计划恢复并stat原目标。报告记录原permission、completeOracle、artifactUnchanged、restored和真实回执，不从改过的JSON重新选期待。
