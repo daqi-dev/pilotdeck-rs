@@ -7,6 +7,7 @@ import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {join,dirname,resolve} from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {checkSuffix} from './check_suffix.mjs';
 const here=dirname(fileURLToPath(import.meta.url));
 if(process.argv.length!==5) throw Error('usage: node record.mjs BASELINE GATEWAY_BINARY NEW_OUTPUT');
 const root=resolve(here,'../../../..');
@@ -213,6 +214,7 @@ webui:
 }
 const inputPaths = {
  recorder: fileURLToPath(import.meta.url), observer: join(here, 'observe.mjs'),
+ suffixChecker: join(here, 'check_suffix.mjs'),
  watcher: join(root, 'scripts/gateway-parity/watcher.mjs'), nodeExecutable: process.execPath,
  baselineCLI: join(baseline, 'dist/src/cli/pilotdeck.js'),
  baselineCLISource: join(baseline, 'src/cli/pilotdeck.ts'),
@@ -334,8 +336,7 @@ try{
   await stopChild(baselineChild);
   if (rs) await stopChild(rs);
  }
- if (suffixResults.length !== 2 || suffixResults.some(row =>
-     row.exception.message !== 'Client WebSocket frames must be masked.' || row.frames.length !== 0 || row.after101WireHex !== '')) throw Error('partial suffix behavior differs');
+ checkSuffix(suffixResults);
  const observations=(await readFile(join(out,'ts-observed.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
  for(const result of results){const o=observations.filter(o=>o.event==='upgrade'&&o.url==='/ws?probe='+result.id);if(o.length!==1)throw Error('upgrade observation missing '+result.id);result.actualTsHeadHex=o[0].headHex;result.actualTsMethod=o[0].method;if(o[0].method!==result.method)throw Error('baseline method differs '+result.id);if(result.side==='ts'&&o[0].headHex!==result.initialTailHex)throw Error('TS read boundary did not match '+result.id);if(result.side==='rust'&&o[0].headBytes!==0)throw Error('Rust forwarded initial head '+result.id)}
  for (const row of routingResults) {
