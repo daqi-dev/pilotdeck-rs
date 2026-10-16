@@ -211,3 +211,17 @@ R78实际shared notify只醒bypass，barrier原8s在8001ms Elapsed，独立Notif
 ## R85 R80未来适用范围债的具体首次节点（自决·待复核）
 
 同步guard只覆盖确定性归属/当前CI，不声称跨线程hold、全局warn-denial、SIGKILL后持久检出恢复或无当前预热前提的独立冷入口。按DS A/B原文，#149追加12–15具体首次节点与验收，原1–11不改，AI代批待人复核；均可撤回、不动冻结/意向，不冒当前P1延期。当前实际source+CI已由两家窄gate478cf确认，历史证据按source范围引用，future候选不当当前错误。原则：未声明的未来范围必须绑首次新增承诺/改变前提节点，不能用模糊待办抵扣真实当前验收。
+
+
+## R86 R81最终793精确一次执行（自决·待复核）
+
+2026-10-17T01:10:40.403956+08:00：旧01:00lease已过，fresh ca75/CLI2f clean且作者归还，无其他源码writer；root新独占冻结这两树至R81临界终态/失败或01:35先到。最终scope两家门c7c39a419907c23f6e720866463630da41266f2926ad0240b086299fcb2594ec无当前P0/P1/P2a，只原R81精确cache，不扩093/090/partial。root授权在本提交后create_new authority、当前入口793cb8c4315b592e38f09802b24f72b9ec6fb66f3eb9393d9062fdbc9be84acf一次--execute；index6b22624b138c300965f4e2e43cf2611cb3f029b7d967e69fd7c890c537d11322/base37d697/accept54817fb23d04b0006a6a5e3e5f696e7645d68b15ec8a57841e6a5787ef214aee/overlay b60d92+helper63c868+metadata0469dd/identity对账61ad7d18均完整SHA绑定在authority，旧7a18只历史。
+
+原collector完整7=旧3+如下4，精确每件SHA e55452a128fb47fa2742df97f45a2a748f5b6661d314184d06c7985d812fb457、1048576B，JSONpointer/enclosing index按overlay原件，不静默filter未知第8；它们只有synthetic方法删除事实，无cache内容、无实际cache保留承诺：
+
+- `_tmp/20261016-debt-cleanup/r81-fixedloader-production-t0zgqle8/fixtures/healthy-full-finish/execute-terminal-receipt.json`
+- `_tmp/20261016-debt-cleanup/r81-fixedloader-production-t0zgqle8/fixtures/fsync-closed-positive-fd-failure/execute-terminal-receipt.json`
+- `_tmp/20261016-debt-cleanup/r81-production-slot-method-lb2kgwhv/fixtures/healthy-full-finish/execute-terminal-receipt.json`
+- `_tmp/20261016-debt-cleanup/r81-production-slot-method-lb2kgwhv/fixtures/fsync-ebadf-failure/execute-terminal-receipt.json`
+
+#152 P2c OPEN，前置首次R81分类枚举或语义合同改变，延期未完成。方法11899与历史PARTIAL d551保持各自范围；不可将synthetic FINAL当实际执行。精确dev/uid/inode、无Rust/Cargo/full53/foreignFD、34锁、全cache/noncache/raw/6target/29sealed/source/tools守恒由当前控制器再核，原O allocated+1MiB terminal+1MiB ordinary+8192<=4MiB；authority写后再核。整个过程中不再往原O加报告。先fresh pin全索引成员再独占创建authority，不重试/清失败证据。实际exit0+唯一FINAL+accepts(postflight守恒/锁释放)才接受本scope；全du实际数决定余量，365367296仍预测，newBuildAuthorized=false。原46GiB/5树/独立target/全量锁不变，R74另门另卡。原则：最终执行内容、出处和时效须同时精确绑定，审完不等于已运行；未知或终态失败保全并转独立工作。

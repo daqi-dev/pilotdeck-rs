@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-17T01:10:40.403956+08:00 · R81最终执行卡R86**：两源ca75/CLI2f已fresh clean/root唯一writer，新lease到01:35或精确R81终态先到；两家当前793七引用门已闭，root将本提交后create_new authority单次执行，仅020004 incremental/原4MiB，actual cleanup仍未运行。不扩093/090/partial，不自动build；最终exit0+FINAL+完整post后实际du再决定R74。#152现OPEN、37OPEN/5Draft，延期未完成。R74新tip6e0e72封34件/六组Python对照通过，原中央正两家必要delta；Node观察器小控ps超限PARTIAL、真实18仍未跑。
+
 > **2026-10-17T00:32:28.153921+08:00 · 原队列接续与发布同步**：用户替换AGENTS与五实际树均同b390，四份/MEMORY当前读取指纹未变；旧00:20lease失效，本片fresh核ca75/CLI2f clean、writer仅root后新冻结到01:00或R81临界终态/失败先到，不沿旧时效。当前36OPEN/5Draft、5树，人手/unknown/旧研究保护不变；中断导致上一00:25前未形成最终交接，按事实接回，不补造完成。02:23前写下一交接。
 > PR150正文已实际更新ca75/current双家窄gate478cf/真实CI38902157910指定失败与恢复五guard原始行、current merge tree；原1a3历史完整保，仍Draft且新artifact七格/M1/CLI18未完成。#149原1–11保持，12–15按DS限定具体首次节点追加处置，延期仍未完成，未把当前已修1500ms转未来。
 > R81旧result顺序P1两家已收口，新fixedbytes loader及两生产1MiB真控已完成且最后tail在原中央；readonly current references实际3→7，新增4仅自有方法synthetic terminal receipt（无cache内容或cache保留承诺），旧严门会正确拒绝，正外置exact overlay/JSONpointer/索引绑定，不filter未知。原35/58/11899全保、无authority/未删除/未Cargo。R74 guardian握手+早期terminal候选已真控封76006f，双家必要delta未过；CLI18外层dba875仅准备，Node观察器/真实18均未跑。
