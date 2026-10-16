@@ -342,3 +342,102 @@ fn unknown_errno_forwards_entire_session_and_catalog_requests_at_every_fs_bounda
         }
     }
 }
+
+pub(crate) fn catalog_io_fixture() -> serde_json::Value {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/config/catalog-io-errors.json"
+    ))
+    .unwrap();
+    assert!(catalog_io_cases_complete(&fixture));
+    fixture
+}
+fn catalog_io_cases_complete(fixture: &serde_json::Value) -> bool {
+    use std::collections::BTreeSet;
+    let expected: BTreeSet<_> = [
+        "stat-denied",
+        "stat-missing",
+        "stat-notdir",
+        "read-denied",
+        "read-missing",
+        "read-notdir",
+        "read-directory",
+        "stat-longname",
+        "read-longname",
+        "stat-loop",
+        "read-loop",
+        "stat-deep",
+        "read-deep",
+    ]
+    .into_iter()
+    .map(|scenario| format!("io-global-{scenario}"))
+    .collect();
+    let Some(rows) = fixture["cases"].as_array() else {
+        return false;
+    };
+    rows.len() == 13
+        && rows
+            .iter()
+            .map(|r| r["id"].as_str().unwrap_or("").to_string())
+            .collect::<BTreeSet<_>>()
+            == expected
+        && rows.iter().all(|row| {
+            let request = parse_json(row["request"].as_str().unwrap_or("")).ok();
+            request.as_ref().and_then(|r| r.get("method"))
+                == Some(&JsValue::from("model_catalog_list"))
+                && row["io"]["observations"].as_array().is_some_and(|o| {
+                    ["loader", "rpc"]
+                        .iter()
+                        .all(|phase| o.iter().any(|entry| entry["phase"] == *phase))
+                })
+        })
+}
+#[test]
+fn catalog_rpc_has_its_own_real_filesystem_errno_oracle() {
+    const SOURCE: &str = include_str!("../../tests/fixtures/config/catalog-io-errors.json");
+    let fixture = catalog_io_fixture();
+    verify_responses(&fixture);
+    verify_diagnostics(SOURCE);
+    for replacement in [
+        vec![],
+        fixture["cases"].as_array().unwrap()[..12].to_vec(),
+        vec![fixture["cases"][0].clone(); 13],
+    ] {
+        let mut broken = fixture.clone();
+        broken["cases"] = replacement.into();
+        assert!(!catalog_io_cases_complete(&broken));
+    }
+}
+#[test]
+fn catalog_unknown_errno_keeps_both_global_fs_boundaries_on_host() {
+    let fixture = catalog_io_fixture();
+    let row = fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "io-global-read-missing")
+        .unwrap();
+    for stat in [false, true] {
+        for errno in crate::node_io::unmeasured_errnos("model_catalog_list")
+            .into_iter()
+            .map(Some)
+            .chain([None])
+        {
+            let metadata = snapshot(row);
+            let metadata = Metadata {
+                home: metadata.home,
+                cwd: metadata.cwd,
+                files: UnknownFiles {
+                    inner: metadata.files,
+                    target: PathBuf::from(row["io"]["target"].as_str().unwrap()),
+                    stat,
+                    errno,
+                },
+            };
+            let request = parse_json(row["request"].as_str().unwrap()).unwrap();
+            assert!(
+                crate::model_catalog::response(&request, &metadata, &env(row)).is_none(),
+                "stat={stat} errno={errno:?}"
+            );
+        }
+    }
+}

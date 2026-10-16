@@ -1,0 +1,65 @@
+{
+  "node": "v22.22.0",
+  "results": [
+    {
+      "name": "missing",
+      "actualError": {
+        "code": "ENOENT",
+        "syscall": "scandir"
+      },
+      "response": {
+        "type": "response",
+        "id": "missing",
+        "ok": true,
+        "result": {
+          "projects": []
+        }
+      }
+    },
+    {
+      "name": "not-directory",
+      "actualError": {
+        "code": "ENOTDIR",
+        "syscall": "scandir"
+      },
+      "response": {
+        "type": "response",
+        "id": "not-directory",
+        "ok": true,
+        "result": {
+          "projects": []
+        }
+      }
+    },
+    {
+      "name": "denied",
+      "actualError": {
+        "code": "EACCES",
+        "syscall": "scandir"
+      },
+      "response": {
+        "type": "response",
+        "id": "denied",
+        "ok": true,
+        "result": {
+          "projects": []
+        }
+      }
+    },
+    {
+      "name": "empty",
+      "response": {
+        "type": "response",
+        "id": "empty",
+        "ok": true,
+        "result": {
+          "projects": []
+        }
+      }
+    }
+  ],
+  "cleanup": {
+    "permissionRestored": true,
+    "noListeners": true
+  }
+}

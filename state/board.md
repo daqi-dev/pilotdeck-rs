@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 · #120前两项可审候选（codex/debt-catalog，基于8745ddd）
+> **实现范围**：catalog本method真实Node22.22 RPC新增13个global stat/read errno原件；Rust逐字节wire、有序诊断、六errno独立method准入与未知errno整请求host边界、pairing零上游及空/截短/重复负控。list_projects复用四个真实Node公开入口原件，Rust NativeFiles重造ENOENT/ENOTDIR/EACCES/empty四场景并经dispatch逐项比较。生产映射与冻结规约不变。
+> **证据与闸门**：主仓 `_tmp/20261016-debt-cleanup/catalog/` 保存收集脚本、13份无路径替换raw-rpc、来源哈希、原始测试输出及verification.json；fmt/clippy与定向catalog/list/whitelist验证以该清单为准。候选待root安排GLM simplify、DeepSeek实际三角色及两家独立终审，未push/开PR/关闭issue。
+> **未完**：#120第三项账本容量/调用链继续OPEN，#117 Linux实效不在本批完成声明内；不因两项候选完成核销整单。target `_build/20261016-083100` 此批验证结束后归还root；none/与旧分支保留。
+
+
 > **02:53 收尾增补**：协调者复现配置fixture空集合会假PASS；只改cfg(test)，锁定catalog32/host0、diagnostics2696/host17及唯一非空ID，空/截短/重复三项负控拒绝。定向config tests、fmt、gateway all-targets clippy通过；产品与固定fixture字节未变，复用已绑定的scan/A2原始证据。该增量须两家独立补审和新HEAD CI后才合并。
 
 > 开工先读 `CLAUDE.md` + **`.42cog/` 四份**（`intent` · `real` · `cog` · `meta`）+ 本文件 + `state/memory/MEMORY.md`。

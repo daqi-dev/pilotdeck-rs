@@ -448,3 +448,99 @@ fn native_stat_and_read_projection_matches_fresh_ts_when_requested() {
         );
     }
 }
+
+// Actual OS failures matching the fixed Node public-RPC oracle. The guard owns
+// only a newly created scratch root and restores permissions even on panic.
+struct ListProjectFixture {
+    metadata: Metadata<NativeFiles>,
+    root: PathBuf,
+}
+impl ListProjectFixture {
+    fn new(name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "pdrs-list-projects-{}-{}-{name}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let fixture = Self {
+            metadata: Metadata {
+                home: root.clone(),
+                cwd: root.clone(),
+                files: NativeFiles,
+            },
+            root,
+        };
+        let projects = fixture.root.join("projects");
+        match name {
+            "missing" => {}
+            "not-directory" => std::fs::write(&projects, b"not a directory").unwrap(),
+            "empty" | "denied" => {
+                std::fs::create_dir(&projects).unwrap();
+                if name == "denied" {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&projects, std::fs::Permissions::from_mode(0o0))
+                        .unwrap();
+                }
+            }
+            _ => panic!("unknown fixture {name}"),
+        }
+        fixture
+    }
+}
+impl Drop for ListProjectFixture {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(
+            self.root.join("projects"),
+            std::fs::Permissions::from_mode(0o700),
+        );
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+#[test]
+fn list_projects_preserves_real_node_scandir_error_suppression() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/metadata/list-project-errors.json"
+    ))
+    .unwrap();
+    let rows = fixture["results"].as_array().unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["name"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["missing", "not-directory", "denied", "empty"]
+            .into_iter()
+            .collect()
+    );
+    for row in rows {
+        let name = row["name"].as_str().unwrap();
+        let actual = ListProjectFixture::new(name);
+        let scan = actual.metadata.files.entries(&actual.root.join("projects"));
+        if name == "empty" {
+            assert!(scan.unwrap().is_empty());
+        } else {
+            let error = scan.unwrap_err();
+            assert_eq!(
+                crate::node_io::lookup(&error).unwrap().0,
+                row["actualError"]["code"].as_str().unwrap()
+            );
+            assert_eq!(row["actualError"]["syscall"], "scandir");
+        }
+        let request =
+            format!("{{\"type\":\"request\",\"id\":\"{name}\",\"method\":\"list_projects\"}}");
+        let Route::LocalResponse(response) =
+            route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&actual.metadata))
+        else {
+            panic!("must stay local")
+        };
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response).unwrap(),
+            row["response"]
+        );
+    }
+}
