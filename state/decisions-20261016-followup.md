@@ -92,3 +92,8 @@ R61真实失败与1607原件保留；已安装tsx源码显式TSX_DISABLE_CACHE�
 
 
 R67实际入口落实：R66 index9e3d224248c889f84a9f19a0da52ce279699ee8ebc496261480b4a49961385f2、supplement e0487392a96a8c7702f3a764ab2bafa961f078986158db12718720662c083834 已实证tiny typed42/0磁盘cache/exit0/reaped。原q/185817只是准备且全保；唯一可执行新入口为 order-architecture/native-finish-r67-cleanup-190100/controller.py SHA4f1376539726c41cb22d91cc7d76dc562e92897dc7b0555d8410aa87aba9131e，prepareindex74f8caeb…；根任务仍q/task.md，新增cleanup为先实查组、每具体signal意图/结果独立落盘，5内存控制含EPERM/ps/wait失败，不冒产品验收。资源8MiB/early6/.20与各判据不变；root核新权源后仅该入口一次，旧候选不得启动。
+
+
+## R68 当前Ready源内两便宜P2a同轮还（自决）
+
+两家F4/F6判据已明确，采用严格当轮修：仅ready_admission.rs去deadqualified两字段、在原256KiB首超字节前限制读取，不改共同gate/score/生产/冻结。任务`_tmp/20261016-debt-cleanup/order-architecture/ready-line-r68-f3za19ti/task.md`。新增三永久std控制；同源standalone只验证新helper，并对14真实parsed pipe数组重序列化回算，明示非原raw字节或整crate重跑。root唯一a4 writer，R67已实际结束后才动；8MiB/early6/.20reserve、原rustc60/test10/total120/流256KiB，一次并保源与工具原件SHA，新CI/双非作者仍待。原则：非权威诊断不伪装资格，资源上限须限制实际读取再解析；真实旧数据复算与新整体运行分列。
