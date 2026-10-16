@@ -20,3 +20,5 @@
 - [资源预算与硬链接](20261016-resource-budget.md) — 清cache按最后硬链接的allocated块估算并完整du复核，保护所有非cache证据。
 
 - [证据时间与状态标题](20261016-evidence-clock.md) — 当前标题自动取时钟，实验/合并取原事件，计划和近似时间明确标注。
+
+- [实现产物与空返回](20261016-implementation-results.md) — 空final不冒交付；按具体item计失败，变更作者须显式交接并核两家非作者。

@@ -77,3 +77,12 @@ ledger_fidelity独占a4运行权、源只读clean9f8a45251138d73ae14d7942c94fe80
 执行前后核旧942+R53的15+R54的12共969原件、c990/3ed、112000全2356条目和R54partial target全路径/身份/内容SHA；当前源/工具/新prereg/authority card SHA与Git HEAD保持不变。root只在此卡提交后新增create_new authority.json，记录该提交、卡SHA、target/output/index/最终source与预算，ledger仅一次--execute；原index不改，运行后新execution-index另封。失败保全、只停相关动作；#65.1默认反例/65.2自然窗口/P3/A5.4/冻结语义和真人实效继续未完成。
 
 原则与断言：监督器自身读目录的竞态不能冒成被测程序失败或通过；先证明控制注入真实，再以新产物重算。每次资源窗与恢复格必须执行前显式登记，原失败和原门不重写。以上为2026-10-16T17:29:09.540948+08:00的可撤回执行判断，不替代两家终审或实效验收。
+
+
+## R56 CLI身份helper的16MiB独立新窗（AI代批，待人复核）
+
+首轮helper26在8.481s触采样allocation门，未取得results，不能认26通过；原proof upgrade-helper26-20261016-1729-5grn4whl、index.json.gz SHA89e1c691ae7a84129e1946143c7c340616f1f4cc15ce3fcd13f69ad09decffd7逐项核1992文件/1symlink，全部失败原件保留。最终allocation8499200B超8MiB110592B，监测峰8458240B；采样监督不是内核硬quota，不能把短暂超量写成严格未超。本次真实新前提是资源窗16MiB，并提前2MiB停止阈值，原测试/判据与fixtures不改，不是原8MiB窗重跑或弱化判据。
+
+CLI已安全rebase mainb888为clean8d0a49ce8f9014bfe4631c9a68b6b5ff75514e4c；原7a7与988完整保存在codex/debt-upgrade-pre-main-20261016和原Git链，rebase冲突只MEMORY保两索引/board保main最新队列，旧CLI阶段记录按原Git追溯。587份src/.github/scripts/specs/.42cog不可变blob逐字同7a7，proof upgrade-rebase-cepq84ua/source-equality.json SHA79b7022413a0767f1db0008093ae1a31307545e8017227f16923c8f49f7a1dea；不倒填旧build或receipt为新HEAD。
+
+给ready_admission_real_payload_impl仅一次原26 helper Node suite，新唯一主仓_tmp目录、原绝对Node22/原HOME/cache、源clean8d前后SHA、旧be00/首轮失败全部SHA守恒。新fixture+proof allocated≤16777216B，采样停止阈值14680064B，逻辑字节同时核；每流1MiB/Node60s/总120s/ownedPGID最终回收。采样不能预先保证绝不超量，若仍超准确记失败、不得算PASS；达到阈值提前停止留2MiB封存与采样写入余量。先fresh全局du保证本窗+214748365B外留且总46GiB，另核在途无Cargo；不准Cargo/recorder18/Rust5/provider或新target、不替整PR138实证。固定26是原source-derived测试，不裁格以适配资源。本次2026-10-16T17:38:38.652516+08:00判断可撤回，第三次同具体项失败按仓规挂起。

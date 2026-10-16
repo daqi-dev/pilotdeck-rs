@@ -1,5 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T17:38:38.652516+08:00 · 两次失败精确记账/源码窄修**：R55新构建24.255s实exit101/reaped，无监督失败，ready_admission.rs523两Result序列化E0277；两guard+七格全NOT_RUN，execution-index5a58f376原21件与旧969/1120002356/R54partial534守恒。a4现cleanb794f27已显式Ok/Err投影窄修，proof059a6a85，仅静态，需新artifact实证；新free685752320B不足原.80窗，未发Cargo。仅100602+102014两已归还cache预测266399744B，仍不足原门，未清；其余未知/partial不动。
+> CLI helper26首轮8MiB采样门失败/26未证，原现场8,499,200B含110,592B超量如实保留；R56独立16MiB新窗提前2MiB停止、仅原Node26一次。CLI safe rebase mainb888至8d0a49c，587非state源blob同7a7，旧7a7/988保backupbranch，不冒旧运行。原中央继续173精确源码角色；capture/容量/序列化后差与实际运行仍待，65/138/31单/P0P1未核销。
+
 > **2026-10-16T17:29:09.540948+08:00 · PR146已交付/五树规则已同，R55新窗**：PR146实于09:24:28Z rebase合并，mainb888563135723127fdb70c89701092ab2166cca2；f17完整独立gate2659/两CI/body/38引用与6blob/hash已核，ae/ce仍已知server隐私缺口。rules-sync-euy79jd5证明五树共同CLAUDE b390/followup736290，未知研究/board/none保留；root e2381d0、a4 9f8a452、CLI7a7acf7、p2e04fde9，wt-d6本资源分支已无冲突rebase新main。中央仍原owner/实际GLM2+DS2能力，held不重试，无GLM代码交付。
 > R54监督ENOENT中断、无artifact/六格NOT_RUN/实际Cargo退出码未知，12原件和partial target保留。R55仅本卡一次新target20261016-172909/原件ready-admission-r55-prep-20261016-172334，a4@9f8只读；≤0.80GiB/外留0.20/门1073741825B、总600/Cargo300/test60/每流1MiB，两辅助+原6+X2后D1+恢复第7格均待运行。CLI source A身份/B全tail/lease修复8bb→7a7仅源码准备，另独立8MiB Node helper26验证；Rust5/recorder18未跑、不预批PR138。唯一实现next仍#65共同Ready子域实证与两非作者审；原31/55与当前34OPEN/P0P1/延期/真人债不清零。
 
