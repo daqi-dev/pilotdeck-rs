@@ -165,3 +165,8 @@ DS N3在真实M1=(HoldRouteReturn,BypassJoin)调用闭包指出bypassed与barrie
 20:00 freshdu `_build23661104+_tmp24352404 KiB` 余226291712B，满足本8MiB/6提前/.20外留/223136973门；root可另发该runner77265cd一次authority，fresh门仍由实际入口重核，不Cargo/不新_build target。R73尚无authority/临界未启动，此小窗前只解除状态卡的预备冻结，a4/CLI源保持07eb/2f不写；小窗终态及无rustc后才生成最新rootHEAD/CardSHA的R73权源，禁止两者实际重叠。原1556 draft authorized=false作废不复用，旧prepare32/卡历史不改。
 
 原则：真实新P1可与远端只读核验并行推进，未启动的临界窗口不能阻塞独立最小事实；可信批准绑定执行当时最新状态，不能硬编码准备时历史HEAD。监督是采样，任何超量/残留/后核失败不算见证通过，保原件并转下一独立任务。
+
+
+## R77 R75编译前检查超时的窗口修正（自决）
+
+R75实际40.698s失败：preflight与post full du均20s timeout，groups[]、无compile/witness；原649输入SHA检查通过，未产生Notify实测。保receipt/execution-index与所有原件。新task`_tmp/20261016-debt-cleanup/order-architecture/acquisition-notify-du-window-r77-go413dm8/task.md`只full du60/whole240、新owned路径，原witness/8s/资源/字节判据不改；root正式单次authority，R73实际清理与rustc不得重叠，先fresh门。依据是现有全盘冷检查60s合同，不能称旧20s监督失败为语义失败，也不绕过held范围。原则：控制器成本不足与被测代码结果分开，修控制器保旧失败，不松实际通过条件。
