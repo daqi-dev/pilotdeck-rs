@@ -132,6 +132,9 @@
 > PR138大boundary包第三次300s空final已挂起；GLM已闭合C1/F1、真实18格和控制有效，但actual boundary角色缺失，不合并/不关闭56。后续分流须先写新有界小批方案，不能第四次同包重试。root保留wt-a4m3/4555ccb，CI新增8控制尚未push。
 > archive实现者持有wt-p2c/codex/archive-safe-candidate，准备普通138/真实errno与安全syscall候选；R29归该writer，#134精确差异授权仍PENDING，冻结不动/不合并相关候选。Astra另做#52+#85A一次组合重登记实施卡；校准proxy入口须核透明代理而非偷偷放松G2。当前08:24片在10:24前交接并自动接续。
 
+> ## 2026-10-16 09:30 · #56并发廉价P2当轮补齐（PR138候选）
+> DeepSeek实际concurrency确认此前四项P2已修，新增C1双连接隔离回归；生产Proxy同一Arc，A合法升级的真实上游已收头且不放响应，B完整GET仍先取得真实200/healthy，随后才释放A得到502并结束。oneshot控制前后顺序、JoinSet drop中止任务、整体3秒上限，不靠sleep。仅测试修改，生产及18格Node证据输入未变。HTTP实际20项（含新测试全名）/clippy通过；首个过窄筛选仅9项未覆盖新测试，原日志保留，不当作新测试通过。待同步main及两家精确增量/实际boundary，未合并、不关闭#56。
+
 > ## 2026-10-16 09:26 · 集中清账实际进展（main f171bcb）
 > **已合入**：PR137于09:16 rebase合入f171bcb，#120前两项13个catalog RPC真实errno/四格list_projects吞错及独立权限oracle已核销；#120第三项/#117/#139仍OPEN，整单未关。两家完整四视角/实际三角色/最终增量闭合、两项CI绿；合并后服务端committer邮箱缺口仍在。原始证据主仓catalog/，issue120已贴逐产物范围和剩余债。
 > **本候选**：#113的1e7两家完整终审已确认F8原件内容/driver当前指针修复，53注册/capture/checker/评分逐字节不变，仍无需新26轮；四原件Git blob再与归档逐字节核验一致。准备保全后同步新main，再跑最终CI/双家元差异补审才合入。#47历史专项负控P2/真人验收不变。
