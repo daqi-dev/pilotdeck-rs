@@ -51,6 +51,27 @@ def check(root):
                 sources[path] = digest
         if set(sources) != EXPECTED:
             errors.append('approval source set must contain all four registered originals')
+        def references(field):
+            rows = [line.split(':', 1)[1].strip() for line in manifest.read_text(encoding='utf-8').splitlines()
+                    if line.startswith(field + ':')]
+            if len(rows) != 1:
+                errors.append(f'{field} must occur exactly once')
+                return []
+            return [part.strip() for part in rows[0].split(';')]
+
+        basis = references('Approval-Basis')
+        reviews = references('Independent-Reviews')
+        calibration = references('Calibration-Evidence')
+        approval_sources = EXPECTED - {'specs/ui-server-parity/approval/driver.log'}
+        review_sources = approval_sources - {'specs/ui-server-parity/approval/calibration-summary.json'}
+        if len(basis) != 3 or set(basis) != approval_sources:
+            errors.append('Approval-Basis must reference the three hashed approval originals')
+        if len(reviews) != 2 or set(reviews) != review_sources:
+            errors.append('Independent-Reviews must reference the two hashed review originals')
+        required_evidence = {'specs/ui-server-parity/approval/calibration-summary.json',
+                             'specs/ui-server-parity/approval/driver.log'}
+        if not required_evidence <= set(calibration) or len(calibration) != len(set(calibration)):
+            errors.append('Calibration-Evidence must reference current summary/driver without duplicates')
         for name, expected in sources.items():
             path = root / name
             if not regular(path, root):
