@@ -19,3 +19,16 @@ R44两目标执行后真实余量仅0.975994GiB，低于1.20，按卡停在Cargo
 采用单处cache清理，前提沿R44：执行时重核uid/dev/inode/nonlink、Cargo锁/进程、sealed引用与完整非cache前后SHA；不删外链保留物，不扩其他目录，不动旧迁移/用户产品或原件。只允许这处已核可再生cache的路径删除，实际释放由完整du重算。达到1.20GiB后仍仅原1GiB新target+实验证据窗，不提高46上限；未达继续停该构建并转独立工作。
 
 原则与断言：删掉一个cache链接不等于释放inode。预算按候选内全部nlink均可删除的distinct inode已分配块估算，外链计零，最终以完整du复核；非cache路径/内容SHA始终不变。这条同类经验写入memory，不再靠连续清cache猜释放量。
+
+
+## R48 为M1–M4新产物窗释放083100与092037精确缓存（自决）
+
+卡在哪：R45实验证据封存后完整du45.272274GiB/46，余0.727726GiB不足1.20新窗门。谁受影响：#65同一装置的M1–M4实际路径负控；不动产品/冻结语义。可恢复性：仅原源码可重建的incremental缓存，保留所有noncache、旧112000与最新145841/c990精确产物及原失败；两个target均有明确归还root锚点。
+
+唯一授权路径为_build/20261016-083100/debug/incremental（dev16777230/inode42367862/uid502）和_build/20261016-092037/debug/incremental（同dev/uid，inode42423766）。只读resource-next-window-prep/index.json SHAe66196a9728c082e8dbaa01851f02c45e29c50af79aa67e016982915e4dc0aef绑定持有人与封存引用扫描；两处union last-link allocated573763584B=547.183594MiB，1789外链inode计零、有noncache路径见证。预计释放0.534359GiB，预测不等于已释放。
+
+执行者ledger_fidelity先于任何删除重核上述精确目录身份/父链/所有条目非软链接、本uid、dev/inode、nlink/blocks、所有构建进程与实际锁、最新封存引用及保留要求；完整两target noncache与旧112000全target路径/size/SHA先存新唯一owned目录，并核原R45封存index。仅清这两处已核可恢复缓存，目录漂移/未知引用/新写入者/锁/异常即停相关动作，不补删其他目录。保留真实删除清单、全部非cache及原件SHA逐项后核、完整du与回收块。只读计划不替执行核验；已有R44/R45不是永久授权。
+
+清后先回root实际du，不启动Cargo/Node。若实际余量达到1.20GiB且总量不超46，再由root给一次全新纯时间戳_build/YYYYMMDD-HHMMSS与新实验输出合计1GiB硬窗；600s总上限、每child60s、每流1MiB、终于回收owned PGID，四wrapper显式空、原绝对Rust1.99与原HOME/cache、offline/locked/jobs2、incremental0。源码9df46654只准备完，后续需真实新artifact与A1/A2前后健康+四mutant八格；不重跑A0，不改原validator，不以setup/EOF/超时/0test冒负控成功。新oracle若旧identity门不能复用须显式报root，不暗加Node任务。
+
+原则与断言：资源释放按真实last-link allocated与完整du核；缓存清理授权必须落到精确对象和当次门，不能泛化为清target或实验原件。非cache/封存SHA守恒、1.20开窗门、1GiB执行窗与46总上限任何一项不满足就只停相关动作，继续独立工作。

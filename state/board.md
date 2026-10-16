@@ -1,6 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 
+> **15:30 分类登记已交付，开发继续**：PR143 exactcec6经GLM四视角/DS三实际角色、两家所有必要尾差、root原件SHA/正文/当前两CI后15:29:48 rebase合并；main589f6bf282edc73202be6fe08c65f37630520d77。31/55逐项分类与现行17合法修订正式入main，canonical cadb、42保真检查；原31减113加139/144/145仍33open，六项历史精确fixed不扩大，延期/验收债务/P0P1未核销。合后邮箱检查仍见已知server committer真邮箱，未改全局配置。旧codex/debt-ledger@cec6/全部原件保留，wt-d6 clean切codex/debt-next-window@newmain由root持有。
+> **唯一实现next**：M1–M4源码9df46654已准备并交root，尚未类型检查/执行；先按R48仅清083100/092037两个已归还incremental，核noncache/原件全SHA与实际du，达到1.20再发新独立产物窗。绝不覆145841/c990或旧112000，不重跑A0。中央唯一provider继续R46 PR138必要B/C/汇总；新Git staged-only身份P1已有有界实际反控，不冒全recorder已假PASS。141环境三空仍held，134精确授权和真人实效仍缺，只停相关动作。
+
+
 > **15:17 唯一实现next已定**：Astra post-acquisition-plan已独立核7格raw/745原件，按R47先补M1–M4实际执行路径负控（只做同一装置任务）；先预登记与源码，当前资源不足1.20门，未发Cargo/Node新窗，不重跑A0、不覆写145841。worker写权随后按task明确分配，未完成不核销65。中央PR143仅末轮GLM文档在途；DS空档按R46真实新正式客户端/空registry硬0前提有界恢复PR138边界，旧三空与a814/当前988源范围保留，没有预批合并或第二provider队列。
 
 
