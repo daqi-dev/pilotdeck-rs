@@ -20,6 +20,8 @@ FileHandle stat/read 只读观察器记录实际调用、成功值、失败 errn
 仍为实际 storage birthtime（或 ctime）。原件不是 list_projects 的复用结果。
 
 Rust 的必跑 replay 使用原始 facts 和真实 RPC 观测错误，完全离线、不读取归档路径。
+CI 覆盖 = 固定原件回放（darwin 录制）；真实 errno 仅本机 driver 跑（`#[ignore]` 用例）。
+errno 名称取自 darwin 原件；Linux 真实语义待 #117/#133 验证。
 完整性守卫锁定十个唯一 ID、RUN 状态、describe_project 方法、各 helper 真实调用栈/
 API/错误种类及结果时间属性；空、截短、重复、错方法、丢任一 helper 错误、错 errno 和
 NOT_RUN 负控均拒绝。完整 response 逐字节比较；配对测试要求上游下一帧只能是独立
@@ -71,11 +73,12 @@ python3 src/pilotdeck-gateway/tests/check_metadata_io.py \
 python3 -m unittest discover -s src/pilotdeck-gateway/tests -p test_metadata_io_driver.py -v
 ```
 
-本批不改变产品吞错行为或冻结装置。Linux真实 errno/非法目录项仍由 #117/#133 验证。
+本批不改变产品吞错行为或冻结装置。Linux 非法目录项仍由 #117/#133 验证。
 本轮曾发生隔离HOME触发rustup自动安装事故；事实、下载现场、停点与修复待验状态只在
 state/board.md 和 state/memory/20261016-runner-home.md 维护，不以本说明代替独立审阅。
 
-复现护栏补强（PR141增量）：录制器在第一次动态 import 前和采集结束后，逐字节
+guard 用途 = 基线源码绑定（防工作副本被改/影子文件），不是二进制下载防护。
+录制器在第一次动态 import 前和采集结束后，逐字节
 绑定固定 cc7c4e6 的全部 `src/` Git blob；缺文件、改字节、源码树内未登记/ignored
 影子文件、同内容 symlink 都拒绝。只核 HEAD 不足以证明实际执行源码；`node --test
 src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs` 用自有 Git fixture 验证

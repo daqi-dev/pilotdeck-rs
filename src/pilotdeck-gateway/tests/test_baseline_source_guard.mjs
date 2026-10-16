@@ -6,9 +6,10 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {bindSourceTree} from './baseline_source_guard.mjs';
+const gitExecutable=fs.realpathSync(process.env.PDRS_TEST_GIT||execFileSync('which',['git'],{encoding:'utf8'}).trim());
 function fixture() {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'metadata-source-'));
- const git=(...args)=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',root,...args],{stdio:['ignore','pipe','pipe']}).toString().trim();
+ const git=(...args)=>execFileSync(gitExecutable,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',root,...args],{stdio:['ignore','pipe','pipe']}).toString().trim();
  git('init');fs.mkdirSync(path.join(root,'src'));fs.writeFileSync(path.join(root,'src/main.ts'),'export const value=1;\n');fs.writeFileSync(path.join(root,'.gitignore'),'src/ignored/\n');git('add','.');git('commit','-m','fixture');
  return {root,git,ref:git('rev-parse','HEAD')};
 }
@@ -21,11 +22,32 @@ for (const mutation of ['healthy','dirty','missing','untracked','ignored','symli
  if(mutation==='symlink'){fs.renameSync(file,path.join(f.root,'same-bytes'));fs.symlinkSync(path.join(f.root,'same-bytes'),file);}
  if(mutation==='assume-unchanged'){f.git('update-index','--assume-unchanged','src/main.ts');fs.writeFileSync(file,'changed');}
  if(mutation==='healthy'){
-  const got=bindSourceTree(f.root,f.ref,'/usr/bin/git'),bytes=fs.readFileSync(file);
+  const got=bindSourceTree(f.root,f.ref,gitExecutable),bytes=fs.readFileSync(file);
   const files={'src/main.ts':{blob:f.git('rev-parse','HEAD:src/main.ts'),sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length}};
   assert.equal(got.count,1);assert.equal(got.ref,f.ref);
   assert.equal(got.sha256,createHash('sha256').update(JSON.stringify(files)).digest('hex'));
- }else assert.throws(()=>bindSourceTree(f.root,f.ref,'/usr/bin/git'));
+ }else assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable));
+});
+
+test('GIT_DIR shadow repository cannot replace the real source blob',t=>{
+ const f=fixture(),shadow=fixture();
+ t.after(()=>{fs.rmSync(f.root,{recursive:true,force:true});fs.rmSync(shadow.root,{recursive:true,force:true});});
+ const shadowSource='export const value=2;\n';
+ fs.writeFileSync(path.join(shadow.root,'src/main.ts'),shadowSource);
+ shadow.git('add','.');shadow.git('commit','-m','shadow source');
+ const shadowRef=shadow.git('rev-parse','HEAD');
+ assert.notEqual(shadowRef,f.ref);
+ const expected=bindSourceTree(f.root,f.ref,gitExecutable);
+ const original=process.env.GIT_DIR;
+ t.after(()=>{if(original===undefined)delete process.env.GIT_DIR;else process.env.GIT_DIR=original;});
+ process.env.GIT_DIR=path.join(shadow.root,'.git');
+ // Prove this environment really redirects unguarded Git, despite -C.
+ assert.equal(f.git('rev-parse','HEAD'),shadowRef);
+ assert.equal(f.git('show','HEAD:src/main.ts'),shadowSource.trim());
+ assert.deepEqual(bindSourceTree(f.root,f.ref,gitExecutable),expected);
+ fs.writeFileSync(path.join(f.root,'src/main.ts'),shadowSource);
+ assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/source bytes differ from trusted Git blob/);
+ assert.equal(process.env.GIT_DIR,path.join(shadow.root,'.git'));
 });
 
 test('workspace-local Git shim rejected before execution',t=>{
@@ -38,5 +60,5 @@ test('workspace-local Git shim rejected before execution',t=>{
 test('wrong HEAD rejected even when requested ref has the same source tree',t=>{
  const f=fixture();t.after(()=>fs.rmSync(f.root,{recursive:true,force:true}));
  f.git('commit','--allow-empty','-m','same source, different HEAD');
- assert.throws(()=>bindSourceTree(f.root,f.ref,'/usr/bin/git'),/baseline HEAD mismatch/);
+ assert.throws(()=>bindSourceTree(f.root,f.ref,gitExecutable),/baseline HEAD mismatch/);
 });
