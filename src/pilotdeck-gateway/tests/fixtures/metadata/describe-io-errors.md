@@ -132,6 +132,9 @@ pairing，未覆盖动态 JSON→Snapshot 的完整 RPC；这些历史范围保�
 测试以独立 Node bits `0x427a142dd3d62187` 为锚，并逐个核对静态及动态 JSON 的数值
 token（含请求/响应中的数值）与标准 double 解析。feature 在同版本 serde_json 的
 test 构建图中统一；普通 lib 构建不含它，不将这项装置修复宣称为生产 parser 修复。
+静态原件精确核384个数值；已登记SHA的两份动态原件精确核386个。未来不同形状录制
+不套用386，另有固定七数值的对象/数组/嵌入request与response遍历canary，四种漏支
+变异必须失败。driver的动态阶段还分别拒绝缺失、重复、未知回执，并核具体失败原因。
 gateway Cargo.toml 纳入 driver 精确来源集合，现为14项；workspace feature、lock 与
 录制 JSON 不变。observation.ok 在完整性和消费两门均须为布尔，missing/null/字符串/
 数字/数组/对象的单轴负控分别拒绝，既有成功 API 闭包和失败 API 策略不变。
