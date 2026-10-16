@@ -89,6 +89,15 @@ def reject_protected_paths(paths, home):
                 raise RuntimeError('protected output/target: ' + str(location))
 
 
+def validate_output_target(target, output):
+    if target.is_relative_to(output) or output.is_relative_to(target):
+        raise RuntimeError('target and output must be disjoint')
+    if target.exists() and not target.is_dir():
+        raise RuntimeError('fresh target must be a directory')
+    if target.exists() and any(target.iterdir()):
+        raise RuntimeError('fresh target required; prior incident target products are not admitted')
+
+
 def external_git(executable, roots):
     executable = executable.resolve(strict=True)
     for start in roots:
@@ -176,6 +185,7 @@ def check_postflight(result, root, toolchain, original, preflight, sources_befor
 
 
 def stop_group(child):
+    """Only for children created with start_new_session=True (pid == pgid)."""
     try:
         os.killpg(child.pid, signal.SIGKILL)
         return False
@@ -237,6 +247,13 @@ def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024)
                     code = child.wait(timeout=5)
                 except subprocess.TimeoutExpired as exc:
                     reason, wait_error = reason or 'wait timeout', str(exc)
+            # The reaped leader can leave same-session descendants behind.
+            # A successful group kill here proves the group was still present.
+            if code is not None and reason is None:
+                already_gone = stop_group(child)
+                gone = gone or already_gone
+                if not already_gone:
+                    reason = reason or 'surviving descendants'
     return dict(argv=list(map(str, command)), exit=code, reason=reason, waitError=wait_error,
                 groupAlreadyGone=gone, reaped=code is not None, pid=child.pid,
                 seconds=round(time.monotonic()-start,3), log=str(log), sha256=sha(log))
@@ -266,9 +283,8 @@ def main(argv=None):
     node_before = sha(node_executable)
     target = args.target.resolve()
     reject_protected_paths((target, args.output), Path(preflight['home']))
-    if target.exists() and any(target.iterdir()):
-        raise RuntimeError('fresh target required; prior incident target products are not admitted')
     output = args.output.resolve()
+    validate_output_target(target, output)
     output.mkdir(parents=True, exist_ok=False)
     scratch = output / 'recording'
     cargo_env, node_env = environments(original, preflight, scratch, target, node_executable, git_executable)
@@ -296,8 +312,10 @@ def main(argv=None):
 
     def run(name, command, *, deadline=90, environment=None):
         log = output / (name + '.log')
-        result = run_bounded(command, root, environment or cargo_env, log, deadline=deadline)
+        actual_environment = cargo_env if environment is None else environment
+        result = run_bounded(command, root, actual_environment, log, deadline=deadline)
         result['name'] = name
+        result['environment'] = dict(actual_environment)
         runs.append(result)
         if result['exit'] != 0 or result['reason'] or not result['reaped']:
             raise RuntimeError(f'{name}: exit={result["exit"]}, reason={result["reason"]}; see {log}')
@@ -341,9 +359,17 @@ def main(argv=None):
                              rustup_before, node_executable, node_before, Path(node_env['HOME']), git_executable, git_before)
         except Exception as exc:
             success, error = False, (error or '') + '\npostflight: ' + str(exc)
+        source_head = None
+        try:
+            source_head = run('source-head', [str(git_executable), '--no-replace-objects',
+                                             'rev-parse', 'HEAD'], deadline=10).strip()
+            if not source_head:
+                raise RuntimeError('empty source HEAD')
+        except Exception as exc:
+            source_head = None
+            success, error = False, (error or '') + '\nsource-head: ' + str(exc)
         manifest = dict(success=success, error=error, runs=runs, preflight=preflight, postflight=postflight,
-                        sourceHead=subprocess.check_output([str(git_executable), 'rev-parse', 'HEAD'], cwd=root,
-                                                          env=cargo_env, text=True).strip(), sources=sources_before)
+                        sourceHead=source_head, sources=sources_before)
         (output / 'verification.json').write_text(json.dumps(manifest, indent=2)+'\n')
     print(json.dumps({'success': success, 'error': error, 'output': str(output)}))
     return 0 if success else 1
