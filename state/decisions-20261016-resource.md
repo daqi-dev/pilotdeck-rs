@@ -60,3 +60,20 @@ R53仅清093057 cache完成，index001e1c1608261fd824a238245b013bc94d5298b127cf9
 按execution-spec原绝对Rust1.99/原HOME-cache、四wrapper显式空、offline/locked/jobs2、incremental0；Cargo JSON中实际唯一lib test executable必须在此新target内，存完整原始编译输出、source/tool/manifest/prereg前后SHA、artifact路径/大小/SHA，不复用旧c990/3ed。只一次D1+/D1−/A+/A−及X1/X2，反控须有真正hit/W0/C0与同一audit.json具体R2_REQUIRED/COMMIT_SEQUENCE_VIOLATION拒，setup/timeout/0test不是成功；四健康必须两共用audit都Ok且完整动态wire一致。仅六格，没有额外恢复格、没有旧A0/全量53/自然窗口重跑。所有自有PGID与host都须finally回收，旧942原件/112000/精确二进制/source/tools前后核。
 
 原则与断言：显式接纳子域实验不代表默认产品修复，成功也只记录该子域与装置，#65.1默认反例/65.2自然窗/P3/A5.4/真人实效继续未完成；失败保原始具体断言并转独立工作，不换期望让结果变绿。资源判断可撤回、判分语义与冻结标准均不动。
+
+
+## R55 修复监督竞态后的新精确产物窗（AI代批，待人复核）
+
+R54首次构建由监督器size()在Rust正常临时lib.rmeta消失时触发FileNotFoundError中断；没有完整artifact，六格全部NOT_RUN，不能算Rust类型错误或负控通过。原执行器未持久化Cargo实际退出码，保持未知；自有PGID32724已TERM/KILL/wait且无残留。R54的12原件index1ea57c7a9e42b040e544b3353a9dece1a141046019f2c1f181b8a457b2158b77及partial target20261016-170311原样保留，不补写旧receipt、不复用partial产物。旧R54原件与卡都不覆盖。
+
+本次唯一输出_tmp/20261016-debt-cleanup/order-architecture/ready-admission-r55-prep-20261016-172334，immutable预登记index9b42ba28f27da9e0a84bf64dac27b719e25f991c4ab9cf75ebfe030581b17668（9件）；controller SHA f1bf40256e5f62ce02c8c017be2fdb2e4a72eb9459f9bf4bd6c26b2c0fe3af4b。监督helper a7e9cf4fea3cbcc949467cc7dff441ccf3984b953b814b57ff9edb5dee7c0326在真实unlink六控制过，index70ef9895f55bf59f0df0237433595e01f77d64bf935299eb9728ab57c35fdfd0；写期只容忍ENOENT，静态后核严格，未知权限/设备/软链接不吞错；全部异常finally必须持久化实际wait退出码/回收/失败。旧control的Path.is_file两stat假设不成立已另存失败，改用实际unlink的准确注入，未抹历史。
+
+ledger_fidelity独占a4运行权、源只读clean9f8a45251138d73ae14d7942c94fe8085a604178；新增capture e6和容量checked_add 890只完成静态/源码层，仍待真实运行与独立审阅。890→9f8严格仅同步mainb888的CLAUDE与引用R52的followup两文件，Rust/Node/prereg所有blob不变；五树现共同规则b390，rules-sync-euy79jd5/result.json SHA4ba09d8878b720ebc0e0cf409c1902bdaa470a6f04a78c826f20bbb9e630bd97。新artifact环境BUILD_SOURCE_HEAD必须9f8，不倒填890/173。
+
+唯一新target为_build/20261016-172909。这是独立更小窗，target+本输出逻辑字节≤858993459B（向下0.80GiB），外留≥214748365B，开窗实际free须≥1073741825B；原0.90/1.10门不降低、不挪作本次通过。最近完整du22886960+24222248KiB，free1152294912B仅作现场参考，controller在mkdir或Cargo/Node前再实测；不足即停，不删旧物、不再缩窗凑门。总46GiB、600s总限、Cargo300s、每test60s、每流1MiB，触限仅回收本轮ownedPGID保失败。并行CLI helper26另获至多8MiB/120s/child60s独立验证权，共用全局46GiB门、不能借用本target或声称PR138全过；中央小评审证据仍从外留预算内计。
+
+以原绝对Rust1.99/原HOME-cache、四wrapper显式空、offline/locked/jobs2/incremental0建新唯一test artifact，绑定Cargo JSON/source/tools/TS1000与三个config/prereg/sourceHEAD前后SHA。先实际两辅助guard各一次：ready_finish_rejects_existing_stderr_file_after_successful_child、bounded_host_log_rejects_first_excess_byte；再真实六格D1+/D1-/A+/A-/X1/X2各一次，最后显式新增X2后的D1+-restore第七格（case仍D1+、新output/runID、同artifact/common gate），不改旧六格预注册或旧原件。健康双audit Ok/全部动态wire；X1/X2须实际hit/W0/C0与共同R2_REQUIRED/COMMIT_SEQUENCE_VIOLATION拒。每格包含负控均核两个host实际reap/完整stderr join/bytes与事件，实际wire总字节≤既有1MiB；0test/setup/timeout/未知失败不算负控成功、不盲跑后续、不重试自然窗/全量53。
+
+执行前后核旧942+R53的15+R54的12共969原件、c990/3ed、112000全2356条目和R54partial target全路径/身份/内容SHA；当前源/工具/新prereg/authority card SHA与Git HEAD保持不变。root只在此卡提交后新增create_new authority.json，记录该提交、卡SHA、target/output/index/最终source与预算，ledger仅一次--execute；原index不改，运行后新execution-index另封。失败保全、只停相关动作；#65.1默认反例/65.2自然窗口/P3/A5.4/冻结语义和真人实效继续未完成。
+
+原则与断言：监督器自身读目录的竞态不能冒成被测程序失败或通过；先证明控制注入真实，再以新产物重算。每次资源窗与恢复格必须执行前显式登记，原失败和原门不重写。以上为2026-10-16T17:29:09.540948+08:00的可撤回执行判断，不替代两家终审或实效验收。
