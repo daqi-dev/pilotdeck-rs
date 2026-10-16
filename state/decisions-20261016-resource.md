@@ -182,3 +182,8 @@ R77 full du前后过、compile原format串错误exit1/reaped/residual[]，Notify
 R78实际shared notify只醒bypass，barrier原8s在8001ms Elapsed，独立Notify两个时点真通过；53.838s/两个PGID已回收/indexf5598807/postCHECKED，仅primitive不冒全Tap。任务`_tmp/20261016-debt-cleanup/order-architecture/acquisition-notify-apply-r79-1e4zl8y6/task.md`按R76候选两src修专用Notify/同义hash/实际Tap两永久guard，仍新CI与两非作者闸门。
 
 为不让临时资源管线阻塞当前P1：R73若20:18前最终两家必要门闭合，root先一次精确清cache并全后核，再释放source；否则本片明确R73未执行、无authority，解除a4预备freeze去落R79，旧R73 SOURCES=07eb自动失效不得偷跑，后续须新source保全。CLI2f不动；R74只准备，没独立闸门/足资源窗不launch。全局5树/46、未知/非cache/旧原件保护不变。原则：未开临界窗口不占住独立修复，保全输入一变即旧准入失效，不能拿旧批准执行新现场。
+
+
+## R80 当前通知守卫改为确定性归属断言（自决）
+
+卡：原1500ms墙钟可受负载制造假FAIL，已到首次CI节点；影响测试判据而非冻结。按GLM/DS真实caller尾审，选同线程实际Tap正控+CI真实共享通知回退负控，原8s/七格不变，不用更长sleep或重试充收敛。可撤回，只a4已提交1a3基础/专用CI/script边界，任务`_tmp/20261016-debt-cleanup/order-architecture/notify-deterministic-r80-yzoj1rj5/task.md`；本地无Cargo，真实执行取新CI。原则：通知路由正确性以确定注册/调用与实际wake归属断言，基础设施调度时限不作语义票；变异必须证明运行到指定断言，编译错不算抓错。
