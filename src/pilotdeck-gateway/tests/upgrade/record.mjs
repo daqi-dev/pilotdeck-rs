@@ -378,18 +378,18 @@ try{
  let binaryAfter=null,baselineSourceAfter=null,baselineDistAfter=null;
  try{binaryAfter=await sha(binary);baselineSourceAfter=await sha(join(baseline,'src/gateway/server/GatewayServer.ts'));baselineDistAfter=await sha(join(baseline,'dist/src/gateway/server/GatewayServer.js'));}
  catch(e){status='FAIL';cleanupErrors.push('final binary/baseline hash: '+String(e));error??='final hash unavailable';}
- if(binaryBefore!==binaryAfter||baselineSourceBefore!==baselineSourceAfter||baselineDistBefore!==baselineDistAfter){status='FAIL';error='binary or baseline changed during capture'}
+ if(binaryBefore!==binaryAfter||baselineSourceBefore!==baselineSourceAfter||baselineDistBefore!==baselineDistAfter){status='FAIL';error??='binary or baseline changed during capture'}
  if(cleanupErrors.length||children.some(x=>x.p.exitCode===null&&x.p.signalCode===null)){status='FAIL';error??='cleanup incomplete'}
  for (const binding of configurationBindings) {
   try{
   binding.sha256After = await sha(binding.path);
-  if (binding.sha256Before !== binding.sha256After) { status = 'FAIL'; error = 'runtime configuration changed'; }
+  if (binding.sha256Before !== binding.sha256After) { status = 'FAIL'; error ??= 'runtime configuration changed'; }
   }catch(e){status='FAIL';binding.verificationError=String(e);error??='runtime configuration hash unavailable';}
  }
  for (const binding of Object.values(inputs.files)) {
   try{
   binding.sha256After = await sha(binding.path);
-  if (binding.sha256Before !== binding.sha256After) { status = 'FAIL'; error = 'key input changed'; }
+  if (binding.sha256Before !== binding.sha256After) { status = 'FAIL'; error ??= 'key input changed'; }
   }catch(e){status='FAIL';binding.verificationError=String(e);error??='key input hash unavailable';}
  }
  const artifactSHA256={};for(const name of ['inputs.json','ts-observed.jsonl',...children.map(child=>child.name+'.log')]){try{artifactSHA256[name]=await sha(join(out,name));}catch(e){status='FAIL';artifactSHA256[name]=null;cleanupErrors.push('artifact hash '+name+': '+String(e));}}
