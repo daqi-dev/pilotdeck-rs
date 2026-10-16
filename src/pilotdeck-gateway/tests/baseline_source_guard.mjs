@@ -18,7 +18,8 @@ export function bindSourceTree(baseline, ref, gitExecutable) {
     }
   }
   const gitSha256=createHash('sha256').update(fs.readFileSync(gitExecutable)).digest('hex');
-  const git = (...args) => execFileSync(gitExecutable, ['--no-replace-objects','-C',baseline,...args], {maxBuffer:32*1024*1024});
+  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!key.startsWith('GIT_')));
+  const git = (...args) => execFileSync(gitExecutable, ['--no-replace-objects','-C',baseline,...args], {env,maxBuffer:32*1024*1024});
   if (git('rev-parse','HEAD').toString().trim() !== ref) throw Error('baseline HEAD mismatch');
   const expected = new Map();
   for (const row of git('ls-tree','-rz',ref,'--','src').toString('utf8').split('\0').filter(Boolean)) {
