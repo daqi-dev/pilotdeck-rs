@@ -26,6 +26,7 @@ SOURCE_FILES = (
     'src/pilotdeck-gateway/tests/baseline_source_guard.mjs', 'src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs',
     'src/pilotdeck-gateway/tests/fixtures/metadata/describe-io-errors.json',
     '.github/workflows/ci.yml', 'rust-toolchain.toml', 'src/Cargo.toml', 'src/Cargo.lock',
+    'src/pilotdeck-gateway/Cargo.toml',
 )
 
 
@@ -401,7 +402,7 @@ def main(argv=None):
 
     def run(name, command, *, deadline=90, environment=None, discard_stderr=False):
         nonlocal snapshot
-        if snapshot is not None and name in ('replay', 'native-retained'):
+        if snapshot is not None and name in ('replay', 'dynamic-snapshot', 'native-retained'):
             unchanged_oracle(fixture, snapshot)
         log = output / (name + '.log')
         actual_environment = cargo_env if environment is None else environment
@@ -422,7 +423,7 @@ def main(argv=None):
                     raise RuntimeError('oracle and pre-chmod permission plans disagree')
                 snapshot = full_snapshot
                 unchanged_oracle(fixture, snapshot)
-        elif name in ('replay', 'native-retained'):
+        elif name in ('replay', 'dynamic-snapshot', 'native-retained'):
             unchanged_oracle(fixture, snapshot)
         if result['exit'] != 0 or result['reason'] or not result['reaped']:
             raise RuntimeError(f'{name}: exit={result["exit"]}, reason={result["reason"]}; see {log}')
@@ -444,6 +445,12 @@ def main(argv=None):
         if 'test result: ok. 3 passed; 0 failed; 2 ignored;' not in replay:
             raise RuntimeError('expected three mandatory replay tests')
         cargo_env['PDRS_METADATA_IO_LIVE'] = str(fixture)
+        dynamic = run('dynamic-snapshot', cargo +
+                      ['metadata::tests::metadata_numeric_dynamic_snapshot_full_rpc_matches_node',
+                       '--', '--ignored', '--exact', '--nocapture'])
+        if 'test result: ok. 1 passed; 0 failed; 0 ignored;' not in dynamic:
+            raise RuntimeError('expected exactly one dynamic Snapshot test')
+        check_receipts(dynamic, 'PDRS_NUMERIC_SNAPSHOT_OK', ids)
         native = run('native-retained', cargo + ['metadata_io_native_retained', '--', '--ignored', '--nocapture'])
         if 'test result: ok. 2 passed; 0 failed; 0 ignored;' not in native:
             raise RuntimeError('expected exactly two retained Native tests')

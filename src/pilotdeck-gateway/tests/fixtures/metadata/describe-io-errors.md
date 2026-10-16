@@ -122,6 +122,22 @@ Node 控制及十二源 SHA 绑定，未重新执行完整 Rust 链；不能将0
 绑定、真实 Node/Native/pairing 以及权限恢复，见 provenance-handoff-index.json；
 旧12源索引不改写。独立评审/CI/P0与139的治理结论仍不能由作者的成功运行代填。
 
+动态 facts 的完整 Snapshot RPC 现在是 driver 的独立必跑阶段，位于静态三项 replay
+之后、Native 之前；必须恰有一项测试及十个唯一 `PDRS_NUMERIC_SNAPSHOT_OK` 回执，
+阶段前后继续核原 oracle 字节。此前13源真实链只包含静态 Snapshot 和动态 Native/
+pairing，未覆盖动态 JSON→Snapshot 的完整 RPC；这些历史范围保持原样。
+
+真实数字 `1792123157858.0955` 在默认 serde_json 解析下曾比 Node/标准 Rust 多一 ULP，
+使 Snapshot 时间字段假 FAIL。gateway 的 dev-dependency 启用 `float_roundtrip`，
+测试以独立 Node bits `0x427a142dd3d62187` 为锚，并逐个核对静态及动态 JSON 的数值
+token（含请求/响应中的数值）与标准 double 解析。feature 在同版本 serde_json 的
+test 构建图中统一；普通 lib 构建不含它，不将这项装置修复宣称为生产 parser 修复。
+gateway Cargo.toml 纳入 driver 精确来源集合，现为14项；workspace feature、lock 与
+录制 JSON 不变。observation.ok 在完整性和消费两门均须为布尔，missing/null/字符串/
+数字/数组/对象的单轴负控分别拒绝，既有成功 API 闭包和失败 API 策略不变。
+数值首次失败、修后原件重放及 feature 构建范围的原始输出见主仓 metadata 的
+`numeric-check-results.json`；完整新录制链是否完成，以独立的 numeric 交接索引为准。
+
 
 BND2输入交接：录制器每次真实chmod前先同步写出原path/mode计划到驱动pipe，写全后才改权限；最后将一次序列化的完整oracle同样送入pipe。驱动保留至多1MiB输出在内存，完整oracle与三项原permission计划必须一致，工作文件只作被验证副本。replay/Native前后、cleanup及最终报告前逐字节核对；文件改目标、改mode或删除都FAIL，仍按内存原计划恢复并stat原目标。报告记录原permission、completeOracle、artifactUnchanged、restored和真实回执，不从改过的JSON重新选期待。
 
