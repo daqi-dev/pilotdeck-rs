@@ -21,6 +21,10 @@
 > **非轮规则：每轮有效工作必更新本文件**（倒序追加，新的在上，带日期与 commit hash）。
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
+> ## 2026-10-16 · #113原件迁入候选（双家同意scope，最终闸门待齐）
+> R26：三份B2批准原文迁入specs/ui-server-parity/approval，FROZEN只改路径/来源标注；53注册/capture/checker/评分逐字节不变。GLM四视角与DS实际sibling均同意无需fresh26，旧summary与Claude旧P2原样保留；另两实际角色、验证器身份/driver SHA廉价补项、最终增量与CI待齐才合并。#47整体未完成；不称项目P0/P1/P2为0。
+> 清账GitHub已将#134标P0，#65/#56/#113标P1且逐项写原因；原31快照外新#139为A4前置metadata三helper真实errno债，仍未完成。root复用干净CLI旧树另建codex/debt-metadata@8745ddd，旧codex/cli-server@1fdb99b/忽略证据保留，root持有、未新增第六树。Linux探测：clawbox-02 SSH有界超时，Docker daemon未运行、既有Colima停止；未为此下载/启动未知镜像，Linux真实证据仍欠。
+
 > ## 2026-10-16 08:24 · 用户启动31单集中清账（基于main8745ddd）
 > **授权/调度**：阶段任务、真实缺陷、验收债务逐子项分清；按现行规则重分级，P0/P1及当前节点前置P2优先；延期仍未完成。两小时交接给后续调度者，不能当停工。当前自动接续pdrs已创建ACTIVE，首次定时执行尚未发生，不冒称运行证明。
 > **隔离**：root复用wt-d6新分支codex/debt-cleanup；旧codex/d6-resume@a3a39b2保留，主树研究及状态未提交改动原样保留。五树/build7.6G+tmp22G，未增worktree。taxonomy、gateway audit、GLM/DeepSeek准备三路只读，证据主仓`_tmp/20261016-debt-cleanup/`。

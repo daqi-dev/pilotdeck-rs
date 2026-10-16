@@ -73,6 +73,17 @@
 - 原则与断言：传输缓冲区不能当宿主批次；同流不同受控data/read边界须各有实际oracle。当前已知差异测试只能叫诊断，不能把assert_ne通过计成兼容性通过。
 
 
+## R26 #113批准原件的可移植登记（AI代批，待人复核）
+
+- 卡在哪：B2已登记FROZEN引用主仓_tmp三份小原文，干净检出恒FAIL；完整定标/ruler厚原件仍在本地归档。
+- 谁受影响：B2/B3验收可复现性；不改变C/A冻结语义。可撤回，原归档保留。
+- 动不动尺子/意向：只改FROZEN的批准依据路径并迁入三原文；53注册文件、checker、captured hash、比较器、阈值/时钟判据均不变。
+- 选项与后果：改checker只检查SHA会放过原文缺失；重写历史摘要会抹PENDING/null/false与旧P2；采用三原文逐字节迁入approval，厚原件仍路径+SHA+说明。
+- 建议与执行：GLM249.309s完整四视角、DS175.807s实际sibling均同意此具体scope，无需新26轮；原53身份、两个真实ruler/各十对及26记录clock复核、无共享_tmp的独立Git fixture校验PASS。其余实际角色及廉价验证器补项/最终CI仍须闭合才合并；不冒称fresh定标。
+- 原则与断言：搬迁批准依据不等于改写批准或补造历史；迁入文件SHA等于原件，三依据任一缺失FAIL。历史summary的PENDING_REVIEW/independent_review:null/frozen:false与原Claude专项负控P2原样保留，批准以当时FROZEN和两份原审查共同为据。来源SHA证明本次迁移，不宣称现有checker防后续内容篡改；#47仍未整单完成。
+
+依据主仓`_tmp/20261016-debt-cleanup/{approval-portability/,reviews/approval-candidate-*-deepseek.md,reviews/approval-candidate-simplify-glm.md}`。同类其他FROZEN只有具体实测成立才新增缺陷，未知项不捏造。
+
 ## R27 #120 子进程验收完整性（自决）
 
 卡在哪：公开测试按继承环境跳worker可只验1/13；--exact零匹配也exit0，子进程输出与运行无界。仅测试装置受影响，可撤回，不动冻结/意向。采用独立ignored worker：公开父入口无env分支，共享test-only helper清环境、限时30s/总输出64KiB，要求恰1个libtest通过和唯一case receipt，父级集合与预注册ID对等。旧四处同类启动也迁移。原则：子进程退出0不代表目标被验证；执行数、案例身份、资源上限必须共同证明。零匹配/无回执/重复回执/失败/超时/超输出负控落入test_process。

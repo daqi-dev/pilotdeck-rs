@@ -1,0 +1,55 @@
+{
+  "verdict": "PENDING_REVIEW",
+  "error": null,
+  "batch": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb",
+  "utc_day": "2026-10-14",
+  "ts_pairs_pass": 10,
+  "ts_pairs_expected": 10,
+  "proxy": "PASS",
+  "clock_regression_check": {
+    "ref1": "PASS",
+    "ref2": "PASS",
+    "ref3": "PASS",
+    "ref4": "PASS",
+    "ref5": "PASS",
+    "ref6": "PASS",
+    "ref7": "PASS",
+    "ref8": "PASS",
+    "ref9": "PASS",
+    "ref10": "PASS",
+    "ref11": "PASS",
+    "ref12": "PASS",
+    "ref13": "PASS",
+    "ref14": "PASS",
+    "ref15": "PASS",
+    "ref16": "PASS",
+    "ref17": "PASS",
+    "ref18": "PASS",
+    "ref19": "PASS",
+    "ref20": "PASS",
+    "ts1": "PASS",
+    "ts2": "PASS",
+    "ts3": "PASS",
+    "ts4": "PASS",
+    "ts5": "PASS",
+    "proxy": "PASS"
+  },
+  "all_26_clocks_pass": true,
+  "independent_review": null,
+  "frozen": false,
+  "head": "eb2f2c7fd2595339fe02eda0e74c9632ca7c0f6d",
+  "build": {
+    "target_dir": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-target",
+    "binary": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-target/debug/pdrs-exp008-proxy",
+    "cargo_home": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-home",
+    "toolchain": {
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1",
+      "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+    },
+    "sha256": "fe2fff6434dcdccf8c8f675f5b02ce1b48378f52c028b4a4fe3626f8bb7345ed"
+  },
+  "reports": {
+    "ts_ruler": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/ts-ruler-f32ed7c9-dbe1-4859-bc6e-a7f18809ccba.json",
+    "final_ruler": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/final-ruler-72ccd4e0-a2bc-4adb-98f9-05919887e396.json"
+  }
+}
