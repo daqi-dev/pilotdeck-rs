@@ -142,3 +142,8 @@ CLI旧26与8d CI5保历史；DS实际Git隐藏flag使clean:true+candidateHead的
 给ledger_fidelity仅sourceclean d0f一次原helper32 Node suite，输出_tmp/20261016-debt-cleanup/upgrade-helper32-r60-3p81nw_x，task原绝对Node22/原HOME-cache；fixture+proof allocated≤16777216B，提前14680064B门留2MiB、逻辑同计、采样不是内核硬quota，child60s/总120/流1MiB、自有PGID finally实际wait/reap。先freshdu≥本窗+214748365B外留且总46GiB/无Cargo；R59已封，不产生du竞态。所有scope按本输出task与两新source封索引执行，旧be00/26/首失败/两新source/R59与工具/源前后守恒。TAP1pass+32唯一CHECKED全部原件才算helper子范围通过；失败保全不重试，不recorder18/Cargo/provider/新target/旧物删除或产品验收。
 
 原则：新增真实失败场景要以新source/新数据验证，历史成功不冒覆盖新source；资源窗口与证据范围分别计。2026-10-16T18:17:49.133045+08:00资源判断待人复核，未改变评分/冻结或原失败。
+
+
+## R73 归还链闭合后的093443唯一可重建缓存（自决·待复核）
+
+18:29报告漏掉revision-task:13“root释放的独占093443 target”，本轮原文46d1索引补齐；writer doc-report停止交root无在途，wrapperreset原工具/同4b5源成功及事故原件均保，不再要求旧明示删除授权。root现决定释放仅`_build/20261016-093443/debug/incremental`可重建cache，以新精确guard/owner/引用/非cache外链与锁检查为执行前提；不是删除旧工作/证据、不是扩至090514、partial或未知cache。任务`_tmp/20261016-debt-cleanup/order-architecture/cache093443-r73-cjxnkc5j/task.md`先仅准备≤2MiB，独立必要增量核后root另给authority一次。当前lastlink110997504B只是旧估，fresh全du决定实际资源，不称满足旧128MiB+0.20门；本卡不授权任何新build。原则：已归还owner可明确解除可重建cache保留，原件/产物与未证关联不能随cache删。
