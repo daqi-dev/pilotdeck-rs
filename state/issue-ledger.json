@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "ALL_ROWS_RECEIVED_SCOPE_QUALIFICATIONS_RECONCILIATION_REQUIRED",
-  "asOf": "2026-10-16T05:40:12.917277+00:00",
+  "asOf": "2026-10-16T06:06:15.776274+00:00",
   "remoteStatusAsOf": "2026-10-16T04:54:58.583176+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
@@ -953,7 +953,7 @@
           "id": "52.1",
           "title": "未登记.js/.cjs/.ts漏检",
           "primaryType": "真实缺陷",
-          "severity": "P2",
+          "severity": "P1",
           "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
@@ -993,7 +993,7 @@
             },
             "adjudicationStatus": "pending"
           },
-          "historicalJudgmentSeverity": "P2",
+          "historicalJudgmentSeverity": "P1",
           "snapshotRecord": "未修；3后缀与未登记即FAIL规则相反，旧import解释只覆盖部分接入",
           "snapshotNextAction": "隔离副本验证独立/导入/副作用三路径；扩后缀并负控；依冻结流程评审和真实复算。假评分PASS须独立实证再升P0",
           "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
@@ -1007,13 +1007,37 @@
               "basis": "initial"
             },
             "glm": {
-              "severity": "P2",
-              "basis": "initial"
+              "severity": "P1",
+              "basis": "independent-revision"
             }
           },
-          "independentRevisions": [],
+          "independentRevisions": [
+            {
+              "id": "52.1",
+              "stableTitle": "未登记.js/.cjs/.ts漏检",
+              "family": "GLM",
+              "severity": "P1",
+              "confirmation": "confirmed",
+              "source": "taxonomy-52-85-semantic-second-glm.md",
+              "sourceLine": 7,
+              "sourceSHA256": "0398ea07912483593b8d5fe5a6c5b50c76bed5557a77a62375c7b5c08fb65c4f",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P2",
+              "priorSource": "suffix-predecision-glm.md",
+              "priorSourceSHA256": "a5de4e81b2498c28e01bb95a9d58a136c0fd6c687e2bec7dff56ea631eec838e",
+              "disposition": "explicit revise priorP2 toP1 undercurrentP2b; A suffixscanner; .js/.cjs/.ts omittedexistence/contract confirmed; actualexecutedimpact candidate; frozenunchanged",
+              "confirmationScope": "A suffixscanner; .js/.cjs/.ts omittedexistence/contract confirmed; actualexecutedimpact candidate; frozenunchanged",
+              "wholeProjectApproval": false,
+              "sourceScope": "A suffixscanner; .js/.cjs/.ts omittedexistence/contract confirmed; actualexecutedimpact candidate; frozenunchanged"
+            }
+          ],
           "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
+          "gradeDisagreement": {
+            "deepseek": "P2",
+            "glm": "P1",
+            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
+          },
           "reviewQualifications": {
             "glmPartial": false,
             "needsCanonicalAdjudication": true,
@@ -2761,7 +2785,7 @@
           "id": "85.1",
           "title": "A侧node_modules/cargo输入未绑定",
           "primaryType": "验收债务",
-          "severity": "P2",
+          "severity": "P1",
           "confirmation": "candidate",
           "state": "pending",
           "fixed": false,
@@ -2805,7 +2829,7 @@
             },
             "adjudicationStatus": "pending"
           },
-          "historicalJudgmentSeverity": "P2",
+          "historicalJudgmentSeverity": "P1",
           "snapshotRecord": "实际TS driver用未摘要loader；cargo/CARGO_HOME真实输入闭包待核",
           "snapshotNextAction": "隔离改写实际依赖/config/build input，核具体能影响结论的路径，参考B2闭包策略，按冻结流程",
           "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
@@ -2819,17 +2843,41 @@
               "basis": "initial"
             },
             "glm": {
-              "severity": "P2",
-              "basis": "initial"
+              "severity": "P1",
+              "basis": "independent-revision"
             }
           },
-          "independentRevisions": [],
+          "independentRevisions": [
+            {
+              "id": "85.1",
+              "stableTitle": "A侧node_modules/cargo输入未绑定",
+              "family": "GLM",
+              "severity": "P1",
+              "confirmation": "confirmed",
+              "source": "taxonomy-85-id-scope-clarification-glm.md",
+              "sourceLine": 7,
+              "sourceSHA256": "97ea5da3dfb1c60468d648470640762a7aceff24bc735cdc06f6048ec7f42369",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P2",
+              "priorSource": "taxonomy-initial-85-glm.md",
+              "priorSourceSHA256": "a2303295f7c943bda7aa4c26179a21701a17337cec73801e8ae560f738242706",
+              "disposition": "explicit revise priorP2 toP1 undercurrentP2b; A node_modules confirmedP1; cargo belongswithin85.1 and is P1candidate with rebuild/pinningchainunknown; doesnotborrowCscope",
+              "confirmationScope": "A node_modules confirmedP1; cargo belongswithin85.1 and is P1candidate with rebuild/pinningchainunknown; doesnotborrowCscope",
+              "wholeProjectApproval": false,
+              "sourceScope": "A node_modules confirmedP1; cargo belongswithin85.1 and is P1candidate with rebuild/pinningchainunknown; doesnotborrowCscope"
+            }
+          ],
           "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "真实缺陷",
             "glm": "验收债务",
             "resolution": "待事实归一；保留DS主类与分歧，不倒写原文"
+          },
+          "gradeDisagreement": {
+            "deepseek": "P2",
+            "glm": "P1",
+            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           },
           "reviewQualifications": {
             "glmPartial": true,
@@ -2876,7 +2924,7 @@
           "id": "85.2",
           "title": "C未登记文件跳过/Python不隔离",
           "primaryType": "真实缺陷",
-          "severity": "P2",
+          "severity": "P1",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
@@ -2921,7 +2969,7 @@
             },
             "adjudicationStatus": "pending"
           },
-          "historicalJudgmentSeverity": "P2",
+          "historicalJudgmentSeverity": "P1",
           "snapshotRecord": "check_frozen CLI允许ok=true/fully_registered=false，但root实测完整check_ruler要求fully_frozen会拦，不能报告全链P0",
           "snapshotNextAction": "分别核CLI契约与评分全链，影子模块/pyc/未登记实际执行路径需独立实测；根审计已否定直接从CLI0推全链假PASS",
           "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
@@ -2935,13 +2983,37 @@
               "basis": "initial"
             },
             "glm": {
-              "severity": "P2",
-              "basis": "initial"
+              "severity": "P1",
+              "basis": "independent-revision"
             }
           },
-          "independentRevisions": [],
+          "independentRevisions": [
+            {
+              "id": "85.2",
+              "stableTitle": "C未登记文件跳过/Python不隔离",
+              "family": "GLM",
+              "severity": "P1",
+              "confirmation": "confirmed",
+              "source": "taxonomy-85-id-scope-clarification-glm.md",
+              "sourceLine": 19,
+              "sourceSHA256": "97ea5da3dfb1c60468d648470640762a7aceff24bc735cdc06f6048ec7f42369",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P2",
+              "priorSource": "taxonomy-initial-85-glm.md",
+              "priorSourceSHA256": "a2303295f7c943bda7aa4c26179a21701a17337cec73801e8ae560f738242706",
+              "disposition": "explicit revise priorP2 toP1 undercurrentP2b; C unregistered CLI ok/exit0 confirmedP1; fullruler fully_frozen rejectsnonpyc; pyc purepremiseconfirmed/fullchainNOTRUN =>P1candidate; Pythonisolation chainunknownP1candidate; noP0claim",
+              "confirmationScope": "C unregistered CLI ok/exit0 confirmedP1; fullruler fully_frozen rejectsnonpyc; pyc purepremiseconfirmed/fullchainNOTRUN =>P1candidate; Pythonisolation chainunknownP1candidate; noP0claim",
+              "wholeProjectApproval": false,
+              "sourceScope": "C unregistered CLI ok/exit0 confirmedP1; fullruler fully_frozen rejectsnonpyc; pyc purepremiseconfirmed/fullchainNOTRUN =>P1candidate; Pythonisolation chainunknownP1candidate; noP0claim"
+            }
+          ],
           "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
+          "gradeDisagreement": {
+            "deepseek": "P2",
+            "glm": "P1",
+            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
+          },
           "reviewQualifications": {
             "glmPartial": true,
             "needsCanonicalAdjudication": true,
@@ -7075,7 +7147,7 @@
       "sha256": "bd98c27920b36bea4ccbfefe2b3e655ab4d24a69f08a893fa50658f36ec36acf"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-adjudications.json": {
-      "sha256": "33db1beb8a0c3b204c6ff936be055593d8eebd70c490be5fd67a1c3865729ba7"
+      "sha256": "602d70dce47089bb815e34e6fedb2bd9796c106b18aeeb7036d634ffa18e6f3e"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-98-4-deepseek.md": {
       "sha256": "5f05b2dfba9dffeacb517efec7497a6b92895477d705d96d90bb7774c927bd7a"
@@ -7104,6 +7176,12 @@
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-94-1-self-semantic-deepseek.md": {
       "sha256": "f734e3df6d2ae95c4ac7d2a1b0e6bc7588ee19cfda32a210ddd0e4fca41e7f8f"
     },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-52-85-semantic-second-glm.md": {
+      "sha256": "0398ea07912483593b8d5fe5a6c5b50c76bed5557a77a62375c7b5c08fb65c4f"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-85-id-scope-clarification-glm.md": {
+      "sha256": "97ea5da3dfb1c60468d648470640762a7aceff24bc735cdc06f6048ec7f42369"
+    },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-ungraded-revisions.json": {
       "sha256": "4200f1a2521307b379572b2c45c70cff3acc08ae531224dc9d3e8a3f0b4ff6df"
     },
@@ -7129,16 +7207,28 @@
       "sha256": "3f0d9e9ec08fa1d660cd3e97f7936bc49294bfaad9108e564742cffb3647c009"
     },
     "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json": {
-      "sha256": "0d26b4c14e60f09cb9e8a877e17fc79f2b40947977e18f405c7725e037e10831"
+      "sha256": "3c22041cb4b533b6b4f53b4838bea30fe1c4fa517b7dfa58b6b49ed5e818331c"
     },
-    "_tmp/20261016-debt-cleanup/taxonomy/current-disposition-proposal.json": {
-      "sha256": "20f1a8661a6cf7983afe2accfaab0fe01a16a47905e6227ca498ff5435840679"
+    "_tmp/20261016-debt-cleanup/taxonomy/grade-baseline-refresh-proof/parent-adoption.json": {
+      "sha256": "0d26b4c14e60f09cb9e8a877e17fc79f2b40947977e18f405c7725e037e10831"
     },
     "_tmp/20261016-debt-cleanup/taxonomy/type-projection-proof/before-type-ledger.json": {
       "sha256": "fed0192fe82cedbd6722347e275fb07f25566bfb23bbfb2a94d1017ae953f597"
     },
+    "_tmp/20261016-debt-cleanup/taxonomy/grade-baseline-refresh-proof/baselines/9cca0d3d638e9fd7aec6a7acd1aae0a09b5d535fa5cbabea6c8a3b95bfa7486a/pretype.json": {
+      "sha256": "e8da86ba8ffec3a1d3f7d7949c130d24feb5996ff8d1324a937469f84b4061af"
+    },
     "_build/wt-d6/state/decisions-20261016.md": {
-      "sha256": "5bb21e58e07754e1e0e9d0df5c50ed558b3d585cdc8629e9a42d1b99d6fa1104"
+      "sha256": "95d2773c246097309d2b4420ce76a6075a4bfefdb4166979e97f713461eb3cd7"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/suffix-predecision-glm.md": {
+      "sha256": "a5de4e81b2498c28e01bb95a9d58a136c0fd6c687e2bec7dff56ea631eec838e"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-85-glm.md": {
+      "sha256": "a2303295f7c943bda7aa4c26179a21701a17337cec73801e8ae560f738242706"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/current-disposition-proposal.json": {
+      "sha256": "20f1a8661a6cf7983afe2accfaab0fe01a16a47905e6227ca498ff5435840679"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md": {
       "sha256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44"
@@ -7152,14 +7242,8 @@
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md": {
       "sha256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448"
     },
-    "_tmp/20261016-debt-cleanup/reviews/suffix-predecision-glm.md": {
-      "sha256": "a5de4e81b2498c28e01bb95a9d58a136c0fd6c687e2bec7dff56ea631eec838e"
-    },
     "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md": {
       "sha256": "29cf9ad3f57fccec97a311f9c2380cc225121620c7cc12679a985faf46f588a7"
-    },
-    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-85-glm.md": {
-      "sha256": "a2303295f7c943bda7aa4c26179a21701a17337cec73801e8ae560f738242706"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-98a-glm.md": {
       "sha256": "09468c7be6c91edecf96c9b54f147082b55500c295ade0fa8fc381c873fb23dc"
