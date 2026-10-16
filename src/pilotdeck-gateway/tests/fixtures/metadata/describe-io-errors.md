@@ -155,3 +155,10 @@ observer 生命周期：每次 install 捕获本代 token，reset 立即使旧�
 新代正常11种成功 API；每个 child 有5秒/1MiB上限。它不执行 Gateway，也不证明
 Gateway 曾触发跨代写入。该控制新增到来源集合，现为15项；新 recorder 的正式录制
 与完整重放是否已执行，以 observer 交接索引中明确的范围为准，旧完整链不追认。
+后续控制还核两个 start/end 标记分别唯一，并以真实 ENOENT/已关闭句柄 EBADF 覆盖
+本代三种同步与三种 handle 错误，错误值与原生对照一致；recorder 算法保持846原字节。
+required `check` 显式 needs observer、以 always 继续调度，首步对非success结果退出1。
+仅 needs 会传播 skipped，而保护规则允许 required skipped，故不能单靠依赖名称；
+依据见 [workflow needs](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds)
+与 [required status checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging)。
+本地结构/变异及 shell 证明不冒充 GitHub 故障依赖实注入，真实 CI 状态另绑定对应 HEAD。

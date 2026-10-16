@@ -18,12 +18,18 @@ jobs:
 
   # job 名 = 分支保护里的必需状态检查名，改这里要同步改保护规则
   check:
+    needs: metadata-observer
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     defaults:
       run:
         # workspace 在 src/ 不在仓库根（demo/04 §4.6）
         working-directory: src
     steps:
+      - name: Require metadata observer success
+        if: ${{ always() && needs.metadata-observer.result != 'success' }}
+        working-directory: .
+        run: exit 1
       - uses: actions/checkout@v4
       # rustup 读仓库根的 rust-toolchain.toml，装锁定的版本与 fmt/clippy
       - run: rustup show active-toolchain

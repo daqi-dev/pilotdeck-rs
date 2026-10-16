@@ -8,14 +8,21 @@ import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 const recorder = join(dirname(fileURLToPath(import.meta.url)), 'record_metadata_io.mts');
 const source = fs.readFileSync(recorder, 'utf8');
-const extract = (start, end) => {
-  const first = source.indexOf(start), last = source.indexOf(end, first);
-  assert(first >= 0 && last > first && source.indexOf(start, first + 1) < 0, 'unique observer source boundaries');
-  return {bytes: source.slice(first, last), firstLine: source.slice(0, first).split('\n').length,
-    lastLine: source.slice(0, last).split('\n').length - 1};
+const extract = (input, start, end) => {
+  const first = input.indexOf(start), last = input.indexOf(end, first);
+  assert(first >= 0 && last > first && input.indexOf(start, first + 1) < 0
+    && input.indexOf(end) === last && input.indexOf(end, last + 1) < 0, 'unique observer source boundaries');
+  return {bytes: input.slice(first, last), firstLine: input.slice(0, first).split('\n').length,
+    lastLine: input.slice(0, last).split('\n').length - 1};
 };
-const real = extract('const real:any={};', 'const owner=');
-const observer = extract('let observations:any[]=[];', 'function snapshot(');
+const markers = [['const real:any={};', 'const owner='], ['let observations:any[]=[];', 'function snapshot(']];
+for (const [start, end] of markers) {
+  for (const broken of [source.replace(start, ''), source + start, source.replace(end, ''), source + end]) {
+    assert.throws(() => extract(broken, start, end), /unique observer source boundaries/);
+  }
+}
+const real = extract(source, ...markers[0]);
+const observer = extract(source, ...markers[1]);
 const digest = text => createHash('sha256').update(text).digest('hex');
 const base = process.env.PDRS_OBSERVER_TMP_ROOT || tmpdir();
 fs.mkdirSync(base, {recursive: true});
@@ -41,6 +48,27 @@ if(which==='handle') {
   release();if(which==='delayed')await old;else await assert.rejects(old,{code:'ENOENT'});reset();
   assert.deepEqual(observations.map(o=>[o.api,o.path]),[['fsp.stat',file]],'old completion must not enter the next generation');
  } finally {release();real['async:readdir']=native;reset();}
+} else if(which==='sync-error') {
+ const missing=join(root,'missing'),expected=[];install();
+ try {
+  for(const name of ['statSync','readdirSync','readFileSync']) {
+   let native:any;try{real['sync:'+name](missing);}catch(e){native=e;}
+   assert.equal(native.code,'ENOENT');assert.throws(()=>fs[name](missing),(e:any)=>e.code===native.code&&e.syscall===native.syscall&&e.path===native.path);
+   expected.push({api:'fs.'+name,path:missing,ok:false,code:native.code});
+  }
+ } finally {reset();}
+ assert.deepEqual(observations.map(o=>({api:o.api,path:o.path,ok:o.ok,code:o.code})),expected);
+} else if(which==='handle-error') {
+ install();const h=await fsp.open(file,'r');await h.close();observations=[];
+ const native=await real['async:open'](file,'r');await native.close();const expected=[];
+ try {
+  for(const method of ['stat','read','readFile']) {
+   const args=method==='read'?[Buffer.alloc(1),0,1,0]:[];let error:any;try{await native[method](...args);}catch(e){error=e;}
+   assert.equal(error.code,'EBADF');await assert.rejects(h[method](...args),(e:any)=>e.code===error.code&&e.syscall===error.syscall);
+   expected.push({api:'FileHandle.'+method,path:file,ok:false,code:error.code});
+  }
+ } finally {reset();}
+ assert.deepEqual(observations.map(o=>({api:o.api,path:o.path,ok:o.ok,code:o.code})),expected);
 } else if(which==='normal') {
  install();
  try {
@@ -56,14 +84,14 @@ console.log(JSON.stringify({case:which,observations:observations.map(o=>({api:o.
 fs.writeFileSync(unit, "import fs from 'node:fs';\nimport fsp from 'node:fs/promises';\nimport {syncBuiltinESMExports} from 'node:module';\nimport {join} from 'node:path';\n" + real.bytes + observer.bytes + probe);
 let failed = false;
 try {
-  for (const which of process.argv[2] ? [process.argv[2]] : ['handle', 'pending-handle', 'delayed', 'delayed-error', 'normal']) {
+  for (const which of process.argv[2] ? [process.argv[2]] : ['handle', 'pending-handle', 'delayed', 'delayed-error', 'sync-error', 'handle-error', 'normal']) {
     const result = spawnSync(process.execPath, ['--experimental-strip-types', unit, which, root],
       {encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024});
     console.log(JSON.stringify({case: which, status: result.status, signal: result.signal,
       error: result.error?.message, stdout: result.stdout, stderr: result.stderr}));
     if (result.status !== 0 || result.error || result.signal) failed = true;
   }
-  console.log(JSON.stringify({recorder, sourceSha256: digest(source), node: process.version,
+  console.log(JSON.stringify({recorder, sourceSha256: digest(source), unitSha256: digest(fs.readFileSync(unit, 'utf8')), node: process.version,
     extracted: [real, observer].map(({bytes, ...lines}) => ({...lines, sha256: digest(bytes)}))}));
 } finally { fs.rmSync(root, {recursive: true, force: true}); }
 if (failed) process.exitCode = 1;
