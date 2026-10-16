@@ -1,5 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-17T00:32:28.153921+08:00 · 原队列接续与发布同步**：用户替换AGENTS与五实际树均同b390，四份/MEMORY当前读取指纹未变；旧00:20lease失效，本片fresh核ca75/CLI2f clean、writer仅root后新冻结到01:00或R81临界终态/失败先到，不沿旧时效。当前36OPEN/5Draft、5树，人手/unknown/旧研究保护不变；中断导致上一00:25前未形成最终交接，按事实接回，不补造完成。02:23前写下一交接。
+> PR150正文已实际更新ca75/current双家窄gate478cf/真实CI38902157910指定失败与恢复五guard原始行、current merge tree；原1a3历史完整保，仍Draft且新artifact七格/M1/CLI18未完成。#149原1–11保持，12–15按DS限定具体首次节点追加处置，延期仍未完成，未把当前已修1500ms转未来。
+> R81旧result顺序P1两家已收口，新fixedbytes loader及两生产1MiB真控已完成且最后tail在原中央；readonly current references实际3→7，新增4仅自有方法synthetic terminal receipt（无cache内容或cache保留承诺），旧严门会正确拒绝，正外置exact overlay/JSONpointer/索引绑定，不filter未知。原35/58/11899全保、无authority/未删除/未Cargo。R74 guardian握手+早期terminal候选已真控封76006f，双家必要delta未过；CLI18外层dba875仅准备，Node观察器/真实18均未跑。
+> 最新完整du总49187745792B、余204378112B，仅该次实测；旧365MB回收预测不是当前额度。唯一下一仍R81精确7refs与最终双家门→fresh authority→一次cleanup+完整post，再R74新candidate必要门和实际资源窗→当前CLI artifact→18；旧093/141/134held不变。证据 `_tmp/20261017-scheduler-resume-noc9d5yk/`，provider唯一中央不建第二队列。
+
 > **2026-10-16T23:58:08.353743+08:00 · 当前节点独立收口与新漏**：原中央R80两家A/B窄门478cf2e6确认ca75同步Tap原1500ms P2a及当前真实负控/恢复/127pass已闭，仅该scope，整150/七格/M1/CLI18仍欠。R81先result-success再terminal的P1已由两家7真实故障控制闭；新pyc gap独立P1实际成立（校验源VALUE2仍执行旧VALUE1），不把dont_write当阻读，正新fixed-bytes loader＋reference_scan闭包与生产1MiB方法补核。旧3槽method因FD账簿/负fd前置ValueError记PARTIAL，已撤错误EBADF措辞，不假称全部通过。
 > R74快退leader的NonePGID残留已真实复现并仅清回自有组，原sealed不动；新guardian+exec前握手、严格PID归属及早期terminal机读回执准备中，原4MiB包含TMPDIR/112MiB总/96提前/.20外留不改，诊断资源/时间停止是RUN_INVALID而非产品判FAIL，也不承诺填满某预算必完成。R81/R74原无authority/未删/未Cargo。
 > **现时source lease**：旧23:50租约已过，root现在再次核ca75/CLI2f clean且无其他writer后重新认领冻结至资源临界终态/失败或00:20先归还；未复用旧时效。00:25前按实际写交接，原provider owner继续两家必要增量，不重试141环境/134冻结held。

@@ -24,3 +24,5 @@
 - [实现产物与空返回](20261016-implementation-results.md) — 空final不冒交付；按具体item计失败，变更作者须显式交接并核两家非作者。
 
 - [测量计数的真实量纲](20261016-observation-units.md) — ReadBuf按实际新字节计数，同审小缓冲/空项/短输入与全部消费者的fixture假设。
+
+- [运行时源码与故障路径](20261017-runtime-proof.md) — Python旧pyc可绕过源码身份直觉；fsync负fd的ValueError不冒内核EBADF。

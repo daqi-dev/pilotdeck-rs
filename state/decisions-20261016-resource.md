@@ -202,3 +202,12 @@ R78实际shared notify只醒bypass，barrier原8s在8001ms Elapsed，独立Notif
 ## R83 当前源租约与执行合同澄清（自决）
 
 2026-10-16T23:58:08.353743+08:00实际ca75与CLI2f clean、writer仅root，旧23:50租约已过；现重新冻结至资源临界终态/失败或00:20先交回。R81仍精确020004，authority未创建；新fixed-bytes loader/root acceptance与新1MiB方法必须两家收口才能执行，不以旧顺序P1闭合代表整体过门。R74 wholeO含TMPDIR、112/96/.20和300/360原数值均保，诊断未完成是INVALID，非测试结论。原则：资源预算是停止线，不是成功承诺；时效前提每次独立更新。
+
+
+## R84 新片租约与具体方法凭证引用（自决·待复核）
+
+2026-10-17T00:32:28.153921+08:00旧00:20lease已过，fresh两源ca75/2f clean且无其他writer，root新认领冻结至01:00或R81临界终态/失败先到。只延续原精确020004资源依赖，不授权执行。当前reference collect7=旧3+新4个方法terminal receipt，均synthetic metadata、无cache内容；按准确path/SHA/bytes/JSONpointer与11899/d551 enclosing index追加只读overlay，原collector完整/未知仍拒，不改旧policy原件。选择依据为实际4个1MiB凭证已由root索引及内容核验，归类属AI代批待人复核；新overlay由原两家最后增量确认再fresh authority，绝不依据过去3集合放行。原则：方法证据生成的新引用也是当前输入，精确分类和保留，不静默屏蔽。
+
+## R85 R80未来适用范围债的具体首次节点（自决·待复核）
+
+同步guard只覆盖确定性归属/当前CI，不声称跨线程hold、全局warn-denial、SIGKILL后持久检出恢复或无当前预热前提的独立冷入口。按DS A/B原文，#149追加12–15具体首次节点与验收，原1–11不改，AI代批待人复核；均可撤回、不动冻结/意向，不冒当前P1延期。当前实际source+CI已由两家窄gate478cf确认，历史证据按source范围引用，future候选不当当前错误。原则：未声明的未来范围必须绑首次新增承诺/改变前提节点，不能用模糊待办抵扣真实当前验收。
