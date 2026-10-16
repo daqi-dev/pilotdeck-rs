@@ -33,6 +33,4 @@ type: feedback
 
 ### 统一协调允许多请求（2026-10-16 人定）
 
-单一协调者负责认领、派发和登记，不是每provider只能一在途。独立只读角色、不同issue调查及隔离实现按依赖并发；额度按实际限流单独管理，同session/写目录/全量对拍仍各守互斥。上文R24“单GLM串行”仅记当时有界诊断，不能升格为当前全通道策略。实际多job指针在主仓reviews/central-current-status.json，旧journal/PID不重新派发；当前owner安全更新registry，保留在途及所有原始证据，不启动第二协调者。并发变化不解除三空或其它已挂起scope。
-
-GLM可参与实现/修复/测试；每个scope登记实际作者，GLM所写delta交DeepSeek+独立GPT，GPT所写仍GLM+DeepSeek。硬0实现只生成候选文本，实际写入须已核worktree持有人机械应用；模型不得以评审身份批准自己的改动，混合作者须重新核独立谱系数量。
+当前并发、作者与执行权限规范只维护在 `CLAUDE.md`「当前协作与持续推进」；人定及本轮落地依据见 R49。上文 R24“单 GLM 串行”仅记当时有界诊断，不能升格为当前通道策略。实时多任务配置/在途指针见主仓 `_tmp/20261016-debt-cleanup/reviews/central-current-status.json`；旧 journal/PID 只作历史，不重启旧派发器。额度与实际重叠分别登记，传输结束不代替实质结论。并发变化不解除任何已挂起范围。

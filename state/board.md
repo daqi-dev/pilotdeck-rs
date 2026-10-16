@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16 16:35接续**：root核main589f6bf/34open/四Draft，五树与旧原件保留，中央原owner继续GLM/DS独审；原f8dfd1c交接分支已推不改。PR146单位P1有R52精确消歧候选，双口径du原件可复算，独立两家确认前不开新构建。a4@9758299源码已归还且六格全PREPARED_NOT_RUN；Astra只读发现X1/X2目前靠mutant专用panic拒、缺同一健康因果/wire门，先修测试判据后再申请精确产物窗，65/P3/A5.4未清。唯一下一实现仍该共同ReadyAdmission矩阵，无新队列/held解封。
+
 > **15:56 独立任务按依赖继续**：Astra已独立解码134原件并给65唯一下一依赖，按R50交GPT-6.1在空闲a4准备TS真实list OutcomeOwned→显式接纳门→原RPC H1的小映射源码，先预登记/15min/1MiB，不发Node/Cargo新窗、不动资源基线/生产Rust/冻结、不核销65。与CLI的GLM identity候选、中央必要独立审阅各自隔离；共享派发仍原owner。中央新dispatcher独立24控制抓两P2a（父子写lease、监视异常后过早free），当前owner同轮修，暂不扩新派发，原在途/历史保留；并发能力已实际重叠不抹成无缺口。
 
 > **15:48 五树规则同步完成，实际已三任务重叠**：root724742e/wt-d6规则60738e9/CLI规则ad8f1c3/p2规则e92a8dd/a4规则c4013b9的CLAUDE/AGENTS共同SHA20518046，proof reviews/policy-sync-zrxjbpzs/all-five-synchronized.json；root其余人手dirty材料SHA不变。a4先封存绑定9df实验134原件index9424fb05（root逐SHA核）再仅同步CLAUDE，target153955/artifact3ed94674及产品源保留，身份未倒填。R48八格：前后A1/A2四健康实际各1pass；M1/M2/M4具体原validator拒，M3两个414B同SHA真实W0/C0后driver先拒、后置validator未跑；独立外审仍待，65/P3/A5.4未核销。最终完整du45.298779/46GiB，自有9PGID无残留。
