@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T20:02:02.901503+08:00 · 新Notify P1先实测**：DS N3已确认M1真实caller条件，shared Notify可能把barrier通知交给先park的bypassed，现P1未闭。R75原Tokio最小双waiter/原8s+两个独立Notify时点控制准备已封24708366，20:00 fresh余226291712B满足8MiB小窗；root先更新本状态卡，a4/CLI源仍07eb/2f冻结。R73尚无authority/未临界、GLM已据真实APFS本人撤误读P0，du失败receipt新entry及B必要callee两家仍在审；实际清理必须等R75终态/无rustc并以最新stateHEAD/CardSHA重新封，不复用旧1556 false draft。R74未启动，R76仅新_tmp候选patch/实际Tap guard设计，无树写。唯一队列仍当前#65/#56依赖，不建调度者。
+
 > **2026-10-16T19:46:02.556720+08:00 · 双CI实绿，资源仅预备不抢跑**：PR138 current2f run38894436536两绿、16命名各1ok，CI syntheticmerge完整tree同2f；正文已实际改写并保完整旧body（receipt body-evidence/，79d524索引）。PR150 current07eb run38894322732两绿，fullcrate125pass/12ignored、3新host_record guard各ok；actual checkout85a4dc treec0c155同07eb。两非作者R72 scope门e44fe确认编译/guard部分，DS R68当前exact新artifact+七格验收P1仍挡；PR150整31源角色覆盖仍PARTIAL，原中央正补实际未读callee/独立工具，不据CI全绿泛批。
 > #148已追加out未来子项3，DS本人澄清当前安全ownedtmp recorder18不因此到期，原文另保；#149延期义务不变。新Draft PR151保存本状态/卡/记忆，现36 OPEN issue/5 Draft，未关单。原root主树人手改动/unknown及5树保护不变。
 > **唯一下一依赖/lease**：R73 ledger准备唯一093443可重建cache的精确保全guard，现已找到root历史释放与完整归还链（46d1索引），root可另卡解除cache保留，尚无执行authority/未删除；不扩090514/事故/partial/noncache。R74 ready_capture_fix只准备2f bin-only新profile0诊断：112MiB总/96提前/外留.20、新门332188877B，未知是否完成；原工具/原HOME/CARGO_HOME、owned TMPDIR、Cargo-vv JSON和正常cache bookkeeping边界分列，原128/.65/46数值不变。先独立必要核、清后freshdu足门才另发authority一次。a4/CLI source lease由root持且暂停写入至本次cache保全临界终态；provider唯一owner与在途不变。20:27交接继续。

@@ -156,3 +156,12 @@ PR138 current2f欠本地产物+18；默认完整build无窗，directrustc无完�
 R74执行合同消歧：原CARGO_HOME不等于只读cache，Cargo正常usage bookkeeping/锁允许且元数据前后记录，不许手动或自动清源cache；原offline保持（官方Cargo Book说明offline禁自动cache删除）。新增owned TMPDIR=proof/tmp并计总cap，与DEV_DEBUG唯一profile差异分列；不换原HOME/四wrapper，不宣称OS强制两目录写隔离。精确允许集合与来源链接见同任务temporary-path-supplement.md。新authority仍未给。
 
 R74日志合同补充：Cargo只追加-vv，保实际rustc调用的private原stderr，防R59缺argv的后续溯源缺口；每流原1MiB及总cap不变，超限失败留存。只增日志、非profile/评分语义改变，外发须挑白名单和去敏。详同任务verbose-provenance-supplement.md；无新运行权。
+
+
+## R75 当前Notify P1先作最小真实仲裁（自决）
+
+DS N3在真实M1=(HoldRouteReturn,BypassJoin)调用闭包指出bypassed与barrier共用Notify，一次notify_one可唤错误等待者使原8s屏障超时；先保持P1、不源码降级。任务`_tmp/20261016-debt-cleanup/order-architecture/acquisition-notify-r75-tj7j9oda/task.md`与已封24708366索引，仅原Tokio两waiter的手poll注册与8s真实timeout、两个专用Notify时点正控，不冒全Tap/M1格或生产bin。
+
+20:00 freshdu `_build23661104+_tmp24352404 KiB` 余226291712B，满足本8MiB/6提前/.20外留/223136973门；root可另发该runner77265cd一次authority，fresh门仍由实际入口重核，不Cargo/不新_build target。R73尚无authority/临界未启动，此小窗前只解除状态卡的预备冻结，a4/CLI源保持07eb/2f不写；小窗终态及无rustc后才生成最新rootHEAD/CardSHA的R73权源，禁止两者实际重叠。原1556 draft authorized=false作废不复用，旧prepare32/卡历史不改。
+
+原则：真实新P1可与远端只读核验并行推进，未启动的临界窗口不能阻塞独立最小事实；可信批准绑定执行当时最新状态，不能硬编码准备时历史HEAD。监督是采样，任何超量/残留/后核失败不算见证通过，保原件并转下一独立任务。
