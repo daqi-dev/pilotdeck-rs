@@ -28,3 +28,12 @@ GLM可写实现候选与测试，不以审阅硬0入口冒充filesystem写权限
 各树同步采用已核原SHA上的精确增量并单独提交，不覆盖未知内容。wt-d6、CLI、wt-p2c与root已同步；wt-a4m3正运行绑定9df的新产物八格，由当前持有人读最新人规则并留rules-override.json立即适用，在原实验postflight/index封存后再单独同步CLAUDE，保护HEAD/产物身份。CLI已从归还metadata c77安全切回原upgrade988再同步，旧分支/证据保留，现仅GLM identity任务可写。
 
 原则与断言：单一认领/派发正本不等于模型单槽；真正互斥对象是依赖、session、写工作区及资源。配置并发不自动重试挂起scope；141环境核心三空与134冻结精确授权缺口继续只停相关动作，R46已有实质新前提的138恢复另守原门。机器可核job ID/output独占、session/write冲突、明确额度、在途不丢和作者/审阅者家系不同；传输成功不能替实质角色结论。
+
+
+## R50 65按依赖继续：TS真实结果到RPC提交资格的窄映射（AI代批，待人复核）
+
+卡在哪：R48四负控已实际拒绝且Astra独立解码134原件，仍没有TS结果拥有/接纳/提交调用的映射，不能直接改默认commit协议或用局部白名单修65.1。谁受影响：65.1真实顺序反例与65.2/A5.4前置；可撤回：只测试代码，不动resources/产品Rust/冻结。采纳post-mutant-plan-20261016-154834/task.md小矩阵，先T0原Promise旁路、T1接纳先、T2后帧先与N1实际提前resolve/N2错token的源码准备；OutcomeOwned明确是装置真实取得结果，不等同天然settlement或Rust R2，H1提交调用不等同客户端C0。
+
+root给现空闲wt-a4m3独占源码准备，先预登记task/matrix并提交指针；≤15min/新证据≤1MiB，仅tests/order小helper与入口，不跑Node/Cargo/provider/新target/旧A0，不改原validator或基线资源。后续实际小Node窗另核资源并发，未跑逐格NOT_RUN；若无法干净隔离或需要扩大范围，记缺口不部署协议。中央GLM identity在不同CLI树继续，root状态/派发安全修复及两家评审可独立并发，不为这条65依赖另建调度者。
+
+原则与断言：取得结果并不证明基线此刻允许提交，运输回执不等于业务完成；先真实回执再决定可映射范围，允许UNMAPPED，禁止增加微任务/重复自然运行直到顺序合意。source-only不核销65、P3、A5.4或真人实效。
