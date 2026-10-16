@@ -1,0 +1,31 @@
+{
+  "node": "v22.22.0",
+  "v8": "12.4.254.21-node.33",
+  "baseline": "/Users/da/ws/pilotdeck-rs/resources/PilotDeck",
+  "sources": {
+    "cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead"
+  },
+  "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/links-recording/project",
+  "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/links-recording/pilot",
+  "cases": [
+    {
+      "id": "native_archive_manifest-in-root-symlink",
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_manifest-in-root-symlink\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/links-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_manifest-in-root-symlink\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"native_archive_manifest\",\"entryCount\":1,\"firstSequence\":7,\"lastSequence\":7,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "native_archive_entries-in-root-symlink",
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_entries-in-root-symlink\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/links-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_entries-in-root-symlink\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":7,\"createdAt\":\"2026-10-15T00:00:00Z\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "native_archive_artifact-in-root-symlink",
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_artifact-in-root-symlink\",\"method\":\"native_archive_artifact\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/links-recording/project\",\"artifactName\":\"probe.bin\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_artifact-in-root-symlink\",\"ok\":true,\"result\":{\"artifactName\":\"probe.bin\",\"content\":\"eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjcsImNyZWF0ZWRBdCI6IjIwMjYtMTAtMTVUMDA6MDA6MDBaIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0K\",\"encoding\":\"base64\",\"bytes\":168,\"truncated\":false}}"
+    }
+  ],
+  "recordingSha256": "42c760ba875158b43b0177265fa946b9d0ee48cbd67398fa4cc160a69c7abbaa"
+}

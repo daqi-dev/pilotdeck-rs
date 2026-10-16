@@ -1,0 +1,244 @@
+{
+  "node": "v22.22.0",
+  "baseline": "/Users/da/ws/pilotdeck-rs/resources/PilotDeck",
+  "sources": {
+    "cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead"
+  },
+  "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project",
+  "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot",
+  "cases": [
+    {
+      "id": "missing-native_archive_manifest",
+      "method": "native_archive_manifest",
+      "kind": "missing",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/missing-native_archive_manifest.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/missing-native_archive_manifest.jsonl",
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/missing-native_archive_manifest.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"missing-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"missing-native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"missing-native_archive_manifest\",\"ok\":false,\"error\":{\"code\":\"SESSION_NOT_FOUND\",\"message\":\"Session not found: missing-native_archive_manifest\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "directory-native_archive_manifest",
+      "method": "native_archive_manifest",
+      "kind": "directory",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/directory-native_archive_manifest.jsonl",
+      "observations": [
+        {
+          "api": "readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/directory-native_archive_manifest.jsonl",
+          "code": "EISDIR",
+          "syscall": "read",
+          "message": "EISDIR: illegal operation on a directory, read"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"directory-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"directory-native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"directory-native_archive_manifest\",\"ok\":false,\"error\":{\"code\":\"EISDIR\",\"message\":\"EISDIR: illegal operation on a directory, read\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "loop-native_archive_manifest",
+      "method": "native_archive_manifest",
+      "kind": "loop",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_manifest.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_manifest.jsonl",
+          "code": "ELOOP",
+          "syscall": "stat",
+          "message": "ELOOP: too many symbolic links encountered, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_manifest.jsonl'"
+        },
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_manifest.jsonl",
+          "code": "ELOOP",
+          "syscall": "stat",
+          "message": "ELOOP: too many symbolic links encountered, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_manifest.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"loop-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"loop-native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"loop-native_archive_manifest\",\"ok\":false,\"error\":{\"code\":\"ELOOP\",\"message\":\"ELOOP: too many symbolic links encountered, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_manifest.jsonl'\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "notdir-native_archive_manifest",
+      "method": "native_archive_manifest",
+      "kind": "notdir",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_manifest.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_manifest.jsonl",
+          "code": "ENOTDIR",
+          "syscall": "stat",
+          "message": "ENOTDIR: not a directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_manifest.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"notdir-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"notdir-native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"notdir-native_archive_manifest\",\"ok\":false,\"error\":{\"code\":\"ENOTDIR\",\"message\":\"ENOTDIR: not a directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_manifest.jsonl'\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "denied-native_archive_manifest",
+      "method": "native_archive_manifest",
+      "kind": "denied",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_manifest.jsonl",
+      "observations": [
+        {
+          "api": "readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_manifest.jsonl",
+          "code": "EACCES",
+          "syscall": "open",
+          "message": "EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_manifest.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"denied-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"denied-native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"denied-native_archive_manifest\",\"ok\":false,\"error\":{\"code\":\"EACCES\",\"message\":\"EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_manifest.jsonl'\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "long-native_archive_manifest",
+      "method": "native_archive_manifest",
+      "kind": "long",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl",
+          "code": "ENAMETOOLONG",
+          "syscall": "stat",
+          "message": "ENAMETOOLONG: name too long, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"long-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"long-native_archive_manifest\",\"ok\":false,\"error\":{\"code\":\"ENAMETOOLONG\",\"message\":\"ENAMETOOLONG: name too long, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl'\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "missing-native_archive_entries",
+      "method": "native_archive_entries",
+      "kind": "missing",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/missing-native_archive_entries.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/missing-native_archive_entries.jsonl",
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/missing-native_archive_entries.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"missing-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"missing-native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"missing-native_archive_entries\",\"ok\":false,\"error\":{\"code\":\"SESSION_NOT_FOUND\",\"message\":\"Session not found: missing-native_archive_entries\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "directory-native_archive_entries",
+      "method": "native_archive_entries",
+      "kind": "directory",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/directory-native_archive_entries.jsonl",
+      "observations": [
+        {
+          "api": "readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/directory-native_archive_entries.jsonl",
+          "code": "EISDIR",
+          "syscall": "read",
+          "message": "EISDIR: illegal operation on a directory, read"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"directory-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"directory-native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"directory-native_archive_entries\",\"ok\":false,\"error\":{\"code\":\"EISDIR\",\"message\":\"EISDIR: illegal operation on a directory, read\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "loop-native_archive_entries",
+      "method": "native_archive_entries",
+      "kind": "loop",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_entries.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_entries.jsonl",
+          "code": "ELOOP",
+          "syscall": "stat",
+          "message": "ELOOP: too many symbolic links encountered, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_entries.jsonl'"
+        },
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_entries.jsonl",
+          "code": "ELOOP",
+          "syscall": "stat",
+          "message": "ELOOP: too many symbolic links encountered, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_entries.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"loop-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"loop-native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"loop-native_archive_entries\",\"ok\":false,\"error\":{\"code\":\"ELOOP\",\"message\":\"ELOOP: too many symbolic links encountered, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/loop-native_archive_entries.jsonl'\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "notdir-native_archive_entries",
+      "method": "native_archive_entries",
+      "kind": "notdir",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_entries.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_entries.jsonl",
+          "code": "ENOTDIR",
+          "syscall": "stat",
+          "message": "ENOTDIR: not a directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_entries.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"notdir-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"notdir-native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"notdir-native_archive_entries\",\"ok\":false,\"error\":{\"code\":\"ENOTDIR\",\"message\":\"ENOTDIR: not a directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/notdir-native_archive_entries.jsonl'\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "denied-native_archive_entries",
+      "method": "native_archive_entries",
+      "kind": "denied",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_entries.jsonl",
+      "observations": [
+        {
+          "api": "readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_entries.jsonl",
+          "code": "EACCES",
+          "syscall": "open",
+          "message": "EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_entries.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"denied-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"denied-native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"denied-native_archive_entries\",\"ok\":false,\"error\":{\"code\":\"EACCES\",\"message\":\"EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/denied-native_archive_entries.jsonl'\"}}",
+      "status": "RUN"
+    },
+    {
+      "id": "long-native_archive_entries",
+      "method": "native_archive_entries",
+      "kind": "long",
+      "target": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl",
+      "observations": [
+        {
+          "api": "stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl",
+          "code": "ENAMETOOLONG",
+          "syscall": "stat",
+          "message": "ENAMETOOLONG: name too long, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl'"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"long-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"long-native_archive_entries\",\"ok\":false,\"error\":{\"code\":\"ENAMETOOLONG\",\"message\":\"ENAMETOOLONG: name too long, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/io-recording/pilot/projects/registered/chats/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.jsonl'\"}}",
+      "status": "RUN"
+    }
+  ]
+}

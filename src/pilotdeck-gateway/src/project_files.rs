@@ -60,7 +60,7 @@ fn checked_open_error(error: io::Error) -> io::Error {
         error
     }
 }
-fn nofollow_loop(error: &io::Error) -> bool {
+pub(crate) fn nofollow_loop(error: &io::Error) -> bool {
     error.get_ref().is_some_and(|e| e.is::<NoFollowLoop>())
 }
 fn measured(method: &str, error: &io::Error) -> Result<()> {
