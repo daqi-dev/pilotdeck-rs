@@ -1,5 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 12:06 · 全55行分类意见到齐，测量P1修复候选9e已推
+> 唯一账本state/issue-ledger.json已收DS55/GLM55行；GLM54初始分类加113.1特定修复确认，显式等级53/类型51，不等于完成分级或全局清零。原31单55子项、快照外139/144四子项分列；远端12:03核32open=原31减113加139/144。8条有理由的独立graded修订与2条明确撤档分列，原文/初始意见/未知/PARTIAL保留；117/133两家均P1但实际Linux行为未知、验收债仍延期未完，98.4两家P2，134.2授权验收门现P1，55.2/56.2等级null仅条件排队上界。34项纯JSON保真/输入SHA/新139.1当前P1断言全过，不替真人验收或独立分级终审。完整派生表主仓_tmp/20261016-debt-cleanup/taxonomy/disposition-report.md；唯一真相仍JSON。
+> PR141作者已冻结推9e164859，CLI clean、writer交root、锁释放；最新两项CI实际绿。fixture原168154B/SHA995400b...未改；补独立字面SHA锚/13执行源，以及entries/read/stat/session_summary四Files边界API/路径/结果集合对真实Node观察。两生产错read/stat实测before0→after101、静态facts/response伪造实测接受→新锚拒绝，三guard-removal变异101和健康restoration0分列。fresh120000实际driver10Node/3replay/10Native10pair、三mode493恢复、13源Gitblob/六工具/组件/后核、fmt/clippy与控制通过。原P2债139.1因测量假PASS按P2b升P1，旧档保留，9e只是修复候选；P0事故139.2、139整体和双非作者实际流程仍OPEN。全部原件metadata/provenance-report.md与566项SHA索引；中央唯一队列已接精准增量。
+> #56.2有界真实probe已做，b83测试候选不改生产cap/冻结：Node在3145742字节、47完整健康样本后RSS-bound；Rust8388622字节、128样本到input-bound。全局STOPPED_OR_FAILED，所有直接child受控终止并reap，failure/postflightError null不能抵消失败；buffer NOT_OBSERVED、DoS NOT_PROVEN，56.2不核销。保留首次114635零输入启动基线误拦与b83健康起点修正；原件frame-resource-probe/actual-report.md及actual-index.json。
+> 持有人：root主树/wt-d6/wt-a4m3/wt-p2c/CLI五树，主树研究和未知none/保护；中央debt_review_prepare为GLM/DS唯一queueowner，子worker只读备料不派provider。已核du22431600+24108820KiB=44.38GiB/46GiB，不再新target/树。main7781b18不变，138/142/143仍draft，不把旧tip的CI当新tip通过。下一唯一就绪任务仍PR141实际独立闭合+分类余分歧，随后PR138缺boundary及PR143角色；52+85A只做冻结前范围审，134精确授权与真人实效保持缺口。当前调度12:28前写唯一交接，后续heartbeat接续，不需逐单发车。
+
+
 > ## 2026-10-16 11:38 · 默认顺序反例已落真实Rust与metadata路径假通过修复候选
 > order分支379ec519，root原安装/offline/locked/jobs2在fresh112000-order编译，单行unused修后按新HEAD重编；11:26实际ignored六格录制1test成功，父PGID无残留、源码/工具/产物前后不变。TS先describe_server再supported_agents，Rust本次相反；另五格本次同序，comparison RECORDED_NOT_ACCEPTED/acceptance NOT_RUN，不是5/6兼容通过。原件order-native/actual-report.md与actual-index.json。COMPLETE=true只在close后的pair_returned观察，未复现后一帧前完成窗口，JoinSet可消费仍NOT_OBSERVED；65.1/65.2各自未核销，不走整批host/FIFO。
 > PR141当前8a6b9aa已推候选：先前4bb空CI身份修复两项实际CI绿；随后独立actualboundary新P1证明Snapshot错目录可同空RPC，作者实测2/10反例后改未登记API/path不可吞拒绝、生产路径/errno观测与单轴observation负控。fresh113400真实driver/10Node/3replay/10Native/10pair/三权限恢复/前后工具源及2guard/fmt/clippy通过，两个源码变异实际拒绝；原始路径实测与精确539SHA见metadata/path-handoff-index.json。新tip独立增量/条件性P2b/GLM与最终CI仍欠，不核销139/P0；CLI writer已交回root，锁释放。

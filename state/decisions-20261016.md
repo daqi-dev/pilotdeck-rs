@@ -120,3 +120,11 @@ R26后续廉价补项：driver原文已入仓，Calibration-Evidence当前指针
 执行准备：复用wt-p2c新codex/frame-resource-probe，从main再ff到固定4a37测试模块，旧archive d148本地/remote同SHA且未知none/保留。worker只准备源码，不监听/负载/Cargo。未来实际单侧最多8MiB未齐masked input、声明64MiB，单侧20秒/总45秒；绝对RSS512MiB或健康起点+64MiB先到即终止，日志≤1MiB，健康小帧对照，独立端口/自有进程finally清理。执行前root再核资源、工具/源身份和所有权后分配窗口，禁止无限流或压垮宿主。OS buffer不可观察时标未知，不以sent字节代填。
 
 原则与断言：资源探针的成功只证明预注册有界域，未挂起不能外推不可达；可达增长、当前健康、静态无cap与风险推断分别列证。父进程watchdog和硬额度不承担兼容性通过判据。
+
+## R33 #139当前验收装置缺口按P1记账（自决）
+
+卡在哪：139.1最初按真实errno证据跟进P2记账，后续DS明确R4和R2-F4/P2-F3会让测量假PASS；实际Rust复现静态facts/response自洽回填、已录错read/stat路径仍通过。新修复9e164859尚未独立收敛，旧P2不能继续代表当前缺口。
+
+谁受影响：PR141、A4/#46验收可信性。账本可撤回；不改冻结、评分、Node原件或意向；不新增平行子项队列。选项是保留旧P2遗漏当前P1，或按现行P2-b取P1并保留历史P2。执行后者，确认度与in-review/fixed=false分列；P0下载事件139.2独立保持OPEN。
+
+原则与断言：候选修复不能提前降低存量等级；影响测量结论的具体漏洞按P1记至独立闭合。JSON保留historicalSnapshotSeverity=P2、current severity=P1、DS原文SHA与9e候选证据SHA，33项旧账保真核查与新项字段断言分别验证。依据主仓_tmp/20261016-debt-cleanup/reviews/metadata-path-correction-deepseek.md及metadata/provenance-report.md。
