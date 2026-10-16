@@ -1,6 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 
+> **14:55 新source尾差**：G1两消费者各一行精确R39原章SHA900dcde1，健康42/同关键词撤授权反控均实际验证；F43-2两侧前置门扩至issues+newIssues，旧synthetic new139未知聚合audit42误放/新唯一check拒绝，producer谓词四格，健康完整source-derived42通过。当前producer21414a33/audit0557dc73，entry01a9与renderer730e不改，正式current-jfoi7nby绑定原cadb JSON，数据未重发；原145/4d及G1/996报告各守原scope。新proof new-issue-aggregate-guard-proof及r39-authority-proof/pin-fix，双家精确增量仍待。
+> **资源**：R44已清两精确cache但实际余0.975994GiB，严格未开Cargo/Node；所有非cache/旧target SHA同。R45仅新增083300 incremental授权门，按实际last-link allocated块327MiB估算、执行时完整核验，满足1.20才给原1GiB全新产物窗。memory已固化硬链接预算，其他工作继续，未完成不归零。
+
+
 > ## 2026-10-16 14:43 · 145快照外登记候选与本片接续
 > 当前33open已实际GitHub读回；PR143@97e7854的check/gateway-schema-baseline（38861249706）绿。新145.1由R43单独登记，当前canonical SHA cadb6bc7e50a353a342c0db290e62b94312c577421fd656f9747f4a1237e25cb，主类协调者AI待复核、DS P2-c、candidate/deferred/fixedfalse，先到节点与无当前实例明确；登记不等于还债。原31/55、139/144逐字段全同，R42源批次/基线/采纳及155原件SHA保留。新三输入仅post-type最终绑定；42项保真与21负控实际通过/拒绝，proof issue145-extension-proof/index.json SHA2fa1f00d…，正式audit current-gx_20c36。producer0e87536d/audit4d821a12/renderer730e8d1d；新42-ID合同不能用旧41报告冒过。中央唯一队列已接精确增量，整PR仍Draft。
 > 本片14:30:46启动、16:30前交接；root持有wt-d6，ledger_fidelity持有wt-a4m3的65实验护栏准备，其他树root且保护旧工作。65源码a05cc2b只准备日志限额与失败gate释放，仍未Cargo/child；旧379及整个112000 target不覆盖。五树/约45.37GiB，先为全新独立target核可恢复cache与完整保留证据；无第二provider队列，不逐单等人批准。

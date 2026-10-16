@@ -9,3 +9,13 @@
 执行后完整du若留不出至少1.20GiB（1GiB执行窗外保留至少204.8MiB），不开构建窗；若足够，仅给全新_build/实际时间戳target+新实验输出合计1GiB硬窗，剩余作并行小证据余量。外部监督新增预算及总46GiB，触限先停/回收本轮自有进程，保现场，不删实验原件。原绝对1.99工具、原HOME/cache、四wrapper显式空、offline/locked/jobs2不变。仅编译当前test-only护栏/65探针及有界实证；自然未见与未跑变异不改写为通过。
 
 原则与断言：可再生缓存与证据产物分别核验；不能靠覆盖旧精确产物取得新HEAD的运行身份。全部非cache文件路径/字节SHA前后一致、完整du预算、精确新产物来源与自有进程回收是开跑前后硬门。
+
+## R45 用最后硬链接可释放块预算补083300精确缓存（自决）
+
+R44两目标执行后真实余量仅0.975994GiB，低于1.20，按卡停在Cargo/Node前；4920非cache与旧112000全2153文件SHA一致。1273已删inode仍由保留noncache引用，局部du相加不能代表实际回收。
+
+新候选仅_build/20261016-083300/debug/incremental：原upgrade/p2-delta.md:3/:29的ff75ca146来源/归还root及原task专属target为持有人依据，无活跃构建。只读resource-candidate-prep/index.json SHAa6853d4c…记录1598 distinct inode，81个所有链接都在候选内，可释放allocated块343207936B=327.3086MiB；其余1517外链inode计零并定位到保留路径。广扫6848潜在sealed清单仅Git incrementalBase词命中，真实cache引用未见，原bin/binding必须保留。
+
+采用单处cache清理，前提沿R44：执行时重核uid/dev/inode/nonlink、Cargo锁/进程、sealed引用与完整非cache前后SHA；不删外链保留物，不扩其他目录，不动旧迁移/用户产品或原件。只允许这处已核可再生cache的路径删除，实际释放由完整du重算。达到1.20GiB后仍仅原1GiB新target+实验证据窗，不提高46上限；未达继续停该构建并转独立工作。
+
+原则与断言：删掉一个cache链接不等于释放inode。预算按候选内全部nlink均可删除的distinct inode已分配块估算，外链计零，最终以完整du复核；非cache路径/内容SHA始终不变。这条同类经验写入memory，不再靠连续清cache猜释放量。
