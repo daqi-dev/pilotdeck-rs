@@ -138,7 +138,7 @@
 > **在途与红线**：#56旧四P2已由两家确认，C1双连接隔离已实际测20项；新增GLM F1为suffix状态只录不比，按P2-b作P1，已补checker/八控制并正复采18真实样本。#139首次驱动把Node隔离HOME传Cargo，rustup在_tmp自动下载工具链，触碰不下载预编译二进制红线，P0事件未闭合；失败/463MiB下载现场隔离保留不用。root核六原工具链SHA/预检后只准绝对绑定原安装、新target/offline恢复；重测成功不等于独立P0审阅通过。
 > **余账**：31单55子项分类仍欠GLM若干批，不报最终总数；#134真实越界P0及精确安全差异授权门、#65顺序P1、#52+#85A组合冻结前置仍未完成。五树，build12G+tmp23G约35G低于46G；当前片08:24启动、10:24前交接，后续调度继续，pdrs首次定时执行尚未发生。
 > ## 2026-10-16 · #56 sibling四项P2当轮候选补齐（产品b38ea44字节不变）
-> **边界补证**：checkpoint1182230的19项HTTP定向回归通过，含失败502+初始残head两格与GET /ws无token/POST合法升级。真实`p2-complete`18样本PASS：原12+POST两侧2+GET两侧2+fresh partial-suffix两侧2；两侧suffix实际均抛masked错误，TS head=3/Rust上游head=0、suffix逐字节到达，捕获时均未EOF/无帧，随后自有清理。12child全停、cleanupErrors空，普通GET均404/not found/EOF；all-targets clippy及fmt通过。
+> **边界补证**：当前19项HTTP定向回归通过；P2-02已提高为有效loopback origin的真实上游403握手拒绝→502，初始WS head→400终止、完整HTTP head→真实上游200恢复，均单次scripted初始read；GET /ws无token/POST合法升级显式路由一并通过。真实`p2-complete`18样本PASS：原12+POST两侧2+GET两侧2+fresh partial-suffix两侧2；两侧suffix实际均抛masked错误，TS head=3/Rust上游head=0、suffix逐字节到达，捕获时均未EOF/无帧，随后自有清理。12child全停、cleanupErrors空，普通GET均404/not found/EOF；all-targets clippy及fmt通过。
 > **原件与绑定**：主仓`_tmp/20261016-debt-cleanup/upgrade/`新增旧实际配置+源配置SHA索引`legacy-config-bindings.json`；新harness自生成各side配置，绑定Node版本/可执行SHA、关键源/dist及协议输入原件、每份配置前后SHA和raw观察/log。首轮log pipe自动end引起flush等待超时原件保留，已改finally独占log收尾并复采PASS；未改产品或冻结，无需重复A2。最终提交HEAD的严格18格复采/SIGTERM负控见同目录后续report，不将旧运行冒称新HEAD。
 > **交付限制**：四P2候选交两家增量及DS尚缺实际concurrency/boundary角色，CI新HEAD后root再核销；#56/#65/A4/A5.4、真人验收均不提前标完成。writer仍仅wt-a4m3，旧archive和原始/失败证据全保留。
 
