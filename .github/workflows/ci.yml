@@ -38,6 +38,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: upgrade 异常结束状态正负对照
+        working-directory: .
+        run: node --test src/pilotdeck-gateway/tests/upgrade/check_suffix.test.mjs
       # A3 · schema 正负例（ajv draft-07）：正例必须过、负例必须拒——含 run_get 省略 result 的线上语义。
       # 依赖钉在 scripts/gateway-parity/package.json（ajv/ts-json-schema-generator/typescript），npm ci 可复现。
       - name: gateway 协议 schema 正负例（ajv）
