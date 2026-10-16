@@ -7,9 +7,9 @@
 > 清单覆盖规约四份及 rust-routes.json、human-approvers.txt（路由审批白名单；改动属装置变更，须评审）、scripts/ui-server-parity 与 scripts/exp008 两目录的全部 Git 跟踪文件；实际文件必须等于 Git 跟踪清单，额外/未跟踪/缺失文件、链接、__pycache__、*.pyc 一律 FAIL；仅精确名为 .DS_Store 的普通文件不登记、不执行、不参与 hash。根 rust-toolchain(.toml) 若存在也纳入清单。所有 Python 入口带 -I，装置预检源码自身先校验哈希，本目录模块按已验哈希的绝对路径载入。威胁模型与每批新构建规则见 README 和 acceptance.md；不防同时篡改装置、清单与审批的本机恶意者。
 
 Approved-By: AI 代批，待人复核（协调者）
-Approval-Basis: _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/summary.json; _tmp/review-b2-freeze2/rev-glm.md; _tmp/review-b2-freeze2/rev-claude.md
-Calibration-Evidence: _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/summary.json; _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/final-ruler-72ccd4e0-a2bc-4adb-98f9-05919887e396.json; _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/ts-ruler-f32ed7c9-dbe1-4859-bc6e-a7f18809ccba.json; _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/driver.log
-Independent-Reviews: _tmp/review-b2-freeze2/rev-glm.md; _tmp/review-b2-freeze2/rev-claude.md
+Approval-Basis: specs/ui-server-parity/approval/calibration-summary.json; specs/ui-server-parity/approval/review-glm.md; specs/ui-server-parity/approval/review-claude.md
+Calibration-Evidence: specs/ui-server-parity/approval/calibration-summary.json; _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/final-ruler-72ccd4e0-a2bc-4adb-98f9-05919887e396.json; _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/ts-ruler-f32ed7c9-dbe1-4859-bc6e-a7f18809ccba.json; _tmp/archive/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/driver.log
+Independent-Reviews: specs/ui-server-parity/approval/review-glm.md; specs/ui-server-parity/approval/review-claude.md
 
 f6d385e8da46ed612ba5207dcdf588c8331cfe025a866bdb59bb7e02ff32a7cc  ../../scripts/exp008/compare.py
 3b8bec2dbcd28b3e99ee11017e4e37c3e59d873d2800331decf0f90a1fd25b24  ../../scripts/exp008/controls.py
@@ -64,3 +64,11 @@ b2004ddf95e02c24b307a9c20905d76437c3eae1a251cff189dd6836e3be85bf  ../../specs/ui
 a1cf65d93b72351eaf5fce8c5356bfaa3b40f56f401d41151123b78582412fc4  ../../rust-toolchain.toml
 7670c4a531150c7886d224ecdebb9eca3fa7724ac91ac8632cc98446d501964f  ../../specs/ui-server-parity/rust-routes.json
 0365b045f3ec15853726a26ccd7b4b6f54993c3d52d6c667f9b6e81341121a65  ../../specs/ui-server-parity/human-approvers.txt
+
+## 批准依据可移植化（#113，2026-10-16）
+
+仅迁移原定标摘要和两份原评审的引用，不更改已登记53文件、比较器、输入或判分。原始摘要保留PENDING_REVIEW/null/frozen=false的历史现场；最终批准由本登记及两份原评审共同记录。来源与残余边界见[批准依据索引](approval/README.md)。
+
+Approval-Source-SHA256: 5fe7f6c6dde4f2f1082cc0c986839397b2e6b42e05156a9008ffcba8c51e9c18  specs/ui-server-parity/approval/calibration-summary.json
+Approval-Source-SHA256: 108245ecb62996a9c88aa93659cfbcca6cc9e31c378dbc6983cd07da3ce3cf99  specs/ui-server-parity/approval/review-glm.md
+Approval-Source-SHA256: 5d3e308c3ab508f542b1eaf095465e240433ac13c62942f8b7680fcb93d7f890  specs/ui-server-parity/approval/review-claude.md
