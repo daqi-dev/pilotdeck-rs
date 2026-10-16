@@ -11,7 +11,9 @@
 
 Rust 测试 `dispatch::tests::list_projects_preserves_real_node_scandir_error_suppression`
 重新创建四个自有目录场景，用 NativeFiles 逐项确认真实 errno（非 root），
-再通过公开 dispatch 比较完整 response 对象。权限通过 Drop guard 恢复，
+再通过公开 dispatch 比较完整 response 对象。root若绕过chmod，明确输出
+`PDRS_UNAVAILABLE real-EACCES`并只把该分支记作真实权限不可达；EACCES录制
+错误replay在所有宿主仍必跑，不能把root结果记为真实EACCES通过。权限通过 Drop guard 恢复，
 临时目录只删除本次独占新建的根。保持既有吞错行为，不扩大 errno 白名单。
 
 ```sh
@@ -20,3 +22,8 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway list_projects_pre
 
 此批只覆盖 #120 的前两项；账本容量与调用链仍 OPEN，Linux errno 实效不在
 本批完成声明内。
+
+DeepSeek同类检查发现的 describe_storage/chat_dir/summary 真实错误入口原件
+仍未完成；对应TS describeWebProject/resolveProjectStorageDir/listProjectSessions
+路径不同，本批空projects四例不替代这些原件。该P2前置A4/#46收尾；Linux
+errno适用面仍按#117单独验实效。

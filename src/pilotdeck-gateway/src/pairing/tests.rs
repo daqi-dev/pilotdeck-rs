@@ -690,48 +690,38 @@ async fn authenticated_native_requests_match_ts_bytes_and_never_reach_upstream()
     pair.finish().await;
 }
 
+#[test]
+fn cjk_local_responses_match_node_without_upstream_requests() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/collation/cjk-node22.json"
+    ))
+    .unwrap();
+    crate::project_files::tests::assert_cjk_fixture_complete(&fixture);
+    let rows = fixture["rows"].as_array().unwrap();
+    crate::test_process::run_cases(
+        "pairing::tests::cjk_pair_worker",
+        rows.iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let mut env = crate::test_process::json_env(&row["env"]);
+                env.push(("PDRS_FIXTURE_ROW".into(), index.to_string()));
+                (format!("cjk-pair-{index}"), env)
+            })
+            .collect(),
+    );
+}
 #[tokio::test]
-async fn cjk_local_responses_match_node_without_upstream_requests() {
+#[ignore = "only launched by complete CJK matrix"]
+async fn cjk_pair_worker() {
     use base64::Engine;
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../tests/fixtures/collation/cjk-node22.json"
     ))
     .unwrap();
     crate::project_files::tests::assert_cjk_fixture_complete(&fixture);
-    const CHILD: &str = "PDRS_CJK_PAIR_ROW";
     let rows = fixture["rows"].as_array().unwrap();
-    let Ok(index) = std::env::var(CHILD) else {
-        for (index, row) in rows.iter().enumerate() {
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-            command.args([
-                "--exact",
-                "pairing::tests::cjk_local_responses_match_node_without_upstream_requests",
-                "--nocapture",
-            ]);
-            for (key, _) in std::env::vars_os() {
-                if key.to_string_lossy().starts_with("LC_")
-                    || matches!(
-                        key.to_str(),
-                        Some("LANG" | "PILOT_HOME" | "PILOTDECK_CONFIG_PATH" | "PILOT_AGENT_MODEL")
-                    )
-                {
-                    command.env_remove(key);
-                }
-            }
-            for (key, value) in row["env"].as_object().unwrap() {
-                command.env(key, value.as_str().unwrap());
-            }
-            let output = command.env(CHILD, index.to_string()).output().unwrap();
-            assert!(
-                output.status.success(),
-                "row {index}: {}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        return;
-    };
-    let row = &rows[index.parse::<usize>().unwrap()];
+    let index: usize = std::env::var("PDRS_FIXTURE_ROW").unwrap().parse().unwrap();
+    let row = &rows[index];
     let mut count = 0;
     for case in row["cases"].as_array().unwrap() {
         let mut metadata = crate::project_files::tests::snapshot_metadata(row);
@@ -768,33 +758,19 @@ async fn cjk_local_responses_match_node_without_upstream_requests() {
         count += 1;
     }
     assert_eq!(count, 12);
+    crate::test_process::receipt(&format!("cjk-pair-{index}"));
 }
 
+#[test]
+fn same_catalog_method_replies_locally_for_ascii_and_unicode_on_one_pair() {
+    crate::test_process::run_cases(
+        "pairing::tests::mixed_catalog_worker",
+        vec![("mixed-catalog".into(), vec![("LANG".into(), "C".into())])],
+    );
+}
 #[tokio::test]
-async fn same_catalog_method_replies_locally_for_ascii_and_unicode_on_one_pair() {
-    const CHILD: &str = "PDRS_CATALOG_MIXED_PAIR";
-    if std::env::var_os(CHILD).is_none() {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("LC_")
-                || matches!(
-                    key.to_str(),
-                    Some("LANG" | "PILOT_HOME" | "PILOTDECK_CONFIG_PATH" | "PILOT_AGENT_MODEL")
-                )
-            {
-                command.env_remove(key);
-            }
-        }
-        let output = command.args(["--exact", "pairing::tests::same_catalog_method_replies_locally_for_ascii_and_unicode_on_one_pair", "--nocapture"])
-            .env(CHILD, "1").env("LANG", "C").output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
+#[ignore = "only launched by mixed catalog parent"]
+async fn mixed_catalog_worker() {
     use crate::metadata::object;
     use base64::Engine;
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -872,6 +848,7 @@ async fn same_catalog_method_replies_locally_for_ascii_and_unicode_on_one_pair()
     silent(&mut pair.server).await;
     pair.server.shutdown().await.unwrap();
     pair.finish().await;
+    crate::test_process::receipt("mixed-catalog");
 }
 
 #[tokio::test]
@@ -1402,41 +1379,31 @@ async fn mapped_but_unmeasured_project_errnos_forward_original_frames_and_relay_
     pair.finish().await;
 }
 
-#[tokio::test]
-async fn catalog_errno_oracles_reply_locally_with_no_upstream_request() {
+#[test]
+fn catalog_errno_oracles_reply_locally_with_no_upstream_request() {
     let fixture = crate::session_model::tests::catalog_io_fixture();
     let rows = fixture["cases"].as_array().unwrap();
     assert_eq!(rows.len(), 13);
-    const CHILD: &str = "PDRS_CATALOG_ERRNO_ROW";
-    let Ok(index) = std::env::var(CHILD) else {
-        for (index, row) in rows.iter().enumerate() {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "pairing::tests::catalog_errno_oracles_reply_locally_with_no_upstream_request",
-                    "--nocapture",
-                ])
-                .env_clear()
-                .envs(
-                    row["env"]
-                        .as_object()
-                        .unwrap()
-                        .iter()
-                        .map(|(k, v)| (k, v.as_str().unwrap())),
-                )
-                .env(CHILD, index.to_string())
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        return;
-    };
-    let row = &rows[index.parse::<usize>().unwrap()];
+    crate::test_process::run_cases(
+        "pairing::tests::catalog_errno_worker",
+        rows.iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let mut env = crate::test_process::json_env(&row["env"]);
+                env.push(("PDRS_FIXTURE_ROW".into(), index.to_string()));
+                (row["id"].as_str().unwrap().into(), env)
+            })
+            .collect(),
+    );
+}
+#[tokio::test]
+#[ignore = "only launched by complete catalog matrix"]
+async fn catalog_errno_worker() {
+    let fixture = crate::session_model::tests::catalog_io_fixture();
+    let rows = fixture["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 13);
+    let index: usize = std::env::var("PDRS_FIXTURE_ROW").unwrap().parse().unwrap();
+    let row = &rows[index];
     let metadata = crate::session_model::tests::snapshot(row);
     let (client, downstream) = tokio::io::duplex(1024 * 1024);
     let (upstream, server) = tokio::io::duplex(1024 * 1024);
@@ -1464,4 +1431,5 @@ async fn catalog_errno_oracles_reply_locally_with_no_upstream_request() {
     silent(&mut pair.server).await;
     pair.server.shutdown().await.unwrap();
     pair.finish().await;
+    crate::test_process::receipt(row["id"].as_str().unwrap());
 }

@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 · #120首轮外审修复候选（基于f8c32ea）
+> **处理**：DS-C1/GLM-S1按独立ignored worker+完整父入口修复；共享helper限30s/64KiB、非阻塞收集、RAII kill/reap，要求恰1个test与实际case ID回执。旧四处启动同类迁移。method/loader/rpc变异负控已补；root免权限时显式记录真实EACCES不可达，所有宿主仍必跑录制错误replay。维护版Node收集器已入tests并在新隔离目录复录13项，与原件request/response/load/io/env/process逐项相同。
+> **验证边界**：污染旧全部child环境及新selector后，catalog父入口仍13唯一回执，CJK pair/files各9回执、mixed及round4/5各1；零匹配/无错重复回执/失败/超时/超输出均拒绝。原始输出和绑定在主仓catalog/revision-*；root权限实际分支本机非root未执行，不能冒认真实root实效。仍待两家增量终审与新HEAD CI，不关#120第三项。
+> **新增同类未完**：DS-S1 describe_storage/chat_dir/summary三条真实errno oracle需独立default链、会话目录及birthtime/mtime证据，未在本批15分钟窗口内补齐；保持P2，前置A4/#46收尾（Linux适用面随#117），不以list_projects四例替代。独立issue由root归账；延期仍未完成。
+
+
 > ## 2026-10-16 · #120前两项可审候选（codex/debt-catalog，基于8745ddd）
 > **实现范围**：catalog本method真实Node22.22 RPC新增13个global stat/read errno原件；Rust逐字节wire、有序诊断、六errno独立method准入与未知errno整请求host边界、pairing零上游及空/截短/重复负控。list_projects复用四个真实Node公开入口原件，Rust NativeFiles重造ENOENT/ENOTDIR/EACCES/empty四场景并经dispatch逐项比较。生产映射与冻结规约不变。
 > **证据与闸门**：主仓 `_tmp/20261016-debt-cleanup/catalog/` 保存收集脚本、13份无路径替换raw-rpc、来源哈希、原始测试输出及verification.json；fmt/clippy与定向catalog/list/whitelist验证以该清单为准。候选待root安排GLM simplify、DeepSeek实际三角色及两家独立终审，未push/开PR/关闭issue。

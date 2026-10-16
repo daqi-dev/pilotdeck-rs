@@ -406,6 +406,22 @@ fn catalog_rpc_has_its_own_real_filesystem_errno_oracle() {
         broken["cases"] = replacement.into();
         assert!(!catalog_io_cases_complete(&broken));
     }
+    let mut wrong_method = fixture.clone();
+    let mut request: serde_json::Value =
+        serde_json::from_str(wrong_method["cases"][0]["request"].as_str().unwrap()).unwrap();
+    request["method"] = "session_model_get".into();
+    wrong_method["cases"][0]["request"] = request.to_string().into();
+    assert!(!catalog_io_cases_complete(&wrong_method));
+    println!("PDRS_REJECTED_FIXTURE wrong-method");
+    for phase in ["loader", "rpc"] {
+        let mut broken = fixture.clone();
+        broken["cases"][0]["io"]["observations"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|entry| entry["phase"] != phase);
+        assert!(!catalog_io_cases_complete(&broken));
+        println!("PDRS_REJECTED_FIXTURE missing-phase-{phase}");
+    }
 }
 #[test]
 fn catalog_unknown_errno_keeps_both_global_fs_boundaries_on_host() {
