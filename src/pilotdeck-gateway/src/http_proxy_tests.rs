@@ -463,14 +463,36 @@ async fn initial_partial_frame_suffix_is_not_rejoined_with_discarded_prefix() {
     .expect("initial head prefix must never be restored");
 }
 
-// Pre-registered candidate boundary: after an upstream failure, initial head
-// bytes are still Hyper HTTP input. Invalid WS bytes terminate via HTTP 400;
-// a complete ordinary request in that buffer is handled as keepalive input.
+// Pre-registered candidate boundary: after a real upstream handshake rejection,
+// invalid initial WS head yields HTTP 400 and termination; a complete ordinary
+// HTTP request in the same initial read is forwarded successfully afterward.
 #[tokio::test]
 async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
     use hyper_util::{client::legacy::Client, rt::TokioExecutor};
     timeout(Duration::from_secs(3), async {
         for valid_http_head in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            let host = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut headers = Vec::new();
+                while !headers.ends_with(b"\r\n\r\n") {
+                    headers.push(stream.read_u8().await.unwrap());
+                }
+                assert!(headers.starts_with(b"GET /ws HTTP/1.1\r\n"));
+                stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+                stream.shutdown().await.unwrap();
+                if valid_http_head {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut headers = Vec::new();
+                    while !headers.ends_with(b"\r\n\r\n") {
+                        headers.push(stream.read_u8().await.unwrap());
+                    }
+                    assert!(headers.starts_with(b"GET /health HTTP/1.1\r\n"));
+                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nhealthy").await.unwrap();
+                    stream.shutdown().await.unwrap();
+                }
+            });
             let (io, mut client) = tokio::io::duplex(4096);
             let count = Arc::new(AtomicUsize::new(0));
             let trailing = if valid_http_head {
@@ -479,17 +501,12 @@ async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
                 client_frame(0x81, 126, b"invalid HTTP head")
             };
             let initial = [REQUEST, trailing.as_slice()].concat();
-            let io = Scripted {
-                io,
-                reads: [initial].into(),
-                count: count.clone(),
-            };
+            let io = Scripted { io, reads: [initial].into(), count: count.clone() };
             let proxy = Arc::new(Proxy {
-                upstream: "invalid upstream".into(),
+                upstream: origin,
                 client: Client::builder(TokioExecutor::new()).build_http(),
             });
             let server = tokio::spawn(proxy.serve_connection(io));
-            // The complete input, including the initial head, is one read.
             let mut response = String::new();
             client.read_to_string(&mut response).await.unwrap();
             assert!(response.starts_with("HTTP/1.1 502"), "{response}");
@@ -497,17 +514,16 @@ async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
             assert_eq!(count.load(Ordering::SeqCst), 1);
             let result = server.await.unwrap();
             if valid_http_head {
-                assert_eq!(response.matches("HTTP/1.1 400").count(), 1, "{response}");
-                assert!(response.ends_with("invalid request URI"));
+                assert_eq!(response.matches("HTTP/1.1 200").count(), 1, "{response}");
+                assert!(response.ends_with("healthy"));
                 result.unwrap();
             } else {
                 assert_eq!(response.matches("HTTP/1.1 400").count(), 1, "{response}");
                 assert!(result.unwrap_err().is_parse());
             }
+            host.await.unwrap();
         }
-    })
-    .await
-    .expect("initial head plus failed upgrade must terminate or serve the next HTTP request");
+    }).await.expect("initial head plus failed upgrade must terminate or serve the next HTTP request");
 }
 
 #[tokio::test]
