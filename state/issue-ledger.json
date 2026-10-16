@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "ALL_ROWS_RECEIVED_SCOPE_QUALIFICATIONS_RECONCILIATION_REQUIRED",
-  "asOf": "2026-10-16T06:06:15.776274+00:00",
+  "asOf": "2026-10-16T06:40:41.779740+00:00",
   "remoteStatusAsOf": "2026-10-16T04:54:58.583176+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
@@ -184,6 +184,44 @@
             "_tmp/20261016-debt-cleanup/reviews/tool-boundary-incident.md"
           ],
           "note": "没有删除前stat/listing；不推断用户数据已丢，也不得以重建birthtime宣称无损。未知继续记未完成。"
+        }
+      ]
+    },
+    {
+      "number": 145,
+      "url": "https://github.com/zhengdaqi/pilotdeck-rs/issues/145",
+      "githubState": "OPEN",
+      "subitems": [
+        {
+          "id": "145.1",
+          "title": "未知开子聚合的状态与计数保真守卫",
+          "primaryType": "验收债务",
+          "severity": "P2",
+          "severityDisposition": "P2-c",
+          "confirmation": "candidate",
+          "state": "deferred",
+          "fixed": false,
+          "prerequisite": "R42之后首个reducer变更，或首个aggregates非空且excludedUnknownChildIds非空行正式入账，二者先到者",
+          "currentReachability": "NO_INSTANCE_IN_CURRENT_AGGREGATES",
+          "runtimeWrongOutputConfirmed": false,
+          "issue144CoversThisDebt": false,
+          "review": {
+            "deepseek": {
+              "severity": "P2",
+              "severityDisposition": "P2-c",
+              "source": "_tmp/20261016-debt-cleanup/reviews/ledger-resource-current-close-deepseek.md",
+              "sourceSHA256": "54287292e1a2ccb80b979ca0c7cd1a917b2207e3a7dbddf716eec3935584bb4f"
+            },
+            "glm": null
+          },
+          "coordinatorTypeDisposition": {
+            "decision": "R43",
+            "status": "AI代批，待人复核",
+            "typeIsCoordinatorJudgment": true,
+            "independentTypeNotClaimed": true
+          },
+          "wholeProjectApproval": false,
+          "frozenSemanticAuthorization": false
         }
       ]
     }
@@ -7219,7 +7257,7 @@
       "sha256": "e8da86ba8ffec3a1d3f7d7949c130d24feb5996ff8d1324a937469f84b4061af"
     },
     "_build/wt-d6/state/decisions-20261016.md": {
-      "sha256": "95d2773c246097309d2b4420ce76a6075a4bfefdb4166979e97f713461eb3cd7"
+      "sha256": "2c48702616916d8a1e7f2759a72bf8bc3f86f34ac1b5cc61241d66182d246bc8"
     },
     "_tmp/20261016-debt-cleanup/reviews/suffix-predecision-glm.md": {
       "sha256": "a5de4e81b2498c28e01bb95a9d58a136c0fd6c687e2bec7dff56ea631eec838e"
@@ -7280,6 +7318,15 @@
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-stage-rest-glm.md": {
       "sha256": "544986244dd5f6fca08bf43d407a5c38f92652d1c1edfa54846e208ae81d645a"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/issue145-registration.json": {
+      "sha256": "f417fba94f2218bfa16f3f0ca593e3154adad68bc1a9d13e0f395318e6beeee1"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/remote-readback-b3msastn/issue145.json": {
+      "sha256": "460fa4cd82ef7d2928d29a0525ec5fdb107352ade81abaa426e6026ded30b82f"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/ledger-resource-current-close-deepseek.md": {
+      "sha256": "54287292e1a2ccb80b979ca0c7cd1a917b2207e3a7dbddf716eec3935584bb4f"
     }
   }
 }

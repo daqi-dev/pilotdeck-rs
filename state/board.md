@@ -1,5 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+
+> ## 2026-10-16 14:43 · 145快照外登记候选与本片接续
+> 当前33open已实际GitHub读回；PR143@97e7854的check/gateway-schema-baseline（38861249706）绿。新145.1由R43单独登记，当前canonical SHA cadb6bc7e50a353a342c0db290e62b94312c577421fd656f9747f4a1237e25cb，主类协调者AI待复核、DS P2-c、candidate/deferred/fixedfalse，先到节点与无当前实例明确；登记不等于还债。原31/55、139/144逐字段全同，R42源批次/基线/采纳及155原件SHA保留。新三输入仅post-type最终绑定；42项保真与21负控实际通过/拒绝，proof issue145-extension-proof/index.json SHA2fa1f00d…，正式audit current-gx_20c36。producer0e87536d/audit4d821a12/renderer730e8d1d；新42-ID合同不能用旧41报告冒过。中央唯一队列已接精确增量，整PR仍Draft。
+> 本片14:30:46启动、16:30前交接；root持有wt-d6，ledger_fidelity持有wt-a4m3的65实验护栏准备，其他树root且保护旧工作。65源码a05cc2b只准备日志限额与失败gate释放，仍未Cargo/child；旧379及整个112000 target不覆盖。五树/约45.37GiB，先为全新独立target核可恢复cache与完整保留证据；无第二provider队列，不逐单等人批准。
+
 > **14:25新债登记**：DS实际P2-c已开#145（未知开子聚合状态/计数），前置于R42后首个reducer变更或首次新未知聚合入账先到者；144.2未来计数面保原单。最新open为33，原31/55+139/144的55c JSON尚未扩145，下一调度须同步这一快照外项，不能据旧32或局部零报清账完成。
 
 > ## 2026-10-16 14:24 · 本片调度交接（12:27:16启动，14:27:16前交后续）
