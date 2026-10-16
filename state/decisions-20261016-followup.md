@@ -102,3 +102,8 @@ R67实际入口落实：R66 index9e3d224248c889f84a9f19a0da52ce279699ee8ebc49626
 ## R69 首失败总结与fixture假设的便宜收尾（自决）
 
 GLM B当前P2a指出finally三处覆盖已有error，当前原始binding/FAIL仍保但summary会丢首失败；本PR便宜改成??=。C计数fixture依赖当前Hyper缓冲，新增准确假设注释不变断言。任务`_tmp/20261016-debt-cleanup/upgrade-summary-r69-gvx7onm9/task.md`；ready_capture_fix独占CLI，10min/512KiB源码及小VM事实控制，禁止Cargo/recorder/生产，随后两非作者仅窄diff与新CI。原则：首失败与后置独立失败都保留，叙述当前缓冲假设不能松原检查。
+
+
+## R70 未来扩域P2-c具体前置登记（自决·待复核）
+
+依据现行三分、中央upgrade-helper35/R59/R67独立scope门，当前有具体未来消费者但未产生错误输出的source码2项与Ready扩域9组，按p2-future-disposition-fjh9oump两张body表登记P2-跟进；每项写首次节点和可复现验收。当前便宜F4/F6、R69不转延期，缺整crate或产品recorder证据照留P1。原31/55 canonical快照不重写；实时issue增加必须如实计数，不冒存量清零。判断为AI代批待人复核，非修改冻结或审阅者等级。原则：合并同类项保留子项与具体到点义务，不用一张总issue隐藏新欠项。
