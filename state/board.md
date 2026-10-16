@@ -1,5 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 12:22 · 本片交接准备：7079尾差与新数值P1候选
+> PR141最新7079c3512cb9d267000dd450c90eab8a81cbdcb0已推、CLI clean、writer归root、两CI实际绿。仅tests.rs的A-N1 pure validator：完整11成功API闭包/未知拒绝，四个已知内部观察仍合法，failure策略不变；已有120000 target定向unit、metadata3/2ignored、前代真实十输入complete/API合法性、clippy/fmt均0。**未新录Node/Native或重跑fresh driver**，9e完整链原绑定保留。DS已按9e核心/guard/当前trusted-memory callee闭合旧两P1，当前尾差与GLM必要范围仍待；PR保持Draft、139/P0未关闭。
+> **新增未修139.1 facet**：额外dynamic Snapshot完整RPC复算失败，facts.birth_ms和Node createdAt原文字面都1792123157858.0955，Rust输出0957（首次把facts说0957的简述已纠正留痕）。极小Rust实测serde_json parse变1ULP，标准parse与原Node22纯JSON实测同bits...187/0955，serde为...188/0957。原件不改/不舍入、不擅加feature；candidate P1/fixedfalse、独立定级及精确修复前置PR141，不能为A-N1单项绿抹掉。9e静态三replay/真实Native十+pair十与该dynamic Snapshot模式分域，不泛化否定或扩张成功。metadata/success-api-report.md、25项索引SHA2d31c144...、extra-rpc-mismatch/float-probe/node-float-probe原件齐；R34留判断卡。
+> 唯一JSON已吃12条graded独立修订+2条unknown撤档，35项保真/新facet断言过；DS/GLM55行已收但类型/范围/规范分歧仍未闭。47人批vs合法AI代批、61.1未来范围、94.1/85测量语义等保留高档及限定，不允许模型增加新审批门，也不作者自降未闭等级。543aa2c备审四角色包固定旧8条，当前12条与新facet需补精确增量；PR143新tip CI另核。#117/#133已按两家P1验收债更新远端标题/标签/证据评论，真实Linux行为仍unknown；65默认反例/56资源未知已贴原单，二单仍OPEN。
+> order379与resource05c7e60分支已推，原PR138988/PR142d148本地远端原样保留；resource实际执行b83，后续只加固定公开WebSocket nonce的精确扫描误报指纹，原异常/纯证明/gitleaks通过全留。最后完整du22634612+24109756KiB=44.58GiB/46，五树均root持有，未知none/与用户研究不动；本片不再开target，后续确需构建先重新核全量du+余量/归属，不把本片限制升级为永久停工。
+> **唯一下一就绪任务**：139.1数值解码P1候选独立定级/精确修复及适用复验，中央继续必要GLM增量和分类规范分歧；再PR138实际boundary/PR143角色。中央debt_review_prepare唯一两家串行队列owner，实际在途读主仓_tmp/20261016-debt-cleanup/reviews/{central-current-status.json,central-handoff.md}；无产品writer在途，不重启第二队列。main仍7781b18，本片无新合并。12:28:18前按主仓scheduler-handoff.md交后续；已实收heartbeat10:28，接续有效、不等待逐单批准。
+
+
 > ## 2026-10-16 12:06 · 全55行分类意见到齐，测量P1修复候选9e已推
 > 唯一账本state/issue-ledger.json已收DS55/GLM55行；GLM54初始分类加113.1特定修复确认，显式等级53/类型51，不等于完成分级或全局清零。原31单55子项、快照外139/144四子项分列；远端12:03核32open=原31减113加139/144。8条有理由的独立graded修订与2条明确撤档分列，原文/初始意见/未知/PARTIAL保留；117/133两家均P1但实际Linux行为未知、验收债仍延期未完，98.4两家P2，134.2授权验收门现P1，55.2/56.2等级null仅条件排队上界。34项纯JSON保真/输入SHA/新139.1当前P1断言全过，不替真人验收或独立分级终审。完整派生表主仓_tmp/20261016-debt-cleanup/taxonomy/disposition-report.md；唯一真相仍JSON。
 > PR141作者已冻结推9e164859，CLI clean、writer交root、锁释放；最新两项CI实际绿。fixture原168154B/SHA995400b...未改；补独立字面SHA锚/13执行源，以及entries/read/stat/session_summary四Files边界API/路径/结果集合对真实Node观察。两生产错read/stat实测before0→after101、静态facts/response伪造实测接受→新锚拒绝，三guard-removal变异101和健康restoration0分列。fresh120000实际driver10Node/3replay/10Native10pair、三mode493恢复、13源Gitblob/六工具/组件/后核、fmt/clippy与控制通过。原P2债139.1因测量假PASS按P2b升P1，旧档保留，9e只是修复候选；P0事故139.2、139整体和双非作者实际流程仍OPEN。全部原件metadata/provenance-report.md与566项SHA索引；中央唯一队列已接精准增量。
