@@ -27,10 +27,21 @@ observer-fence，十项各自核对，无 describe_project 请求上游。
 
 Snapshot 只接受已登记事实或错误中的 API/path 组合；未知请求直接 panic，不能用
 可被产品吞掉的默认 ENOENT 代替。direct、pairing 和保留现场 Native 都记录生产实际
-entries 请求的路径与成功/errno，断言其使用该行 errorTarget；独立探测正确目录不算
-生产请求证据。这里只锁定目标请求，不要求 Rust 与 Node 的全部内部 I/O 轨迹一致。
+entries/read/stat/session_summary 的路径及成功/errno，核对归一后的 Node 观察集合，
+并断言 errorTarget 被使用；独立探测正确目录不算生产请求证据。同步/异步 API 合并，
+fsp.open 代表 session_summary 边界，handle 内部读取与 existsSync 不作为独立 Files
+请求；不比较次数和顺序。成功结果记成功状态，数据与时间仍由固定事实及完整 RPC 校验。
 两个空 RPC 的 missing 场景保留错目录负控，expectedError 与 observation.code 各自有
 单轴负控；errorTarget 还必须匹配 home/projects 或 chats。
+
+静态 fixture 的全部168154字节固定为原 Node 录制 SHA256
+`995400bce07ef1bee5e4e0d6d3766343ae0229e21eac496394b6866e68518c7c`，独立字面量
+位于 Rust loader，解析前校验；不信任 JSON 自报 sources/owner 等元数据。它与主仓
+`_tmp/20261016-debt-cleanup/metadata/metadata-io.json` 原件逐字节相同，初录命令与收集器
+身份见该目录 record-runner.json，绑定证据见 provenance-original-binding.json。新增录制
+需保留新 Node 原件并独立复核锚的更新，不能由 Rust 回填期望。驱动 source allowlist
+由12项扩为13项，新增此 JSON，控制核精确集合及该文件运行中漂移。早前12源执行索引
+保持原有范围；本次13源/定向与静态锚负控见 provenance-handoff-index.json。
 
 权限以实际能力为前提。若 chmod 未能制造目标 EACCES，Node 标 NOT_RUN 并退出2；
 不能因为 root 或其他权限覆盖而记空 PASS。收集器保留受限目录到 Native 验证结束，
@@ -104,6 +115,12 @@ Node 控制及十二源 SHA 绑定，未重新执行完整 Rust 链；不能将0
 的逐项 SHA 对应关系见 `path-head-binding.json`，精确 argv/env、负控和旧件继承见
 `path-handoff-index.json`。这里的完整链属于新增路径护栏源码，不能反向追认早前尾差
 已经执行过它；静态 fixture 来源边界和其他条件项仍由独立评审判断。
+
+后续静态 SHA 锚与四个 Files 边界集合的联合版本，另用全新
+`_build/20261016-120000-metadata` 跑实际 driver；原件为主仓 metadata 的
+`provenance-fresh-verified/verification.json`。这轮包含新增静态 JSON 在内的13源前后
+绑定、真实 Node/Native/pairing 以及权限恢复，见 provenance-handoff-index.json；
+旧12源索引不改写。独立评审/CI/P0与139的治理结论仍不能由作者的成功运行代填。
 
 
 BND2输入交接：录制器每次真实chmod前先同步写出原path/mode计划到驱动pipe，写全后才改权限；最后将一次序列化的完整oracle同样送入pipe。驱动保留至多1MiB输出在内存，完整oracle与三项原permission计划必须一致，工作文件只作被验证副本。replay/Native前后、cleanup及最终报告前逐字节核对；文件改目标、改mode或删除都FAIL，仍按内存原计划恢复并stat原目标。报告记录原permission、completeOracle、artifactUnchanged、restored和真实回执，不从改过的JSON重新选期待。
