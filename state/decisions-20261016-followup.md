@@ -97,3 +97,8 @@ R67实际入口落实：R66 index9e3d224248c889f84a9f19a0da52ce279699ee8ebc49626
 ## R68 当前Ready源内两便宜P2a同轮还（自决）
 
 两家F4/F6判据已明确，采用严格当轮修：仅ready_admission.rs去deadqualified两字段、在原256KiB首超字节前限制读取，不改共同gate/score/生产/冻结。任务`_tmp/20261016-debt-cleanup/order-architecture/ready-line-r68-f3za19ti/task.md`。新增三永久std控制；同源standalone只验证新helper，并对14真实parsed pipe数组重序列化回算，明示非原raw字节或整crate重跑。root唯一a4 writer，R67已实际结束后才动；8MiB/early6/.20reserve、原rustc60/test10/total120/流256KiB，一次并保源与工具原件SHA，新CI/双非作者仍待。原则：非权威诊断不伪装资格，资源上限须限制实际读取再解析；真实旧数据复算与新整体运行分列。
+
+
+## R69 首失败总结与fixture假设的便宜收尾（自决）
+
+GLM B当前P2a指出finally三处覆盖已有error，当前原始binding/FAIL仍保但summary会丢首失败；本PR便宜改成??=。C计数fixture依赖当前Hyper缓冲，新增准确假设注释不变断言。任务`_tmp/20261016-debt-cleanup/upgrade-summary-r69-gvx7onm9/task.md`；ready_capture_fix独占CLI，10min/512KiB源码及小VM事实控制，禁止Cargo/recorder/生产，随后两非作者仅窄diff与新CI。原则：首失败与后置独立失败都保留，叙述当前缓冲假设不能松原检查。
