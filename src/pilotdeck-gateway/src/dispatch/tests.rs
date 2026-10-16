@@ -523,11 +523,11 @@ fn list_projects_preserves_real_node_scandir_error_suppression() {
         let scan = actual.metadata.files.entries(&actual.root.join("projects"));
         if name == "empty" {
             assert!(scan.unwrap().is_empty());
-        } else if name == "denied" && scan.is_ok() && rustix::process::geteuid().is_root() {
-            // Privileged hosts cannot reproduce EACCES with chmod. Keep the
+        } else if name == "denied" && scan.is_ok() {
+            // Root or a permissive filesystem may ignore chmod denial. Keep
             // recorded error replay below mandatory and report this boundary.
             eprintln!(
-                "PDRS_UNAVAILABLE real-EACCES: privileged host; recorded EACCES replay required"
+                "PDRS_UNAVAILABLE real-EACCES: privilege/filesystem permits access; recorded replay required"
             );
         } else {
             let error = scan.unwrap_err();

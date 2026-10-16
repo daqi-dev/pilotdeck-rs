@@ -1,5 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 · PR137增量边界修复
+> DS增量确认首轮廉价finding闭合，另P2指出非root宽松/FUSE文件系统也可能无法制造chmod EACCES；测试按真实scan结果标不可达而非仅geteuid，录制错误replay仍必跑。此分支当前宿主未实际触发，不假称root/FUSE实效通过。metadata三入口证据债已绑定#139，前置A4/#46收尾，延期仍未完成；#120第三项/#117保持OPEN。
+
 > ## 2026-10-16 · #120首轮外审修复候选（基于f8c32ea）
 > **处理**：DS-C1/GLM-S1按独立ignored worker+完整父入口修复；共享helper限30s/64KiB、非阻塞收集、RAII kill/reap，要求恰1个test与实际case ID回执。旧四处启动同类迁移。method/loader/rpc变异负控已补；root免权限时显式记录真实EACCES不可达，所有宿主仍必跑录制错误replay。维护版Node收集器已入tests并在新隔离目录复录13项，与原件request/response/load/io/env/process逐项相同。
 > **验证边界**：污染旧全部child环境及新selector后，catalog父入口仍13唯一回执，CJK pair/files各9回执、mixed及round4/5各1；零匹配/无错重复回执/失败/超时/超输出均拒绝。原始输出和绑定在主仓catalog/revision-*；root权限实际分支本机非root未执行，不能冒认真实root实效。仍待两家增量终审与新HEAD CI，不关#120第三项。
