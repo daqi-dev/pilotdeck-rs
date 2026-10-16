@@ -112,3 +112,8 @@ GLM B当前P2a指出finally三处覆盖已有error，当前原始binding/FAIL仍
 ## R71 以main干净源分支交付已验证装置（自决·待复核）
 
 旧a4@7b混有历史state/CLAUDE，不能把其整体HEAD误作新PR当前规则或新证据。选择同一a4树新codex/ready-admission-probe从mainb888，仅Git恢复31个src已提交blob；old-source逐blob登记，旧branch/backup正常推送保全部历史，不删除、不强推、不增树。README陈旧准备态改当前真实范围及历史索引；源仍GPT作者，中央按新增callee覆盖缺口补两家/角色，DS R68验收P1照留。任务`_tmp/20261016-debt-cleanup/order-architecture/ready-delivery-r71-mlsu8fme/task.md`。可撤回，仅诊断/测试源码，不改变默认生产/冻结/意向；新PR先Draft和CI，不因搬源声称65完成。原则：交付范围与历史证据身份分开，清洁分支不能清掉未闭合债。
+
+
+## R72 当前源码闸门的便宜增量（自决）
+
+PR150实际CI check五lint失败保原件：两opt-in compiletimeOption的unwrap与三可合并if；采用Option对Some(actualHEAD)的断言，缺值仍拒绝运行但默认CI可编译，三if纯等价合并。root独占a4；CLI R69双家还要求两同类buffer注释，ready_capture_fix只补同类不动断言。任务`_tmp/20261016-debt-cleanup/current-ci-r72-icd1vhzx/task.md`；sourceonly/各512KiB、不本地Cargo或重跑产品，正常push后新CI，两家只增量。原则：CI真实失败按原条件等价修复，不放松门；同类假设说明补齐所有消费者。
