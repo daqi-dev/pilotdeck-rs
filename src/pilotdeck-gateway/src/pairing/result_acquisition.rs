@@ -611,18 +611,11 @@ mod notify_controls {
     use super::*;
     use std::{
         future::Future,
-        sync::mpsc,
         task::{Context, Poll, Wake, Waker},
-        thread::{self, JoinHandle},
     };
 
-    const CONTROL_WAIT: Duration = Duration::from_millis(1500);
-
     #[derive(Default)]
-    struct CountWake {
-        count: Mutex<usize>,
-        changed: Condvar,
-    }
+    struct CountWake(AtomicUsize);
 
     impl Wake for CountWake {
         fn wake(self: Arc<Self>) {
@@ -630,82 +623,13 @@ mod notify_controls {
         }
 
         fn wake_by_ref(self: &Arc<Self>) {
-            *self.count.lock().unwrap() += 1;
-            self.changed.notify_all();
+            self.0.fetch_add(1, Ordering::SeqCst);
         }
     }
 
     impl CountWake {
         fn count(&self) -> usize {
-            *self.count.lock().unwrap()
-        }
-
-        fn wait_for_one(&self) {
-            let count = self.count.lock().unwrap();
-            let (count, timed) = self
-                .changed
-                .wait_timeout_while(count, CONTROL_WAIT, |count| *count == 0)
-                .unwrap();
-            let observed = *count;
-            drop(count);
-            assert!(
-                !timed.timed_out() && observed == 1,
-                "one real wake required"
-            );
-        }
-    }
-
-    struct OwnedProducer {
-        cleanup: Option<OwnedRunCleanup>,
-        task: Option<JoinHandle<()>>,
-    }
-
-    impl OwnedProducer {
-        fn new(tap: Tap) -> Self {
-            Self {
-                cleanup: Some(OwnedRunCleanup::new(tap)),
-                task: None,
-            }
-        }
-
-        fn start(
-            &mut self,
-            tap: Tap,
-            frame: frame::Frame,
-            route: Route,
-            done: mpsc::SyncSender<()>,
-        ) {
-            assert!(self.task.is_none());
-            self.task = Some(thread::spawn(move || {
-                // This is the actual production-test call order, not a copied state machine.
-                tap.route_returned(&frame, &route);
-                tap.closure_result(&frame, &route);
-                // A receiver dropped by an assertion unwind is already a test
-                // failure; finish the owned thread instead of adding a panic.
-                let _ = done.send(());
-            }));
-        }
-
-        fn release(&mut self) {
-            // Exercise the real cleanup guard on normal and assertion-unwind paths.
-            drop(self.cleanup.take());
-        }
-
-        fn finish(mut self) {
-            self.release();
-            self.task.take().unwrap().join().unwrap();
-        }
-    }
-
-    impl Drop for OwnedProducer {
-        fn drop(&mut self) {
-            self.release();
-            if let Some(task) = self.task.take() {
-                let joined = task.join();
-                if !thread::panicking() {
-                    assert!(joined.is_ok(), "owned Tap producer panicked");
-                }
-            }
+            self.0.load(Ordering::SeqCst)
         }
     }
 
@@ -756,13 +680,11 @@ mod notify_controls {
     async fn actual_tap_notify_before_await_preserves_bypass_and_barrier() {
         let (tap, frame, route) = fixture("notify-before");
         let expected = copy_result(&frame, &route);
-        let (done_tx, done_rx) = mpsc::sync_channel(1);
-        let mut producer = OwnedProducer::new(tap.clone());
-        // Pre-release only this variant so both real producer calls can complete
-        // before either future exists; notify_one's stored permits must be safe.
-        producer.release();
-        producer.start(tap.clone(), frame, route, done_tx);
-        done_rx.recv_timeout(CONTROL_WAIT).unwrap();
+        // The actual cleanup releases the real gate before synchronous producer
+        // calls. Both notifications precede creation of either consumer future.
+        drop(OwnedRunCleanup::new(tap.clone()));
+        tap.route_returned(&frame, &route);
+        tap.closure_result(&frame, &route);
 
         let wake = Waker::from(Arc::new(CountWake::default()));
         let mut context = Context::from_waker(&wake);
@@ -772,14 +694,13 @@ mod notify_controls {
         assert_result(bypass.as_mut().poll(&mut context), &expected);
         let mut empty_bypass = Box::pin(tap.bypassed());
         assert!(empty_bypass.as_mut().poll(&mut context).is_pending());
-        producer.finish();
     }
 
     #[tokio::test]
     async fn actual_tap_pending_bypass_cannot_steal_admission_barrier_wake() {
         let (tap, frame, route) = fixture("notify-pending");
         let expected = copy_result(&frame, &route);
-        let mut producer = OwnedProducer::new(tap.clone());
+        drop(OwnedRunCleanup::new(tap.clone()));
         let bypass_count = Arc::new(CountWake::default());
         let barrier_count = Arc::new(CountWake::default());
         let bypass_wake = Waker::from(bypass_count.clone());
@@ -793,10 +714,14 @@ mod notify_controls {
         assert!(bypass.as_mut().poll(&mut bypass_context).is_pending());
         let mut barrier = Box::pin(tap.wait_admission_barrier());
         assert!(barrier.as_mut().poll(&mut barrier_context).is_pending());
-        let (done_tx, done_rx) = mpsc::sync_channel(1);
-        producer.start(tap.clone(), frame, route, done_tx);
-
-        barrier_count.wait_for_one();
+        // notify_one calls Wake synchronously: count ownership immediately,
+        // without scheduler deadlines or a producer thread.
+        tap.route_returned(&frame, &route);
+        assert_eq!(
+            barrier_count.count(),
+            1,
+            "R80_SHARED_NOTIFY_ROUTE_WAKE_STOLEN"
+        );
         assert_eq!(
             bypass_count.count(),
             0,
@@ -804,12 +729,14 @@ mod notify_controls {
         );
         assert!(bypass.as_mut().poll(&mut bypass_context).is_pending());
         assert!(barrier.as_mut().poll(&mut barrier_context).is_ready());
-        producer.release();
-        bypass_count.wait_for_one();
-        done_rx.recv_timeout(CONTROL_WAIT).unwrap();
+        tap.closure_result(&frame, &route);
+        assert_eq!(
+            bypass_count.count(),
+            1,
+            "real bypass publication must wake its consumer"
+        );
         assert_result(bypass.as_mut().poll(&mut bypass_context), &expected);
         let mut empty_bypass = Box::pin(tap.bypassed());
         assert!(empty_bypass.as_mut().poll(&mut bypass_context).is_pending());
-        producer.finish();
     }
 }
