@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **11:09持有人/下一任务更新**：wt-a4m3写权已明确交order_default_probe，只准备真实Rust NativeFiles/production pairing六格与cfg(test)可观测事件，不Cargo/不新target；root不抢该树。Tokio COMPLETE观察与JoinSet可消费分开，后者不能由is_finished冒认。CLI作者接回1c90后的精确docs指针/范围小差；中央两provider各一队列，GLM先补余18分类/12分歧、DS补141旧docs/尾差。root持wt-d6与wt-p2c/archive冻结候选。正常du18,761,044+24,037,752KiB=40.82GiB，距46约5.2GiB，五树不增。R31组合卡只准备范围审查，#52/#85A冻结实施与真实六轮未启动。
+
 > ## 2026-10-16 11:06 · 默认TS六格已实测与评审硬权限恢复
 > root持wt-d6与wt-a4m3；order新分支codex/order-default-probe@4a37e83，旧PR138988分支及证据保留。固定Node22.22/Git/tsx loader、cc7全部1000源码与解析配置前后核同，11:04实际默认createLocalGateway+parser/RPC+自有磁盘六格录制成功，child退出0/未watchdog/local.dispose；内存transport限定，原件主仓order-default-probe/actual-default-110420。describe→supported保持，list→supported与list→ping后者先写，list→close只close，真实list响应后再ping保持因果。OS/methodReady/taskConsumable仍NOT_OBSERVED，Rust NOT_RUN；只补TS oracle，不核销65/P1或A5.4。
 > 新事故144已登记，两项分别执行权限P0候选与旧通用tmp删除前状态未知验收债；当前32open=原31减113加139/144，不报全局清零。JSON新增144仍与原31/55分列，六输入绑定/27纯JSON断言通过；GLM原分类缺18和等级争议未闭合。
