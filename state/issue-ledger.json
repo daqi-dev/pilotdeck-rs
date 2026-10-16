@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "ALL_ROWS_RECEIVED_SCOPE_QUALIFICATIONS_RECONCILIATION_REQUIRED",
-  "asOf": "2026-10-16T04:49:04.928081+00:00",
-  "remoteStatusAsOf": "2026-10-16T04:03:13.500106+00:00",
+  "asOf": "2026-10-16T04:55:04.227771+00:00",
+  "remoteStatusAsOf": "2026-10-16T04:54:58.583176+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
   "productHead": "8745ddd3e1bcfca634a6355f5b2e12084f5c6931",
@@ -94,11 +94,11 @@
             "note": "修复候选与负控成功不等于独立双家、整PR及当前CI闭合；旧P2保留，当前取高P1。"
           },
           "currentCandidate": {
-            "head": "7079c3512cb9d267000dd450c90eab8a81cbdcb0",
+            "head": "0c11ed377abc3dbb6424831e945b6564680f1e47",
             "previousFullDriverHead": "9e164859b8a4d7148dfce03b706ce1f9da6a537d",
-            "scope": "A-N1 pure success-API validator/control tail; no new Native/Node/fresh driver run",
-            "index": "_tmp/20261016-debt-cleanup/metadata/success-api-handoff-index.json",
-            "indexSha256": "2d31c1447687d21784b4d159c141aacfc46cf67457178e8fe475ce4eb1c789c5",
+            "scope": "numeric precision and observation bool/source14; actual six-stage fresh Node/static/dynamic Snapshot/Native/pair/restore/postflight,10 dynamic Snapshot/10 Native10pair; narrow initial confirmations are not wholePR approval",
+            "index": "_tmp/20261016-debt-cleanup/metadata/numeric-handoff-index.json",
+            "indexSha256": "966b488344cb0351c18cdadf3bea4123ff84dc5c04b8b9463af419313488c0aa",
             "wholePRApproved": false
           },
           "openFacets": [
@@ -118,7 +118,17 @@
                 "_tmp/20261016-debt-cleanup/metadata/success-api-float-probe.log",
                 "_tmp/20261016-debt-cleanup/metadata/success-api-node-float-probe.json"
               ],
-              "nextAction": "Independent grade/scope confirmation then exact numeric-decoding fix and appropriate replay; do not rewrite expectations to green."
+              "nextAction": "Independent grade/scope confirmation then exact numeric-decoding fix and appropriate replay; do not rewrite expectations to green.",
+              "observationScope": "historical failure before numeric repair candidate; old .0957 is not claimed as current repaired output",
+              "repairCandidate": {
+                "head": "0c11ed377abc3dbb6424831e945b6564680f1e47",
+                "index": "_tmp/20261016-debt-cleanup/metadata/numeric-handoff-index.json",
+                "indexSha256": "966b488344cb0351c18cdadf3bea4123ff84dc5c04b8b9463af419313488c0aa",
+                "scope": "bit-level numeric regression and actual fresh six stages, source14/10 dynamic Snapshot/10Native10pair",
+                "fixed": false,
+                "wholePRApproved": false,
+                "independentGate": "initial narrow-scope confirmations do not substitute actual wholePR final review"
+              }
             }
           ]
         },
@@ -261,7 +271,22 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "已交付budget终态修复按原缺陷类型归档，仅本子项核销。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": []
         },
         {
           "id": "19.2",
@@ -335,7 +360,26 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "deadline宿主收尾存在Rust额外gateway_submit_failed事件；延期不消除行为差异。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "A7.7真实宿主断言与C收尾口径尚未闭合"
+          ]
         }
       ]
     },
@@ -418,7 +462,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "archive三方法尚待本地化，属于既定交付清单；不是因计划未完成就认当前bug。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "archive安全前置与精确授权",
+            "三方法实际本地化及A4真实验收"
+          ]
         },
         {
           "id": "46.2",
@@ -567,7 +631,28 @@
             "excludedUnknownChildIds": [],
             "conditionalCeilingsIncluded": false,
             "countAsIndependentDefect": false
-          }
+          },
+          "secondaryTypes": [
+            "真实缺陷"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "现有A4协议/错误/安全与真实UI验收缺口的聚合门，风险来自子项，父门不重复计缺陷。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "子项逐项核销",
+            "真实UI/真人实效",
+            "DS P1与GLM聚合N/A计数语义仍有分歧"
+          ]
         }
       ]
     },
@@ -752,7 +837,28 @@
             "excludedUnknownChildIds": [],
             "conditionalCeilingsIncluded": false,
             "countAsIndependentDefect": false
-          }
+          },
+          "secondaryTypes": [
+            "阶段任务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "B2装置已有交付与冻结，父聚合余项是证据/人效债；R5合法冻结分支与未来B3任务另列。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "DS47.1 R5仅mandatory人名门已自撤，root范围投影待同步",
+            "GLM未撤P1及其规范解释仍待独立处理",
+            "剩余94与未来真人人效/B3复核，不新造签名载体"
+          ]
         }
       ]
     },
@@ -834,12 +940,32 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "现有输入枚举器遗漏可运行脚本后缀，属于检查实现漏判候选；GLM专项只给等级未给主类，主类为协调者建议。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "GLM原无合法主类，不补写同意",
+            "与85A组合输入范围审、冻结程序及真实重算"
+          ]
         },
         {
           "id": "52.2",
           "title": "A9文案等",
-          "primaryType": "验收债务",
+          "primaryType": "已知留白",
           "severity": "P3",
           "confirmation": "confirmed",
           "state": "known-gap",
@@ -908,7 +1034,24 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed / pending（不建债不阻塞）"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "unresolved",
+            "adoptedDisposition": "P3-known-blank-exception",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "只有A9文案P3留白；GLM明确不入三类，不能把DS记账类强写为双家同主类。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "原件无共同合法三类主类；保留P3留白，不新建阻塞"
+          ]
         }
       ]
     },
@@ -991,12 +1134,31 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "实现存在capture后发Completed前未复查hard-stop窗口；错误输出尚待窗口实测，缺陷候选与验收债并存。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "确定性barrier捕获实际发布与effect责任"
+          ]
         },
         {
           "id": "55.2",
           "title": "计时线程/Requested/loop-top边角",
-          "primaryType": "真实缺陷",
+          "primaryType": "验收债务",
           "severity": null,
           "confirmation": "unknown",
           "state": "deferred",
@@ -1097,7 +1259,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "真实缺陷"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "已确定的行动是补计时/Requested边角实测，实际可达错误未定；主验收债、次真实缺陷候选只是协调者主次提议。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "可达性/错误输出未知；两家有效grade均null",
+            "条件排队上界P1不是已证P1"
+          ]
         }
       ]
     },
@@ -1199,12 +1381,32 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "真实字节丢失机制及hyper/F1证据已到；候选PR138未合入，fix边界与真实验收另列。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "精确PR138独立boundary/双家/CI",
+            "TS各格原件限定与真人验收"
+          ]
         },
         {
           "id": "56.2",
           "title": "每帧缓冲无上限",
-          "primaryType": "真实缺陷",
+          "primaryType": "验收债务",
           "severity": null,
           "confirmation": "unknown",
           "state": "pending",
@@ -1305,7 +1507,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "真实缺陷"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "无操作性cap属源码事实，已知行动是资源域验收；实际DoS可达性未证，不能把未知安全风险当当前已证P0。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "受限资源probe不能外推全域安全",
+            "两家有效grade null，条件上界P0只作排队"
+          ]
         }
       ]
     },
@@ -1387,7 +1609,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed / partial"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "F2 runner/A34/B部署/D黑盒仍属阶段装置交付，现有部分证据不等于整个阶段完成。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "runner与部署/黑盒分面交付",
+            "阶段实效验收"
+          ]
         }
       ]
     },
@@ -1515,7 +1757,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed / partial（旧侧已对账，新侧 NOT_RUN）"
-          }
+          },
+          "secondaryTypes": [
+            "阶段任务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "真实全量多profile防skip是装置已有后的验收对象；是否当前到期/被误签仍有独立语义争议。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "DS未撤P1与GLM N/A不可作者降档",
+            "F3实际报告/到期与宣称完成情况"
+          ]
         },
         {
           "id": "61.2",
@@ -1612,7 +1874,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "缺口 confirmed（README:112 自认）/ 假PASS路径 candidate / pending"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "现役装置依赖node_modules不入绑定，检查实现与可复现测量承诺之间有具体缺口；实际假判路径尚待probe。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "依赖漂移单轴控制与真实复算",
+            "全F2未核销"
+          ]
         }
       ]
     },
@@ -1695,7 +1977,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "mixed batch响应次序机制/线级差异属当前行为缺陷候选；真实默认生产同连接完整顺序仍须独立核。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "默认生产同连接TS/Rust顺序及宿主前提",
+            "65.2单独观察不可由本项顺带核销"
+          ]
         },
         {
           "id": "65.2",
@@ -1789,7 +2091,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "整缓冲解析与job完成消费之间有当前交错机制；独立修订保P1 candidate，未证默认生产全序。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "COMPLETE与JoinSet可消费不可混同",
+            "生产交错顺序实测"
+          ]
         },
         {
           "id": "65.3",
@@ -1869,7 +2191,25 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "Linux raw-byte排序函数级证据不替代真实文件系统端到端验收；只共享Linux环境。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "真实Linux源构建/非法字节目录",
+            "与117errno/133dirent分别断言"
+          ]
         },
         {
           "id": "65.4",
@@ -1945,7 +2285,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [
+            "阶段任务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "Windows目前是目标范围决策门；纳入范围才派阶段实现，不能按N/A视为已修。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "范围纳入须人定",
+            "未纳入不推断无风险"
+          ]
         },
         {
           "id": "65.5",
@@ -2023,7 +2383,22 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "广泛非ASCII分流/截断点缺陷已有D6精确修复，仅已交付本范围归档。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": []
         }
       ]
     },
@@ -2106,7 +2481,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed / partial"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "A5.1/A5.2已有部分证据，A5.3/A5.4仍是计划装配/验收阶段；父阶段不可提前完成。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "A5.3/A5.4实际产物和验收",
+            "既有装置证据边界"
+          ]
         }
       ]
     },
@@ -2119,7 +2514,7 @@
         {
           "id": "85.1",
           "title": "A侧node_modules/cargo输入未绑定",
-          "primaryType": "真实缺陷",
+          "primaryType": "验收债务",
           "severity": "P2",
           "confirmation": "candidate",
           "state": "pending",
@@ -2197,7 +2592,28 @@
             "historicalScopePreserved": true,
             "scopeNote": "Model explicitly PARTIAL, not a confirmed enum. 85.1 P2 applies to node_modules facet; cargo facet remains null/unknown. 85.2 P2 local checker conclusion, fullchain runtime/pyc/-I not established. No wholeissue fixed.",
             "confirmationRaw": "PARTIAL：node_modules 缺口经代码证实（L48+L176 互证）；cargo 未跟踪输入在 A 侧无证据（L7/L10 属 B2 实测后的迁移推断）；proxySha256 是否对照冻结期望未示"
-          }
+          },
+          "secondaryTypes": [
+            "真实缺陷"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "GLM明确A装置摘要有意排除面属可复现验收债；node_modules面已证、cargo面未知，DS缺陷类分歧保留。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "cargo面运行时/构建输入未知",
+            "node_modules与冻结输入范围重登记",
+            "未经独立事实统一不改原DS主类"
+          ]
         },
         {
           "id": "85.2",
@@ -2276,7 +2692,27 @@
             "historicalScopePreserved": true,
             "scopeNote": "Model explicitly PARTIAL, not a confirmed enum. 85.1 P2 applies to node_modules facet; cargo facet remains null/unknown. 85.2 P2 local checker conclusion, fullchain runtime/pyc/-I not established. No wholeissue fixed.",
             "confirmationRaw": "PARTIAL：未登记跳过已由 probe 证实（CLI 级；probe scope 自声明\"not full score pipeline\"，sourceHead 66d2f4c 与摘录对象 7781b18e 一致性未验、行为吻合互证）；pyc 盲区仅代码证实；-I 缺失无调用证据；全链行为仅代码推断未跑"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "本地checker未登记项ok/exit0与其枚举声明的偏离已证；全链pyc/PYTHONPATH实际通过仍未测。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "局部CLI假通过不可等同全链计分假通过",
+            "pyc全链及-I路径注入事实未知"
+          ]
         }
       ]
     },
@@ -2358,7 +2794,25 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "子码观察及规划索引遗漏是现有证据链缺口，R6不进计分不代表漏项被修复。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "规划47漏项实际补丁合入",
+            "观察范围闭合"
+          ]
         },
         {
           "id": "91.2",
@@ -2431,7 +2885,24 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "candidate"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "第9跳helper返回码缺真实观察，当前是证据债而非已证运行错误。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "真实helper错误返回路径观察"
+          ]
         },
         {
           "id": "91.3",
@@ -2504,7 +2975,24 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "candidate"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "stopReason映射仍缺完整观测/登记，当前缺的是验收证据。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "映射各分支真实观测/登记"
+          ]
         }
       ]
     },
@@ -2632,12 +3120,32 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "helper级 confirmed / 系统级绕过 unknown / pending"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "helper把注释当身份的实现缺口已证；系统全门绕过尚未证，保留独立P2语义争议。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "首个B3 Rust路由前完整check_frozen反例",
+            "helper缺口与系统假PASS分别验证"
+          ]
         },
         {
           "id": "94.2",
           "title": "宿主PyYAML未绑定",
-          "primaryType": "验收债务",
+          "primaryType": "真实缺陷",
           "severity": "P1",
           "confirmation": "confirmed",
           "state": "deferred",
@@ -2710,7 +3218,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed（common.py:93-99）/ 差异假判路径 candidate / pending"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "现役解析器PyYAML实际参与workspace清单但未绑定，具体检查实现可变面优先主缺陷，次可复现验收债。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "DS验收债/GLM缺陷类型分歧由root待复核",
+            "绑定真实parser/受限解析及真实workspace复算"
+          ]
         },
         {
           "id": "94.3",
@@ -2783,7 +3311,25 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed / accepted-risk"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "仅作已人定接受残余风险的管理记录，不作未修产品缺陷；GLM无三类主类，不得写双家同意。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "接受风险不等修复或强认证",
+            "只保精确威胁模型，超范围新事实另记"
+          ]
         }
       ]
     },
@@ -2796,7 +3342,7 @@
         {
           "id": "98.1",
           "title": "updater真实可执行文件未核",
-          "primaryType": "真实缺陷",
+          "primaryType": "验收债务",
           "severity": "P2",
           "confirmation": "candidate",
           "state": "deferred",
@@ -2873,12 +3419,33 @@
             "historicalScopePreserved": true,
             "scopeNote": "CONFIRMED explicitly static only, no runtime verified. OPEN normalized pending, not fixed. 98.2 sameProcess internal field set PARTIAL; F3 prerequisite historical comment not independently current-plan verified. Preserve P2-b semantic qualification for canonical adjudication.",
             "confirmationRaw": "confirmation: **CONFIRMED**（静态：所示放行判定路径 L312–318 无任何真实可执行文件核对，L336–341 直接 `allowedUpdaters.set` 并记证据；运行时未复验，NOT_CALLED）"
-          }
+          },
+          "secondaryTypes": [
+            "真实缺陷"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "真实可执行文件核对是现有威胁模型外的残余审计加固，GLM未指出现合同违约；DS缺陷候选意见保留。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "静态CONFIRMED不代表运行时已验",
+            "现行F3前置与历史评论时态需核",
+            "DS与GLM主类分歧待事实统一"
+          ]
         },
         {
           "id": "98.2",
           "title": "retryNodeHomes重采argv",
-          "primaryType": "真实缺陷",
+          "primaryType": "验收债务",
           "severity": "P2",
           "confirmation": "candidate",
           "state": "deferred",
@@ -2954,7 +3521,28 @@
             "historicalScopePreserved": true,
             "scopeNote": "CONFIRMED explicitly static only, no runtime verified. OPEN normalized pending, not fixed. 98.2 sameProcess internal field set PARTIAL; F3 prerequisite historical comment not independently current-plan verified. Preserve P2-b semantic qualification for canonical adjudication.",
             "confirmationRaw": "confirmation: **CONFIRMED**（静态：L226/L231 身份复检后 L233 采纳新 argv、L240–241 记 `argvRebound`，与 README L400–402 一致；`sameProcess` 内部字段集未在证据内，该单点 PARTIAL；运行时未复验）"
-          }
+          },
+          "secondaryTypes": [
+            "真实缺陷"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "最新argv重配对与既有合同一致；补可执行文件绑定属残余验收加固，sameProcess细节仍PARTIAL。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "sameProcess字段与真实运行未知",
+            "DS缺陷类分歧保留",
+            "F3加固或精确风险接受由既有授权程序判定"
+          ]
         },
         {
           "id": "98.3",
@@ -3041,12 +3629,32 @@
             "historicalScopePreserved": true,
             "scopeNote": "GLM explicitly attaches futureF3 acceptance residual to historical source fix. Extraction retains its partial/P3 raw judgment; canonical historical-source-guard-only scope may independently be fixed by source-backed scope card. Future F3 debt must stay linked, not expanded into original source criterion.",
             "confirmationRaw": "confirmation=PARTIAL（源码级修复由原件直接确认；本包未新增运行、未执行单测，F3 真实 soffice 实效无任何运行证据）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "历史soffice路径护栏源码缺陷本体已修；未来F3真实运行是次级验收面，不能扩大原核销范围。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "F3双侧真实soffice运行未验，保持关联",
+            "历史fixed不认证未来人效"
+          ]
         },
         {
           "id": "98.4",
           "title": "D只有13行为守护/11级联",
-          "primaryType": "验收债务",
+          "primaryType": "阶段任务",
           "severity": "P2",
           "confirmation": "confirmed",
           "state": "deferred",
@@ -3140,7 +3748,28 @@
             "historicalScopePreserved": true,
             "scopeNote": "98.3 explicitly source fixed only, PARTIAL real F3 unverified; no wholeitem fixed. 98.4 phase task with acceptance-debt facet; F4/F5 prereq, not complete. P3 residual does not erase human acceptance debt.",
             "confirmationRaw": "confirmation=CONFIRMED（缺面与账目由 README/issue 原件载明，无需运行断言）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "F4/F5前新增守护例是未来阶段任务，当前披露分母/级联不等当前违约；已有11级联无有效守护形成次级验收债。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "DS主验收债/GLM主阶段任务分歧保留",
+            "补例与28/28误签条件不得混同",
+            "DS已自撤旧P1，当前P2保持"
+          ]
         }
       ]
     },
@@ -3235,7 +3864,25 @@
             "historicalScopePreserved": true,
             "scopeNote": "Specific-fix confirmation only; no initial taxonomy grade invented. Original filtered generic scope not retried; DS initialP1 and root actual closure evidence separate.",
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "已有冻结装置的入库来源证据债经PR140本子项修复；GLM只特定fix确认，无初始类型判定。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "不重派被过滤旧初始分类scope",
+            "fix-only不得补造GLM初始grade/type"
+          ]
         }
       ]
     },
@@ -3248,7 +3895,7 @@
         {
           "id": "115.1",
           "title": "oldSideNondeterministic人工转绿途径缺失",
-          "primaryType": "验收债务",
+          "primaryType": "阶段任务",
           "severity": "P2",
           "confirmation": "confirmed",
           "state": "deferred",
@@ -3325,7 +3972,28 @@
             "historicalScopePreserved": true,
             "scopeNote": "Explicit document-only confirmation; no runtime rerun. Open/pending, not fixed. 115.2 suggests cheap threat-boundary clarification subject to frozen apparatus change rules, not automatic permission to weaken audit.",
             "confirmationRaw": " confirmation=CONFIRMED（文档证据充分，非运行时验证）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "新增oldSideNondeterministic人工确认载体属于新阶段能力；现始终NEEDS_HUMAN_CONFIRMATION与合同一致，身份收口另为次级验收面。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "原DS主验收债分歧待root复核",
+            "载体/判据/入账实施",
+            "不得用缺载体误签绿"
+          ]
         },
         {
           "id": "115.2",
@@ -3401,7 +4069,24 @@
             "historicalScopePreserved": true,
             "scopeNote": "Explicit document-only confirmation; no runtime rerun. Open/pending, not fixed. 115.2 suggests cheap threat-boundary clarification subject to frozen apparatus change rules, not automatic permission to weaken audit.",
             "confirmationRaw": " confirmation=CONFIRMED（冻结 README 自认缺口，L510 注明协调者另记；基于固定 commit 文档，未做运行时复验）"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "已实现审计缺短命esbuild/node env原件，补证据/声明边界为验收债。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "短命子进程env真实覆盖或明确边界"
+          ]
         },
         {
           "id": "115.3",
@@ -3483,7 +4168,27 @@
             "historicalScopePreserved": true,
             "scopeNote": "Document-only CONFIRMED; BLOCKED/manual supply and human decision remain pending, not automatically approved. No active StaffDeck service borrowed/no runtime installed.",
             "confirmationRaw": "confirmation=CONFIRMED（限本包文档级：issue-115.md L11/L13 与 README L459/L495 同包互证一致；本次无工具、未执行任何运行时探针，未核 origin/main 当前 HEAD 是否仍 BLOCKED）"
-          }
+          },
+          "secondaryTypes": [
+            "阶段任务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "StaffDeck已规划验收对象却缺锁定源码/运行时/种子；入口如实BLOCKED，非已证当前产品bug。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "对象/源码/种子到位",
+            "DS P1/GLM P2未独立收敛仍取高P1"
+          ]
         }
       ]
     },
@@ -3614,7 +4319,25 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "缺口confirmed / 是否偏小unknown"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "目标平台Linux errno真实验收缺失，欠证据不等已证Linux错误；两家最新P1只确认验收缺口。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "真实Linux源构建与errno",
+            "共享runner不合并133dirent断言"
+          ]
         }
       ]
     },
@@ -3695,7 +4418,24 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "Queued→dispatch前retire窗口无确定性夹具，现有并行次数不覆盖指定窗口。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "barrier钉住窗口/派发/owner释放"
+          ]
         },
         {
           "id": "119.2",
@@ -3768,7 +4508,25 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": null
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "单进程1000次已有但CI式并行负载未验，属于已实现传输的验收债。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "指定exact binary并行负载",
+            "不以全量对拍替代本域负载"
+          ]
         }
       ]
     },
@@ -3862,7 +4620,22 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "真实系统错误RPC来源证据缺口已由PR137明确子项补齐；历史验收债类型不变。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": []
         },
         {
           "id": "120.2",
@@ -3950,7 +4723,24 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "TS confirmed / Rust unknown"
-          }
+          },
+          "secondaryTypes": [
+            "真实缺陷"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "错误吞噬面按原验收子项核销，保留合同/补充说明，不把已合修复重复计当前缺陷。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": []
         },
         {
           "id": "120.3",
@@ -4024,7 +4814,24 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "账本1.5MB上限致引用/链压缩是证据结构债，前两项已修不消除此项。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "来源链可追溯完整性与压缩边界"
+          ]
         }
       ]
     },
@@ -4110,7 +4917,26 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual external initial judgment; model retained preparation NOT_CALLED in confirmation, so normalized confirmation remains null rather than invented confirmed. Runtime behavior not newly executed. Planned future task does not automatically imply defect. 130.1 severity explicitly null pending temporal/scope evidence; no assumed grade.",
             "confirmationRaw": "NOT_CALLED"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "CLI D0装置/TS定标尚待交付，属于阶段准备任务。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "D0装置及真实TS定标"
+          ]
         }
       ]
     },
@@ -4197,7 +5023,26 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual external initial judgment; model retained preparation NOT_CALLED in confirmation, so normalized confirmation remains null rather than invented confirmed. Runtime behavior not newly executed. Planned future task does not automatically imply defect. 130.1 severity explicitly null pending temporal/scope evidence; no assumed grade.",
             "confirmationRaw": "NOT_CALLED"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "CLI D1命令面未来交付及真实验收未完；独立合约复核已排除单凭缺命令判当前P1。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "D1命令与真实行为验收"
+          ]
         }
       ]
     },
@@ -4282,7 +5127,26 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual external initial judgment; model retained preparation NOT_CALLED in confirmation, so normalized confirmation remains null rather than invented confirmed. Runtime behavior not newly executed. Planned future task does not automatically imply defect. 130.1 severity explicitly null pending temporal/scope evidence; no assumed grade.",
             "confirmationRaw": "NOT_CALLED"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "CLI D2默认/未知argv/chat/cron/skills/gateway属于既定未来命令面交付。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "D2逐入口实现与TS行为验收"
+          ]
         }
       ]
     },
@@ -4368,7 +5232,26 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual external initial judgment; model retained preparation NOT_CALLED in confirmation, so normalized confirmation remains null rather than invented confirmed. Runtime behavior not newly executed. Planned future task does not automatically imply defect. 130.1 severity explicitly null pending temporal/scope evidence; no assumed grade.",
             "confirmationRaw": "NOT_CALLED"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "D3 setup/update与mock验收是未完成阶段能力，不能把未来计划当当前违约。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "D3 mock及真实范围验收"
+          ]
         }
       ]
     },
@@ -4455,7 +5338,26 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual external initial judgment; model retained preparation NOT_CALLED in confirmation, so normalized confirmation remains null rather than invented confirmed. Runtime behavior not newly executed. Planned future task does not automatically imply defect. 130.1 severity explicitly null pending temporal/scope evidence; no assumed grade.",
             "confirmationRaw": "NOT_CALLED"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "D4 TUI/PTY中文/信号/恢复属阶段交付，尚未实际验收。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "PTY/中文/信号/终端恢复四面真实验收"
+          ]
         }
       ]
     },
@@ -4541,7 +5443,27 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual returned external initial classifications, but model retained historical preparation NOT_CALLED meta. PARTIAL confirmation stays null; source-only future-stage classifications do not certify current delivery or runtime. N/A is not done.",
             "confirmationRaw": "confirmation=PARTIAL（仅 issue 正文+计划快照静态件，无 #127 自身运行/交付状态）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "A6–A8宿主/会话域/全入口及TS退役是后续阶段产出，不按未交付统一算当前bug。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "逐入口产物/宿主与TS退役证据",
+            "真实实效验收"
+          ]
         }
       ]
     },
@@ -4628,7 +5550,27 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual returned external initial classifications, but model retained historical preparation NOT_CALLED meta. PARTIAL confirmation stays null; source-only future-stage classifications do not certify current delivery or runtime. N/A is not done.",
             "confirmationRaw": "confirmation=PARTIAL（#113=PR140 MERGED 仅系历史快照记录，delivery-status 现值未读；A8/B1/B2/#94/真人门状态包内无证）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "B3–B6全路由/UI恢复/桌面编排尚属未来交付，冻结合法不能替这些产物验收。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "路由/恢复/桌面逐项交付",
+            "真人使用验收"
+          ]
         }
       ]
     },
@@ -4715,7 +5657,27 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual returned external initial classifications, but model retained historical preparation NOT_CALLED meta. PARTIAL confirmation stays null; source-only future-stage classifications do not certify current delivery or runtime. N/A is not done.",
             "confirmationRaw": "confirmation=PARTIAL（“F2装置/防skip完成”为 issue 正文历史自称，F5 所需流式/滚动黑盒断言就绪度未验；B 依赖节点状态无证）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "F3–F6业务迁移及旧前端/双壳退役尚未交付，是阶段主任务。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "页面实际行为/旧前端退役",
+            "真人实效"
+          ]
         }
       ]
     },
@@ -4802,7 +5764,27 @@
             "historicalScopePreserved": true,
             "scopeNote": "Actual external initial judgment; model retained preparation NOT_CALLED in confirmation, so normalized confirmation remains null rather than invented confirmed. Runtime behavior not newly executed. Planned future task does not automatically imply defect. 130.1 severity explicitly null pending temporal/scope evidence; no assumed grade.",
             "confirmationRaw": "NOT_CALLED"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "TCP/custom factory是否属于C兼容范围已按合约归阶段审计；GLM初始grade null是范围不足，不能填N/A共识。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "GLM grade null保留",
+            "声明支持域与实际入口审计"
+          ]
         }
       ]
     },
@@ -4889,7 +5871,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed（R3实测复算）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "阶段任务",
+            "reason": "当前用TS宿主处理孤立UTF16回退保留既有行为；未来精确原生化/退役为阶段任务，次级有退役验收债。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "TS宿主精确替代与退役节点",
+            "DS阶段/GLM验收主类差异保留"
+          ]
         }
       ]
     },
@@ -4997,7 +5999,25 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "缺口confirmed"
-          }
+          },
+          "secondaryTypes": [],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "真实Linux非法UTF8 dirent端到端证据缺失，函数级对照不能顶替真实平台验收。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "真实Linux dirent端到端",
+            "与117errno分开断言不整组核销"
+          ]
         }
       ]
     },
@@ -5080,7 +6100,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "TS confirmed / Rust candidate（旧9589be4未在当前HEAD复算）"
-          }
+          },
+          "secondaryTypes": [
+            "验收债务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "proposed",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "真实缺陷",
+            "reason": "archive根外读取/TOCTOU是明确基线安全风险，PR142候选未合不能解除当前P0。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "精确安全差异授权",
+            "独立双家/真实探针/冻结A2链"
+          ]
         },
         {
           "id": "134.2",
@@ -5179,7 +6219,27 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed"
-          }
+          },
+          "secondaryTypes": [
+            "阶段任务"
+          ],
+          "typeAdjudicationPending": false,
+          "coordinatorTypeDisposition": {
+            "status": "AI代批，待人复核",
+            "typeClassified": true,
+            "decision": "R37",
+            "proposalDisposition": "agree",
+            "adoptedDisposition": "adopted-coordinator-type",
+            "independentReviewComplete": false,
+            "independentAgreementClaim": false,
+            "originalPrimaryType": "验收债务",
+            "reason": "新安全差异精确授权及冻结登记是当前验收/决策门，不是已经越红线的行为缺陷。",
+            "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
+          },
+          "pendingFacts": [
+            "精确授权人定与冻结重登记",
+            "不得由AI待复核替代未授权动作"
+          ]
         }
       ]
     }
@@ -5333,7 +6393,7 @@
       "sha256": "a19c95392fc9171353240c6b52b7743cd9bfc590f30b3dc2690aeea0e5b035c4"
     },
     "_tmp/20261016-debt-cleanup/taxonomy/delivery-status.json": {
-      "sha256": "f8d6a166d8caa89140455c7a4e026f121e516300092455d98cd5e7908aad493f"
+      "sha256": "ebdf208302058c5420911b1cb8d4e92ba2a7c3213d368fa552adedb0005368cf"
     },
     "_tmp/20261016-debt-cleanup/reviews/metadata-path-correction-deepseek.md": {
       "sha256": "69d6fda15807a1cd94e30453365602ed766f6a6987901e443ba55120a02f2300"
@@ -5346,6 +6406,9 @@
     },
     "_tmp/20261016-debt-cleanup/metadata/success-api-node-float-probe.json": {
       "sha256": "184f27d91683581d80eae99abcefdf47b3204e73ba1c7781abc3a881329bcc7c"
+    },
+    "_tmp/20261016-debt-cleanup/metadata/numeric-handoff-index.json": {
+      "sha256": "966b488344cb0351c18cdadf3bea4123ff84dc5c04b8b9463af419313488c0aa"
     },
     "_tmp/20261016-debt-cleanup/taxonomy/runtime-incident-issue.json": {
       "sha256": "d418578cbf79cec1016c356994e75f268f76b0b095a4a276ea836e700873eabf"
@@ -5406,6 +6469,75 @@
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md": {
       "sha256": "3f0d9e9ec08fa1d660cd3e97f7936bc49294bfaad9108e564742cffb3647c009"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json": {
+      "sha256": "0d26b4c14e60f09cb9e8a877e17fc79f2b40947977e18f405c7725e037e10831"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/current-disposition-proposal.json": {
+      "sha256": "20f1a8661a6cf7983afe2accfaab0fe01a16a47905e6227ca498ff5435840679"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/type-projection-proof/before-type-ledger.json": {
+      "sha256": "fed0192fe82cedbd6722347e275fb07f25566bfb23bbfb2a94d1017ae953f597"
+    },
+    "_build/wt-d6/state/decisions-20261016.md": {
+      "sha256": "5e0e86e64be07b3850f2e3e05b9af26664d056dd85b09cd88797ff558230b0eb"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md": {
+      "sha256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md": {
+      "sha256": "eed96efccf5057248544cecaceb7b7c0cafa1f63acaa622d090499c951060ca0"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md": {
+      "sha256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md": {
+      "sha256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/suffix-predecision-glm.md": {
+      "sha256": "a5de4e81b2498c28e01bb95a9d58a136c0fd6c687e2bec7dff56ea631eec838e"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md": {
+      "sha256": "29cf9ad3f57fccec97a311f9c2380cc225121620c7cc12679a985faf46f588a7"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-85-glm.md": {
+      "sha256": "a2303295f7c943bda7aa4c26179a21701a17337cec73801e8ae560f738242706"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-98a-glm.md": {
+      "sha256": "09468c7be6c91edecf96c9b54f147082b55500c295ade0fa8fc381c873fb23dc"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md": {
+      "sha256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-98b-glm.md": {
+      "sha256": "9fb5cb71765e7b74f31fdb77df8264b813c1f2af993c3833b024efe5efdeb746"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-source-final-deepseek.md": {
+      "sha256": "b4e4498be9561869174f98dd39a007256544beb6a0621ed667bec2d41f6fe6f0"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/approval-provenance-final-glm.md": {
+      "sha256": "5aa472295a59d9cf128dbb3aeb15921ae48b3a0a447432b9aea06d505863d466"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/issue113-deepseek.md": {
+      "sha256": "59baa424f7e496f619f78b51ec0dae7b0f9721d12167a49ced2f03d32bcf031e"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-115a-glm.md": {
+      "sha256": "0a16ad93632dfba261871fd08d3e41c280057e23559c5796a5efb30ce7c92f9c"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-115b-glm.md": {
+      "sha256": "079c48f9bc743807b4f70b53d0de37ff2c20494dd0f2d3f2554f4993550d6fdb"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-cli-stage-glm.md": {
+      "sha256": "51a72321d735789e924e987689f81b5dd30d0e8e786495f5c98ed5c67f951530"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md": {
+      "sha256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-stage-contract-cwd-deepseek.md": {
+      "sha256": "f397b6f418d8bae2ff4a21c2e19b5a47df1986fb1dc7c0fae0bffaede4f55fb7"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-initial-stage-rest-glm.md": {
+      "sha256": "544986244dd5f6fca08bf43d407a5c38f92652d1c1edfa54846e208ae81d645a"
     }
   }
 }

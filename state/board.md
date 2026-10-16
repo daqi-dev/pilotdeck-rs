@@ -1,5 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 12:56 · 主次归类已落候选账本
+> R37现已正式投影55项：54项分为14真实缺陷主类、15阶段任务主类、25验收债务主类，另52.2唯一P3已知留白；该分布含已修历史范围，**不是未完成独立缺陷计数**。32项初始主类一致、22项协调者主次取舍、1项P3例外分别标注AI代批待人复核；不冒双家均同意。主次类型、原始分歧、PARTIAL/raw限定、等级、确认度、交付及到期节点分轴；所有保护字段对最新14graded/双R5前候选逐项守恒。41/41纯JSON审计、15账本+8采纳record+2派生器负控通过，仅证明保真，不代PR143独立合并闸门。唯一JSON state/issue-ledger.json，主仓taxonomy/disposition-report.md只由其派生；delivery远端核到12:54:58。数值currentCandidate仅0c11真实六stage/537索引，旧0957失败标历史，3a tiny不能继承fresh身份。
+> PR141便宜三guard已提交推3a3a5a1、实际三份JSON384/386/386各十Snapshot与4漏遍历/receipt/reason变异齐，中央双家窄审在途。原作者现独占CLI仅核旧concurrency C01/C02观察器代际：单位真实Node已见reset后handle仍trace及受控迟到readdir混入下一数组，尚未证明Gateway曾触发；正做≤15min最小generation隔离及永久控制。新recorder真实链另由root核预算发窗口，不冒旧fresh通过。其余树root，五树/46GiB与中央唯一队列不变。
+
 > ## 2026-10-16 12:53 · 新调度片接续：数值P1修复实跑、归类落账中
 > 已实读本片AGENTS/.42cog四份/MEMORY及最新board，12:27:16启动，14:27:16前写调度交接，后续heartbeat继续工作；两小时不等于等待批准。main仍7781b18e195afbc90d696be575c7bc6ad6662e0b；12:50远端核32open=原31减113加139/144，PR138/141/142/143仍Draft、当时各HEAD两CI绿，本片尚无新合并。
 > **139.1数值候选0c11ed377abc3dbb6424831e945b6564680f1e47已实际fresh通过**：只gateway dev-dependency启用既有serde_json float_roundtrip，普通生产图不启用；测试图统一feature的边界已记录，没改oracle/舍入/判分或冻结。原修前3红101、修后定向/库134+10ignored/384静态token/旧386动态token十完整Snapshot/布尔双门/21Python控制与fmt/clippy通过。新独立124315 target实跑Node10→静态3→动态恰1test/386token/十唯一Snapshot→Native2test/十Native十pair→恢复三权限→sourceHead，六stage0、六child reaped、14源Git/工具/组件/原件前后同；537原件索引numeric-handoff-index.json SHA966b488344cb0351c18cdadf3bea4123ff84dc5c04b8b9463af419313488c0aa。旧7079失败及9e Native范围全保，0c11 CI两绿不替双家整PR终审。R35记录选型。
