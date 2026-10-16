@@ -1,5 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **15:48 五树规则同步完成，实际已三任务重叠**：root724742e/wt-d6规则60738e9/CLI规则ad8f1c3/p2规则e92a8dd/a4规则c4013b9的CLAUDE/AGENTS共同SHA20518046，proof reviews/policy-sync-zrxjbpzs/all-five-synchronized.json；root其余人手dirty材料SHA不变。a4先封存绑定9df实验134原件index9424fb05（root逐SHA核）再仅同步CLAUDE，target153955/artifact3ed94674及产品源保留，身份未倒填。R48八格：前后A1/A2四健康实际各1pass；M1/M2/M4具体原validator拒，M3两个414B同SHA真实W0/C0后driver先拒、后置validator未跑；独立外审仍待，65/P3/A5.4未核销。最终完整du45.298779/46GiB，自有9PGID无残留。
+> 中央实际15:46:39重叠为GLM identity实现候选与两个DS独立必要callee，root只读registry并ps核三provider确在途；证据reviews/concurrent-job-first-overlap.json。GLM已从只审扩展到源码/永久测试候选生成（硬0文本），CLI唯一写lease归该job，后续DS+独立GPT审GLM新增delta。原中央持有人更新model_jobs.py/run_model_job.py/原子多job状态，初始GLM2/DS2可配置、按实际限流调整，三scope依赖/session分开，未杀在途/未解held。ledger_fidelity只在自有fixture独立核派发安全，Astra只读复核65实际负控与下一依赖；这两者不发provider/不建第二dispatcher。root继续状态PR的独立角色与适用CI后交付。
+
 > **15:44 人定并发编排正在落地**：按最新用户/实际CLAUDE，人改原fc428提交371815b保留；共用规则20518046已同步root/wt-d6/CLI/wt-p2c，a4持有人已即时读新规则并留override，待绑定9df实验封存后单独同步。单一中央owner仍debt_review_prepare，允许多job/多provider在途，按session、依赖、独占写树和资源互斥；旧逐provider单槽叙述只作历史，不重启旧queue/不因改并发重试held scope。中央正在安全改真实dispatcher+原子多任务状态，实际job/PID/额度/来源和完成度以reviews/central-current-status.json为准。
 > root持有wt-d6状态；ledger_fidelity持有a4本次八格执行/后核，源码9df不写（已报前后健康各1pass，四mutant实际拒绝，仍待逐帧/封存复核）；中央获得CLI@ad8f1c3的GLM identity源码only写权，原metadata c77与upgrade988历史保留。GLM将由只审扩展到实现候选/测试编写，operator仅机械应用；GLM精确新增delta须DS+独立GPT审，旧GPTscope仍GLM+DS，不减少任何闸门。5树、46GiB、独立target、full53锁继续。
 
