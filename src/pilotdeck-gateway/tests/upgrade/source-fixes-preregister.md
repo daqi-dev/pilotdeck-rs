@@ -5,3 +5,7 @@
 ## 2026-10-16 18:10 · Git隐藏位与缺root窄修（PREPARED_NOT_RUN）
 
 主仓 `_tmp/20261016-debt-cleanup/upgrade-hidden-index-1810/task.md` 预登记：scoped S/小写h均拒，NUL换行path保持，scope外flag不误拒；missingroot ENOENT归现有SOURCE_ROOT并用自有fixture rename/恢复控制。旧26+新5预计31rows，未Node/Cargo，不沿用旧26给新源通过；PR138仍Draft。
+
+## 2026-10-16 · required tree物理缺失（PREPARED_NOT_RUN）
+
+主仓 `_tmp/20261016-debt-cleanup/upgrade-missing-tree-1818/task.md`：A-1精确对象为required tree物理目录缺失；复用missing语义归SOURCE_TREE，新增第32行自有干净Git/移目录控制。旧missingroot保留但不冒本项，旧31准备原件不覆盖。
