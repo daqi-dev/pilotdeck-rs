@@ -1,5 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 · 本片调度交接点（08:24启动，10:24前交后续）
+> 唯一完整交接在主仓`_tmp/20261016-debt-cleanup/scheduler-handoff.md`，模型在途/任务SHA/实际覆盖读`reviews/central-handoff.md`；不重启第二队列，不把交接当停工。main仍7781b18，已交付137/140；Draft143总账JSON仍c277相同字节、分类输入37份未收敛，c277两CI绿但本次board提交后的新tip实时核。延期/验收债不核销，全局无归零结论。
+> 首任务PR141：CLI唯一writer debt_catalog_impl在ca260ae之后修已实测BND1（仓内Git shim可让sourceguard假通过），五个source当前未提交；原真实运行Git路径正常，不能抹去原成功或拿它解除future guard缺陷。C10多余wire漏判按P2-b升P1，ca260已补真实EOF负控；C04超时abort+await及任务销毁控制同批48pairing/4ignored通过，独立尾差待核。f446/ca260与失败原件均保留，P0事故/139仍OPEN。交接后先核writer状态和新tip，不并发修改或假称已过完整boundary。
+> PR138988两CI绿但boundary缺失仍draft；PR142d148精确授权/独立闸门/A2仍待。#65六格默认装配probe只在主仓_tmp独立准备，10:23应交PREPARED/NOT_RUN，不当实测。五树，最新约39G/46G；用户研究、none/、旧分支与事故证据保护不变。pdrs已核ACTIVE、尚无首次执行证据；下一调度按本交接继续，无须逐单发车。
+
 > ## 2026-10-16 · 账本保真纠偏与三条候选现状
 > 唯一总账`state/issue-ledger.json`按原31单55子项维护，新139两项另列；113/120前两项只按已合并PR140/137核销，当前仍31open。分类输入DS55、GLM37份，其中等级36/类型33/仅修复确认1；不是37项完整分类，更不是全仓归零。DS55.2/56.2真实原文为未定待实测，保留null/raw与候选；65.4为范围门N/A。snapshot与当前行动分列，98.3仅旧源码护栏已修，聚合不重复计故障，共享Linux环境不合并不同断言。五输入SHA/写前一致性与原子写入、独立纯JSON27项核查通过；后续两家分类及分歧仍未齐。
 > PR141实现者独占CLI树：ebf9653新source guard逐一核cc7的1000个src Git blob并拒shadow；7个Node/15个Python控制，新target100602完整10RUN/3replay/10Native+10pair/实际三权限恢复/postflight通过。六原工具SHA、四wrapper空串、Cargo/Node白名单与源码/tool/rustup元数据前后绑定；P0事故与失败463MiB现场保留。作者正补finally失败mock尾差，原实现不变；两家增量/实际boundary与新CI未闭合，不核销139。
