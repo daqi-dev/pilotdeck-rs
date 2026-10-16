@@ -2,47 +2,61 @@
 use crate::{Body, HttpClient, ProxyError, acceptor, pairing, upstream};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::{Request, Response, StatusCode, body::Incoming, header};
-use hyper_util::rt::TokioIo;
-use std::convert::Infallible;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::TcpStream,
+use hyper::{
+    Request, Response, StatusCode, body::Incoming, header, server::conn::http1, service::service_fn,
 };
+use hyper_util::rt::TokioIo;
+use std::{
+    convert::Infallible,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll, Waker},
+};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 pub struct Proxy {
     pub upstream: String,
     pub client: HttpClient,
 }
 
 impl Proxy {
-    pub async fn serve(
+    /// All accepted connections use the same synchronous upgrade read boundary.
+    pub async fn serve_connection<S>(self: Arc<Self>, stream: S) -> Result<(), hyper::Error>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        serve_connection_with(stream, move |request, lease| {
+            let proxy = self.clone();
+            async move { proxy.serve::<S>(request, lease).await }
+        })
+        .await
+    }
+
+    async fn serve<S>(
         &self,
         request: Request<Incoming>,
-    ) -> Result<Response<Body>, std::io::Error> {
-        self.serve_with_http(request, |request| self.http(request))
+        lease: Option<ReadLease>,
+    ) -> Result<Response<Body>, std::io::Error>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        self.serve_with_http::<S, _, _>(request, lease, |request| self.http(request))
             .await
     }
 
-    async fn serve_with_http<F, Fut>(
+    async fn serve_with_http<S, F, Fut>(
         &self,
         mut request: Request<Incoming>,
+        lease: Option<ReadLease>,
         http: F,
     ) -> Result<Response<Body>, std::io::Error>
     where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         F: FnOnce(Request<Incoming>) -> Fut,
         Fut: std::future::Future<Output = Response<Body>>,
     {
         // Node dispatches any Upgrade protocol only when Connection also has
         // an upgrade token, then handleUpgrade checks the pathname and key.
-        let is_upgrade = request.headers().contains_key(header::UPGRADE)
-            && request
-                .headers()
-                .get_all(header::CONNECTION)
-                .iter()
-                .filter_map(|value| value.to_str().ok())
-                .flat_map(|value| value.split(','))
-                .any(|token| token.trim().eq_ignore_ascii_case("upgrade"));
-        if is_upgrade {
+        if is_upgrade(&request) {
             if request.uri().path() != "/ws" {
                 // A service error makes Hyper close the socket without an HTTP
                 // response, matching TS's socket.destroy() upgrade rejection.
@@ -51,7 +65,7 @@ impl Proxy {
             if acceptor::websocket_accept(request.headers()).is_none() {
                 return Err(std::io::Error::other("missing websocket key"));
             }
-            return Ok(match self.websocket(&mut request).await {
+            return Ok(match self.websocket::<S>(&mut request, lease).await {
                 Ok(response) => response,
                 Err(error) => {
                     eprintln!("WS pairing: {error}");
@@ -96,10 +110,14 @@ impl Proxy {
         }
     }
 
-    async fn websocket(
+    async fn websocket<S>(
         &self,
         request: &mut Request<Incoming>,
-    ) -> Result<Response<Body>, ProxyError> {
+        lease: Option<ReadLease>,
+    ) -> Result<Response<Body>, ProxyError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let accept = acceptor::websocket_accept(request.headers()).expect("validated key");
         let path = request
             .uri()
@@ -115,10 +133,12 @@ impl Proxy {
         .await?;
         let upgraded = hyper::upgrade::on(request);
         tokio::spawn(async move {
-            match upgraded.await {
+            let upgraded = upgraded.await;
+            drop(lease);
+            match upgraded {
                 Ok(downstream) => {
                     if let Err(error) =
-                        pair_upgraded::<TcpStream, _>(downstream, TokioIo::new(upstream)).await
+                        pair_upgraded::<S, _>(downstream, TokioIo::new(upstream)).await
                     {
                         eprintln!("WS pairing: {error}");
                     }
@@ -130,6 +150,109 @@ impl Proxy {
     }
 }
 
+/// Node's upgrade head ends at the read that completed the HTTP headers.
+/// Hyper otherwise performs another read while the service awaits upstream 101.
+#[derive(Debug, Default)]
+struct ReadState {
+    paused: bool,
+    waker: Option<Waker>,
+}
+
+type SharedReadState = Arc<Mutex<ReadState>>;
+
+#[derive(Debug)]
+struct ReadLease(SharedReadState);
+impl Drop for ReadLease {
+    fn drop(&mut self) {
+        let waker = {
+            let mut state = self.0.lock().expect("upgrade read state");
+            state.paused = false;
+            state.waker.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+}
+
+struct UpgradeReadGate<S> {
+    stream: S,
+    state: SharedReadState,
+}
+impl<S: AsyncRead + Unpin> AsyncRead for UpgradeReadGate<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        {
+            let mut state = self.state.lock().expect("upgrade read state");
+            if state.paused {
+                state.waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+        }
+        Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+impl<S: AsyncWrite + Unpin> AsyncWrite for UpgradeReadGate<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+
+fn is_upgrade(request: &Request<Incoming>) -> bool {
+    request.headers().contains_key(header::UPGRADE)
+        && request
+            .headers()
+            .get_all(header::CONNECTION)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+}
+
+async fn serve_connection_with<S, F, Fut>(stream: S, handler: F) -> Result<(), hyper::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    F: Fn(Request<Incoming>, Option<ReadLease>) -> Fut,
+    Fut: std::future::Future<Output = Result<Response<Body>, std::io::Error>>,
+{
+    let state = SharedReadState::default();
+    let stream = UpgradeReadGate {
+        stream,
+        state: state.clone(),
+    };
+    let service = service_fn(move |request| {
+        // This must run before returning a future: Hyper can poll read again
+        // before it polls that future. Invalid upgrade requests close anyway.
+        let lease = if is_upgrade(&request)
+            && request.uri().path() == "/ws"
+            && acceptor::websocket_accept(request.headers()).is_some()
+        {
+            state.lock().expect("upgrade read state").paused = true;
+            Some(ReadLease(state.clone()))
+        } else {
+            None
+        };
+        handler(request, lease)
+    });
+    http1::Builder::new()
+        .serve_connection(TokioIo::new(stream), service)
+        .with_upgrades()
+        .await
+}
+
 async fn pair_upgraded<S, U>(
     downstream: hyper::upgrade::Upgraded,
     upstream: U,
@@ -139,13 +262,14 @@ where
     U: AsyncRead + AsyncWrite + Unpin,
 {
     let parts = downstream
-        .downcast::<TokioIo<S>>()
+        .downcast::<TokioIo<UpgradeReadGate<S>>>()
         .map_err(|_| std::io::Error::other("unexpected downstream upgrade IO type"))?;
     // GatewayServer.ts:67 ignores Node's upgrade `head`. Hyper's equivalent
-    // is read_buf: discard client frames already read with the HTTP request.
+    // is read_buf: the synchronous gate ensures it contains only bytes read
+    // with the HTTP headers, never a later read while waiting for upstream.
     // Upstream response read-ahead remains intact because it is TS output.
     drop(parts.read_buf);
-    pairing::run(parts.io.into_inner(), upstream).await
+    pairing::run(parts.io.into_inner().stream, upstream).await
 }
 
 pub(crate) fn strip_hop_headers(headers: &mut hyper::HeaderMap) {
@@ -190,9 +314,7 @@ pub(crate) fn plain(status: StatusCode, message: &'static str) -> Response<Body>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::{server::conn::http1, service::service_fn};
     use hyper_util::{client::legacy::Client, rt::TokioExecutor};
-    use std::sync::Arc;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         time::{Duration, timeout},
@@ -252,16 +374,7 @@ mod tests {
             upstream: "http://127.0.0.1:28790".into(),
             client: Client::builder(TokioExecutor::new()).build_http(),
         });
-        let server = tokio::spawn(async move {
-            let service = service_fn(move |request| {
-                let proxy = proxy.clone();
-                async move { proxy.serve(request).await }
-            });
-            http1::Builder::new()
-                .serve_connection(TokioIo::new(server_io), service)
-                .with_upgrades()
-                .await
-        });
+        let server = tokio::spawn(async move { proxy.serve_connection(server_io).await });
         let key = key
             .map(|key| format!("Sec-WebSocket-Key: {key}\r\n"))
             .unwrap_or_default();
@@ -322,23 +435,24 @@ mod tests {
                     client: Client::builder(TokioExecutor::new()).build_http(),
                 });
                 let server = tokio::spawn(async move {
-                    let service = service_fn(move |request| {
+                    serve_connection_with(server_io, move |request, lease| {
                         let proxy = proxy.clone();
                         async move {
                             proxy
-                                .serve_with_http(request, |request| async move {
-                                    assert_eq!(request.uri().path(), "/health");
-                                    assert_eq!(request.headers()[header::UPGRADE], "h2c");
-                                    plain(StatusCode::OK, "healthy")
-                                })
+                                .serve_with_http::<tokio::io::DuplexStream, _, _>(
+                                    request,
+                                    lease,
+                                    |request| async move {
+                                        assert_eq!(request.uri().path(), "/health");
+                                        assert_eq!(request.headers()[header::UPGRADE], "h2c");
+                                        plain(StatusCode::OK, "healthy")
+                                    },
+                                )
                                 .await
                         }
-                    });
-                    http1::Builder::new()
-                        .serve_connection(TokioIo::new(server_io), service)
-                        .with_upgrades()
-                        .await
-                        .unwrap();
+                    })
+                    .await
+                    .unwrap();
                 });
                 let (mut sender, client) =
                     hyper::client::conn::http1::handshake(TokioIo::new(client_io))
@@ -401,14 +515,15 @@ mod tests {
             let (upgrade_tx, upgrade_rx) = tokio::sync::oneshot::channel();
             let upgrade_tx = Arc::new(std::sync::Mutex::new(Some(upgrade_tx)));
             let http = tokio::spawn(async move {
-                let service = service_fn(move |mut request: Request<Incoming>| {
+                let handler = move |mut request: Request<Incoming>, lease| {
                     let upgraded = hyper::upgrade::on(&mut request);
-                    upgrade_tx.lock().unwrap().take().unwrap().send(upgraded).unwrap();
-                    async { Ok::<_, Infallible>(acceptor::websocket_response(hyper::HeaderMap::new(), "accept")) }
-                });
-                http1::Builder::new().serve_connection(TokioIo::new(downstream), service).with_upgrades().await.unwrap();
+                    upgrade_tx.lock().unwrap().take().unwrap().send((upgraded, lease)).unwrap();
+                    async { Ok(acceptor::websocket_response(hyper::HeaderMap::new(), "accept")) }
+                };
+                serve_connection_with(downstream, handler).await.unwrap();
             });
-            let upgraded = upgrade_rx.await.unwrap().await.unwrap();
+            let (upgraded, _lease) = upgrade_rx.await.unwrap();
+            let upgraded = upgraded.await.unwrap();
             let pair = tokio::spawn(pair_upgraded::<DuplexStream, _>(upgraded, upstream));
             let mut response = Vec::new();
             while !response.ends_with(b"\r\n\r\n") {
@@ -447,3 +562,7 @@ mod tests {
         assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
     }
 }
+
+#[cfg(test)]
+#[path = "http_proxy_tests.rs"]
+mod read_boundary_tests;
