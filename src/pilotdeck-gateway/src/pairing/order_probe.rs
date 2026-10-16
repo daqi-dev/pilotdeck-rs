@@ -28,7 +28,7 @@ const SCRIPT_NAMES: &[&str] = &[
     "stdio-host.mjs",
 ];
 
-fn hash(bytes: impl AsRef<[u8]>) -> String {
+pub(super) fn hash(bytes: impl AsRef<[u8]>) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 

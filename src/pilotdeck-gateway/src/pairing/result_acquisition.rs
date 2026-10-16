@@ -1,7 +1,9 @@
 //! PREPARED_NOT_RUN. Test-only causal taps; never infer JoinSet readiness from COMPLETE.
-use super::{Route, frame, order_probe::Observer};
+use super::{
+    Route, frame,
+    order_probe::{Observer, hash as digest},
+};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::sync::{
     Arc, Condvar, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -44,6 +46,7 @@ struct State {
     successor_frame: Mutex<Option<frame::Frame>>,
     release_count: AtomicUsize,
     changed: Notify,
+    bypass_changed: Notify,
 }
 
 #[derive(Clone, Default)]
@@ -52,10 +55,6 @@ tokio::task_local! { pub(super) static ACTIVE: Tap; }
 
 pub(super) fn current() -> Tap {
     ACTIVE.try_with(Clone::clone).unwrap_or_default()
-}
-
-fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn identity(frame: &frame::Frame) -> String {
@@ -134,6 +133,7 @@ impl Tap {
             successor_frame: Mutex::new(None),
             release_count: AtomicUsize::new(0),
             changed: Notify::new(),
+            bypass_changed: Notify::new(),
         })))
     }
 
@@ -204,14 +204,14 @@ impl Tap {
                 .unwrap()
                 .replace(copy_result(frame, route));
             assert!(previous.is_none(), "bounded single-result bypass slot");
-            state.changed.notify_one();
+            state.bypass_changed.notify_one();
         }
     }
 
     pub(super) async fn bypassed(&self) -> (frame::Frame, Route) {
         let state = self.0.as_ref().expect("configured bypass");
         loop {
-            let changed = state.changed.notified();
+            let changed = state.bypass_changed.notified();
             if let Some(result) = state.bypass.lock().unwrap().take() {
                 self.event("mutant_hit", facts(&result.0, &result.1));
                 return result;
@@ -602,5 +602,214 @@ async fn m1_m4_actual_path_mutant() {
         Ok(()) => panic!("actual mutant accepted; preserve raw and investigate as P1"),
         Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
         Err(error) => panic!("mutant task infrastructure failure: {error}"),
+    }
+}
+
+// Keep real Tap bypass-result notifications separate from admission-barrier progress.
+#[cfg(test)]
+mod notify_controls {
+    use super::*;
+    use std::{
+        future::Future,
+        sync::mpsc,
+        task::{Context, Poll, Wake, Waker},
+        thread::{self, JoinHandle},
+    };
+
+    const CONTROL_WAIT: Duration = Duration::from_millis(1500);
+
+    #[derive(Default)]
+    struct CountWake {
+        count: Mutex<usize>,
+        changed: Condvar,
+    }
+
+    impl Wake for CountWake {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            *self.count.lock().unwrap() += 1;
+            self.changed.notify_all();
+        }
+    }
+
+    impl CountWake {
+        fn count(&self) -> usize {
+            *self.count.lock().unwrap()
+        }
+
+        fn wait_for_one(&self) {
+            let count = self.count.lock().unwrap();
+            let (count, timed) = self
+                .changed
+                .wait_timeout_while(count, CONTROL_WAIT, |count| *count == 0)
+                .unwrap();
+            let observed = *count;
+            drop(count);
+            assert!(
+                !timed.timed_out() && observed == 1,
+                "one real wake required"
+            );
+        }
+    }
+
+    struct OwnedProducer {
+        cleanup: Option<OwnedRunCleanup>,
+        task: Option<JoinHandle<()>>,
+    }
+
+    impl OwnedProducer {
+        fn new(tap: Tap) -> Self {
+            Self {
+                cleanup: Some(OwnedRunCleanup::new(tap)),
+                task: None,
+            }
+        }
+
+        fn start(
+            &mut self,
+            tap: Tap,
+            frame: frame::Frame,
+            route: Route,
+            done: mpsc::SyncSender<()>,
+        ) {
+            assert!(self.task.is_none());
+            self.task = Some(thread::spawn(move || {
+                // This is the actual production-test call order, not a copied state machine.
+                tap.route_returned(&frame, &route);
+                tap.closure_result(&frame, &route);
+                // A receiver dropped by an assertion unwind is already a test
+                // failure; finish the owned thread instead of adding a panic.
+                let _ = done.send(());
+            }));
+        }
+
+        fn release(&mut self) {
+            // Exercise the real cleanup guard on normal and assertion-unwind paths.
+            drop(self.cleanup.take());
+        }
+
+        fn finish(mut self) {
+            self.release();
+            self.task.take().unwrap().join().unwrap();
+        }
+    }
+
+    impl Drop for OwnedProducer {
+        fn drop(&mut self) {
+            self.release();
+            if let Some(task) = self.task.take() {
+                let joined = task.join();
+                if !thread::panicking() {
+                    assert!(joined.is_ok(), "owned Tap producer panicked");
+                }
+            }
+        }
+    }
+
+    fn fixture(connection: &str) -> (Tap, frame::Frame, Route) {
+        let id = format!("{connection}-0");
+        let payload = serde_json::to_vec(&json!({
+            "type":"request", "id":&id, "method":"project_files_list"
+        }))
+        .unwrap();
+        let wire = frame::client_frame(0x81, 126, &payload).into();
+        let route = Route::LocalResponse(
+            serde_json::to_vec(&json!({"type":"response", "id":id, "result":{"control":true}}))
+                .unwrap(),
+        );
+        let tap = Tap::with_mutation(
+            Mode::HoldRouteReturn,
+            Mutation::BypassJoin,
+            Observer::new(),
+            "actual-tap-notify-control".into(),
+            connection,
+        );
+        (
+            tap,
+            frame::Frame {
+                opcode: 1,
+                wire,
+                payload,
+            },
+            route,
+        )
+    }
+
+    fn assert_result(actual: Poll<(frame::Frame, Route)>, expected: &(frame::Frame, Route)) {
+        let Poll::Ready((frame, route)) = actual else {
+            panic!("published real Tap bypass slot must be ready");
+        };
+        assert_eq!(frame.wire, expected.0.wire);
+        assert_eq!(frame.payload, expected.0.payload);
+        match (route, &expected.1) {
+            (Route::LocalResponse(actual), Route::LocalResponse(expected)) => {
+                assert_eq!(&actual, expected);
+            }
+            _ => panic!("actual Tap route changed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn actual_tap_notify_before_await_preserves_bypass_and_barrier() {
+        let (tap, frame, route) = fixture("notify-before");
+        let expected = copy_result(&frame, &route);
+        let (done_tx, done_rx) = mpsc::sync_channel(1);
+        let mut producer = OwnedProducer::new(tap.clone());
+        // Pre-release only this variant so both real producer calls can complete
+        // before either future exists; notify_one's stored permits must be safe.
+        producer.release();
+        producer.start(tap.clone(), frame, route, done_tx);
+        done_rx.recv_timeout(CONTROL_WAIT).unwrap();
+
+        let wake = Waker::from(Arc::new(CountWake::default()));
+        let mut context = Context::from_waker(&wake);
+        let mut barrier = Box::pin(tap.wait_admission_barrier());
+        assert!(barrier.as_mut().poll(&mut context).is_ready());
+        let mut bypass = Box::pin(tap.bypassed());
+        assert_result(bypass.as_mut().poll(&mut context), &expected);
+        let mut empty_bypass = Box::pin(tap.bypassed());
+        assert!(empty_bypass.as_mut().poll(&mut context).is_pending());
+        producer.finish();
+    }
+
+    #[tokio::test]
+    async fn actual_tap_pending_bypass_cannot_steal_admission_barrier_wake() {
+        let (tap, frame, route) = fixture("notify-pending");
+        let expected = copy_result(&frame, &route);
+        let mut producer = OwnedProducer::new(tap.clone());
+        let bypass_count = Arc::new(CountWake::default());
+        let barrier_count = Arc::new(CountWake::default());
+        let bypass_wake = Waker::from(bypass_count.clone());
+        let barrier_wake = Waker::from(barrier_count.clone());
+        let mut bypass_context = Context::from_waker(&bypass_wake);
+        let mut barrier_context = Context::from_waker(&barrier_wake);
+
+        // Polling to Pending registers the actual Notify waiters in this exact
+        // order. No sleep/yield is used to guess which future got registered.
+        let mut bypass = Box::pin(tap.bypassed());
+        assert!(bypass.as_mut().poll(&mut bypass_context).is_pending());
+        let mut barrier = Box::pin(tap.wait_admission_barrier());
+        assert!(barrier.as_mut().poll(&mut barrier_context).is_pending());
+        let (done_tx, done_rx) = mpsc::sync_channel(1);
+        producer.start(tap.clone(), frame, route, done_tx);
+
+        barrier_count.wait_for_one();
+        assert_eq!(
+            bypass_count.count(),
+            0,
+            "route-held wake belongs to the barrier"
+        );
+        assert!(bypass.as_mut().poll(&mut bypass_context).is_pending());
+        assert!(barrier.as_mut().poll(&mut barrier_context).is_ready());
+        producer.release();
+        bypass_count.wait_for_one();
+        done_rx.recv_timeout(CONTROL_WAIT).unwrap();
+        assert_result(bypass.as_mut().poll(&mut bypass_context), &expected);
+        let mut empty_bypass = Box::pin(tap.bypassed());
+        assert!(empty_bypass.as_mut().poll(&mut bypass_context).is_pending());
+        producer.finish();
     }
 }
