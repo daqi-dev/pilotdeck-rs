@@ -74,3 +74,8 @@ R62仅测试改动已提交36e76a0/clean，三新增和G6精确码未跑；旧R6
 ## R64 两个测量P1的最小真实ReadBuf复现（自决）
 
 GLM C判当前Scripted以chunk pop计数遇小ReadBuf假FAIL、空chunk假EOF/短later panic；DS按现有调用约束曾低判，现取高不作者降档。准备精确36e原struct+AsyncRead切片，原Rust1.99/r59已编tokio依赖做独立standalone witness，只证明原helper算法，不冒产品bin/整PR/默认TS。任务`_tmp/20261016-debt-cleanup/upgrade-read-boundary-r64-4ree12_9/task.md`；新8MiB/提前6MiB/.20reserve/freshdu、rustc60/程序10/总120/流256KiB，R63结束后才可执行一次，源/工具/原rlib前后核，不Cargo/旧target改写。结果交两非作者，随后修全部同类count消费者与边界永久控制。原则：调度/底层事实分歧先最小实测，当前调用不可达不等于测量装置永久安全。
+
+
+## R65 以实际字节修读取装置计数与边界（自决）
+
+R64原36e精确Scripted/ReadBuf实际复现三小读pop3/实际9字节，空队列条目首读0但后有R，later0..4切片panic、5空尾；standalone binarye62bf0d2/861640B，原源码与rustc/Tokio rlib前后同，index1bf480d0e52a931b114f2fdb9bc1b806c27b121e2e63cb70af6f4ff2efc80fb5。接受GLM当前P1高判修同类，不作者降级；任务`_tmp/20261016-debt-cleanup/upgrade-read-boundary-r65-fix-k61btbpo/task.md`只CLI测试源，全部counter consumer同步字节/空chunk/短later/CRLF36。20min/1MiB源码only；新CI与两家新增终审待，不冒当前产品bin或历史CI5覆盖。原则：量纲必须对准观测字节，不受下层缓冲大小耦合，真运行反例转永久控制。
