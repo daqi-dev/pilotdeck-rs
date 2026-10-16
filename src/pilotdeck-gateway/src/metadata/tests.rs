@@ -347,6 +347,18 @@ fn metadata_io_completeness_rejects_missing_cases_method_and_each_helper_error()
             && o["result"]["directory"] == true)
     });
     assert!(!complete(&missing_legacy_stat));
+    let mut wrong_expected = fixture.clone();
+    let row = wrong_expected["cases"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|r| r["id"] == "chats-loop")
+        .unwrap();
+    row["expectedError"] = "EACCES".into();
+    assert!(
+        !complete(&wrong_expected),
+        "expectedError must be independently anchored"
+    );
     let mut wrong_code = fixture.clone();
     let row = wrong_code["cases"]
         .as_array_mut()

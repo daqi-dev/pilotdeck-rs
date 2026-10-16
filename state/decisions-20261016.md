@@ -234,3 +234,6 @@ R28精确评审尾差：首个正确响应不证明流中没有多余响应；me
 
 
 R28 BND1实测增量：源码Git对象绑定仍依赖Git可执行身份；仓内PATH shim能伪造rev-parse/ls-tree即使baseline真实脏源。明确传递同一个绝对Git，不从Node PATH重新解析；Git真实路径及workspace根先canonicalize（macOS /var别名必须归一），拒当前仓与baseline及Git祖先内可替换Git，执行前后核SHA。原则：验证器依赖的可执行身份也是输入边界；自有repo-local shim在执行前被拒，真实固定baseline健康仍过。此为R4仓内威胁范围，不扩称全部系统可执行可信闭合。
+
+
+R28 BND2已实证P1：仅替fixture.permissions目标或mode就能让旧restore/checker共同通过且原目录仍111/111/000。采用每chmod前同步pipe原计划、最终一次序列化oracle的pipe内存快照；Node restore只吃驱动私有计划参数，checker核同一原目标，工作JSON任意漂移FAIL仍恢复。部分record异常/timeout/cap也按已提交1至3步恢复，不等最终manifest。无需签名/新crypto；信任点为已绑定源码的直接子进程pipe，不是可改输出文件。真实七格控制healthy通过、两替换/删除/三类record失败拒绝且原权限终于恢复；目录对象/owner marker检查仍保留，未扩成任意目录重命名可逆保证。阶段与P0闭合仍待两家精确增量审。

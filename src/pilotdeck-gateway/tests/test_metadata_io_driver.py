@@ -183,19 +183,20 @@ class EnvironmentControls(unittest.TestCase):
             path = scratch/str(n); path.mkdir(); path.chmod(0o755)
             permissions.append(dict(path=str(path), mode=0o755))
         fixture = self.root/'oracle.json'
-        fixture.write_text(json.dumps(dict(owner='owner', scratch=str(scratch), permissions=permissions)))
+        plan=dict(owner='owner', scratch=str(scratch), permissions=permissions)
+        fixture.write_text(json.dumps(plan))
         receipt = Path(str(fixture)+'.cleanup.json')
         good = dict(owner='owner', restored=3)
-        with self.assertRaises(FileNotFoundError): driver.check_restore(fixture)
+        with self.assertRaises(FileNotFoundError): driver.check_restore(fixture,plan)
         for data in ({}, dict(good, owner='wrong'), dict(good, restored=0), dict(good, restored=True)):
             receipt.write_text(json.dumps(data))
-            with self.assertRaises(RuntimeError): driver.check_restore(fixture)
-        receipt.write_text(json.dumps(good)); driver.check_restore(fixture)
+            with self.assertRaises(RuntimeError): driver.check_restore(fixture,plan)
+        receipt.write_text(json.dumps(good)); driver.check_restore(fixture,plan)
         Path(permissions[0]['path']).chmod(0o111)
-        with self.assertRaises(RuntimeError): driver.check_restore(fixture)
+        with self.assertRaises(RuntimeError): driver.check_restore(fixture,plan)
         Path(permissions[0]['path']).chmod(0o755)
         (scratch/'.metadata-oracle-owner').write_text('wrong')
-        with self.assertRaises(RuntimeError): driver.check_restore(fixture)
+        with self.assertRaises(RuntimeError): driver.check_restore(fixture,plan)
 
     def test_postflight_rejects_source_binary_component_and_cache_changes(self):
         for change in ('source', 'binary', 'components', 'rustup-entry', 'node-cache'):
@@ -242,12 +243,12 @@ class FailureRestoreControls(unittest.TestCase):
         import contextlib
         import io
         import json
-        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'success'):
+        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'success'):
             with self.subTest(scenario=scenario):
                 output = self.root / scenario
                 pf = driver.toolchain_preflight(self.toolchain, self.original, self.root)
                 names = []
-                permissions = []
+                permissions, decoys = [], []
                 def fake_run(command, cwd, environment, log, **kwargs):
                     name = log.stem; names.append(name)
                     text = ''
@@ -256,17 +257,35 @@ class FailureRestoreControls(unittest.TestCase):
                     if name == 'record':
                         scratch = output / 'recording'
                         (scratch / '.metadata-oracle-owner').write_text('owner')
-                        for n in range(3):
+                        for n in range(1 if scenario.startswith('record-') else 3):
                             path = scratch / str(n); path.mkdir(); path.chmod(0o111)
                             permissions.append(dict(path=str(path), mode=0o755))
-                        fixture.write_text(json.dumps(dict(owner='owner', scratch=str(scratch),
-                            permissions=permissions, cases=[dict(id=str(n), status='RUN') for n in range(10)])))
+                        data=dict(baselineCommit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85',owner='owner',scratch=str(scratch),
+                                  permissions=permissions,cases=[dict(id=str(n),status='RUN') for n in range(10)])
+                        text=''.join('PDRS_METADATA_PERMISSION '+json.dumps(dict(
+                            baselineCommit=data['baselineCommit'],owner='owner',scratch=str(scratch),permission=item))+'\n' for item in permissions)
+                        if scenario.startswith('record-'):
+                            code,reason = (9,None) if scenario=='record-failure' else (-9,'timeout')
+                        else:
+                            serialized=json.dumps(data);fixture.write_text(serialized)
+                            text+='PDRS_METADATA_ORACLE '+json.dumps(serialized)+'\n'
                     if name == 'replay':
                         if scenario == 'replay-failure': code = 9
                         text = 'test result: ok. 3 passed; 0 failed; 2 ignored;\n'
                     if name == 'native-retained':
                         text = 'test result: ok. 2 passed; 0 failed; 0 ignored;\n'
                         text += ''.join('PDRS_NATIVE_METADATA_OK '+str(n)+'\n' for n in range(10))
+                        if scenario in ('permission-target-replaced','permission-mode-replaced'):
+                            data=json.loads(fixture.read_text())
+                            if scenario=='permission-target-replaced':
+                                for n in range(3):
+                                    path=output/'recording'/('decoy-'+str(n));path.mkdir();path.chmod(0o700)
+                                    decoys.append(path)
+                                data['permissions']=[dict(path=str(path),mode=0o755) for path in decoys]
+                            else:data['permissions']=[dict(item,mode=0o111) for item in permissions]
+                            fixture.write_text(json.dumps(data))
+                        if scenario=='fixture-deleted':fixture.unlink()
+
                     if name in ('replay', 'native-retained'):
                         text += ''.join('PDRS_METADATA_PAIR_OK '+str(n)+'\n' for n in range(10))
                     if name == 'source-head':
@@ -277,11 +296,13 @@ class FailureRestoreControls(unittest.TestCase):
                         if scenario == 'source-head-empty': text = ''
                     if name == 'restore':
                         if scenario != 'noop-restore':
-                            for item in permissions: Path(item['path']).chmod(item['mode'])
+                            trusted=json.loads(command[-1])
+                            self.assertEqual(trusted['permissions'],permissions)
+                            for item in trusted['permissions']: Path(item['path']).chmod(item['mode'])
                         # A plausible receipt plus exit0 still cannot hide wrong modes.
-                        Path(str(fixture)+'.cleanup.json').write_text(json.dumps(dict(owner='owner', restored=3)))
+                        Path(str(fixture)+'.cleanup.json').write_text(json.dumps(dict(owner='owner', restored=len(permissions))))
                     log.write_text(text)
-                    return dict(exit=code, reason=reason, reaped=True, log=str(log))
+                    return dict(exit=code, reason=reason, reaped=True, log=str(log),stdout=text)
                 with patch.dict(driver.os.environ, self.original, clear=True), \
                      patch.object(driver, 'toolchain_preflight', return_value=pf), \
                      patch.object(driver, 'source_snapshot', return_value={}), \
@@ -290,7 +311,6 @@ class FailureRestoreControls(unittest.TestCase):
                      patch.object(driver, 'run_bounded', side_effect=fake_run), \
                      patch.object(driver, 'check_postflight'), \
                      patch.object(driver, 'external_git', side_effect=lambda executable, roots: executable), \
-                     patch.object(driver.subprocess, 'check_output', return_value='mock-head\n'), \
                      patch.object(driver.subprocess, 'Popen', side_effect=AssertionError('no external process')), \
                      contextlib.redirect_stdout(io.StringIO()):
                     code = driver.main(['--baseline',str(self.root), '--output',str(output),
@@ -299,6 +319,8 @@ class FailureRestoreControls(unittest.TestCase):
                 self.assertEqual(code, 0 if scenario=='success' else 1)
                 self.assertEqual(result['success'], scenario=='success')
                 self.assertEqual(names[-2:], ['restore','source-head'])
+                if scenario.startswith('record-'):
+                    self.assertEqual(names,['record','restore','source-head'])
                 if scenario == 'replay-failure':
                     self.assertEqual(names, ['record', 'replay', 'restore', 'source-head'])
                     for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777, 0o755)
@@ -310,7 +332,13 @@ class FailureRestoreControls(unittest.TestCase):
                                 'source-head-spawn-error':'mock Git spawn denied', 'source-head-empty':'empty source HEAD'}[scenario]
                     self.assertIn(expected,result['error'])
                     self.assertIsNone(result['sourceHead'])
-                if scenario != 'replay-failure':
+                if scenario in ('permission-target-replaced','permission-mode-replaced','fixture-deleted'):
+                    self.assertTrue(result['oracleGuard']['restored'])
+                    self.assertFalse(result['oracleGuard']['artifactUnchanged'])
+                if scenario != 'noop-restore':
+                    for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777,0o755)
+                for path in decoys:self.assertEqual(os.stat(path).st_mode & 0o777,0o700)
+                if scenario not in ('replay-failure','record-failure','record-timeout'):
                     native = next(r for r in result['runs'] if r['name']=='native-retained')
                     replay = next(r for r in result['runs'] if r['name']=='replay')
                     self.assertEqual(native['environment']['PDRS_METADATA_IO_LIVE'],str(output/'metadata-io.json'))

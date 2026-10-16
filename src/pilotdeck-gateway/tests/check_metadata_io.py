@@ -62,23 +62,92 @@ def check_receipts(text, marker, ids):
         raise RuntimeError(marker + ': expected ten unique actual-case receipts')
 
 
-def check_restore(fixture):
-    oracle = json.loads(fixture.read_text())
+def permission_checkpoint(stdout, expected_scratch):
+    rows = [json.loads(line.removeprefix('PDRS_METADATA_PERMISSION '))
+            for line in stdout.split('\n') if line.startswith('PDRS_METADATA_PERMISSION ')]
+    if not rows:
+        return None
+    first = rows[0]
+    plan = {key: first[key] for key in ('baselineCommit', 'owner', 'scratch')}
+    if plan['baselineCommit'] != 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85':
+        raise RuntimeError('permission baseline mismatch')
+    scratch = Path(plan['scratch']).resolve(strict=True)
+    if scratch != expected_scratch.resolve(strict=True) or not plan['owner']:
+        raise RuntimeError('permission owner root mismatch')
+    if (scratch/'.metadata-oracle-owner').read_text() != plan['owner']:
+        raise RuntimeError('permission owner marker mismatch')
+    plan['permissions'] = []
+    for row in rows:
+        if any(row[key] != first[key] for key in ('baselineCommit','owner','scratch')):
+            raise RuntimeError('mixed permission owners')
+        item = row['permission']; path = Path(item['path'])
+        if not path.is_absolute() or path.is_symlink() or not path.resolve(strict=True).is_relative_to(scratch):
+            raise RuntimeError('permission path outside owner')
+        if type(item['mode']) is not int or not 0 <= item['mode'] <= 0o777:
+            raise RuntimeError('invalid permission mode')
+        plan['permissions'].append(dict(path=str(path),mode=item['mode']))
+    paths = [item['path'] for item in plan['permissions']]
+    if len(paths) > 3 or len(paths) != len(set(paths)):
+        raise RuntimeError('duplicate or excess permission plans')
+    return dict(content=None,oracle=None,plan=plan,restoreArgument=json.dumps(plan))
+
+
+def freeze_oracle(stdout, expected_scratch):
+    """Checkpoint comes from the recorder pipe, never from a mutable file."""
+    rows = [line.removeprefix('PDRS_METADATA_ORACLE ') for line in stdout.split('\n')
+            if line.startswith('PDRS_METADATA_ORACLE ')]
+    if len(rows) != 1:
+        raise RuntimeError('one recorder memory checkpoint required')
+    serialized = json.loads(rows[0])
+    if not isinstance(serialized, str):
+        raise RuntimeError('invalid recorder memory checkpoint')
+    oracle = json.loads(serialized)
+    plan = {key: oracle[key] for key in ('baselineCommit', 'owner', 'scratch')}
+    if plan['baselineCommit'] != 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85':
+        raise RuntimeError('checkpoint baseline mismatch')
+    scratch = Path(plan['scratch']).resolve(strict=True)
+    if scratch != expected_scratch.resolve(strict=True):
+        raise RuntimeError('checkpoint scratch mismatch')
+    if not plan['owner'] or (scratch/'.metadata-oracle-owner').read_text() != plan['owner']:
+        raise RuntimeError('checkpoint owner mismatch')
+    permissions = oracle['permissions']
+    if len(permissions) != 3 or len({item['path'] for item in permissions}) != 3:
+        raise RuntimeError('three unique checkpoint permission targets required')
+    plan['permissions'] = []
+    for item in permissions:
+        path = Path(item['path'])
+        if not path.is_absolute() or path.is_symlink() or not path.resolve(strict=True).is_relative_to(scratch):
+            raise RuntimeError('checkpoint target outside owner')
+        if type(item['mode']) is not int or not 0 <= item['mode'] <= 0o777:
+            raise RuntimeError('invalid checkpoint mode')
+        plan['permissions'].append(dict(path=str(path), mode=item['mode']))
+    return dict(content=serialized.encode('utf-8'), oracle=oracle, plan=plan,
+                restoreArgument=json.dumps(plan))
+
+
+def unchanged_oracle(fixture, snapshot):
+    if snapshot['content'] is None:
+        raise RuntimeError('recording has no complete oracle checkpoint')
+    if fixture.read_bytes() != snapshot['content']:
+        raise RuntimeError('oracle bytes changed after recorder checkpoint')
+
+
+def check_restore(fixture, oracle):
     scratch = Path(oracle['scratch']).resolve(strict=True)
     if not oracle.get('owner') or (scratch / '.metadata-oracle-owner').read_text() != oracle['owner']:
         raise RuntimeError('restore owner mismatch')
     permissions = oracle['permissions']
-    receipt = json.loads(Path(str(fixture) + '.cleanup.json').read_text())
-    if len(permissions) != 3 or len({item['path'] for item in permissions}) != 3:
-        raise RuntimeError('three unique permission targets required')
-    if receipt.get('owner') != oracle['owner'] or type(receipt.get('restored')) is not int or receipt['restored'] != 3:
-        raise RuntimeError('restore receipt owner/count mismatch')
+    if not 1 <= len(permissions) <= 3 or len({item['path'] for item in permissions}) != len(permissions):
+        raise RuntimeError('one to three unique permission targets required')
     for item in permissions:
         path = Path(item['path'])
         if not path.resolve(strict=True).is_relative_to(scratch) or path.is_symlink():
             raise RuntimeError('restore target outside owner')
         if type(item['mode']) is not int or stat.S_IMODE(path.stat().st_mode) != item['mode']:
             raise RuntimeError('permission not restored: ' + str(path))
+    receipt = json.loads(Path(str(fixture) + '.cleanup.json').read_text())
+    if receipt.get('owner') != oracle['owner'] or type(receipt.get('restored')) is not int or receipt['restored'] != len(permissions):
+        raise RuntimeError('restore receipt owner/count mismatch')
     return receipt
 
 
@@ -196,6 +265,8 @@ def stop_group(child):
 def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024):
     start = time.monotonic()
     reason, wait_error, code, gone = None, None, None, False
+    captured = bytearray()
+    written = 0
     with log.open('xb') as stream:
         child = subprocess.Popen(command, cwd=cwd, env=environment, stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
@@ -203,7 +274,7 @@ def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024)
             with selectors.DefaultSelector() as selector:
                 os.set_blocking(child.stdout.fileno(), False)
                 selector.register(child.stdout, selectors.EVENT_READ)
-                pipe_open, written = True, 0
+                pipe_open = True
                 while pipe_open or child.poll() is None:
                     if time.monotonic()-start > deadline:
                         reason = 'timeout'
@@ -221,7 +292,7 @@ def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024)
                             pipe_open = False
                             break
                         keep = min(len(chunk), limit-written)
-                        stream.write(chunk[:keep]); written += keep
+                        stream.write(chunk[:keep]); captured.extend(chunk[:keep]); written += keep
                         if keep != len(chunk):
                             reason = 'output limit'
                             break
@@ -240,7 +311,6 @@ def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024)
                 except subprocess.TimeoutExpired as second:
                     wait_error += '\n' + str(second)
         finally:
-            child.stdout.close()
             if child.poll() is None:
                 gone = stop_group(child) or gone
                 try:
@@ -254,9 +324,25 @@ def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024)
                 gone = gone or already_gone
                 if not already_gone:
                     reason = reason or 'surviving descendants'
+            # Preserve already-written permission checkpoints on timeout/kill.
+            # Read only the remaining output budget plus one detection byte.
+            while written <= limit:
+                try:
+                    chunk = os.read(child.stdout.fileno(), min(65536, limit-written+1))
+                except BlockingIOError:
+                    break
+                if not chunk:
+                    break
+                keep = min(len(chunk), limit-written)
+                stream.write(chunk[:keep]); captured.extend(chunk[:keep]); written += keep
+                if keep != len(chunk):
+                    reason = reason or 'output limit'
+                    break
+            child.stdout.close()
     return dict(argv=list(map(str, command)), exit=code, reason=reason, waitError=wait_error,
                 groupAlreadyGone=gone, reaped=code is not None, pid=child.pid,
-                seconds=round(time.monotonic()-start,3), log=str(log), sha256=sha(log))
+                seconds=round(time.monotonic()-start,3), log=str(log), sha256=sha(log),
+                stdout=captured.decode('utf-8', errors='replace'))
 
 
 def main(argv=None):
@@ -309,17 +395,35 @@ def main(argv=None):
     fixture = output / 'metadata-io.json'
     recorder = repo / 'pilotdeck-gateway/tests/record_metadata_io.mts'
     runs = []
+    snapshot = None
 
     def run(name, command, *, deadline=90, environment=None):
+        nonlocal snapshot
+        if snapshot is not None and name in ('replay', 'native-retained'):
+            unchanged_oracle(fixture, snapshot)
         log = output / (name + '.log')
         actual_environment = cargo_env if environment is None else environment
         result = run_bounded(command, root, actual_environment, log, deadline=deadline)
+        stdout = result.pop('stdout')
         result['name'] = name
         result['environment'] = dict(actual_environment)
         runs.append(result)
+        if name == 'record':
+            snapshot = permission_checkpoint(stdout, scratch)
+            if result['exit'] == 0 and not result['reason']:
+                full_snapshot = freeze_oracle(stdout, scratch)
+                if snapshot is None:
+                    snapshot = full_snapshot
+                    raise RuntimeError('pre-chmod permission checkpoints missing')
+                if snapshot['plan'] != full_snapshot['plan']:
+                    raise RuntimeError('oracle and pre-chmod permission plans disagree')
+                snapshot = full_snapshot
+                unchanged_oracle(fixture, snapshot)
+        elif name in ('replay', 'native-retained'):
+            unchanged_oracle(fixture, snapshot)
         if result['exit'] != 0 or result['reason'] or not result['reaped']:
             raise RuntimeError(f'{name}: exit={result["exit"]}, reason={result["reason"]}; see {log}')
-        return log.read_text()
+        return stdout
 
     success, error = False, None
     try:
@@ -327,7 +431,7 @@ def main(argv=None):
         node = [str(node_executable), '--import', str(root / 'scripts/gateway-parity/watcher.mjs'), '--import',
                 str(baseline / 'node_modules/tsx/dist/loader.mjs'), str(recorder)]
         run('record', node + [str(baseline), str(fixture), str(scratch)], environment=node_env)
-        oracle = json.loads(fixture.read_text())
+        oracle = snapshot['oracle']
         ids = {row['id'] for row in oracle['cases']}
         if len(oracle['cases']) != 10 or len(ids) != 10 or any(row['status'] != 'RUN' for row in oracle['cases']):
             raise RuntimeError('ten unique RUN cases required; NOT_RUN never passes')
@@ -347,12 +451,25 @@ def main(argv=None):
     except Exception as exc:
         error = str(exc)
     finally:
-        if fixture.exists():
+        oracle_guard = None
+        if snapshot is not None:
+            oracle_guard = dict(originalPermissions=snapshot['plan']['permissions'],
+                                artifactUnchanged=True, completeOracle=snapshot['content'] is not None, restored=False)
             try:
-                run('restore', node + ['--restore', str(fixture)], deadline=15, environment=node_env)
-                check_restore(fixture)
+                unchanged_oracle(fixture, snapshot)
+            except Exception as exc:
+                oracle_guard['artifactUnchanged'] = False
+                success, error = False, (error or '') + '\noracle: ' + str(exc)
+            try:
+                run('restore', node + ['--restore', str(fixture), snapshot['restoreArgument']],
+                    deadline=15, environment=node_env)
             except Exception as exc:
                 success, error = False, (error or '') + '\ncleanup: ' + str(exc)
+            try:
+                oracle_guard['receipt'] = check_restore(fixture, snapshot['plan'])
+                oracle_guard['restored'] = True
+            except Exception as exc:
+                success, error = False, (error or '') + '\nrestore-check: ' + str(exc)
         postflight = {}
         try:
             check_postflight(postflight, root, args.toolchain, original, preflight, sources_before,
@@ -368,8 +485,14 @@ def main(argv=None):
         except Exception as exc:
             source_head = None
             success, error = False, (error or '') + '\nsource-head: ' + str(exc)
+        if snapshot is not None and snapshot['content'] is not None:
+            try:
+                unchanged_oracle(fixture, snapshot)
+            except Exception as exc:
+                oracle_guard['artifactUnchanged'] = False
+                success, error = False, (error or '') + '\nfinal-oracle: ' + str(exc)
         manifest = dict(success=success, error=error, runs=runs, preflight=preflight, postflight=postflight,
-                        sourceHead=source_head, sources=sources_before)
+                        sourceHead=source_head, sources=sources_before, oracleGuard=oracle_guard)
         (output / 'verification.json').write_text(json.dumps(manifest, indent=2)+'\n')
     print(json.dumps({'success': success, 'error': error, 'output': str(output)}))
     return 0 if success else 1

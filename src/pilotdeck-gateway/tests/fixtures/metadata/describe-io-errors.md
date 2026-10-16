@@ -76,3 +76,10 @@ finally 除退出码外，读取 owner/restored=3 的严格回执，并对三处
 缺/错回执和 no-op 都失败。恢复命令复用收集时相同 watcher/tsx loader。恢复后只能
 重放固定 facts。CI 跑纯源绑定与环境/receipt/恢复/watchdog 负控；本机十项受限目录
 Native 与 pairing 实测证据另存主仓 revision-verified，不由 CI mock 代填。
+
+
+BND2输入交接：录制器每次真实chmod前先同步写出原path/mode计划到驱动pipe，写全后才改权限；最后将一次序列化的完整oracle同样送入pipe。驱动保留至多1MiB输出在内存，完整oracle与三项原permission计划必须一致，工作文件只作被验证副本。replay/Native前后、cleanup及最终报告前逐字节核对；文件改目标、改mode或删除都FAIL，仍按内存原计划恢复并stat原目标。报告记录原permission、completeOracle、artifactUnchanged、restored和真实回执，不从改过的JSON重新选期待。
+
+record非零/超时/超输出时，即使尚无最终oracle或工作文件，已同步提交的permission计划仍在内存，finally按已发生步骤恢复1至3处。杀子进程后有界drain内核pipe中剩余字节，保留已写计划；直接子进程和持stdout后代控制见Python测试。旧`--restore fixture`缺原计划参数会拒绝；自动驱动把可信内存计划作为独立参数传给Node，standalone调用不能重新信任可改fixture来选择恢复对象。
+
+该保证针对本批自有fixture数据跨阶段替换；目录/owner marker所有权检查继续执行。实际目录对象被移动/替换的恢复能力不由这批数据绑定证明。P0历史及独立终审仍按board处理。
