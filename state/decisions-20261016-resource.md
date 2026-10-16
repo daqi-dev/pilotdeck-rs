@@ -192,3 +192,8 @@ R78实际shared notify只醒bypass，barrier原8s在8001ms Elapsed，独立Notif
 ## R81 选择已归还020004增量缓存的单一资源窗口（自决·待复核）
 
 卡在哪：093预测lastlink111MB加当前余量已不足保证R74门，不能按假释放编译；谁受影响：CLI当前artifact+18、Ready七格；可撤回：本项只可再生编译cache，所有验收binary/deps/raw不变；不动尺子/意向。选项：继续无窗口等待；或核已终结D6独占020004的cache。建议后者，AI代批待人复核，归还与当前binary同SHA的owner proof367e已读。只释放精确 `_build/20261016-020004/debug/incremental` 候选（dev16777230/inode42286985/uid502），不是执行授权；新4MiB证据/终态槽按2346实际条目预注册，093/旧2MiB与其所有失败不改。任务`_tmp/20261016-debt-cleanup/order-architecture/cache020004-r81-s7tbfzmt/task.md`。原则：资源替代须重新核持有人与实际数据规模，回执容量是输入规模的函数；不把老窗口参数套新根，也不以预测腾量启动产品。
+
+
+## R82 中断后的精确租约重新认领（自决）
+
+原R81卡/候选不改，旧21:05租约已失效。本次复核4b0ed47b索引证明源ca75/2f、原35件、cache/noncache/保留原件与无写者前提同；root新认领这两源码唯一写权，冻结至R81终态/明确失败或23:50先归还。新卡只恢复现时来源前提，不是cleanup/build authority，不借仍未闭合的两家尾审放行。原则：时效租约不继承，内容同一也须重新核持有人；事故停点据实际证据接回，不补写虚假的交接完成。证据`_tmp/20261016-debt-cleanup/scheduler-resume-2231-4hjc5ll1/task.md`。

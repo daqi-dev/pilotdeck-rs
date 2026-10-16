@@ -1,5 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T23:17:33.651537+08:00 · 中断恢复/重新认领**：旧20:42命令实际已完成、state35fb/sourceca75推送到位；上一片22:25前未形成最终交接，本片按实际恢复，不补造按时退出。规则/四份/MEMORY、5树同b390、人手与unknown已核；当前36OPEN/5Draft，仍无新merge/关闭。ca75 CI38902157910实际两绿，真实共享Notify单guard指定断言left0/right1拒、两流raw完整非截断/sourceRestored同ca75 blob，恢复后两新Tap+三R68各唯一ok；synthetic bbfa91d tree50d3b594精确同ca75。indexd895ad7e root逐SHA核，仅该scope不冒七格；最终source双家尾审待。
+> **唯一资源下一/lease**：R81新复核index4b0ed47b root逐SHA核，原35件/37d697与controller6e8a、cache/noncache/旧六target/D6raw/29sealed/工具/源ca75+2f全同，34锁已释放/无build或外来FD；旧21:05租约过期不沿用。root现在重新认领a4ca75与CLI2f为唯一source writer并冻结至R81终态、明确失败或23:50先归还（若必要新source修则先撤本准入）；ready只新_tmp准备18，无树/运行lease。原O无authority/未删，4MiB仅8192B余，禁止再加报告，fresh authority后仍须完整cap门。最后完整du总49175502848B、余216621056B，仅当时实测不据预计回收launch；R74仍只有合同部分评审/无authority。
+> 原中央debt_review_prepare已接原sessions，旧PID均退，不另owner；优先R81必要新增收尾/实际callee+控制两家，再R74完整源必要门取得CLI当前artifact→18，R80/未读legacy源独立并发。141/134held/真人验收不重试。新片00:25前交接，后续调度自动继续。证据 `_tmp/20261016-debt-cleanup/scheduler-resume-2231-4hjc5ll1/`。
+
 > **2026-10-16T20:41:35.778721+08:00 · R80已推/R81唯一资源窗**：a4 currentclean `ca75dd0f5e7f1131488f301874d8e443f6638e9f` 已推，两个Tap guard同线程确定性归属、CI实际共享通知回退+恢复再全test；推前gitleaks0，新CI与双家必要尾审待，旧1a3绿不冒新。控制器保两流raw、EPERM严格infra失败，真实R59 panic线程ID解析补控只格式验证不冒实际Rust变异。149未来10/11已追加actual读回f833e9c9，当前1500ms另账未延期。
 > 原093未执行/旧source stale；020004 owner归还/验收binary当前同SHA/无FD已核，R81改选单一可再生cache以获得R74实际窗口，4MiB证据与2346条目终态槽新预注册，绝不放松原46或R74 112/.20。cache准备者仅新O，root现冻结ca75/CLI2f源至R81终态或21:05先交回；无authority/删除/本地Cargo，snapshot/尾审/真实du齐才另发。原provider owner并发R74合同/legacy/R80增量，挂起范围不变。
 
