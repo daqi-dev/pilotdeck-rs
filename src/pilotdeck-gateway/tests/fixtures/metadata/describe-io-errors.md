@@ -34,6 +34,7 @@ manifest；常规CI的三项 replay 不依赖实际权限或这些归档路径�
 维护入口为 `tests/record_metadata_io.mts`；编排入口为 `tests/check_metadata_io.py`。
 后者先只读核验原 installed 工具链、完整组件和六个执行文件，Cargo/RUSTC/RUSTDOC
 绝对绑定、原 HOME/CARGO_HOME/RUSTUP_HOME 固定，Node 独立隔离 HOME/XDG。缺失先拒绝，
+RUSTC_WRAPPER/RUSTC_WORKSPACE_WRAPPER及两个CARGO_BUILD_*别名明确置空以覆盖Cargo配置，
 不调用 rustup 安装。目标目录必须全新/空且独占，2jobs/locked/offline；运行有时间与
 输出上限，退出0还必须匹配测试数和十个唯一实际案例回执，finally 恢复权限。
 

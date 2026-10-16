@@ -30,6 +30,9 @@ class EnvironmentControls(unittest.TestCase):
         (lib / 'components').write_text('\n'.join(name+'-mock-host' for name in
             ('cargo', 'rustc', 'rust-std', 'clippy-preview', 'rustfmt-preview')))
         self.original = dict(HOME=str(self.home), PATH='/original/bin', RUSTC_WRAPPER='untrusted-wrapper',
+                             RUSTC_WORKSPACE_WRAPPER='untrusted-workspace-wrapper',
+                             CARGO_BUILD_RUSTC_WRAPPER='untrusted-build-wrapper',
+                             CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER='untrusted-build-workspace-wrapper',
                              RUSTUP_TOOLCHAIN='missing-inherited-toolchain')
 
     def test_node_home_never_flows_into_cargo_and_executables_are_explicit(self):
@@ -44,7 +47,9 @@ class EnvironmentControls(unittest.TestCase):
             self.assertEqual(cargo['RUSTUP_AUTO_INSTALL'], '0')
             self.assertEqual(cargo['RUSTC'], str(self.toolchain/'bin/rustc'))
             self.assertEqual(preflight['binaries']['cargo']['path'], str(self.toolchain/'bin/cargo'))
-            self.assertNotIn('RUSTC_WRAPPER', cargo)
+            for key in ('RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',
+                        'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER'):
+                self.assertEqual(cargo[key], '')
             self.assertNotIn('RUSTUP_TOOLCHAIN', cargo)
             process.assert_not_called()
 
