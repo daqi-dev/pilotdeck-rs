@@ -79,3 +79,8 @@ GLM C判当前Scripted以chunk pop计数遇小ReadBuf假FAIL、空chunk假EOF/�
 ## R65 以实际字节修读取装置计数与边界（自决）
 
 R64原36e精确Scripted/ReadBuf实际复现三小读pop3/实际9字节，空队列条目首读0但后有R，later0..4切片panic、5空尾；standalone binarye62bf0d2/861640B，原源码与rustc/Tokio rlib前后同，index1bf480d0e52a931b114f2fdb9bc1b806c27b121e2e63cb70af6f4ff2efc80fb5。接受GLM当前P1高判修同类，不作者降级；任务`_tmp/20261016-debt-cleanup/upgrade-read-boundary-r65-fix-k61btbpo/task.md`只CLI测试源，全部counter consumer同步字节/空chunk/短later/CRLF36。20min/1MiB源码only；新CI与两家新增终审待，不冒当前产品bin或历史CI5覆盖。原则：量纲必须对准观测字节，不受下层缓冲大小耦合，真运行反例转永久控制。
+
+
+## R66 只核外部loader禁磁盘缓存的新运行前提（自决）
+
+R61真实失败与1607原件保留；已安装tsx源码显式TSX_DISABLE_CACHE选择Map，故可先用独立外部wrapper验证同Node真实typedfixture，不动产品/基线/编译源。任务`_tmp/20261016-debt-cleanup/tsx-cacheoff-r66-r4j55gsg/task.md`，1MiB/768KiB提前/.20外留，Node20/总60/流64KiB，ledger唯一执行权；只tiny非产品控制，足门一次。本卡不是native重跑授权；若无cache实证成立，再按全新工具前提预登记Off caller回归，旧失败不抹。原则：失败后改变可实核执行前提，与换词重试区分；禁可再生磁盘cache不更改评分或基线源。
