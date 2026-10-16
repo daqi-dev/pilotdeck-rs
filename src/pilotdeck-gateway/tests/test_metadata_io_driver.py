@@ -191,6 +191,12 @@ class EnvironmentControls(unittest.TestCase):
                             driver.check_postflight({},case.root,case.toolchain,case.original,pf,before,rustup,node,node_sha,node_home)
                 finally: case.doCleanups()
 
+    def test_workspace_git_is_rejected_before_execution(self):
+        shim=self.root/'git';shim.write_text('never execute');shim.chmod(0o755)
+        with patch.object(driver.subprocess,'Popen',side_effect=AssertionError('no process')) as process:
+            with self.assertRaises(RuntimeError):driver.external_git(shim,(self.root,))
+            process.assert_not_called()
+
     def test_protected_outputs_are_rejected_without_writes(self):
         for suffix in ('.pilotdeck', '.cargo', '.rustup', 'ws/PilotDeck-rust-program-20261009'):
             with self.assertRaises(RuntimeError): driver.reject_protected_paths((self.home/suffix/'new',), self.home)
@@ -243,6 +249,7 @@ class FailureRestoreControls(unittest.TestCase):
                      patch.object(driver.shutil, 'which', return_value=str(self.toolchain/'bin/cargo')), \
                      patch.object(driver, 'run_bounded', side_effect=fake_run), \
                      patch.object(driver, 'check_postflight'), \
+                     patch.object(driver, 'external_git', side_effect=lambda executable, roots: executable), \
                      patch.object(driver.subprocess, 'check_output', return_value='mock-head\n'), \
                      patch.object(driver.subprocess, 'Popen', side_effect=AssertionError('no external process')), \
                      contextlib.redirect_stdout(io.StringIO()):

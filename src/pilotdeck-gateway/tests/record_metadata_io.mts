@@ -5,7 +5,6 @@ import fsp from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import {resolve,join,dirname,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {execFileSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {bindSourceTree} from './baseline_source_guard.mjs';
 const COMMIT='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
@@ -22,11 +21,12 @@ if(process.argv[2]==='--restore') {
  process.exit(0);
 }
 const baseline=resolve(process.argv[2]),output=resolve(process.argv[3]),scratch=resolve(process.argv[4]);
-if(process.version!=='v22.22.0'||execFileSync('git',['-C',baseline,'rev-parse','HEAD'],{encoding:'utf8'}).trim()!==COMMIT)throw Error('fixed Node22.22/cc7c4e6 required');
+const gitExecutable=process.env.PDRS_METADATA_GIT;if(!gitExecutable)throw Error('explicit Git required');
+if(process.version!=='v22.22.0')throw Error('fixed Node22.22 required');
 if(fs.existsSync(output)||fs.existsSync(join(scratch,'cases')))throw Error('fresh output and scratch required');
 for(const key of ['HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','TMPDIR','PILOT_HOME'])if(!process.env[key]||!resolve(process.env[key]!).startsWith(scratch+sep))throw Error('Unisolated '+key);
 if(process.env.SKIP_BROWSER_OPEN!=='1'||process.env.PILOTDECK_SKIP_BROWSER_OPEN!=='1')throw Error('browser guards required');
-const sourceBindingBefore=bindSourceTree(baseline,COMMIT);
+const sourceBindingBefore=bindSourceTree(baseline,COMMIT,gitExecutable);
 const source=(p:string)=>import(pathToFileURL(join(baseline,'src',p)).href);
 const {GatewayWsConnection}=await source('gateway/server/GatewayWsConnection.ts');
 const {describeWebProject}=await source('web/server/listProjects.ts');
@@ -85,7 +85,7 @@ for(const id of ids) {
  const row={id,status,expectedError:code,errorTarget:target,home,cwd:root,project,storage,legacy,chats,request,response,files,observations};
  fs.writeFileSync(join(root,'raw-rpc.json'),JSON.stringify({request,response,observations},null,2)+'\n');cases.push(row);console.log(id,status,code??'positive');
 }
-const sourceBindingAfter=bindSourceTree(baseline,COMMIT);if(JSON.stringify(sourceBindingBefore)!==JSON.stringify(sourceBindingAfter))throw Error('baseline sources changed during recording');
+const sourceBindingAfter=bindSourceTree(baseline,COMMIT,gitExecutable);if(JSON.stringify(sourceBindingBefore)!==JSON.stringify(sourceBindingAfter))throw Error('baseline sources changed during recording');
 const sourceFiles=['src/gateway/server/GatewayWsConnection.ts','src/web/server/listProjects.ts','src/pilot/paths.ts','src/session/storage/SessionList.ts','src/session/storage/SessionLiteReader.ts'];const sources=Object.fromEntries(sourceFiles.map(p=>[p,createHash('sha256').update(fs.readFileSync(join(baseline,p))).digest('hex')]));
 fs.writeFileSync(output,JSON.stringify({baselineCommit:COMMIT,node:process.version,icu:process.versions.icu,platform:process.platform,owner,scratch,permissions,sources,sourceBinding:{before:sourceBindingBefore,after:sourceBindingAfter},callPath:['GatewayWsConnection','describeWebProject','resolveProjectStorageDir','summarizeProject','getPilotProjectChatDir','listProjectSessions'],cases},null,2)+'\n',{flag:'wx'});
 success=true;if(cases.some(c=>c.status!=='RUN'))process.exitCode=2;

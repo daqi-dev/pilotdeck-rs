@@ -3,8 +3,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-export function bindSourceTree(baseline, ref) {
-  const git = (...args) => execFileSync('git', ['--no-replace-objects','-C',baseline,...args], {maxBuffer:32*1024*1024});
+import {fileURLToPath} from 'node:url';
+export function bindSourceTree(baseline, ref, gitExecutable) {
+  if (!gitExecutable || !path.isAbsolute(gitExecutable)) throw Error('explicit absolute Git required');
+  gitExecutable=fs.realpathSync(gitExecutable);
+  for (const location of [baseline,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..')]) {
+    const start=fs.realpathSync(location);
+    for(let root=start;;root=path.dirname(root)) {
+      if(root===start||fs.existsSync(path.join(root,'.git'))) {
+        const relative=path.relative(root,gitExecutable);
+        if(relative===''||(!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)))throw Error('workspace-local Git rejected');
+      }
+      if(path.dirname(root)===root)break;
+    }
+  }
+  const gitSha256=createHash('sha256').update(fs.readFileSync(gitExecutable)).digest('hex');
+  const git = (...args) => execFileSync(gitExecutable, ['--no-replace-objects','-C',baseline,...args], {maxBuffer:32*1024*1024});
   if (git('rev-parse','HEAD').toString().trim() !== ref) throw Error('baseline HEAD mismatch');
   const expected = new Map();
   for (const row of git('ls-tree','-rz',ref,'--','src').toString('utf8').split('\0').filter(Boolean)) {
@@ -25,5 +39,5 @@ export function bindSourceTree(baseline, ref) {
   }
   walk('src');
   if (Object.keys(files).length!==expected.size) throw Error('missing tracked source file');
-  return {ref,count:expected.size,sha256:createHash('sha256').update(JSON.stringify(files)).digest('hex')};
+  return {ref,git:{path:gitExecutable,sha256:gitSha256},count:expected.size,sha256:createHash('sha256').update(JSON.stringify(files)).digest('hex')};
 }

@@ -19,5 +19,12 @@ for (const mutation of ['healthy','dirty','missing','untracked','ignored','symli
  if(mutation==='ignored'){fs.mkdirSync(path.join(f.root,'src/ignored'));fs.writeFileSync(path.join(f.root,'src/ignored/shadow.ts'),'shadow');}
  if(mutation==='symlink'){fs.renameSync(file,path.join(f.root,'same-bytes'));fs.symlinkSync(path.join(f.root,'same-bytes'),file);}
  if(mutation==='assume-unchanged'){f.git('update-index','--assume-unchanged','src/main.ts');fs.writeFileSync(file,'changed');}
- if(mutation==='healthy')assert.equal(bindSourceTree(f.root,f.ref).count,1);else assert.throws(()=>bindSourceTree(f.root,f.ref));
+ if(mutation==='healthy')assert.equal(bindSourceTree(f.root,f.ref,'/usr/bin/git').count,1);else assert.throws(()=>bindSourceTree(f.root,f.ref,'/usr/bin/git'));
+});
+
+test('workspace-local Git shim rejected before execution',t=>{
+ const f=fixture();t.after(()=>fs.rmSync(f.root,{recursive:true,force:true}));
+ const shim=path.join(f.root,'git');fs.writeFileSync(shim,'#!/bin/sh\nexit 0\n');fs.chmodSync(shim,0o755);
+ assert.throws(()=>bindSourceTree(f.root,f.ref,shim),/workspace-local Git/);
+ assert.throws(()=>bindSourceTree(f.root,f.ref),/explicit absolute Git/);
 });

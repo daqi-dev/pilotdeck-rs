@@ -231,3 +231,6 @@ exit0 不能代替状态核对。自有 Git fixture 七控、Python 环境/recei
 
 
 R28精确评审尾差：首个正确响应不证明流中没有多余响应；metadata配对收口必须在shutdown后读EOF，再发案例receipt，真实trailing bytes负控拒绝。JoinHandle超时drop会detach，test-only Pair收尾必须abort并await；pending任务Drop marker锁定该约束。两项都可撤回且不动产品/冻结，C10按P2-b作P1等待非作者复核；不由作者自称收敛。
+
+
+R28 BND1实测增量：源码Git对象绑定仍依赖Git可执行身份；仓内PATH shim能伪造rev-parse/ls-tree即使baseline真实脏源。明确传递同一个绝对Git，不从Node PATH重新解析；Git真实路径及workspace根先canonicalize（macOS /var别名必须归一），拒当前仓与baseline及Git祖先内可替换Git，执行前后核SHA。原则：验证器依赖的可执行身份也是输入边界；自有repo-local shim在执行前被拒，真实固定baseline健康仍过。此为R4仓内威胁范围，不扩称全部系统可执行可信闭合。
