@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 11:38 · 默认顺序反例已落真实Rust与metadata路径假通过修复候选
+> order分支379ec519，root原安装/offline/locked/jobs2在fresh112000-order编译，单行unused修后按新HEAD重编；11:26实际ignored六格录制1test成功，父PGID无残留、源码/工具/产物前后不变。TS先describe_server再supported_agents，Rust本次相反；另五格本次同序，comparison RECORDED_NOT_ACCEPTED/acceptance NOT_RUN，不是5/6兼容通过。原件order-native/actual-report.md与actual-index.json。COMPLETE=true只在close后的pair_returned观察，未复现后一帧前完成窗口，JoinSet可消费仍NOT_OBSERVED；65.1/65.2各自未核销，不走整批host/FIFO。
+> PR141当前8a6b9aa已推候选：先前4bb空CI身份修复两项实际CI绿；随后独立actualboundary新P1证明Snapshot错目录可同空RPC，作者实测2/10反例后改未登记API/path不可吞拒绝、生产路径/errno观测与单轴observation负控。fresh113400真实driver/10Node/3replay/10Native/10pair/三权限恢复/前后工具源及2guard/fmt/clippy通过，两个源码变异实际拒绝；原始路径实测与精确539SHA见metadata/path-handoff-index.json。新tip独立增量/条件性P2b/GLM与最终CI仍欠，不核销139/P0；CLI writer已交回root，锁释放。
+> frame候选6a5e42a在wt-p2c，复用固定4a37测试模块；旧archive d148本地/remote保留，未知none/保留。只完成有界双侧资源入口与外部watchdog/纯控制准备，NOT_RUN，56.2无新增DoS事实。root持该树；下一实际资源probe须绑定自己HEAD新产物和8MiB/20s/45s/RSS域，不无限流。R32登记准备边界。
+> 分类GLM已45received，余115.3与未来阶段九项两批在唯一队列；旧九包去重为两包仍保留135/93原件行与全SHA。DS初始98.4 P1已由同家独立带理由撤回到P2，GLM亦P2：未来F4/F5门现披露不等于现违约；若到点误签仍P1。初始原文与新revision分列，root正更新唯一账本。PARTIAL/raw限定不再丢失，未形成最终等级总数。两家provider执行门已固定安装/empty工具registry；144历史影响未知仍开放。A1源码预检113archive本地112匹配，唯一缺包已从官方补11,341字节源码且锁SHA核同，无预编译下载/安装；52+85A范围审/冻结实施/六轮均未开始。
+
 > **11:09持有人/下一任务更新**：wt-a4m3写权已明确交order_default_probe，只准备真实Rust NativeFiles/production pairing六格与cfg(test)可观测事件，不Cargo/不新target；root不抢该树。Tokio COMPLETE观察与JoinSet可消费分开，后者不能由is_finished冒认。CLI作者接回1c90后的精确docs指针/范围小差；中央两provider各一队列，GLM先补余18分类/12分歧、DS补141旧docs/尾差。root持wt-d6与wt-p2c/archive冻结候选。正常du18,761,044+24,037,752KiB=40.82GiB，距46约5.2GiB，五树不增。R31组合卡只准备范围审查，#52/#85A冻结实施与真实六轮未启动。
 
 > ## 2026-10-16 11:06 · 默认TS六格已实测与评审硬权限恢复
