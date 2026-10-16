@@ -1,6 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 
+> **15:17 唯一实现next已定**：Astra post-acquisition-plan已独立核7格raw/745原件，按R47先补M1–M4实际执行路径负控（只做同一装置任务）；先预登记与源码，当前资源不足1.20门，未发Cargo/Node新窗，不重跑A0、不覆写145841。worker写权随后按task明确分配，未完成不核销65。中央PR143仅末轮GLM文档在途；DS空档按R46真实新正式客户端/空registry硬0前提有界恢复PR138边界，旧三空与a814/当前988源范围保留，没有预批合并或第二provider队列。
+
+
 > **15:11 #65真实结果取得实证已封**：wt-a4m3@8fbaa5c9144600e716742561b0bf5156d9d8511d clean、写权交root（未push/PR）；新target145841 testexe c990a235…/45637104B。两guard各实际1test，新TS六格/A0五格一次/A1/A2各一次exit0；源码首编译两处&mut bool错误/22s失败及两!*修复都保留，未重跑自然窗。745原件index3f3c93ba…已root与Astra分别全SHA核；唯一报告order-architecture/acquisition-r45-145620/report.md及逐帧表。三个list-first burst目标窗NOT_OBSERVED；另两raw OBSERVED分别cleanup close与先等C0后的Ping控制，不是未消费竞争窗。P3 unmapped/M1–M4 NOT_RUN/#65P1及A5.4未清。
 > R45实际清后余1.289GiB才开原1GiB窗，build→A2共224.918s；所有旧noncache/112000 target SHA同、自有PGID回收，最终完整du45.270721GiB/46。当前五树全部root，无Cargo/child；Astra只读复核最新raw并给65唯一下一任务（post-acquisition-plan），不另开provider队列，中央PR143最后GLM元差异仍在收敛。
 
