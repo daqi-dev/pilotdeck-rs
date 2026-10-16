@@ -122,6 +122,32 @@ class EnvironmentControls(unittest.TestCase):
         self.assertNotIn('CARGO_HOME', node)
         self.assertNotIn('RUSTUP_HOME', node)
 
+    def test_source_inventory_is_exactly_the_twelve_required_files(self):
+        expected = {
+            'src/pilotdeck-gateway/src/metadata.rs', 'src/pilotdeck-gateway/src/metadata/tests.rs',
+            'src/pilotdeck-gateway/src/pairing/tests.rs', 'src/pilotdeck-gateway/tests/record_metadata_io.mts',
+            'src/pilotdeck-gateway/tests/check_metadata_io.py', 'src/pilotdeck-gateway/tests/test_metadata_io_driver.py',
+            'src/pilotdeck-gateway/tests/baseline_source_guard.mjs', 'src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs',
+            '.github/workflows/ci.yml', 'rust-toolchain.toml', 'src/Cargo.toml', 'src/Cargo.lock',
+        }
+        self.assertEqual(len(driver.SOURCE_FILES), 12)
+        self.assertEqual(set(driver.SOURCE_FILES), expected)
+
+    def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
+        target = self.root/'new-target'
+        for output in (target, target/'inside', self.root):
+            with self.assertRaisesRegex(RuntimeError, 'disjoint'):
+                driver.validate_output_target(target, output)
+            self.assertFalse(target.exists())
+        target.write_text('owned sentinel')
+        with self.assertRaisesRegex(RuntimeError, 'directory'):
+            driver.validate_output_target(target, self.root/'separate')
+        self.assertEqual(target.read_text(), 'owned sentinel')
+        target.unlink();target.mkdir();(target/'sentinel').write_text('keep')
+        with self.assertRaisesRegex(RuntimeError, 'fresh target required'):
+            driver.validate_output_target(target,self.root/'separate')
+        self.assertEqual((target/'sentinel').read_text(),'keep')
+
     def test_sources_missing_or_changed_are_not_silent_none(self):
         with patch.object(driver, 'SOURCE_FILES', ('source.rs',)):
             with self.assertRaises(RuntimeError): driver.source_snapshot(self.root)
@@ -198,8 +224,16 @@ class EnvironmentControls(unittest.TestCase):
             process.assert_not_called()
 
     def test_protected_outputs_are_rejected_without_writes(self):
+        before = {str(p.relative_to(self.home)) for p in self.home.rglob('*')}
         for suffix in ('.pilotdeck', '.cargo', '.rustup', 'ws/PilotDeck-rust-program-20261009'):
-            with self.assertRaises(RuntimeError): driver.reject_protected_paths((self.home/suffix/'new',), self.home)
+            destination = self.home/suffix/'new'
+            self.assertFalse(os.path.lexists(destination))
+            with self.assertRaises(RuntimeError): driver.reject_protected_paths((destination,), self.home)
+            self.assertFalse(os.path.lexists(destination))
+        alias = self.root/'protected-alias';alias.symlink_to(self.home/'.rustup',target_is_directory=True)
+        with self.assertRaises(RuntimeError): driver.reject_protected_paths((alias/'new',),self.home)
+        self.assertFalse(os.path.lexists(alias/'new'))
+        self.assertEqual(before,{str(p.relative_to(self.home)) for p in self.home.rglob('*')})
 
 
 class FailureRestoreControls(unittest.TestCase):
@@ -208,7 +242,7 @@ class FailureRestoreControls(unittest.TestCase):
         import contextlib
         import io
         import json
-        for scenario in ('replay-failure', 'noop-restore'):
+        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'success'):
             with self.subTest(scenario=scenario):
                 output = self.root / scenario
                 pf = driver.toolchain_preflight(self.toolchain, self.original, self.root)
@@ -217,7 +251,7 @@ class FailureRestoreControls(unittest.TestCase):
                 def fake_run(command, cwd, environment, log, **kwargs):
                     name = log.stem; names.append(name)
                     text = ''
-                    code = 0
+                    code, reason = 0, None
                     fixture = output / 'metadata-io.json'
                     if name == 'record':
                         scratch = output / 'recording'
@@ -235,13 +269,19 @@ class FailureRestoreControls(unittest.TestCase):
                         text += ''.join('PDRS_NATIVE_METADATA_OK '+str(n)+'\n' for n in range(10))
                     if name in ('replay', 'native-retained'):
                         text += ''.join('PDRS_METADATA_PAIR_OK '+str(n)+'\n' for n in range(10))
+                    if name == 'source-head':
+                        text = 'a'*40+'\n'
+                        if scenario == 'source-head-failure': code = 9
+                        if scenario == 'source-head-timeout': code, reason = -9, 'timeout'
+                        if scenario == 'source-head-spawn-error': raise OSError('mock Git spawn denied')
+                        if scenario == 'source-head-empty': text = ''
                     if name == 'restore':
                         if scenario != 'noop-restore':
                             for item in permissions: Path(item['path']).chmod(item['mode'])
                         # A plausible receipt plus exit0 still cannot hide wrong modes.
                         Path(str(fixture)+'.cleanup.json').write_text(json.dumps(dict(owner='owner', restored=3)))
                     log.write_text(text)
-                    return dict(exit=code, reason=None, reaped=True, log=str(log))
+                    return dict(exit=code, reason=reason, reaped=True, log=str(log))
                 with patch.dict(driver.os.environ, self.original, clear=True), \
                      patch.object(driver, 'toolchain_preflight', return_value=pf), \
                      patch.object(driver, 'source_snapshot', return_value={}), \
@@ -256,15 +296,25 @@ class FailureRestoreControls(unittest.TestCase):
                     code = driver.main(['--baseline',str(self.root), '--output',str(output),
                         '--target',str(self.root/'new-target'), '--toolchain',str(self.toolchain)])
                 result = json.loads((output/'verification.json').read_text())
-                self.assertEqual(code, 1)
-                self.assertFalse(result['success'])
-                self.assertEqual(names[-1], 'restore')
+                self.assertEqual(code, 0 if scenario=='success' else 1)
+                self.assertEqual(result['success'], scenario=='success')
+                self.assertEqual(names[-2:], ['restore','source-head'])
                 if scenario == 'replay-failure':
-                    self.assertEqual(names, ['record', 'replay', 'restore'])
+                    self.assertEqual(names, ['record', 'replay', 'restore', 'source-head'])
                     for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777, 0o755)
-                else:
+                elif scenario == 'noop-restore':
                     self.assertIn('permission not restored', result['error'])
                     for item in permissions:Path(item['path']).chmod(0o755)
+                elif scenario.startswith('source-head-'):
+                    expected = {'source-head-failure':'exit=9', 'source-head-timeout':'reason=timeout',
+                                'source-head-spawn-error':'mock Git spawn denied', 'source-head-empty':'empty source HEAD'}[scenario]
+                    self.assertIn(expected,result['error'])
+                    self.assertIsNone(result['sourceHead'])
+                if scenario != 'replay-failure':
+                    native = next(r for r in result['runs'] if r['name']=='native-retained')
+                    replay = next(r for r in result['runs'] if r['name']=='replay')
+                    self.assertEqual(native['environment']['PDRS_METADATA_IO_LIVE'],str(output/'metadata-io.json'))
+                    self.assertNotIn('PDRS_METADATA_IO_LIVE',replay['environment'])
 
 
 class WatchdogControls(unittest.TestCase):
@@ -274,7 +324,9 @@ class WatchdogControls(unittest.TestCase):
             root=Path(temp)
             cases=[('success', 'print("ok")', 5, None),
                    ('timeout', 'import time; time.sleep(5)', 0.05, 'timeout'),
-                   ('output', 'import os; os.write(1,b"x"*1000000)', 5, 'output limit')]
+                   ('output', 'import os; os.write(1,b"x"*1000000)', 5, 'output limit'),
+                   ('exact-cap', 'import os; os.write(1,b"x"*128)', 5, None),
+                   ('cap-plus-one', 'import os; os.write(1,b"x"*129)', 5, 'output limit')]
             for name,code,deadline,reason in cases:
                 log=root/(name+'.log')
                 result=driver.run_bounded([sys.executable,'-I','-c',code],root,{},log,deadline=deadline,limit=128)
@@ -282,11 +334,39 @@ class WatchdogControls(unittest.TestCase):
                 self.assertTrue(result['reaped'])
                 self.assertLessEqual(log.stat().st_size,128)
                 if reason is None:self.assertEqual(result['exit'],0)
+                if name in ('exact-cap','cap-plus-one'):self.assertEqual(log.read_bytes(),b'x'*128)
+
+    def test_exited_leader_descendants_are_killed_with_and_without_stdout(self):
+        import subprocess
+        import sys
+        import time
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for holds_stdout,reason in ((True,'timeout'),(False,'surviving descendants')):
+                pidfile=root/('held.pid' if holds_stdout else 'closed.pid')
+                child_code='import time; time.sleep(60)'
+                leader=('import subprocess,sys,pathlib; '
+                    'child=subprocess.Popen([sys.executable,"-I","-c",'+repr(child_code)+']'
+                    + (')' if holds_stdout else ',stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)')
+                    + '; pathlib.Path('+repr(str(pidfile))+').write_text(str(child.pid))')
+                result=driver.run_bounded([sys.executable,'-I','-c',leader],root,{},
+                    root/(pidfile.stem+'.log'),deadline=0.2)
+                self.assertEqual(result['reason'],reason)
+                self.assertTrue(result['reaped'])
+                pid=int(pidfile.read_text())
+                state=''
+                for _ in range(100):
+                    state=subprocess.run(['/bin/ps','-o','stat=','-p',str(pid)],capture_output=True,text=True).stdout.strip()
+                    if not state or state.startswith('Z'):break
+                    time.sleep(0.01)
+                self.assertTrue(not state or state.startswith('Z'),f'descendant still running: {pid} {state}')
+                print(f'descendant stdout={holds_stdout}: leaderReaped={result["reaped"]}, reason={reason}, childState={state or "absent"}')
 
     def test_exit_between_poll_and_kill_is_expected(self):
         from types import SimpleNamespace
-        with patch.object(driver.os,'killpg',side_effect=ProcessLookupError):
+        with patch.object(driver.os,'killpg',side_effect=ProcessLookupError) as killpg:
             self.assertTrue(driver.stop_group(SimpleNamespace(pid=123)))
+            killpg.assert_called_once_with(123,driver.signal.SIGKILL)
 
 
 if __name__ == '__main__':

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {bindSourceTree} from './baseline_source_guard.mjs';
 function fixture() {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'metadata-source-'));
@@ -19,7 +20,12 @@ for (const mutation of ['healthy','dirty','missing','untracked','ignored','symli
  if(mutation==='ignored'){fs.mkdirSync(path.join(f.root,'src/ignored'));fs.writeFileSync(path.join(f.root,'src/ignored/shadow.ts'),'shadow');}
  if(mutation==='symlink'){fs.renameSync(file,path.join(f.root,'same-bytes'));fs.symlinkSync(path.join(f.root,'same-bytes'),file);}
  if(mutation==='assume-unchanged'){f.git('update-index','--assume-unchanged','src/main.ts');fs.writeFileSync(file,'changed');}
- if(mutation==='healthy')assert.equal(bindSourceTree(f.root,f.ref,'/usr/bin/git').count,1);else assert.throws(()=>bindSourceTree(f.root,f.ref,'/usr/bin/git'));
+ if(mutation==='healthy'){
+  const got=bindSourceTree(f.root,f.ref,'/usr/bin/git'),bytes=fs.readFileSync(file);
+  const files={'src/main.ts':{blob:f.git('rev-parse','HEAD:src/main.ts'),sha256:createHash('sha256').update(bytes).digest('hex'),size:bytes.length}};
+  assert.equal(got.count,1);assert.equal(got.ref,f.ref);
+  assert.equal(got.sha256,createHash('sha256').update(JSON.stringify(files)).digest('hex'));
+ }else assert.throws(()=>bindSourceTree(f.root,f.ref,'/usr/bin/git'));
 });
 
 test('workspace-local Git shim rejected before execution',t=>{
@@ -27,4 +33,10 @@ test('workspace-local Git shim rejected before execution',t=>{
  const shim=path.join(f.root,'git');fs.writeFileSync(shim,'#!/bin/sh\nexit 0\n');fs.chmodSync(shim,0o755);
  assert.throws(()=>bindSourceTree(f.root,f.ref,shim),/workspace-local Git/);
  assert.throws(()=>bindSourceTree(f.root,f.ref),/explicit absolute Git/);
+});
+
+test('wrong HEAD rejected even when requested ref has the same source tree',t=>{
+ const f=fixture();t.after(()=>fs.rmSync(f.root,{recursive:true,force:true}));
+ f.git('commit','--allow-empty','-m','same source, different HEAD');
+ assert.throws(()=>bindSourceTree(f.root,f.ref,'/usr/bin/git'),/baseline HEAD mismatch/);
 });
