@@ -101,3 +101,18 @@ CLI已安全rebase mainb888为clean8d0a49ce8f9014bfe4631c9a68b6b5ff75514e4c；�
 last-link allocated预测266399744B，1272外链计零且各有保留见证，两根inode集合不交；预测不是释放事实。执行日志execute-*追加，原prepare index不改，最终execution-index另封。清后完整du交root，若用途窗口仍不足，只停该运行并转独立任务；不把cache清理或文档/CI部分通过当作#65/PR138/阶段完成。新更小产物窗若另判必须引用完整已成功target592562547B等实际证据、实际当前free与新硬上限，原.80门保持不变，本卡绝不预批该窗。
 
 原则与断言：保留失败原始证据与回收已归还可重建cache分别判断，cache权限不推导整个target或unknown对象可删。此卡2026-10-16T17:46:40.164711+08:00只执行两根、核全保全与真实du，资源数值不改善判分语义。
+
+
+## R58 同卷实测后的两cache精确残余（自决）
+
+R57只unlink100602内672文件、0目录，102014未动；旧入口按只扣子目录的nlink假设在APFS停，34原件execution-indexc8f2e6e3b1ada7b89172642fd9cd40e4c37c2e6de9f6f0ac762fac68cf784c17完整，990原件/noncache/112000/两partial/源与二进制后核同、锁全释放。旧入口与snapshot不重跑，原释放153808896B/余825188352B不改写。
+
+root同dev16777230真实小fixture创建两文件/一目录再移除，nlink[2,3,4,5,4,3,2]精确等于2+直接entries；文件和目录均减1。原results3943472e8e1e5393ead6acb47125d4114dc5f2c66cb2dbaf1343d674ee54dcfb保持，持久reproduce.py b19ea234e05c8d300f11a55dbb7e71e51abe3e479f7d7f3aa0dfcf7fe6317114在新自有fixture复验exit0，indexc2968f4edd538b5e5ee98c8b7142ec1134daacb2bcc7c7eeb52a5a76c9ebd362。此为本APFS卷事实，不泛化Linux/外卷，不取消nlink断言。
+
+唯一残余_build/20261016-100602/debug/incremental（uid502/dev16777230/inode42481833，10file22dir）与_build/20261016-102014/debug/incremental（同uid/dev，42501923，650file8dir）。新snapshot已严格=旧身份减原672实际unlink，noncache nlink按实际同inode扣。新入口file与dir移除均累计直接childentry，目录断言精确减该量；其余dirfd/O_NOFOLLOW/父链/inode/内容/blocks/锁/FD/引用门与R57相同。残余last-link预测112590848B/634外链计零，不扩其他cache/partial。
+
+主仓_tmp/20261016-debt-cleanup/order-architecture/cache-metadata-residual-prep-20261016-175015/index010dfb67cc9aefb33c9d06b7dd41b6b620e463541ae6740f870a9039c04fd0af（24/2960222B）、execute921207ba22b9c872cbb1d2eca383df5bccf5118f9aa76f191050cbc7ba758ce3、snapshot074c260397a7b0c6495114fc6bec4264b9a8dfd51f63c73281df7b6ef16095ee均已root全核。source48bdeff48c30c9438c7761c5be1ddd8c002af557 clean800与83f01549…绑定，DNS91f86b9…17原件实际64调用与34named身份分列，GLM/DS尚未终审，不核P1或历史外联。
+
+本卡2026-10-16T17:57:51.478819+08:00给ledger_fidelity仅新入口一次--execute这两根残余，root提交后create_new authority绑定卡SHA/HEAD/index/uid/dev/inode/newBuildfalse。两遍临界原全部门、26锁只放实际ownPID+FD+path；1024原件（990+R5734）、2815/2101noncache、1120002356/R54partial534/R55partial1492、当前48b800与tool/c990/3ed前后守恒。未知/漂移即停，finally释放锁；原index不改、execute追加、execution-index另封，freshdu回root再判新窗，禁止Cargo/Node/新target。原.80门不动。
+
+原则与断言：底层FS属性先同卷最小实测，修正以原实际unlink、新基线与新入口承接；不以读码猜测解禁、不覆盖旧失败、不外推删除权。
