@@ -243,7 +243,7 @@ class FailureRestoreControls(unittest.TestCase):
         import contextlib
         import io
         import json
-        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'success'):
+        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'source-head-polluted', 'source-head-short', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'success'):
             with self.subTest(scenario=scenario):
                 output = self.root / scenario
                 pf = driver.toolchain_preflight(self.toolchain, self.original, self.root)
@@ -289,11 +289,14 @@ class FailureRestoreControls(unittest.TestCase):
                     if name in ('replay', 'native-retained'):
                         text += ''.join('PDRS_METADATA_PAIR_OK '+str(n)+'\n' for n in range(10))
                     if name == 'source-head':
+                        self.assertTrue(kwargs['discard_stderr'])
                         text = 'a'*40+'\n'
                         if scenario == 'source-head-failure': code = 9
                         if scenario == 'source-head-timeout': code, reason = -9, 'timeout'
                         if scenario == 'source-head-spawn-error': raise OSError('mock Git spawn denied')
                         if scenario == 'source-head-empty': text = ''
+                        if scenario == 'source-head-polluted': text = 'warning\n'+'a'*40+'\n'
+                        if scenario == 'source-head-short': text = 'a'*39+'\n'
                     if name == 'restore':
                         if scenario != 'noop-restore':
                             trusted=json.loads(command[-1])
@@ -318,6 +321,7 @@ class FailureRestoreControls(unittest.TestCase):
                 result = json.loads((output/'verification.json').read_text())
                 self.assertEqual(code, 0 if scenario=='success' else 1)
                 self.assertEqual(result['success'], scenario=='success')
+                if scenario=='success':self.assertEqual(result['sourceHead'],'a'*40)
                 self.assertEqual(names[-2:], ['restore','source-head'])
                 if scenario.startswith('record-'):
                     self.assertEqual(names,['record','restore','source-head'])
@@ -329,7 +333,8 @@ class FailureRestoreControls(unittest.TestCase):
                     for item in permissions:Path(item['path']).chmod(0o755)
                 elif scenario.startswith('source-head-'):
                     expected = {'source-head-failure':'exit=9', 'source-head-timeout':'reason=timeout',
-                                'source-head-spawn-error':'mock Git spawn denied', 'source-head-empty':'empty source HEAD'}[scenario]
+                                'source-head-spawn-error':'mock Git spawn denied', 'source-head-empty':'forty lowercase hex',
+                                'source-head-polluted':'forty lowercase hex','source-head-short':'forty lowercase hex'}[scenario]
                     self.assertIn(expected,result['error'])
                     self.assertIsNone(result['sourceHead'])
                 if scenario in ('permission-target-replaced','permission-mode-replaced','fixture-deleted'):
@@ -389,6 +394,21 @@ class WatchdogControls(unittest.TestCase):
                     time.sleep(0.01)
                 self.assertTrue(not state or state.startswith('Z'),f'descendant still running: {pid} {state}')
                 print(f'descendant stdout={holds_stdout}: leaderReaped={result["reaped"]}, reason={reason}, childState={state or "absent"}')
+
+    def test_identity_stdout_is_not_polluted_by_stderr(self):
+        import sys
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            code='import os; os.write(2,b"warning on stderr\\n"); os.write(1,b"'+('a'*40)+'\\n")'
+            merged=driver.run_bounded([sys.executable,'-I','-c',code],root,{},root/'merged.log')
+            self.assertEqual(merged['exit'],0)
+            self.assertIn('warning on stderr',merged['stdout'])
+            self.assertIsNone(driver.re.fullmatch('[0-9a-f]{40}',merged['stdout'].strip()))
+            result=driver.run_bounded([sys.executable,'-I','-c',code],root,{},root/'head.log',discard_stderr=True)
+            self.assertEqual(result['exit'],0)
+            self.assertIsNone(result['reason'])
+            self.assertEqual(result['stdout'],'a'*40+'\n')
+            self.assertEqual((root/'head.log').read_text(),'a'*40+'\n')
 
     def test_exit_between_poll_and_kill_is_expected(self):
         from types import SimpleNamespace
