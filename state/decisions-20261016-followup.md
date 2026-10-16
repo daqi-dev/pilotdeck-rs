@@ -25,7 +25,7 @@
 
 GLM可写实现候选与测试，不以审阅硬0入口冒充filesystem写权限：本次先让GLM经既有硬0入口生成PR138 identity源码/测试patch，由中央operator机械应用到已独占CLI树，operator不擅自补写代码。该精确GLM新增delta交DeepSeek与独立GPT评审；旧GPT产品scope仍GLM+DeepSeek，混合作者须逐scope登记，不能让实现者终审自己或借作者变更省略旧阻塞。源码only阶段不发新Cargo/Node窗，限1MiB/15min，后续测试须按实际资源单独分配。
 
-各树同步采用已核原SHA上的精确增量并单独提交，不覆盖未知内容。wt-d6、CLI、wt-p2c与root已同步；wt-a4m3正运行绑定9df的新产物八格，由当前持有人读最新人规则并留rules-override.json立即适用，在原实验postflight/index封存后再单独同步CLAUDE，保护HEAD/产物身份。CLI已从归还metadata c77安全切回原upgrade988再同步，旧分支/证据保留，现仅GLM identity任务可写。
+截至15:44的执行记录（后续完成态看board15:48）：各树同步采用已核原SHA上的精确增量并单独提交，不覆盖未知内容。wt-d6、CLI、wt-p2c与root已同步；wt-a4m3正运行绑定9df的新产物八格，由当前持有人读最新人规则并留rules-override.json立即适用，在原实验postflight/index封存后再单独同步CLAUDE，保护HEAD/产物身份。CLI已从归还metadata c77安全切回原upgrade988再同步，旧分支/证据保留，现仅GLM identity任务可写。
 
 原则与断言：单一认领/派发正本不等于模型单槽；真正互斥对象是依赖、session、写工作区及资源。配置并发不自动重试挂起scope；141环境核心三空与134冻结精确授权缺口继续只停相关动作，R46已有实质新前提的138恢复另守原门。机器可核job ID/output独占、session/write冲突、明确额度、在途不丢和作者/审阅者家系不同；传输成功不能替实质角色结论。
 
@@ -37,3 +37,14 @@ GLM可写实现候选与测试，不以审阅硬0入口冒充filesystem写权限
 root给现空闲wt-a4m3独占源码准备，先预登记task/matrix并提交指针；≤15min/新证据≤1MiB，仅tests/order小helper与入口，不跑Node/Cargo/provider/新target/旧A0，不改原validator或基线资源。后续实际小Node窗另核资源并发，未跑逐格NOT_RUN；若无法干净隔离或需要扩大范围，记缺口不部署协议。中央GLM identity在不同CLI树继续，root状态/派发安全修复及两家评审可独立并发，不为这条65依赖另建调度者。
 
 原则与断言：取得结果并不证明基线此刻允许提交，运输回执不等于业务完成；先真实回执再决定可映射范围，允许UNMAPPED，禁止增加微任务/重复自然运行直到顺序合意。source-only不核销65、P3、A5.4或真人实效。
+
+
+## R52 资源单位与并发执行边界消歧（AI代批，待人复核）
+
+卡在哪：PR146 boundary按现行规约指出GB/GiB未定义，影响资源门复算，保原P1直到非作者复核。人定原文为46 GB（20261014决策文件中2026-10-15回复），配套规则一直要求du -sh；既有R36/R44/R45/R48原件均按du -sk的1024口径，不存在十进制字节的明确人定。本卡选择沿用既有du口径并显式定义46 GiB=49,392,123,904 B，保46数值/5树/全量串行；属于可撤回的单位判断，不能伪称人已逐字批准GiB。另一选项是十进制46,000,000,000 B（42.840838432 GiB），会改变既有执行门；若后续人明确该口径，则立即暂停相关新增并重算历史，绝不删证据以消除超限。
+
+受影响是所有后续资源准入与历史资源门读者，不改冻结判分。当前du原件和两种口径的余量写主仓_tmp/20261016-debt-cleanup/reviews/unit-clarification-1630/；明确当前按十进制为负余量，不掩盖歧义。单位行引用本卡及原人定，后续须用同一命令/公式与实际du，不按单目录相加硬链接释放预测充门。独立DS/GLM审该精确修复前不开新大构建窗。
+
+同轮便宜修：CLAUDE明确同一可变session串行，GLM能力由通道/任务卡限定，无工具只产文本、operator机械应用，源码准备不等于运行测试；混合作者范围若不足两家非作者不得合并。memory删除重复规范而保R24适用边界和实时指针；R49同步状态加当时时点。R50矩阵以其task.md为准，源码为13ff8bfbcefb9f7414e809f3adfbc872d37f22a9，新增文件src/pilotdeck-gateway/tests/order/acceptance-gate.mjs与acceptance-probe.mjs，预登记acceptance-preregister.md由其前置提交bb7da1c保存，实际路径已按13ff的Git文件清单核验；准备与后续R51运行分开。前提实证指针为order-architecture/acquisition-r48-run-3vr4vds0/index.json（9424fb058a0578b9e7d827216da394ebc6e633b80da2c694cef7d2bd9ef851b3）及post-mutant-plan-20261016-154834/verification.json，均在主仓_tmp/20261016-debt-cleanup/，不把本PR文档HEAD绑成实验运行HEAD。
+
+原则：人定数值不动，机器单位必须明确；可撤回解释与原人定分开标注。任务的能力授权、工具权限、运行窗口、作者独立性分别核实，不能从其中一项推出另一项。断言为46*1024^3与KiB总和的同口径比较；真实窗口成本另核per-target/proof，不由全局净增长倒推。
