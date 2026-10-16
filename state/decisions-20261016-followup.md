@@ -48,3 +48,7 @@ root给现空闲wt-a4m3独占源码准备，先预登记task/matrix并提交指�
 同轮便宜修：CLAUDE明确同一可变session串行，GLM能力由通道/任务卡限定，无工具只产文本、operator机械应用，源码准备不等于运行测试；混合作者范围若不足两家非作者不得合并。memory删除重复规范而保R24适用边界和实时指针；R49同步状态加当时时点。R50矩阵以其task.md为准，源码为13ff8bfbcefb9f7414e809f3adfbc872d37f22a9，新增文件src/pilotdeck-gateway/tests/order/acceptance-gate.mjs与acceptance-probe.mjs，预登记acceptance-preregister.md由其前置提交bb7da1c保存，实际路径已按13ff的Git文件清单核验；准备与后续R51运行分开。前提实证指针为order-architecture/acquisition-r48-run-3vr4vds0/index.json（9424fb058a0578b9e7d827216da394ebc6e633b80da2c694cef7d2bd9ef851b3）及post-mutant-plan-20261016-154834/verification.json，均在主仓_tmp/20261016-debt-cleanup/，不把本PR文档HEAD绑成实验运行HEAD。
 
 原则：人定数值不动，机器单位必须明确；可撤回解释与原人定分开标注。任务的能力授权、工具权限、运行窗口、作者独立性分别核实，不能从其中一项推出另一项。断言为46*1024^3与KiB总和的同口径比较；真实窗口成本另核per-target/proof，不由全局净增长倒推。
+
+R52候选边界与历史对账补充：本PR的CLAUDE b390fbdb…目前只在wt-d6候选，其他四树仍20518046；原人定并发立即适用，单位候选须两家确认后按持有人/实验封存点安全同步，未把候选五树同SHA说成已完成。R48八格=前后A1/A2四健康+M1–M4四负控，source9df、artifact3ed；R51五格=T0/T1/T2/N1/N2，source13ff且仅TS内存adapter。ReadyAdmission准备六格=四正常D1+/D1−/A+/A−与X1/X2，source975；其共用门后续修复173仍未跑，不倒填成R48/R51结论。Git已实核9df→13ff→975→173祖先链（其间c401只是规则同步），不是同一运行artifact；完整谱系/33旧OPEN清单与当时source身份见主仓_tmp/20261016-debt-cleanup/reviews/root-policy-tail-1655/facts.json。
+
+ee9的33 OPEN由canonical cadb内31原单去113、加139/144/145得出；147是之后新开，当前实读34，不能倒改旧快照。六项历史精确fixed只指19.1、65.5、98.3旧source guard、120.1、120.2、113.1；不扩成这些整单或当前全部缺陷已修。
