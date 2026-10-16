@@ -187,3 +187,8 @@ R78实际shared notify只醒bypass，barrier原8s在8001ms Elapsed，独立Notif
 ## R80 当前通知守卫改为确定性归属断言（自决）
 
 卡：原1500ms墙钟可受负载制造假FAIL，已到首次CI节点；影响测试判据而非冻结。按GLM/DS真实caller尾审，选同线程实际Tap正控+CI真实共享通知回退负控，原8s/七格不变，不用更长sleep或重试充收敛。可撤回，只a4已提交1a3基础/专用CI/script边界，任务`_tmp/20261016-debt-cleanup/order-architecture/notify-deterministic-r80-yzoj1rj5/task.md`；本地无Cargo，真实执行取新CI。原则：通知路由正确性以确定注册/调用与实际wake归属断言，基础设施调度时限不作语义票；变异必须证明运行到指定断言，编译错不算抓错。
+
+
+## R81 选择已归还020004增量缓存的单一资源窗口（自决·待复核）
+
+卡在哪：093预测lastlink111MB加当前余量已不足保证R74门，不能按假释放编译；谁受影响：CLI当前artifact+18、Ready七格；可撤回：本项只可再生编译cache，所有验收binary/deps/raw不变；不动尺子/意向。选项：继续无窗口等待；或核已终结D6独占020004的cache。建议后者，AI代批待人复核，归还与当前binary同SHA的owner proof367e已读。只释放精确020004 incremental候选，不是执行授权；新4MiB证据/终态槽按2346实际条目预注册，093/旧2MiB与其所有失败不改。任务`_tmp/20261016-debt-cleanup/order-architecture/cache020004-r81-s7tbfzmt/task.md`。原则：资源替代须重新核持有人与实际数据规模，回执容量是输入规模的函数；不把老窗口参数套新根，也不以预测腾量启动产品。
