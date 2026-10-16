@@ -1,7 +1,7 @@
 // PREPARED_NOT_RUN. Actual helper and actual native Git, no product process.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,unlinkSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,unlinkSync,symlinkSync,renameSync} from 'node:fs';
 import {join,dirname,isAbsolute} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {producerInputs,captureSourceIdentity,verifySourceIdentity} from './source_identity.mjs';
@@ -49,8 +49,36 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
   run('G8-source-after',f=>{const before=captureSourceIdentity(f.root);f.put('src/pilotdeck-gateway/src/upstream.rs','after\n');assert.throws(()=>verifySourceIdentity(f.root,before),{code:'SOURCE_DIRTY'});});
   run('G8-head-after',f=>{const before=captureSourceIdentity(f.root);f.put('docs/only.md','new head\n');f.git('add','docs');f.commit();assert.throws(()=>verifySourceIdentity(f.root,before),{code:'SOURCE_IDENTITY_DRIFT'});});
   run('G9-outside-scope',f=>{const before=captureSourceIdentity(f.root);f.put('state/example.md','state\n');f.put('docs/example.md','docs\n');assert.deepEqual(verifySourceIdentity(f.root,before),before);});
+  for(const [id,option,tag]of [
+    ['G12-skip-worktree','--skip-worktree','S'],
+    ['G12-assume-unchanged','--assume-unchanged','h'],
+  ])run(id,f=>{
+    const path='src/pilotdeck-gateway/src/space\n name.rs';
+    f.git('update-index',option,'--',path);f.put(path,'hidden changed\n');
+    assert.equal(f.git('status','--porcelain=v1','-z','--',path).length,0,'actual Git hides the changed input');
+    assert.equal(f.git('ls-files','-v','-z','--',path).toString(),`${tag} ${path}\0`);
+    assert.notDeepEqual(readFileSync(join(f.root,path)),f.git('show',`HEAD:${path}`));
+    assert.throws(()=>captureSourceIdentity(f.root),error=>error.code==='SOURCE_DIRTY'&&error.details.flag===tag&&error.details.path===path);
+  });
+  for(const [id,option]of [
+    ['G12-outside-skip-worktree','--skip-worktree'],
+    ['G12-outside-assume-unchanged','--assume-unchanged'],
+  ])run(id,f=>{
+    const path='docs/hidden-source-excluded.md';f.put(path,'outside original\n');f.git('add','--',path);f.commit();
+    const before=captureSourceIdentity(f.root);f.git('update-index',option,'--',path);f.put(path,'outside changed\n');
+    assert.deepEqual(verifySourceIdentity(f.root,before),before);
+  });
+  run('G12-missing-root',f=>{
+    const holding=join(mkdtempSync(join(parent,'missing-root-held-')),'checkout');
+    renameSync(f.root,holding);
+    try{assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_ROOT'});}
+    finally{renameSync(holding,f.root);}
+    assert.doesNotThrow(()=>captureSourceIdentity(f.root));
+  });
   run('G11-tracked-symlink',f=>{const path='src/pilotdeck-gateway/src/upstream.rs';unlinkSync(join(f.root,path));symlinkSync('main.rs',join(f.root,path));f.git('add','--',path);f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_SYMLINK'});});
   run('G11-not-repository',f=>{mkdirSync(join(f.root,'empty'));assert.throws(()=>captureSourceIdentity(join(f.root,'empty')),{code:'SOURCE_ROOT'});});
   run('G11-git-command-error',f=>{f.put('.git/config','[invalid\n');assert.throws(()=>captureSourceIdentity(f.root),error=>Number.isInteger(error.status)&&error.status!==0);});
+  assert.equal(rows.length,31,'all registered source-identity rows completed');
+  assert.equal(new Set(rows.map(row=>row.id)).size,31,'all source-identity row IDs unique');
   completed=true;
 });

@@ -39,13 +39,23 @@ function stat(root,path,missing=false){
 }
 function clean(root){
   const specs=scopes.map(p=>':(literal)'+p);
+  const entries=paths(git(root,['ls-files','-v','-z','--',...specs]));
+  for(const entry of entries){
+    if(entry.length<3||entry[1]!==' ')fail('INVALID_GIT_PATH_LIST','expected index tag and NUL-delimited path');
+    const flag=entry[0],path=entry.slice(2);
+    if(flag==='S'||/^[a-z]$/.test(flag))fail('SOURCE_DIRTY','hidden index flag on scoped source input',{flag,path});
+  }
   const status=git(root,['status','--porcelain=v1','-z','--untracked-files=all','--',...specs]);
   if(status.length)fail('SOURCE_DIRTY','staged/unstaged/scoped untracked source changes',{statusHex:status.toString('hex')});
   const others=paths(git(root,['ls-files','--others','-z','--',...specs]));
   if(others.length)fail('SOURCE_UNTRACKED','untracked or ignored files in source scope',{paths:others});
 }
 export function captureSourceIdentity(root){
-  root=realpathSync(resolve(root));
+  const requested=resolve(root);
+  try{root=realpathSync(requested);}catch(error){
+    if(error.code==='ENOENT')fail('SOURCE_ROOT','source checkout root does not exist',{root:requested,cause:error.code});
+    throw error;
+  }
   if(realpathSync(git(root,['rev-parse','--show-toplevel']).toString().trim())!==root)fail('SOURCE_ROOT','expected Git checkout root');
   clean(root);const head=git(root,['rev-parse','HEAD']).toString().trim();
   const tracked=paths(git(root,['ls-files','-z','--',...scopes.map(p=>':(literal)'+p)])).sort(order);
