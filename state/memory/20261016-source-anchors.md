@@ -8,4 +8,4 @@ type: feedback
 
 新增语义锚点先读固定基线实际行，再选最小稳定表达式；优先AST结构。失配报FAIL并查源码，三次同一具体失败挂起该项；多个补充锚点要整体预核。行为归属和方法仍以真实实现/实测为准，不让锚点名成为新标准。
 
-路径第一次不存在后先用`rg --files`定位，不能继续猜`dispatch/metadata.rs`或`metadata/tests.rs`等层级；本轮三次同类误读后固化。worktree没有resources时显式使用已核主仓固定baseline绝对路径，不能把相对资源路径带到另一个工作区。
+每次读worker交接/证据路径前先用`rg --files`或它的机器索引定位，后续只使用实际列出的路径；不再等第一次不存在后才定位，不能猜`dispatch/metadata.rs`或`metadata/tests.rs`等层级。2026-10-16本片再次误猜两个diff basename和一个server文件名，说明旧“失败后定位”没有阻止重复，现改为读取前准入。路径不存在时挂起猜测式读取，先取得实际清单，不用加前缀/换扩展名试探。worktree没有resources时显式使用已核主仓固定baseline绝对路径，不能把相对资源路径带到另一个工作区。
