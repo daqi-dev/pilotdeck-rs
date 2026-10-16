@@ -24,8 +24,8 @@ function fixture(){
 }
 
 test('source identity fixed producerInputs git fixture matrix',t=>{
-  const rows=[];
-  t.after(()=>writeFileSync(join(parent,'source-identity-results.json'),JSON.stringify({status:rows.some(r=>r.status==='FAIL')?'FAILED_HELPER_ONLY':'CHECKED_HELPER_ONLY',rows,product:'NOT_RUN',artifactOrigin:'NOT_PROVED'},null,2)+'\n',{flag:'wx'}));
+  const rows=[];let completed=false;
+  t.after(()=>writeFileSync(join(parent,'source-identity-results.json'),JSON.stringify({status:completed&&!rows.some(r=>r.status==='FAIL')?'CHECKED_HELPER_ONLY':'FAILED_HELPER_ONLY',completed,rows,product:'NOT_RUN',artifactOrigin:'NOT_PROVED'},null,2)+'\n',{flag:'wx'}));
   function run(id,action){const f=fixture();try{action(f);rows.push({id,fixture:f.root,status:'CHECKED'});}catch(error){rows.push({id,fixture:f.root,status:'FAIL',error:String(error)});throw error;}}
   run('G0-clean',f=>{const before=captureSourceIdentity(f.root);assert.ok(before.files.length>producerInputs.required.length);assert.ok(before.files.some(x=>x.path.includes('\n')));assert.ok(before.optional.some(x=>x.path.endsWith('/build.rs')&&!x.present));assert.deepEqual(verifySourceIdentity(f.root,before),before);});
   run('G0-optional-present',f=>{const path='src/pilotdeck-gateway/build.rs';f.put(path,'fixture build\n');f.git('add','-f','--',path);f.commit();const before=captureSourceIdentity(f.root);assert.ok(before.files.some(x=>x.path===path));assert.ok(before.optional.some(x=>x.path===path&&x.present));assert.deepEqual(verifySourceIdentity(f.root,before),before);});
@@ -52,4 +52,5 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
   run('G11-tracked-symlink',f=>{const path='src/pilotdeck-gateway/src/upstream.rs';unlinkSync(join(f.root,path));symlinkSync('main.rs',join(f.root,path));f.git('add','--',path);f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_SYMLINK'});});
   run('G11-not-repository',f=>{mkdirSync(join(f.root,'empty'));assert.throws(()=>captureSourceIdentity(join(f.root,'empty')),{code:'SOURCE_ROOT'});});
   run('G11-git-command-error',f=>{f.put('.git/config','[invalid\n');assert.throws(()=>captureSourceIdentity(f.root),error=>Number.isInteger(error.status)&&error.status!==0);});
+  completed=true;
 });
