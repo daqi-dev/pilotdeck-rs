@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "ALL_ROWS_RECEIVED_SCOPE_QUALIFICATIONS_RECONCILIATION_REQUIRED",
-  "asOf": "2026-10-16T05:08:40.726533+00:00",
+  "asOf": "2026-10-16T05:28:32.571150+00:00",
   "remoteStatusAsOf": "2026-10-16T04:54:58.583176+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
@@ -286,7 +286,18 @@
             "reason": "已交付budget终态修复按原缺陷类型归档，仅本子项核销。",
             "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
           },
-          "pendingFacts": []
+          "pendingFacts": [],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "19.2",
@@ -379,7 +390,18 @@
           },
           "pendingFacts": [
             "A7.7真实宿主断言与C收尾口径尚未闭合"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -482,7 +504,18 @@
           "pendingFacts": [
             "archive安全前置与精确授权",
             "三方法实际本地化及A4真实验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "46.2",
@@ -652,7 +685,18 @@
             "子项逐项核销",
             "真实UI/真人实效",
             "DS P1与GLM聚合N/A计数语义仍有分歧"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -855,10 +899,47 @@
             "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
           },
           "pendingFacts": [
-            "DS47.1 R5仅mandatory人名门已自撤，root范围投影待同步",
-            "GLM未撤P1及其规范解释仍待独立处理",
-            "剩余94与未来真人人效/B3复核，不新造签名载体"
-          ]
+            "未清94.1/94.2当前P1仍阻断聚合闭合；47仅继承实际子项，不再以R5必须人签判P1。",
+            "未来真人人效/B3验收仍未完成；不新增mandatory具名替换或签名载体。",
+            "94.1全门实证、94.2解析器绑定与冻结/真实复算仍各自待核。"
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          },
+          "pendingFactsRefresh": {
+            "decision": "R39",
+            "validatedScopeFamilies": [
+              "DeepSeek",
+              "GLM"
+            ],
+            "remainingChildIds": [
+              "94.1",
+              "94.2"
+            ],
+            "futureHumanEfficacyOpen": true,
+            "newSignatureCarrierRequired": false,
+            "originalProposalPreserved": true,
+            "scopeSourceBindings": [
+              {
+                "family": "DeepSeek",
+                "path": "_tmp/20261016-debt-cleanup/reviews/taxonomy-r5-approval-meaning-deepseek.md",
+                "sha256": "9ae59939edf9644331ee0f1bc8b1d48c4bb07348729070b195df7fe8fe33bae3"
+              },
+              {
+                "family": "GLM",
+                "path": "_tmp/20261016-debt-cleanup/reviews/taxonomy-r5-approval-meaning-glm.md",
+                "sha256": "50798bbbbdba15ee2bad5e9d8b987b3eb182f80c45269f6eb7781ac78088c66f"
+              }
+            ]
+          }
         }
       ]
     },
@@ -960,7 +1041,18 @@
           "pendingFacts": [
             "GLM原无合法主类，不补写同意",
             "与85A组合输入范围审、冻结程序及真实重算"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md",
+            "sourceSHA256": "29cf9ad3f57fccec97a311f9c2380cc225121620c7cc12679a985faf46f588a7",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "52.2",
@@ -1051,7 +1143,18 @@
           },
           "pendingFacts": [
             "原件无共同合法三类主类；保留P3留白，不新建阻塞"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -1153,7 +1256,18 @@
           },
           "pendingFacts": [
             "确定性barrier捕获实际发布与effect责任"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "55.2",
@@ -1279,7 +1393,18 @@
           "pendingFacts": [
             "可达性/错误输出未知；两家有效grade均null",
             "条件排队上界P1不是已证P1"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -1401,7 +1526,18 @@
           "pendingFacts": [
             "精确PR138独立boundary/双家/CI",
             "TS各格原件限定与真人验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "56.2",
@@ -1527,7 +1663,18 @@
           "pendingFacts": [
             "受限资源probe不能外推全域安全",
             "两家有效grade null，条件上界P0只作排队"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -1629,7 +1776,18 @@
           "pendingFacts": [
             "runner与部署/黑盒分面交付",
             "阶段实效验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -1777,7 +1935,18 @@
           "pendingFacts": [
             "DS未撤P1与GLM N/A不可作者降档",
             "F3实际报告/到期与宣称完成情况"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "61.2",
@@ -1894,7 +2063,18 @@
           "pendingFacts": [
             "依赖漂移单轴控制与真实复算",
             "全F2未核销"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -1997,7 +2177,18 @@
           "pendingFacts": [
             "默认生产同连接TS/Rust顺序及宿主前提",
             "65.2单独观察不可由本项顺带核销"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "65.2",
@@ -2111,7 +2302,18 @@
           "pendingFacts": [
             "COMPLETE与JoinSet可消费不可混同",
             "生产交错顺序实测"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "65.3",
@@ -2209,7 +2411,18 @@
           "pendingFacts": [
             "真实Linux源构建/非法字节目录",
             "与117errno/133dirent分别断言"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "65.4",
@@ -2305,7 +2518,18 @@
           "pendingFacts": [
             "范围纳入须人定",
             "未纳入不推断无风险"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "65.5",
@@ -2398,7 +2622,18 @@
             "reason": "广泛非ASCII分流/截断点缺陷已有D6精确修复，仅已交付本范围归档。",
             "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
           },
-          "pendingFacts": []
+          "pendingFacts": [],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -2501,7 +2736,18 @@
           "pendingFacts": [
             "A5.3/A5.4实际产物和验收",
             "既有装置证据边界"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -2613,7 +2859,18 @@
             "cargo面运行时/构建输入未知",
             "node_modules与冻结输入范围重登记",
             "未经独立事实统一不改原DS主类"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md",
+            "sourceSHA256": "29cf9ad3f57fccec97a311f9c2380cc225121620c7cc12679a985faf46f588a7",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "85.2",
@@ -2712,7 +2969,18 @@
           "pendingFacts": [
             "局部CLI假通过不可等同全链计分假通过",
             "pyc全链及-I路径注入事实未知"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md",
+            "sourceSHA256": "29cf9ad3f57fccec97a311f9c2380cc225121620c7cc12679a985faf46f588a7",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -2812,7 +3080,18 @@
           "pendingFacts": [
             "规划47漏项实际补丁合入",
             "观察范围闭合"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "91.2",
@@ -2902,7 +3181,18 @@
           },
           "pendingFacts": [
             "真实helper错误返回路径观察"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "91.3",
@@ -2992,7 +3282,18 @@
           },
           "pendingFacts": [
             "映射各分支真实观测/登记"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -3140,7 +3441,36 @@
           "pendingFacts": [
             "首个B3 Rust路由前完整check_frozen反例",
             "helper缺口与系统假PASS分别验证"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          },
+          "currentSeverityBasis": {
+            "basis": "highest-effective-independent-grade",
+            "decision": "R39",
+            "deepseek": {
+              "severity": "P1",
+              "priorSeverity": "P2",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-94-1-self-semantic-deepseek.md",
+              "sourceSHA256": "f734e3df6d2ae95c4ac7d2a1b0e6bc7588ee19cfda32a210ddd0e4fca41e7f8f"
+            },
+            "glm": {
+              "severity": "P2",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-apparatus-semantic-glm.md",
+              "sourceSHA256": "1e191487b6117c2d48d3371792c0c70a17c451c2035961dd59b4ce75ee18e490"
+            },
+            "reason": "DS明确撤旧P2数值、保P2-b审计误判语义按现行规则升P1；与GLM P2争议取高。",
+            "factScope": "helper缺口已证；全门假PASS仍unknown/pending，不声称已证P0。",
+            "independentDisagreementOpen": true
+          }
         },
         {
           "id": "94.2",
@@ -3238,7 +3568,18 @@
           "pendingFacts": [
             "DS验收债/GLM缺陷类型分歧由root待复核",
             "绑定真实parser/受限解析及真实workspace复算"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "94.3",
@@ -3329,7 +3670,18 @@
           "pendingFacts": [
             "接受风险不等修复或强认证",
             "只保精确威胁模型，超范围新事实另记"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+            "sourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -3440,7 +3792,18 @@
             "静态CONFIRMED不代表运行时已验",
             "现行F3前置与历史评论时态需核",
             "DS与GLM主类分歧待事实统一"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+            "sourceSHA256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "98.2",
@@ -3542,7 +3905,18 @@
             "sameProcess字段与真实运行未知",
             "DS缺陷类分歧保留",
             "F3加固或精确风险接受由既有授权程序判定"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+            "sourceSHA256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "98.3",
@@ -3649,7 +4023,18 @@
           "pendingFacts": [
             "F3双侧真实soffice运行未验，保持关联",
             "历史fixed不认证未来人效"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-source-final-deepseek.md",
+            "sourceSHA256": "b4e4498be9561869174f98dd39a007256544beb6a0621ed667bec2d41f6fe6f0",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "98.4",
@@ -3731,7 +4116,12 @@
               "disposition": "explicitly withdraw priorP1: future F4/F5 gate not current promised behavior, disclosed28 denominator/11cascade/4unpaired; P1 if falselyused to signoff28/28",
               "prerequisite": "F4 skills/files andF5session",
               "wholeProjectApproval": false,
-              "sourceSHA256": "5f05b2dfba9dffeacb517efec7497a6b92895477d705d96d90bb7774c927bd7a"
+              "priorSourceSHA256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7",
+              "sourceSHA256": "5f05b2dfba9dffeacb517efec7497a6b92895477d705d96d90bb7774c927bd7a",
+              "metadataBeforeExplicitPriorHash": {
+                "path": "taxonomy-adjudication-history/ac6309933fce8231da5c601141cb916f5deea615a8a08a5161e3a901774625cf.json",
+                "sha256": "ac6309933fce8231da5c601141cb916f5deea615a8a08a5161e3a901774625cf"
+              }
             }
           ],
           "independentScopeWithdrawals": [],
@@ -3769,7 +4159,18 @@
             "DS主验收债/GLM主阶段任务分歧保留",
             "补例与28/28误签条件不得混同",
             "DS已自撤旧P1，当前P2保持"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+            "sourceSHA256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -3882,7 +4283,18 @@
           "pendingFacts": [
             "不重派被过滤旧初始分类scope",
             "fix-only不得补造GLM初始grade/type"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/issue113-deepseek.md",
+            "sourceSHA256": "59baa424f7e496f619f78b51ec0dae7b0f9721d12167a49ced2f03d32bcf031e",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -3993,7 +4405,18 @@
             "原DS主验收债分歧待root复核",
             "载体/判据/入账实施",
             "不得用缺载体误签绿"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+            "sourceSHA256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "115.2",
@@ -4086,7 +4509,18 @@
           },
           "pendingFacts": [
             "短命子进程env真实覆盖或明确边界"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+            "sourceSHA256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "115.3",
@@ -4188,7 +4622,18 @@
           "pendingFacts": [
             "对象/源码/种子到位",
             "DS P1/GLM P2未独立收敛仍取高P1"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+            "sourceSHA256": "1eb8836f90dcae6dbd1d263784872939c6dde5c084d45ed0e9f1f2a3c3cef9c7",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -4337,7 +4782,18 @@
           "pendingFacts": [
             "真实Linux源构建与errno",
             "共享runner不合并133dirent断言"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -4435,7 +4891,18 @@
           },
           "pendingFacts": [
             "barrier钉住窗口/派发/owner释放"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "119.2",
@@ -4526,7 +4993,18 @@
           "pendingFacts": [
             "指定exact binary并行负载",
             "不以全量对拍替代本域负载"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+            "sourceSHA256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -4635,7 +5113,18 @@
             "reason": "真实系统错误RPC来源证据缺口已由PR137明确子项补齐；历史验收债类型不变。",
             "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
           },
-          "pendingFacts": []
+          "pendingFacts": [],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "120.2",
@@ -4740,7 +5229,18 @@
             "reason": "错误吞噬面按原验收子项核销，保留合同/补充说明，不把已合修复重复计当前缺陷。",
             "record": "_tmp/20261016-debt-cleanup/taxonomy/coordinator-type-adjudication.json"
           },
-          "pendingFacts": []
+          "pendingFacts": [],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "120.3",
@@ -4831,7 +5331,18 @@
           },
           "pendingFacts": [
             "来源链可追溯完整性与压缩边界"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -4936,7 +5447,18 @@
           },
           "pendingFacts": [
             "D0装置及真实TS定标"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+            "sourceSHA256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5042,7 +5564,18 @@
           },
           "pendingFacts": [
             "D1命令与真实行为验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stage-contract-cwd-deepseek.md",
+            "sourceSHA256": "f397b6f418d8bae2ff4a21c2e19b5a47df1986fb1dc7c0fae0bffaede4f55fb7",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5146,7 +5679,18 @@
           },
           "pendingFacts": [
             "D2逐入口实现与TS行为验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+            "sourceSHA256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5251,7 +5795,18 @@
           },
           "pendingFacts": [
             "D3 mock及真实范围验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+            "sourceSHA256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5357,7 +5912,18 @@
           },
           "pendingFacts": [
             "PTY/中文/信号/终端恢复四面真实验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+            "sourceSHA256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5463,7 +6029,18 @@
           "pendingFacts": [
             "逐入口产物/宿主与TS退役证据",
             "真实实效验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+            "sourceSHA256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5570,7 +6147,18 @@
           "pendingFacts": [
             "路由/恢复/桌面逐项交付",
             "真人使用验收"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+            "sourceSHA256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5677,7 +6265,18 @@
           "pendingFacts": [
             "页面实际行为/旧前端退役",
             "真人实效"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+            "sourceSHA256": "1103569078637610d65201fc4937d84d60d015b84ed713512e027e8acaa8301a",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5784,7 +6383,18 @@
           "pendingFacts": [
             "GLM grade null保留",
             "声明支持域与实际入口审计"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stage-contract-cwd-deepseek.md",
+            "sourceSHA256": "f397b6f418d8bae2ff4a21c2e19b5a47df1986fb1dc7c0fae0bffaede4f55fb7",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -5891,7 +6501,18 @@
           "pendingFacts": [
             "TS宿主精确替代与退役节点",
             "DS阶段/GLM验收主类差异保留"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "阶段任务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -6017,7 +6638,18 @@
           "pendingFacts": [
             "真实Linux dirent端到端",
             "与117errno分开断言不整组核销"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     },
@@ -6120,7 +6752,18 @@
           "pendingFacts": [
             "精确安全差异授权",
             "独立双家/真实探针/冻结A2链"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "真实缺陷",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": true,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         },
         {
           "id": "134.2",
@@ -6199,10 +6842,14 @@
               "priorSeverity": "P1",
               "priorSource": "taxonomy-gateway-final-glm.md",
               "priorSourceSHA256": "eed96efccf5057248544cecaceb7b7c0cafa1f63acaa622d090499c951060ca0",
-              "disposition": "revise priorNA toP1: currentdue exact authorization gate acceptance record missing, not future plannedtask and not proved redlineviolation",
+              "disposition": "retain own priorP1: currentdue exact authorization gate acceptance record missing, not future plannedtask and not proved redlineviolation; N/A was other-family counting-semantic disagreement, not own priorGLM grade",
               "prerequisite": "beforearchive methodmerge/A4 closure; authorizationpending",
               "wholeProjectApproval": false,
-              "authorization": "pending"
+              "authorization": "pending",
+              "metadataBeforeDispositionCorrection": {
+                "path": "taxonomy-adjudication-history/ac6309933fce8231da5c601141cb916f5deea615a8a08a5161e3a901774625cf.json",
+                "sha256": "ac6309933fce8231da5c601141cb916f5deea615a8a08a5161e3a901774625cf"
+              }
             }
           ],
           "independentScopeWithdrawals": [],
@@ -6239,7 +6886,18 @@
           "pendingFacts": [
             "精确授权人定与冻结重登记",
             "不得由AI待复核替代未授权动作"
-          ]
+          ],
+          "countingBasis": {
+            "status": "legacy-pre-R37-flag-not-final-current-count",
+            "origin": "initial DeepSeek primary classification plus original role/state exclusions",
+            "initialDeepseekPrimaryType": "验收债务",
+            "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+            "sourceSHA256": "5f6e4d67769391c45d9bf90b4e8d70b65fa75f9a9a1378909e7d11f9d6c732d2",
+            "retainedFlag": false,
+            "finalCountingAdjudicationPending": true,
+            "useForGlobalDefectTotal": false,
+            "decision": "R39"
+          }
         }
       ]
     }
@@ -6417,7 +7075,7 @@
       "sha256": "bd98c27920b36bea4ccbfefe2b3e655ab4d24a69f08a893fa50658f36ec36acf"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-adjudications.json": {
-      "sha256": "ac6309933fce8231da5c601141cb916f5deea615a8a08a5161e3a901774625cf"
+      "sha256": "33db1beb8a0c3b204c6ff936be055593d8eebd70c490be5fd67a1c3865729ba7"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-98-4-deepseek.md": {
       "sha256": "5f05b2dfba9dffeacb517efec7497a6b92895477d705d96d90bb7774c927bd7a"
@@ -6480,7 +7138,7 @@
       "sha256": "fed0192fe82cedbd6722347e275fb07f25566bfb23bbfb2a94d1017ae953f597"
     },
     "_build/wt-d6/state/decisions-20261016.md": {
-      "sha256": "7657bbc55624d5b65fe49c6eada262a6b750bfd4344068ebabed4cfa6ccf71f5"
+      "sha256": "be902d81e751408bb9d7866148554b056a5a6ad252db807955cdd01990784a70"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md": {
       "sha256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44"
