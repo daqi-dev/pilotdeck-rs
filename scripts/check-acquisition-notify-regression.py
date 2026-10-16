@@ -103,7 +103,7 @@ def verify_failure(code, stdout, stderr):
         and re.search(r"assertion `left == right` failed: " + MARKER + r"\n\s*left: 0\n\s*right: 1(?:\n|$)", err) is not None
         and "could not compile" not in err
         and re.search(r"error\[E\d+\]", err) is None
-        and len(re.findall(r"thread '[^\n]+' panicked at", err)) == 1
+        and len(re.findall(r"thread '[^\n]+'(?: \(\d+\))? panicked at", err)) == 1
     )
     if not valid:
         raise RuntimeError("negative control did not execute exactly one test with the designated route-wake assertion")
