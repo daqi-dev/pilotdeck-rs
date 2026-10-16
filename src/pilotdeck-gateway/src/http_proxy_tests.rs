@@ -263,6 +263,8 @@ async fn boundary_stream(
     })
     .await;
     let (upgrade, lease) = upgrade_rx.await.unwrap();
+    // This fixture assumes Hyper's HTTP buffer accepts the final REQUEST chunk
+    // together with head; revisit this control if Hyper's buffering changes.
     assert_eq!(bytes_read.load(Ordering::SeqCst), http_bytes);
     release_tx.send(()).unwrap();
     let server = tokio::spawn(server);
@@ -570,8 +572,8 @@ async fn ungated_hyper_control_pre_reads_later_frame_into_discarded_buffer() {
         })
         .await;
         let upgrade = upgrade_rx.await.unwrap();
-        // This control assumes Hyper's first-poll read buffer holds REQUEST plus later;
-        // revisit the control if Hyper's buffering strategy changes.
+        // This control assumes Hyper's HTTP buffering holds REQUEST and later while
+        // the service is pending; revisit it if Hyper's buffering strategy changes.
         assert_eq!(
             bytes_read.load(Ordering::SeqCst),
             REQUEST.len() + later.len(),
@@ -777,6 +779,8 @@ async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
             client.read_to_string(&mut response).await.unwrap();
             assert!(response.starts_with("HTTP/1.1 502"), "{response}");
             assert_eq!(response.matches("HTTP/1.1 502").count(), 1);
+            // This fixture assumes Hyper's HTTP buffer accepts the entire initial chunk,
+            // including trailing; revisit this control if Hyper's buffering changes.
             assert_eq!(bytes_read.load(Ordering::SeqCst), initial_bytes);
             let result = server.await.unwrap();
             if valid_http_head {
