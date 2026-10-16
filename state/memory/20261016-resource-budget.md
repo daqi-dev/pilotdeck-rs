@@ -10,3 +10,5 @@ type: feedback
 
 
 目录nlink须目标卷实测：R57在APFS因只扣子目录假设停，实际每个直接file/dir entry都减1。双次真实控制主仓_tmp/20261016-debt-cleanup/apfs-directory-links-odyyiuk1/index.json（SHAc2968f4e…）；新snapshot扣旧实际unlink、新入口按全部entry精确计数，保inode/内容/blocks门，不泛用Linux经验。采样配额不称内核硬quota：helper首轮8MiB实际超110592B并停，独立16MiB窗提前2MiB门后实际26通过，两结论分别保留。
+
+外部loader临时缓存也算本轮输出：R61六caller每格tsx生成约6.6MiB allocated，16MiB早停仍实际超380928B，失败/EPERM原件保留。先用已安装tsx源码与typed42独立控制证明TSX_DISABLE_CACHE wrapper真正无磁盘cache，再按新工具身份开R67，六格实际约0.7MiB；不以改预算或删旧证据充新前提。不可把历史cache硬链接去重当无害：tsx可按cache key覆写/TTL删除，未来写会污染共享sealed别名。只读理论节省不等于可执行回收。
