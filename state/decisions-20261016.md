@@ -184,3 +184,13 @@ R36第五个精确目标：124315清理后1898个非cache路径/字节全同，�
 同时给94.1补当前等级理由：DS已按P2-b升P1，与GLM P2争议取高，不能让旧type理由替当前grade理由。原countAsIndependentDefect是在R37前按初始DS主类生成并由R37保留的标记；明确其历史来源与“不得用于当前最终缺陷总数”的状态，94.2 false不等于其真实缺陷主类/P1被核销。当前不得把这些遗留标记相加报全局缺陷数；真正计数须先处理候选、聚合/同域不同断言和事实确认，不在本次偷偷改count轴。
 
 原则与断言：保留旧原件不等于保留错误的当前待办；当前完整独立修订按最新合法原件比，类型操作的七保护轴另比。每个例外都给真实前后/源SHA与单轴负控，不删缺口、不降档、不把纯JSON验证当独立终审。F7同path不同SHA原41误放已复现，producer逐引用一致与audit独立SHA集合的窄修一并交两家增量；当前47/94文字更新不代其通过。
+
+## R40 #65只实施测试共同提交域原型（AI代批，待人复核）
+
+卡在哪：真实默认describe/supported反序已证，有限即时类不能覆盖控制帧与跨读pending；只有宿主完成bit也缺输入回调边界和已决定的提交序列。谁受影响：#65/A5.4前置，R25明确不能靠FIFO/sleep/整批host。可撤回；不改冻结/分母/判据/意向或产品部署。
+
+采用Astra在主仓order-architecture/next-domain/report.md提出的必要接口作测试专用证伪原型：显式受控ingress epoch、opaque NativeSlot、唯一Commit序列，先验证有证即时子域；真实默认host method日志中本地方法调用必须0，客户端WS不混控制token。不改resources，不启用默认产品；不同输入事件脚本分别跑其真实oracle，不按Rust输出调整期望或Promise层数。异步域缺证时只报NECESSARY_EVIDENCE_MISSING/SYNC_SUBDOMAIN_ONLY，不报兼容PASS或清#65。
+
+复用已核clean的wt-a4m3，新分支codex/completion-domain-probe从379ec519开始，旧order-default-probe本地远端原样保留；持有人completion_domain_impl，主仓证据单独绑定。首轮仅原安装Node与379真实Rust原件/既有产物，不Cargo或新target，磁盘新增预算16MiB、五树不增。运行前先固定矩阵/因果点/失败与回收条件，源码/工具前后绑定；后续若真需编译，先给root实际需求再按总量发窗口。
+
+原则与断言：区分计算有结果、基线应何时提交、传输何时到达；共同序列只消除最后一层重排，不自动证明前两者。缺epoch、缺seq、把local方法交host、close后提交及重复/丢commit均要有反控，未知自然COMPLETE/JoinSet状态不能由受控缓存或被消费后的结果代填。原型不能过全域时保留明确缺口和唯一下一实证，其他清账继续。
