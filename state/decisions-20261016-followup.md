@@ -59,3 +59,8 @@ ee9的33 OPEN由canonical cadb内31原单去113、加139/144/145得出；147是�
 卡在哪：GLM F17/DS source已确认finish共享修复，但旧native caller没有运行证据；属于当前源码范围便宜的验证债。谁受影响：显式测试装置调用者，非默认生产/自然竞争窗口结论。可撤回、不动冻结/意向/业务实现。选择同f793精确R59产物已有ignored六格只跑一次，任务`_tmp/20261016-debt-cleanup/order-architecture/native-finish-r61-1838/task.md`；不用旧HEAD binary冒新，也不重复自然模式至合意。
 
 16MiB新proof、14MiB提前门、外留214748365B、总120s/child90s/每流1MiB；fresh完整du达门、源码/工具/基线/4689sealed前后同才准。失败原件保全只停该项，原中央评审继续。只证caller finish/capture/reap，65.1/65.2/P3/A5.4/真人仍未闭。原则：源码同一实现不替实际caller回归，精确产物可复用但不得扩大已观察语义。
+
+
+## R62 当前身份helper三条便宜永久控制（自决）
+
+当前d0/R60两家已确认隐藏位P1修复，但SOURCE_KIND可达空config目录、contract-only before与组合s位缺负控；按当前PR内便宜P2a同轮补。只改CLI测试文件，32→35，不改helper合同/判据/生产；任务`_tmp/20261016-debt-cleanup/upgrade-helper35-r62-prep-cla_wzhg/task.md`。ready_capture_fix独占CLI源码，先准备不运行，后续真实Node与非作者增量终审另守门。原则：一行可达同类缺口不能只因原评审写c就延期；保原scope判定与原件，不扩大R60运行覆盖。
