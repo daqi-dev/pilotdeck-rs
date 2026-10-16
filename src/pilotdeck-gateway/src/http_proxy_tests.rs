@@ -462,3 +462,94 @@ async fn initial_partial_frame_suffix_is_not_rejoined_with_discarded_prefix() {
     .await
     .expect("initial head prefix must never be restored");
 }
+
+// Pre-registered candidate boundary: after an upstream failure, initial head
+// bytes are still Hyper HTTP input. Invalid WS bytes terminate via HTTP 400;
+// a complete ordinary request in that buffer is handled as keepalive input.
+#[tokio::test]
+async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    timeout(Duration::from_secs(3), async {
+        for valid_http_head in [false, true] {
+            let (io, mut client) = tokio::io::duplex(4096);
+            let count = Arc::new(AtomicUsize::new(0));
+            let trailing = if valid_http_head {
+                b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".to_vec()
+            } else {
+                client_frame(0x81, 126, b"invalid HTTP head")
+            };
+            let initial = [REQUEST, trailing.as_slice()].concat();
+            let io = Scripted {
+                io,
+                reads: [initial].into(),
+                count: count.clone(),
+            };
+            let proxy = Arc::new(Proxy {
+                upstream: "invalid upstream".into(),
+                client: Client::builder(TokioExecutor::new()).build_http(),
+            });
+            let server = tokio::spawn(proxy.serve_connection(io));
+            // The complete input, including the initial head, is one read.
+            let mut response = String::new();
+            client.read_to_string(&mut response).await.unwrap();
+            assert!(response.starts_with("HTTP/1.1 502"), "{response}");
+            assert_eq!(response.matches("HTTP/1.1 502").count(), 1);
+            assert_eq!(count.load(Ordering::SeqCst), 1);
+            let result = server.await.unwrap();
+            if valid_http_head {
+                assert_eq!(response.matches("HTTP/1.1 400").count(), 1, "{response}");
+                assert!(response.ends_with("invalid request URI"));
+                result.unwrap();
+            } else {
+                assert_eq!(response.matches("HTTP/1.1 400").count(), 1, "{response}");
+                assert!(result.unwrap_err().is_parse());
+            }
+        }
+    })
+    .await
+    .expect("initial head plus failed upgrade must terminate or serve the next HTTP request");
+}
+
+#[tokio::test]
+async fn production_ws_get_without_token_and_post_upgrade_route_explicitly() {
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    timeout(Duration::from_secs(3), async {
+        for (method, upgrade, expected) in [
+            (hyper::Method::GET, false, StatusCode::BAD_REQUEST),
+            (hyper::Method::POST, true, StatusCode::BAD_GATEWAY),
+        ] {
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let proxy = Arc::new(Proxy {
+                upstream: "invalid upstream".into(),
+                client: Client::builder(TokioExecutor::new()).build_http(),
+            });
+            let server = tokio::spawn(proxy.serve_connection(server_io));
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(TokioIo::new(client_io))
+                    .await
+                    .unwrap();
+            let connection = tokio::spawn(connection);
+            let mut request = Request::builder()
+                .method(method)
+                .uri("/ws")
+                .header(header::HOST, "localhost")
+                .header(header::UPGRADE, "websocket");
+            if upgrade {
+                request = request
+                    .header(header::CONNECTION, "Upgrade")
+                    .header(header::SEC_WEBSOCKET_KEY, "key");
+            }
+            let response = sender
+                .send_request(request.body(Full::new(Bytes::new())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            response.into_body().collect().await.unwrap();
+            drop(sender);
+            connection.await.unwrap().unwrap();
+            server.await.unwrap().unwrap();
+        }
+    })
+    .await
+    .expect("explicit /ws method and token routing");
+}

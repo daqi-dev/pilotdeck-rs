@@ -137,6 +137,9 @@
 > **本候选**：#113的1e7两家完整终审已确认F8原件内容/driver当前指针修复，53注册/capture/checker/评分逐字节不变，仍无需新26轮；四原件Git blob再与归档逐字节核验一致。准备保全后同步新main，再跑最终CI/双家元差异补审才合入。#47历史专项负控P2/真人验收不变。
 > **在途与红线**：#56旧四P2已由两家确认，C1双连接隔离已实际测20项；新增GLM F1为suffix状态只录不比，按P2-b作P1，已补checker/八控制并正复采18真实样本。#139首次驱动把Node隔离HOME传Cargo，rustup在_tmp自动下载工具链，触碰不下载预编译二进制红线，P0事件未闭合；失败/463MiB下载现场隔离保留不用。root核六原工具链SHA/预检后只准绝对绑定原安装、新target/offline恢复；重测成功不等于独立P0审阅通过。
 > **余账**：31单55子项分类仍欠GLM若干批，不报最终总数；#134真实越界P0及精确安全差异授权门、#65顺序P1、#52+#85A组合冻结前置仍未完成。五树，build12G+tmp23G约35G低于46G；当前片08:24启动、10:24前交接，后续调度继续，pdrs首次定时执行尚未发生。
+> ## 2026-10-16 · #56 sibling廉价P2补证进行中（基于c204901）
+> writer收回wt-a4m3；新增生产路径失败502+初始残head两格（invalid WS head→400终止、完整HTTP head→400既有HTTP处理）已实测通过，GET /ws无token/POST升级显式路由一并补回归。真实partial-suffix两side独立新baseline/隔离home及配置/Node/输入SHA补录仍在进行；原始config保留，不改旧report。不改产品/冻结，不冒认四P2已全闭或#65/A4完成；提交仅保存测试checkpoint。
+
 > ## 2026-10-16 · #56 真实默认TS HTTP入口补证（产品b38ea44不变）
 > root持有wt-a4m3，仅新增tests/upgrade录制器/观察器与本段。原型真实TS默认CLI经透明relay扣住101，直连/候选各3初始head×2后来分块共12格PASS；TS实际upgradehead逐字节核对，后来hello/post/FENCE各一次、无INITIAL pong，全部自有进程停止。可移植版本同12格复采PASS、前后binary/基线hash相同，SIGTERM负控FAIL且自有进程全停/cleanupErrors空，原始/失败记录主仓`_tmp/20261016-debt-cleanup/upgrade/ts-http-oracle/`；Rust初始read归属继续靠同PR scripted生产路径矩阵，不能从TCP write次数推断。真实TS补证与harness增量须两家终审；#65/A4和人工验收仍未完成。
 
