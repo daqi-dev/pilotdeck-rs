@@ -1,5 +1,16 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 11:06 · 默认TS六格已实测与评审硬权限恢复
+> root持wt-d6与wt-a4m3；order新分支codex/order-default-probe@4a37e83，旧PR138988分支及证据保留。固定Node22.22/Git/tsx loader、cc7全部1000源码与解析配置前后核同，11:04实际默认createLocalGateway+parser/RPC+自有磁盘六格录制成功，child退出0/未watchdog/local.dispose；内存transport限定，原件主仓order-default-probe/actual-default-110420。describe→supported保持，list→supported与list→ping后者先写，list→close只close，真实list响应后再ping保持因果。OS/methodReady/taskConsumable仍NOT_OBSERVED，Rust NOT_RUN；只补TS oracle，不核销65/P1或A5.4。
+> 新事故144已登记，两项分别执行权限P0候选与旧通用tmp删除前状态未知验收债；当前32open=原31减113加139/144，不报全局清零。JSON新增144仍与原31/55分列，六输入绑定/27纯JSON断言通过；GLM原分类缺18和等级争议未闭合。
+> DS硬0runtime已恢复，GLM唯一新native入口在canonical cwd/PWD/session/agent/model及实际installed snapshot definitions=[]阳性对照后恢复；保留非wire/非实际deny的适用边界，旧宽入口拒绝。R30/memory沉淀执行门与PWD教训。两家各一条provider队列，中央唯一owner，不重派。PR141当前fce尾差待审，BND2被DS A-D确认修复，GLM与旧docs事实消歧/完整boundary仍欠；作者正顺手修C01/D05控制。#134精确授权门继续待，余独立工作继续。
+
+> ## 2026-10-16 10:28 · 首次pdrs heartbeat实际接回
+> 10:28:09收到定时接续，新片从10:28:18起、12:28前交后续；不再只称ACTIVE配置。核五树/正常du17G+23G约40G<46，主仓研究与none/保留。main7781b18；138/141(32c)/142/143(baa)当时两CI均绿，但独立闸门仍未齐，未合并或清零。root仍持wt-d6/upgrade/archive；CLI由debt_catalog_impl接回唯一写权，central唯一模型队列接回，不开第二路。
+> **已证新P1**：Astra固定32c真实Node/Python反例仅替换fixture.permissions三个路径或mode，restore/checker通过而原三处仍受限；不需改receipt/source/manifest/人批，不能归R4模型外。作者正在BND2内存/可信pipe原计划修复；完整事实`metadata-r4-facts/review-packet.md`，不冒称Rust语义假PASS。32c后廉价P2先形成7785e57稳定增量：source-head有界失败仍写报告、真实每run env、孙进程清理/边界等Node9/Python20控通过，独立增量待审。
+> **外审执行边界事故**：DS两份明确no-tools任务仍执行19/31工具，其中通用/tmp先rm后重建，删除前所有权/内容未知。唯一记录`reviews/tool-boundary-incident.md`，不宣称无损、不把未经授权执行当验收。两家后续已安全停；DS本次overlay的真实runtime registry=[]已核，可受约束恢复；GLM stateless无执行器源码已核，但v2本地catalog为空而400，尚未成功恢复该入口，不是供应商拒绝。R30/新memory记录派发硬闸门。
+> #65默认TS六格脚本已PREPARED/NOT_RUN，root将先做小范围真实oracle，Rust/65.2观察仍欠；余18分类包由Astra只读准备，首次分类不输入DS等级诱导，#113被过滤旧scope不重试。分类/所有延期与验收债继续未完成；精确冻结授权134只停相关动作，其余继续。
+
 > ## 2026-10-16 · 本片调度交接点（08:24启动，10:24前交后续）
 > 唯一完整交接在主仓`_tmp/20261016-debt-cleanup/scheduler-handoff.md`，模型在途/任务SHA/实际覆盖读`reviews/central-handoff.md`；不重启第二队列，不把交接当停工。main仍7781b18，已交付137/140；Draft143总账JSON仍c277相同字节、分类输入37份未收敛，c277两CI绿但本次board提交后的新tip实时核。延期/验收债不核销，全局无归零结论。
 > 首任务PR141：CLI最终32c4544504170b90ffdb1889998a82318e441c4d已推；BND1仓内Git shim假通过经独立实测后改绝对Git/工作区根拒绝/身份前后核验，Node8/Python17控制与target102014完整10RUN/3replay/10Native+10pair/restore/postflight通过。C10多余wire漏判按P2-b升P1，真实EOF负控与C04超时abort+await/任务销毁控制已补，全部pairing48/4ignored通过；原真实运行Git路径正常，不否定原成功。作者此tip冻结、自有child已停且权限恢复；新Git/Pair精确尾差独立审阅及完整boundary仍欠，P0事故/139保持OPEN。交接后先核实际writer/新tip与central唯一队列，不并发改或假称已过闸门。
