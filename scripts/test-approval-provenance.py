@@ -30,6 +30,10 @@ class ProvenanceControls(unittest.TestCase):
             (self.approval / name).write_bytes(content)
             lines.append(f'Approval-Source-SHA256: {hashlib.sha256(content).hexdigest()}  '
                          f'specs/ui-server-parity/approval/{name}')
+        paths = ['specs/ui-server-parity/approval/' + name for name in NAMES]
+        lines += ['Approval-Basis: ' + '; '.join(paths[:3]),
+                  'Independent-Reviews: ' + '; '.join(paths[1:3]),
+                  'Calibration-Evidence: ' + paths[0] + '; ' + paths[3]]
         self.original = '\n'.join(lines) + '\n'
         self.manifest.write_text(self.original)
 
@@ -67,6 +71,22 @@ class ProvenanceControls(unittest.TestCase):
         self.manifest.write_text(self.original + 'Approval-Source-SHA256: ' + 'a' * 64 + '  ../outside\n')
         self.rejected()
         self.manifest.write_text(self.original.replace('Approval-Source-SHA256: ', 'Approval-Source-SHA256: z', 1))
+        self.rejected()
+
+    def test_basis_and_review_references_cannot_bypass_hashed_sources(self):
+        lines = self.original.splitlines()
+        for field in ['Approval-Basis', 'Independent-Reviews']:
+            with self.subTest(field=field):
+                self.manifest.write_text('\n'.join(
+                    (field + ': arbitrary-existing-file') if line.startswith(field + ':') else line
+                    for line in lines) + '\n')
+                self.rejected()
+
+    def test_calibration_driver_cannot_point_back_to_tmp(self):
+        self.manifest.write_text(self.original.replace(
+            'Calibration-Evidence: specs/ui-server-parity/approval/calibration-summary.json; '
+            'specs/ui-server-parity/approval/driver.log',
+            'Calibration-Evidence: specs/ui-server-parity/approval/calibration-summary.json; _tmp/driver.log'))
         self.rejected()
 
     def test_symlinked_approval_directory_fails(self):
