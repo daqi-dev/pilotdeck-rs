@@ -136,6 +136,21 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(driver.SOURCE_FILES), 15)
         self.assertEqual(set(driver.SOURCE_FILES), expected)
 
+    def test_required_check_gates_observer_failure_instead_of_skipping(self):
+        text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
+        self.assertEqual(text.count('\n  check:\n'), 1)
+        check = text.split('\n  check:\n', 1)[1].split('\n  gateway-schema-baseline:', 1)[0]
+        self.assertIn('\n    needs: metadata-observer\n', '\n'+check)
+        self.assertIn('\n    if: ${{ always() }}\n', '\n'+check)
+        gate = check.split('    steps:\n', 1)[1].split('      - uses:', 1)[0]
+        self.assertIn("        if: ${{ always() && needs.metadata-observer.result != 'success' }}\n", gate)
+        self.assertIn('        working-directory: .\n', gate)
+        self.assertIn('        run: exit 1\n', gate)
+        self.assertNotIn('continue-on-error:', gate)
+        observer = text.split('\n  metadata-observer:\n', 1)[1].split('\n  check:', 1)[0]
+        self.assertNotIn('continue-on-error:', observer)
+        self.assertIn('run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs', observer)
+
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
         target = self.root/'new-target'
         for output in (target, target/'inside', self.root):
