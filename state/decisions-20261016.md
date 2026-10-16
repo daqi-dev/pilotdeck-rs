@@ -228,3 +228,6 @@ pipe 硬输出界限和实际权限回执核对；不读取同一 fixture 来放
 exit0 不能代替状态核对。自有 Git fixture 七控、Python 环境/receipt/restore/watchdog
 负控、删 legacy 正向 stat 观察后的 complete=false 及真实十项复采为断言。依赖树
 完整闭合仍属 #85，原 P0 下载事故及现场保留；成功重测不能自行解除独立双审闸门。
+
+
+R28精确评审尾差：首个正确响应不证明流中没有多余响应；metadata配对收口必须在shutdown后读EOF，再发案例receipt，真实trailing bytes负控拒绝。JoinHandle超时drop会detach，test-only Pair收尾必须abort并await；pending任务Drop marker锁定该约束。两项都可撤回且不动产品/冻结，C10按P2-b作P1等待非作者复核；不由作者自称收敛。
