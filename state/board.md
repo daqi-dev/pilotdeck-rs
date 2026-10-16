@@ -1,5 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T20:41:35.778721+08:00 · R80已推/R81唯一资源窗**：a4 currentclean `ca75dd0f5e7f1131488f301874d8e443f6638e9f` 已推，两个Tap guard同线程确定性归属、CI实际共享通知回退+恢复再全test；推前gitleaks0，新CI与双家必要尾审待，旧1a3绿不冒新。控制器保两流raw、EPERM严格infra失败，真实R59 panic线程ID解析补控只格式验证不冒实际Rust变异。149未来10/11已追加actual读回f833e9c9，当前1500ms另账未延期。
+> 原093未执行/旧source stale；020004 owner归还/验收binary当前同SHA/无FD已核，R81改选单一可再生cache以获得R74实际窗口，4MiB证据与2346条目终态槽新预注册，绝不放松原46或R74 112/.20。cache准备者仅新O，root现冻结ca75/CLI2f源至R81终态或21:05先交回；无authority/删除/本地Cargo，snapshot/尾审/真实du齐才另发。原provider owner并发R74合同/legacy/R80增量，挂起范围不变。
+
 > **2026-10-16T20:30:24.879124+08:00 · 新调度片接续/R80**：已读规则与.42cog四份/最新MEMORY/board，5树CLAUDE同b390；实时36OPEN/5Draft、wt-d6 clean95bb、a4 clean1a3/CLI clean2f、未知人手保护不变。原中央同owner在途不动。接回当前1500ms P2a，同线程实际Tap+真实共享通知回退CI按R80准备，a4源码准备独占交ready_capture_fix；新cache_receipt_prepare只自有_tmp补R73 finally-save，不清理/authority，旧07eb准入仍stale。R74只准备无运行，本片22:25前交下一调度继续。
 
 > **20:25交接补充**：1a3当前run38899913927两CI已实际SUCCESS；两新actualTap及三R68永久guard各唯一ok、actualcheckout ffaa6a3 tree5e3152e3精确同1a3。12件索引e13c7ef6 root逐SHA核，主仓order-architecture/notify-ci-handoff-20261016-2021/ci-1a3e9f/；不冒M1七格。GLM/DS两批source方向均可接受，但DS新增1500ms墙钟极端负载假FAIL的P2前置首次guard CI/登记运行已到当前节点，仍未闭，下一就绪先当轮处理，不因本次绿降级/延期；Tokio变更反控与track/abort未覆盖按具体扩域节点留账。新artifact七格与CLI18的P1照留。
