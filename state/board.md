@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-17 01:16接续**：已实际回收020004可重建增量缓存约348.4MiB，完整保全与退出/终态均通过，核算当时还余539.0MiB；源码和旧证据都保留，5树未动。主树新57a55ac的人定“开发优先”已读，旧Ready/流程排程作历史；下一步按新board优先交付PR138当前产物和18项入口验证、救回PR141，再评估其他Draft。当前37张open issue、6张open PR（5 Draft），没有清零或新合并；精确原件见主仓 `_tmp/20261017-cache-run-6ug2cqv9/report.md`。
+
 > **2026-10-17T01:10:40.403956+08:00 · R81最终执行卡R86**：两源ca75/CLI2f已fresh clean/root唯一writer，新lease到01:35或精确R81终态先到；两家当前793七引用门已闭，root将本提交后create_new authority单次执行，仅020004 incremental/原4MiB，actual cleanup仍未运行。不扩093/090/partial，不自动build；最终exit0+FINAL+完整post后实际du再决定R74。#152现OPEN、37OPEN/5Draft，延期未完成。R74新tip6e0e72封34件/六组Python对照通过，原中央正两家必要delta；Node观察器小控ps超限PARTIAL、真实18仍未跑。
 
 > **2026-10-17T00:32:28.153921+08:00 · 原队列接续与发布同步**：用户替换AGENTS与五实际树均同b390，四份/MEMORY当前读取指纹未变；旧00:20lease失效，本片fresh核ca75/CLI2f clean、writer仅root后新冻结到01:00或R81临界终态/失败先到，不沿旧时效。当前36OPEN/5Draft、5树，人手/unknown/旧研究保护不变；中断导致上一00:25前未形成最终交接，按事实接回，不补造完成。02:23前写下一交接。
