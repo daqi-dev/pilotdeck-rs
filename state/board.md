@@ -1,5 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 13:29 · R39落账与实际分类评审进展
+> 当前候选按中央合法33db1beb独立修订快照生成：98.4补初判真实SHA、134.2摘要纠正为保留本家原P1，原grade/MD不动、ac630历史保留。47.1当前假待办已按双scope撤回刷新，只留94两P1与未来真人实效/B3；94.1显式P2-b→P1取高来源。55项countingBasis说明旧count标记来源及useForGlobalDefectTotal=false，94.2旧false不抹其当前真实缺陷主类/P1。七保护轴/初判/限定不变；修订完整元数据由专门revision_lost逐字段核最新原件，不再被旧R37额外基线错误冻结。R39判断、candidate与57原件proof已交回root，正式normalizer→audit41→renderer通过，唯一JSON SHA0f1880146ccd243f0200d1c1cd8358c075a9215c0e41af056c2f1a962c3e3a24；原R37章节与行162保持。
+> F7真实前代41误放同path异SHA已封20项原件，producer逐引用一致/audit独立SHA集合的窄修在当前33db首尾冲突都拒；同SHA重复合法。F3新publisher写前绑定temp身份，真实成功/部分写错/replace错/foreign替换四控制通过，异常仅清自身同inode/dev常规文件，未知替换保留；没有fsync承诺、没有改真实canonical做反例。两项仍待实际非作者增量闭合，不拿机器结果充终审。
+> PR143实际DS sibling已走55当前类型及18链/两聚合/四新项，GLM三type批也全55覆盖；均各有原文/未验边界，不能概括为全角色零。当前GLM I1=P1认为52/85测量口径不一，中央正求逐子项明确当前grade/scope，不作者自降或新增人批。DS concurrency已独立撤回R5/重复ID/未承诺fsync的旧疑问，F3/F7修复精确包和后续boundary/final仍欠；stage的P2次债、98两项不同断言等按必要真实字段消歧。中央仍唯一队列，不机械11包×四角色重送原文。
+> PR141最新c77dc820cff5712e5977dd628fea9cba14298222三CI全绿，O1/O4/O5控制尾差34原件SHA67df9392a4c64ebb28340ef95965d0b0de2ae496c69306e56ad6708852e6475d；check门用needs+always+显式非success失败，不能靠skipped挡保护。recorder逐字同846真fresh，未跨HEAD追认；新说明已body-file更新/读回逐字同，公开正文gitleaks0。环境held/139/P0/整PR继续开放；root核12份有效GLM旧输入也无当前environment函数精确覆盖，不第四重试或虚构复用。
+> #65 Astra新只读架构结论在order-architecture/next-domain/{report.md,index.json}：有限即时类只解释首反例，下一必要单元是测试专用共同提交域原型，非产品启用/新外部协议。旧actual-index报告项仅落后于205字节pong说明，旧2609B前缀hash及其余四项匹配，补充index已明确，不假称旧索引覆盖追加。持有人五树当前皆root、无产品writer；资源最新45.327873GiB/46，锁释放。下一仍是PR143当前分级/实际角色收敛及PR141独立剩余；单线held只停其动作，14:27:16前调度交接后继续。
+
 > ## 2026-10-16 13:05 · 846观察器真实链通过，环境核心按三次失败挂起
 > PR141当前84601238bec016ecad78c60ed655567007c12046已推/CLI clean冻结交root。C01/C02单位实际旧代4红→隔离后5绿→去guard4红→恢复5绿；仅装置observer代际，不证实际Gateway曾触发。新130100独立target完整fresh先observer5，再15源driver六stage全0/reaped，真实Node10/静态3/动态恰1test十unique386token/Native2test十Native十pair/恢复3/sourceHead846，15源逐项等Git/工具与组件/rustup/产物前后同。530原件observer-fresh-handoff-index.json SHA34b00385c629cec97b3adad3263b43edbe020707740886c7aaba05177ca8d005；target735300KiB、compile27.714s，未复造多次Cargo。0c11与3a旧索引不改，3a三cheap守卫两家已独立确认修复且当HEAD两CI绿，846新CI与独立窄审另核。
 > **失败与转线**：GLM环境核心第3次300.040s/text0仍无有效final（前两次300.085/300.095）；本scope挂起，不第四改写/拆包重试，依赖它的PR141合并未过。三次原件/SHA保留，memory/review-bounds沉淀，不断言供应商/filter或SIGTERM/socket先后。真正独立memory-capture必要scope仍在当前唯一队列，不是环境第四变体；之后PR143新R37/双R5/聚合实际角色优先。PR138旧boundary也保持其三空失败的held，只有确有新执行前提才能恢复，单纯拆包不能解挂；不让单线失败停全项目。
