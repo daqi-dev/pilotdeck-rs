@@ -209,6 +209,64 @@ async fn failed_production_upgrade_releases_gate_for_next_http_request() {
     .expect("failed upgrade keepalive must not stay gated");
 }
 
+// C1: a legal upgrade awaiting its host response may pause only its own
+// connection. The same production Proxy must serve B before A is released.
+#[tokio::test]
+async fn pending_production_upgrade_does_not_pause_another_connection() {
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    timeout(Duration::from_secs(3), async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = Arc::new(Proxy {
+            upstream: format!("http://{}", listener.local_addr().unwrap()),
+            client: Client::builder(TokioExecutor::new()).build_http(),
+        });
+        let (seen_tx, seen_rx) = oneshot::channel();
+        let (release_tx, mut release_rx) = oneshot::channel();
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async move {
+            let (mut a, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(a.read_u8().await.unwrap());
+            }
+            assert!(request.starts_with(b"GET /ws HTTP/1.1\r\n"));
+            seen_tx.send(()).unwrap();
+            let (mut b, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(b.read_u8().await.unwrap());
+            }
+            assert!(request.starts_with(b"GET /health HTTP/1.1\r\n"));
+            assert!(matches!(release_rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+            b.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nhealthy").await.unwrap();
+            b.shutdown().await.unwrap();
+            release_rx.await.unwrap();
+            a.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            a.shutdown().await.unwrap();
+        });
+        let (a_server, mut a_client) = tokio::io::duplex(4096);
+        let a_proxy = proxy.clone();
+        tasks.spawn(async move { a_proxy.serve_connection(a_server).await.unwrap() });
+        a_client.write_all(b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n").await.unwrap();
+        seen_rx.await.unwrap();
+        let (b_server, mut b_client) = tokio::io::duplex(4096);
+        tasks.spawn(async move { proxy.serve_connection(b_server).await.unwrap() });
+        b_client.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut response = String::new();
+        b_client.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(response.ends_with("healthy"), "{response}");
+        a_client.shutdown().await.unwrap();
+        release_tx.send(()).unwrap();
+        let mut response = String::new();
+        a_client.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 502"), "{response}");
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+    }).await.expect("connection B must complete while connection A still awaits its host handshake");
+}
+
 #[tokio::test]
 async fn empty_and_incomplete_http_eof_finish_without_gating() {
     use hyper_util::{client::legacy::Client, rt::TokioExecutor};
