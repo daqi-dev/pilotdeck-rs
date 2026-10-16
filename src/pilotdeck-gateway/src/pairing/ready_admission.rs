@@ -283,7 +283,11 @@ async fn ready_admission_real_payload() {
         String::from_utf8(result.stdout).unwrap().trim().to_string()
     };
     let head = read_git(&["rev-parse", "HEAD"]);
-    assert_eq!(option_env!("PDRS_ORDER_BUILD_SOURCE_HEAD").unwrap(), head);
+    assert_eq!(
+        option_env!("PDRS_ORDER_BUILD_SOURCE_HEAD"),
+        Some(head.as_str()),
+        "compile-time source HEAD binding required for this opt-in probe"
+    );
     assert!(read_git(&["status", "--porcelain", "--", "src/pilotdeck-gateway"]).is_empty());
     assert_eq!(
         hash(fs::read(std::env::current_exe().unwrap()).unwrap()),
@@ -470,36 +474,34 @@ async fn ready_admission_real_payload() {
         let host_events = host_report["events"].as_array().unwrap();
         assert_eq!(host_report["cleanup"]["disposed"], true);
         assert_eq!(host_report["cleanup"]["closed"], true);
-        if mode == "candidate" {
-            if case == "A+" || case == "A-" {
-                let received = host_events
-                    .iter()
-                    .position(|e| {
-                        e["event"] == "ReadyReceived" && e["readinessClass"] == "JoinConsumed"
-                    })
-                    .unwrap();
-                let returned = host_events
-                    .iter()
-                    .position(|e| e["event"] == "CallbackReturn" && e["label"] == "successor")
-                    .unwrap();
-                let token = items[0]["token"].clone();
-                let committed = host_events
-                    .iter()
-                    .position(|e| e["event"] == "commit" && e["token"] == token)
-                    .unwrap();
-                assert!(
-                    returned < committed,
-                    "continuation must remain after successor callback return"
-                );
-                assert!(
-                    if case == "A+" {
-                        received < returned
-                    } else {
-                        returned < received
-                    },
-                    "explicit callback/Ready envelope mapping"
-                );
-            }
+        if mode == "candidate" && (case == "A+" || case == "A-") {
+            let received = host_events
+                .iter()
+                .position(|e| {
+                    e["event"] == "ReadyReceived" && e["readinessClass"] == "JoinConsumed"
+                })
+                .unwrap();
+            let returned = host_events
+                .iter()
+                .position(|e| e["event"] == "CallbackReturn" && e["label"] == "successor")
+                .unwrap();
+            let token = items[0]["token"].clone();
+            let committed = host_events
+                .iter()
+                .position(|e| e["event"] == "commit" && e["token"] == token)
+                .unwrap();
+            assert!(
+                returned < committed,
+                "continuation must remain after successor callback return"
+            );
+            assert!(
+                if case == "A+" {
+                    received < returned
+                } else {
+                    returned < received
+                },
+                "explicit callback/Ready envelope mapping"
+            );
         }
         fs::write(
             output.join(format!("{mode}-pipe.json")),

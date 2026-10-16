@@ -561,9 +561,9 @@ pub(super) async fn record_native_cells_with_mutation(
     };
     let source_head = git_read(&["rev-parse", "HEAD"]);
     assert_eq!(
-        option_env!("PDRS_ORDER_BUILD_SOURCE_HEAD")
-            .expect("compile-time source HEAD binding required for this opt-in probe"),
-        source_head
+        option_env!("PDRS_ORDER_BUILD_SOURCE_HEAD"),
+        Some(source_head.as_str()),
+        "compile-time source HEAD binding required for this opt-in probe"
     );
     assert!(
         git_read(&["status", "--porcelain", "--", "src/pilotdeck-gateway"]).is_empty(),

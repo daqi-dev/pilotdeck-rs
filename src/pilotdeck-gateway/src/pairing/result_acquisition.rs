@@ -354,17 +354,16 @@ impl FailureTrace {
 }
 impl Drop for FailureTrace {
     fn drop(&mut self) {
-        if std::thread::panicking() {
-            if let Ok(file) = std::fs::OpenOptions::new()
+        if std::thread::panicking()
+            && let Ok(file) = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&self.path)
-            {
-                let _ = serde_json::to_writer_pretty(
-                    file,
-                    &json!({"status":"FAILED_PARTIAL_TRACE","events":self.observer.snapshot(),"taskConsumable":"NOT_INFERRED","compatibility":"NOT_ACCEPTED"}),
-                );
-            }
+        {
+            let _ = serde_json::to_writer_pretty(
+                file,
+                &json!({"status":"FAILED_PARTIAL_TRACE","events":self.observer.snapshot(),"taskConsumable":"NOT_INFERRED","compatibility":"NOT_ACCEPTED"}),
+            );
         }
     }
 }
@@ -591,14 +590,13 @@ async fn m1_m4_actual_path_mutant() {
         Err(error) => ("FAILED_REQUIRES_RAW_CLASSIFICATION", error.to_string()),
     };
     // create_new forbids replacement even after setup/source identity failures.
-    if output.is_dir() {
-        if let Ok(file) = std::fs::OpenOptions::new()
+    if output.is_dir()
+        && let Ok(file) = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(output.join("mutant-outcome.json"))
-        {
-            serde_json::to_writer_pretty(file, &json!({"status":status,"reason":reason,"mutation":format!("{mutation:?}"),"negativeControlAccepted":false})).unwrap();
-        }
+    {
+        serde_json::to_writer_pretty(file, &json!({"status":status,"reason":reason,"mutation":format!("{mutation:?}"),"negativeControlAccepted":false})).unwrap();
     }
     match outcome {
         Ok(()) => panic!("actual mutant accepted; preserve raw and investigate as P1"),
