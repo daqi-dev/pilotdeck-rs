@@ -1,5 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 09:42 · #113已核销，ledger归一及剩余P0/P1继续
+> PR140于09:38 rebase合入main7781b18，#113已CLOSED；合并后邮箱检查仍为服务端committer主邮箱。PR137/#120前两项此前已核销，#120整单仍OPEN；原31单减113加新139，目前仍31 open，不能解释为31缺陷或清零。
+> root复用wt-d6为codex/debt-ledger@7781b18，准备唯一分类总账；GLM runtime13子项已审，剩四批/85仍待，未输出最终分类总数。#65顺序保留高档P1，golden/最小装配不冒充真实默认装配确定性确认，完整生产顺序证据仍欠。
+> PR141最终41e9cea已同步main：原安装/四wrapper显式空串、十Node/3 replay/十Native+十pair/restore0、四受控spy不再执行；CI新增纯mock五控制。P0事故及failed463MiB现场仍保留，必须两家实际审阅后核销。CLI树当前root持有。
+> PR138大boundary包第三次300s空final已挂起；GLM已闭合C1/F1、真实18格和控制有效，但actual boundary角色缺失，不合并/不关闭56。后续分流须先写新有界小批方案，不能第四次同包重试。root保留wt-a4m3/4555ccb，CI新增8控制尚未push。
+> archive实现者持有wt-p2c/codex/archive-safe-candidate，准备普通138/真实errno与安全syscall候选；R29归该writer，#134精确差异授权仍PENDING，冻结不动/不合并相关候选。Astra另做#52+#85A一次组合重登记实施卡；校准proxy入口须核透明代理而非偷偷放松G2。当前08:24片在10:24前交接并自动接续。
+
 > ## 2026-10-16 09:26 · 集中清账实际进展（main f171bcb）
 > **已合入**：PR137于09:16 rebase合入f171bcb，#120前两项13个catalog RPC真实errno/四格list_projects吞错及独立权限oracle已核销；#120第三项/#117/#139仍OPEN，整单未关。两家完整四视角/实际三角色/最终增量闭合、两项CI绿；合并后服务端committer邮箱缺口仍在。原始证据主仓catalog/，issue120已贴逐产物范围和剩余债。
 > **本候选**：#113的1e7两家完整终审已确认F8原件内容/driver当前指针修复，53注册/capture/checker/评分逐字节不变，仍无需新26轮；四原件Git blob再与归档逐字节核验一致。准备保全后同步新main，再跑最终CI/双家元差异补审才合入。#47历史专项负控P2/真人验收不变。
