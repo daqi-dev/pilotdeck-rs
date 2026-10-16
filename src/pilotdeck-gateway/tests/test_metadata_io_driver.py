@@ -248,7 +248,7 @@ class FailureRestoreControls(unittest.TestCase):
         import contextlib
         import io
         import json
-        for scenario in ('replay-failure', 'dynamic-snapshot-failure', 'dynamic-zero-tests', 'dynamic-missing-receipt', 'dynamic-oracle-drift', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'source-head-polluted', 'source-head-short', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'record-output-limit', 'success'):
+        for scenario in ('replay-failure', 'dynamic-snapshot-failure', 'dynamic-zero-tests', 'dynamic-missing-receipt', 'dynamic-duplicate-receipt', 'dynamic-spurious-receipt', 'dynamic-oracle-drift', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'source-head-polluted', 'source-head-short', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'record-output-limit', 'success'):
             with self.subTest(scenario=scenario):
                 output = self.root / scenario
                 pf = driver.toolchain_preflight(self.toolchain, self.original, self.root)
@@ -290,6 +290,8 @@ class FailureRestoreControls(unittest.TestCase):
                         text += ''.join('PDRS_NUMERIC_SNAPSHOT_OK '+str(n)+'\n' for n in range(10))
                         if scenario == 'dynamic-zero-tests': text = text.replace('1 passed', '0 passed')
                         if scenario == 'dynamic-missing-receipt': text = text.replace('PDRS_NUMERIC_SNAPSHOT_OK 9\n','')
+                        if scenario == 'dynamic-duplicate-receipt': text = text.replace('PDRS_NUMERIC_SNAPSHOT_OK 9\n','PDRS_NUMERIC_SNAPSHOT_OK 0\n')
+                        if scenario == 'dynamic-spurious-receipt': text = text.replace('PDRS_NUMERIC_SNAPSHOT_OK 9\n','PDRS_NUMERIC_SNAPSHOT_OK unknown\n')
                         if scenario == 'dynamic-oracle-drift': fixture.write_text('changed oracle')
                     if name == 'native-retained':
                         text = 'test result: ok. 2 passed; 0 failed; 0 ignored;\n'
@@ -347,6 +349,17 @@ class FailureRestoreControls(unittest.TestCase):
                     expected = {'record-failure':'exit=9', 'record-timeout':'reason=timeout',
                                 'record-output-limit':'reason=output limit'}[scenario]
                     self.assertIn(expected, result['error'])
+                    self.assertTrue(result['oracleGuard']['restored'])
+                if scenario.startswith('dynamic-'):
+                    expected_error = {
+                        'dynamic-snapshot-failure': 'dynamic-snapshot: exit=9, reason=None',
+                        'dynamic-zero-tests': 'expected exactly one dynamic Snapshot test',
+                        'dynamic-missing-receipt': 'PDRS_NUMERIC_SNAPSHOT_OK: expected ten unique actual-case receipts',
+                        'dynamic-duplicate-receipt': 'PDRS_NUMERIC_SNAPSHOT_OK: expected ten unique actual-case receipts',
+                        'dynamic-spurious-receipt': 'PDRS_NUMERIC_SNAPSHOT_OK: expected ten unique actual-case receipts',
+                        'dynamic-oracle-drift': 'oracle bytes changed after recorder checkpoint',
+                    }[scenario]
+                    self.assertIn(expected_error, result['error'])
                     self.assertTrue(result['oracleGuard']['restored'])
                 if scenario == 'replay-failure' or scenario.startswith('dynamic-'):
                     expected = ['record', 'replay']

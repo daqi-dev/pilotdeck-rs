@@ -524,8 +524,13 @@ fn assert_json_number_bits(source: &str) -> usize {
 #[test]
 fn metadata_numeric_static_tokens_preserve_standard_double_bits() {
     let count = assert_json_number_bits(SOURCE);
-    assert!(count > 0);
+    assert_eq!(count, 384, "fixed original Node recording numeric coverage");
     println!("PDRS_NUMERIC_STATIC_TOKENS {count}");
+}
+#[test]
+fn metadata_numeric_walker_covers_objects_arrays_and_embedded_wire_numbers() {
+    let source = r#"{"object":{"n":0.25},"array":[1,{"n":2},[3]],"request":"{\"n\":4}","response":"[5,{\"n\":6}]"}"#;
+    assert_eq!(assert_json_number_bits(source), 7);
 }
 #[test]
 #[ignore = "requires explicit recorded Node oracle; full Snapshot RPC replay"]
@@ -535,6 +540,15 @@ fn metadata_numeric_dynamic_snapshot_full_rpc_matches_node() {
     let source = std::fs::read_to_string(path).unwrap();
     let count = assert_json_number_bits(&source);
     assert!(count > 0);
+    // Exact coverage for these immutable recordings; future recordings may have
+    // a different shape and are covered by the independent traversal canary.
+    if matches!(
+        format!("{:x}", Sha256::digest(source.as_bytes())).as_str(),
+        "17b9b53525d13635757bdccd2eb925c134c2b3591f84d42c5d75bd83efcb9846"
+            | "ddba8da8635783db8862f878989dbfab3eecc66799b7910729ba080ba870b552"
+    ) {
+        assert_eq!(count, 386, "known dynamic recording numeric coverage");
+    }
     println!("PDRS_NUMERIC_DYNAMIC_TOKENS {count}");
     let fixture: Value = serde_json::from_str(&source).unwrap();
     assert!(complete(&fixture));
