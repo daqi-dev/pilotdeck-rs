@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T18:49:13.015622+08:00 · R63实际35通过/R64先复现**：CLI仍clean36e76a0，Node35 actualexit0、CHECKED_HELPER35_ONLY、mandatorypostflightCHECKED，原件回执正在封；新三个G13与G6精确码属于本次实际scope，旧R60仍32。root接回CLI执行权，R64仅standalone原Scripted ReadBuf小见证（8MiB/不Cargo）先确认GLM测量P1，再同步所有计数consumer；当前CI5/旧body不能闭此新项，PR138仍Draft。a4F4/F6双家当前P2a仍待源码窄修，R61failed/F17仍欠，中央唯一owner未变。
+
 > **2026-10-16T18:44:55.400992+08:00 · R61实际失败/R62交还/R63准备**：R61在18:38:56真实启动，earlyquota后-15/reaped PGID88328/residual[]，actualallocated17158144B超16MiB380928B，killpg EPERM对应signal原件未记；仅2caller完整、第三部分，未六格通过，1607原件全SHA保留。源800/TS1000/R594689/artifact在新只读postcheck实核同，原finally assertion具体原因不补造。派生50e63；freshdu余249958400B，未知cache未删。CLI R62 clean36e76a0仅suite35已准备/未Node，R63仅新16MiB Node35窗；a4仍f793归root、无Cargo，中央原owner继续独立审，GLM C新两测量P1取高待修/实测，不因旧CI绿闭合。
 
 > **2026-10-16T18:32:59.811178+08:00 · 本片接续/R61预登记**：规则/.42cog四份/MEMORY及实际5树/34OPEN/3Draft/mainb888已核；wt-d6 a798由root，a4f793与CLI d0无写者，中央原owner继续独立在途。R59正式runtime四角色范围门42e0已成，P2三分仍欠；不核销整65。R61只用同HEAD精确efbcc产物验证legacy finish现有六caller一次/16MiB/外留.20GiB，不新Cargo、不重跑Natural/A0；任务见R61决策与原件目录。资源归属与CLI最新bin→recorder18路线各只读并行调查，未清未知cache。

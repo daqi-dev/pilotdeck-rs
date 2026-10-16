@@ -69,3 +69,8 @@ ee9的33 OPEN由canonical cadb内31原单去113、加139/144/145得出；147是�
 ## R63 35身份控制独立新Node窗口（自决）
 
 R62仅测试改动已提交36e76a0/clean，三新增和G6精确码未跑；旧R60仍只32。给ledger_fidelity任务`_tmp/20261016-debt-cleanup/upgrade-helper35-r63-983ihfl7/task.md`，16MiB/14提前/.20外留，fresh完整du门后一次；Node60/总120/流1MiB，无Cargo/recorder18。R61实际失败不重试，保1607/50e63原件；该失败因native每格642临时文件，不能由不同35Gitfixture省略其事实。原则：新测试变更另实跑，复用旧证据有边界；资源监督为采样，真实超量不说硬quota。
+
+
+## R64 两个测量P1的最小真实ReadBuf复现（自决）
+
+GLM C判当前Scripted以chunk pop计数遇小ReadBuf假FAIL、空chunk假EOF/短later panic；DS按现有调用约束曾低判，现取高不作者降档。准备精确36e原struct+AsyncRead切片，原Rust1.99/r59已编tokio依赖做独立standalone witness，只证明原helper算法，不冒产品bin/整PR/默认TS。任务`_tmp/20261016-debt-cleanup/upgrade-read-boundary-r64-4ree12_9/task.md`；新8MiB/提前6MiB/.20reserve/freshdu、rustc60/程序10/总120/流256KiB，R63结束后才可执行一次，源/工具/原rlib前后核，不Cargo/旧target改写。结果交两非作者，随后修全部同类count消费者与边界永久控制。原则：调度/底层事实分歧先最小实测，当前调用不可达不等于测量装置永久安全。
