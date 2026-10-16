@@ -1,5 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **15:44 人定并发编排正在落地**：按最新用户/实际CLAUDE，人改原fc428提交371815b保留；共用规则20518046已同步root/wt-d6/CLI/wt-p2c，a4持有人已即时读新规则并留override，待绑定9df实验封存后单独同步。单一中央owner仍debt_review_prepare，允许多job/多provider在途，按session、依赖、独占写树和资源互斥；旧逐provider单槽叙述只作历史，不重启旧queue/不因改并发重试held scope。中央正在安全改真实dispatcher+原子多任务状态，实际job/PID/额度/来源和完成度以reviews/central-current-status.json为准。
+> root持有wt-d6状态；ledger_fidelity持有a4本次八格执行/后核，源码9df不写（已报前后健康各1pass，四mutant实际拒绝，仍待逐帧/封存复核）；中央获得CLI@ad8f1c3的GLM identity源码only写权，原metadata c77与upgrade988历史保留。GLM将由只审扩展到实现候选/测试编写，operator仅机械应用；GLM精确新增delta须DS+独立GPT审，旧GPTscope仍GLM+DS，不减少任何闸门。5树、46GiB、独立target、full53锁继续。
+
 > **15:37 R48资源门实过，M1–M4发一次窗**：仅两授权incremental清完，26原件index c8d408ba…全SHA核；9416 noncache/旧112000全target/R45全部745原件/145841-c990守恒。root完整du22706516+24209804KiB=44.742889GiB，余1.257111≥1.20；任务_tmp/20261016-debt-cleanup/order-architecture/acquisition-r48-run-3vr4vds0/task.md给ledger_fidelity独占wt-a4m3执行权（源码9df不写），一新纯时间戳target+proof≤1GiB/600s/child60s。八格前后健康+M1–M4尚未执行，不重跑A0、不覆旧产物，失败实报。中央138 freshA/B/C已实质、aggregate在途，新身份P1两家确认仅溯源机制，不否定旧run；其它claim待scope/实控，未合并138或关56。
 
 
