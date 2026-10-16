@@ -84,7 +84,28 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
     try{assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_TREE'});}
     finally{renameSync(holding,join(f.root,tree));}
   });
-  assert.equal(rows.length,32,'all registered source-identity rows completed');
-  assert.equal(new Set(rows.map(row=>row.id)).size,32,'all source-identity row IDs unique');
+  run('G13-optional-config-directory',f=>{
+    const path='.cargo/config.toml';mkdirSync(join(f.root,path),{recursive:true});
+    assert.equal(f.git('status','--porcelain=v1','-z').length,0,'physical empty config directory stays Git-clean');
+    assert.equal(f.git('ls-files','--others','-z','--',path).length,0);
+    assert.throws(()=>captureSourceIdentity(f.root),error=>error.code==='SOURCE_KIND'&&error.details.path===path);
+  });
+  run('G13-contract-only-before',f=>{
+    const before=captureSourceIdentity(f.root);
+    const changed={...before,contract:{...before.contract,version:before.contract.version+1}};
+    assert.deepEqual({...changed,contract:before.contract},before,'only contract changes');
+    assert.throws(()=>verifySourceIdentity(f.root,changed),{code:'SOURCE_BEFORE_INVALID'});
+  });
+  run('G13-combined-index-flags',f=>{
+    const path='src/pilotdeck-gateway/src/space\n name.rs';
+    f.git('update-index','--skip-worktree','--',path);f.git('update-index','--assume-unchanged','--',path);
+    f.put(path,'combined hidden changed\n');
+    assert.equal(f.git('status','--porcelain=v1','-z','--',path).length,0,'actual Git hides combined flags');
+    assert.equal(f.git('ls-files','-v','-z','--',path).toString(),`s ${path}\0`);
+    assert.notDeepEqual(readFileSync(join(f.root,path)),f.git('show',`HEAD:${path}`));
+    assert.throws(()=>captureSourceIdentity(f.root),error=>error.code==='SOURCE_DIRTY'&&error.details.flag==='s'&&error.details.path===path);
+  });
+  assert.equal(rows.length,35,'all registered source-identity rows completed');
+  assert.equal(new Set(rows.map(row=>row.id)).size,35,'all source-identity row IDs unique');
   completed=true;
 });
