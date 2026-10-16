@@ -107,3 +107,8 @@ GLM B当前P2a指出finally三处覆盖已有error，当前原始binding/FAIL仍
 ## R70 未来扩域P2-c具体前置登记（自决·待复核）
 
 依据现行三分、中央upgrade-helper35/R59/R67独立scope门，当前有具体未来消费者但未产生错误输出的source码2项与Ready扩域9组，按p2-future-disposition-fjh9oump两张body表登记P2-跟进；每项写首次节点和可复现验收。当前便宜F4/F6、R69不转延期，缺整crate或产品recorder证据照留P1。原31/55 canonical快照不重写；实时issue增加必须如实计数，不冒存量清零。判断为AI代批待人复核，非修改冻结或审阅者等级。原则：合并同类项保留子项与具体到点义务，不用一张总issue隐藏新欠项。
+
+
+## R71 以main干净源分支交付已验证装置（自决·待复核）
+
+旧a4@7b混有历史state/CLAUDE，不能把其整体HEAD误作新PR当前规则或新证据。选择同一a4树新codex/ready-admission-probe从mainb888，仅Git恢复31个src已提交blob；old-source逐blob登记，旧branch/backup正常推送保全部历史，不删除、不强推、不增树。README陈旧准备态改当前真实范围及历史索引；源仍GPT作者，中央按新增callee覆盖缺口补两家/角色，DS R68验收P1照留。任务`_tmp/20261016-debt-cleanup/order-architecture/ready-delivery-r71-mlsu8fme/task.md`。可撤回，仅诊断/测试源码，不改变默认生产/冻结/意向；新PR先Draft和CI，不因搬源声称65完成。原则：交付范围与历史证据身份分开，清洁分支不能清掉未闭合债。
