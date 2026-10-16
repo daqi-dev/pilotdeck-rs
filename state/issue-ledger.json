@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "ALL_ROWS_RECEIVED_SCOPE_QUALIFICATIONS_RECONCILIATION_REQUIRED",
-  "asOf": "2026-10-16T04:21:41.439596+00:00",
+  "asOf": "2026-10-16T04:49:04.928081+00:00",
   "remoteStatusAsOf": "2026-10-16T04:03:13.500106+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
@@ -246,6 +246,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "fixScope": "explicit-subitem-only",
           "historicalConfirmationBasis": "deepseek",
@@ -325,6 +326,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -407,6 +409,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -421,7 +424,7 @@
           "id": "46.2",
           "title": "协议/错误/安全前置与真实UI",
           "primaryType": "验收债务",
-          "severity": "P1",
+          "severity": "P0",
           "confirmation": "confirmed",
           "state": "partial",
           "fixed": false,
@@ -463,6 +466,10 @@
             "adjudicationStatus": "pending"
           },
           "historicalJudgmentSeverity": "P1",
+          "currentOwnJudgment": {
+            "severity": "P1",
+            "basis": "effective-independent-own-judgments"
+          },
           "snapshotRecord": "#56/#120/#134未完；真人/桌面未验",
           "snapshotNextAction": "分别清子单，准备真人步骤，模型不能填真人通过",
           "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
@@ -502,6 +509,7 @@
               "classificationSemantics": "aggregate gate NA does not mean pass; source explicitlykeepschildrisk"
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "P1",
@@ -524,6 +532,41 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed"
+          },
+          "severityInheritance": {
+            "basis": "open-child-inheritance",
+            "ownSeverity": "P1",
+            "inheritedSeverity": "P0",
+            "openChildGrades": [
+              {
+                "id": "56.1",
+                "severity": "P1",
+                "state": "pending"
+              },
+              {
+                "id": "65.1",
+                "severity": "P1",
+                "state": "pending"
+              },
+              {
+                "id": "65.2",
+                "severity": "P1",
+                "state": "pending"
+              },
+              {
+                "id": "134.1",
+                "severity": "P0",
+                "state": "pending"
+              },
+              {
+                "id": "134.2",
+                "severity": "P1",
+                "state": "pending"
+              }
+            ],
+            "excludedUnknownChildIds": [],
+            "conditionalCeilingsIncluded": false,
+            "countAsIndependentDefect": false
           }
         }
       ]
@@ -548,7 +591,7 @@
             "specs/ui-server-parity/FROZEN.md:10",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-47.md:7"
           ],
-          "nextAction": "复核剩余94子项与真人验收门；不重开R5已接受的签名风险，不再把113写成当前阻塞。",
+          "nextAction": "保留各家显式命题撤回与未清子项来源，继续剩余94及未来人效验收/B3复核；不得新增强制签名载体，不代填真人已验。",
           "review": {
             "status": "two-family-inputs",
             "gptCandidate": "P1子门#113",
@@ -581,21 +624,26 @@
             "adjudicationStatus": "pending"
           },
           "historicalJudgmentSeverity": "P1",
+          "currentOwnJudgment": {
+            "severity": null,
+            "basis": "independent-scope-withdrawals-no-current-own-grade"
+          },
+          "historicalGradeStatus": "historical-own-grade-withdrawn-only-in-explicit-facets",
           "snapshotRecord": "装置/定标历史已交付，#113仍阻可携带复核，父issue未收尾",
           "snapshotNextAction": "修#113并核机器闸门，逐项对照产物后收父单",
-          "currentStateNote": "聚合门仍未完成；113已由PR140核销，剩余94与真人验收及解释分歧继续。",
+          "currentStateNote": "两家仅撤回R5 mandatory具名替换/新签名推进前置命题；raw合法不是N/A，当前own规范等级无已给档。父聚合仍partial，未清94及未来人效开放；当前P1仅来自未清子项继承，不以人必须签名计P1。",
           "confirmationBasis": "unresolved-independent-qualifications",
           "classificationPending": true,
           "recordRole": "aggregate",
           "countAsIndependentDefect": false,
           "effectiveJudgments": {
             "deepseek": {
-              "severity": "P1",
-              "basis": "initial"
+              "severity": null,
+              "basis": "independent-scope-withdrawal"
             },
             "glm": {
-              "severity": "P1",
-              "basis": "independent-revision"
+              "severity": null,
+              "basis": "independent-scope-withdrawal"
             }
           },
           "independentRevisions": [
@@ -621,6 +669,50 @@
               "normativeClarificationPending": true
             }
           ],
+          "independentScopeWithdrawals": [
+            {
+              "id": "47.1",
+              "family": "DeepSeek",
+              "source": "taxonomy-r5-approval-meaning-deepseek.md",
+              "sourceSha256": "9ae59939edf9644331ee0f1bc8b1d48c4bb07348729070b195df7fe8fe33bae3",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P1",
+              "priorSource": "taxonomy-apparatus-deepseek.md",
+              "wholeProjectApproval": false,
+              "severity": null,
+              "rawSeverityLiteral": "合法",
+              "normalizedGradeNotInvented": true,
+              "explicitWithdrawPriorP1": true,
+              "withdrawnScope": "mandatory named-human replacement or new signature carrier for valid R5 AI Approved-By branch",
+              "legality": "valid",
+              "confirmation": "confirmed",
+              "disposition": "R5 OR branches valid; futurehumanreal-efficacy remainsopen; notwhole47/B3approval",
+              "cannotWithdrawOtherFamily": true,
+              "GLMPriorJudgmentStillPending": true,
+              "rawMarkdownUnmodified": true
+            },
+            {
+              "id": "47.1",
+              "family": "GLM",
+              "source": "taxonomy-r5-approval-meaning-glm.md",
+              "sourceSha256": "50798bbbbdba15ee2bad5e9d8b987b3eb182f80c45269f6eb7781ac78088c66f",
+              "sourceType": "independent-dispute-adjudication",
+              "initialSeverity": "N/A",
+              "initialSource": "taxonomy-apparatus-final-glm.md",
+              "priorSeverity": "P1",
+              "priorSource": "taxonomy-dispute-apparatus-acceptance-glm.md",
+              "wholeProjectApproval": false,
+              "severity": null,
+              "rawSeverityLiteral": "合法",
+              "normalizedGradeNotInvented": true,
+              "explicitWithdrawPriorP1": true,
+              "withdrawnScope": "AIApprovedBy transitionalvalue itself currentP1, mandatorynamedhumanreplacement/advancement precondition",
+              "legality": "valid",
+              "confirmationRaw": "mandatoryreplacement disproved; futurehumanefficacydebtOPEN",
+              "disposition": "R5 ORbranch authorizes freezeprogress; futurehumanreal-efficacy/parentclosure remainsOPEN, otheractualsubitemstatus notnewlycertified",
+              "scopeQualification": "Raw rementions113open onlyas oldpack fact; current113 mergedstatus separatelyknown, no reopening113. Raw維持人门未闭 futuredebt is NOT authority to retain currentR5-violationP1."
+            }
+          ],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "验收债务",
@@ -640,6 +732,26 @@
             "historicalScopePreserved": true,
             "scopeNote": null,
             "confirmationRaw": "confirmed / partial"
+          },
+          "severityInheritance": {
+            "basis": "open-child-inheritance",
+            "ownSeverity": null,
+            "inheritedSeverity": "P1",
+            "openChildGrades": [
+              {
+                "id": "94.1",
+                "severity": "P1",
+                "state": "deferred"
+              },
+              {
+                "id": "94.2",
+                "severity": "P1",
+                "state": "deferred"
+              }
+            ],
+            "excludedUnknownChildIds": [],
+            "conditionalCeilingsIncluded": false,
+            "countAsIndependentDefect": false
           }
         }
       ]
@@ -713,6 +825,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -786,6 +899,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -868,6 +982,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -943,6 +1058,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [
             {
               "id": "55.2",
@@ -1073,6 +1189,7 @@
               "wholeProjectApproval": false
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "candidatePR": 138,
           "reviewQualifications": {
@@ -1149,6 +1266,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [
             {
               "id": "56.2",
@@ -1260,6 +1378,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": true,
@@ -1334,7 +1453,7 @@
           "effectiveJudgments": {
             "deepseek": {
               "severity": "P1",
-              "basis": "initial"
+              "basis": "independent-revision"
             },
             "glm": {
               "severity": "N/A",
@@ -1360,8 +1479,29 @@
               "prerequisite": "F3",
               "wholeProjectApproval": false,
               "semanticDisputePending": true
+            },
+            {
+              "id": "61.1",
+              "family": "DeepSeek",
+              "primaryKind": "验收债务",
+              "severity": "P1",
+              "confirmation": null,
+              "confirmationRaw": "PARTIAL: oldside reconciled, newsideNOT_RUN; currentinstalledmeasurementrule acceptancegap; runtime verdict notobserved",
+              "state": "pending",
+              "source": "taxonomy-61-1-self-contract-deepseek.md",
+              "sourceSHA256": "2e62c033fc5aace14d683f39abe8c0c9e18768ec3bd8c4e8752ea145460585cb",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P1",
+              "priorSource": "taxonomy-apparatus-deepseek.md",
+              "priorSourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+              "disposition": "explicitly retain ownpriorP1: realdata verification missing for alreadydelivered anti-skip measuringrule; F3 is repaymentnode not startof evidence obligation; no falsePASS/FAIL runtimeclaim, oldside alreadyreconciled/newsideNOT_RUN preserved",
+              "prerequisite": "F3 before61closure; historical74 missednode preserved",
+              "wholeProjectApproval": false,
+              "revisionType": "restatement",
+              "scopeQualification": "No claims all historicaloldside reportsneverran; raw paragraph fullmultiside reportnotrun is limited by its explicitoldsidealreadyreconciled/newsideNOT_RUN. Does not substitute numeric/PR139 orGLMdecision."
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "P1",
@@ -1458,6 +1598,7 @@
               "wholeProjectApproval": false
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "P2",
@@ -1544,6 +1685,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "confirmationNote": "保留高档P1 candidate；golden与最小装配不冒充真实默认生产同连接顺序实测。",
           "reviewQualifications": {
@@ -1637,6 +1779,7 @@
               "wholeProjectApproval": false
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "confirmationNote": "保留高档P1 candidate；golden与最小装配不冒充真实默认生产同连接顺序实测。",
           "reviewQualifications": {
@@ -1711,6 +1854,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "sharedExecutionGroup": "linux-acceptance",
           "linkedRelation": "共享执行环境，不自动视为同一验收断言或整组核销。",
@@ -1791,6 +1935,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "humanOrScopeActionPending": true,
           "reviewQualifications": {
@@ -1863,6 +2008,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "fixScope": "explicit-subitem-only",
           "historicalConfirmationBasis": "deepseek",
@@ -1951,6 +2097,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": true,
@@ -2036,6 +2183,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "真实缺陷",
@@ -2119,6 +2267,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": true,
@@ -2200,6 +2349,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -2272,6 +2422,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -2344,6 +2495,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -2366,7 +2518,7 @@
           "id": "94.1",
           "title": "白名单注释作为身份",
           "primaryType": "真实缺陷",
-          "severity": "P2",
+          "severity": "P1",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
@@ -2407,7 +2559,7 @@
             },
             "adjudicationStatus": "pending"
           },
-          "historicalJudgmentSeverity": "P2",
+          "historicalJudgmentSeverity": "P1",
           "snapshotRecord": "未修；当前名单仅zhengdaqi无注释，不能说已被利用",
           "snapshotNextAction": "明确忽略/拒绝注释并负控；若实际允许非批准身份过门按P0安全/假通过，冻结程序仍需走",
           "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
@@ -2417,8 +2569,8 @@
           "countAsIndependentDefect": true,
           "effectiveJudgments": {
             "deepseek": {
-              "severity": "P2",
-              "basis": "initial"
+              "severity": "P1",
+              "basis": "independent-revision"
             },
             "glm": {
               "severity": "P2",
@@ -2444,9 +2596,35 @@
               "prerequisite": "beforefirstB3Rustroute takeover",
               "wholeProjectApproval": false,
               "semanticDisputePending": true
+            },
+            {
+              "id": "94.1",
+              "family": "DeepSeek",
+              "primaryKind": "真实缺陷",
+              "severity": "P1",
+              "confirmation": null,
+              "confirmationRaw": "helperconfirmed; wholechainfalsePASS unknown/pending, routesempty and currenthumanlistno comment; no runtimearbitration",
+              "state": "pending",
+              "source": "taxonomy-94-1-self-semantic-deepseek.md",
+              "sourceSHA256": "f734e3df6d2ae95c4ac7d2a1b0e6bc7588ee19cfda32a210ddd0e4fca41e7f8f",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P2",
+              "priorSource": "taxonomy-apparatus-deepseek.md",
+              "priorSourceSHA256": "e78908436f2e43358db091700bb17a0def929d81ba2b367a95c6af0069441448",
+              "disposition": "explicitly withdraw P2 numericgrade while retainb audit/approval-misjudgment semantics; currentP2b mapsP1. Helpercommentidentity confirmed, actualfullgatefalsePASS unknown; actualcurrentroutesempty/no# humanline doesnotitself prove runtimeunreachability; notP0",
+              "prerequisite": "B3 firstRustroute/authorizedregister; fixfrozenapparatus onlyunderexistingprocedure",
+              "wholeProjectApproval": false,
+              "classificationSemantics": "Audit-only is notP2b exception; GLMsemanticrule exception remainsdisputed; highP1 retained pending independentactualfullgate facts",
+              "notNewHumanApprovalRequirement": true
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
+          "gradeDisagreement": {
+            "deepseek": "P1",
+            "glm": "P2",
+            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
+          },
           "reviewQualifications": {
             "glmPartial": false,
             "needsCanonicalAdjudication": true,
@@ -2518,6 +2696,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "验收债务",
@@ -2595,6 +2774,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -2679,6 +2859,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "真实缺陷",
@@ -2759,6 +2940,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "真实缺陷",
@@ -2839,6 +3021,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "N/A",
@@ -2943,6 +3126,7 @@
               "sourceSHA256": "5f05b2dfba9dffeacb517efec7497a6b92895477d705d96d90bb7774c927bd7a"
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "验收债务",
@@ -3031,6 +3215,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "delivery": {
             "pr": "https://github.com/zhengdaqi/pilotdeck-rs/pull/140",
@@ -3126,6 +3311,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "验收债务",
@@ -3206,6 +3392,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -3282,6 +3469,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "P1",
@@ -3411,6 +3599,7 @@
               "wholeProjectApproval": false
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "sharedExecutionGroup": "linux-acceptance",
           "linkedRelation": "共享执行环境，不自动视为同一验收断言或整组核销。",
@@ -3497,6 +3686,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -3569,6 +3759,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -3651,6 +3842,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "delivery": {
             "pr": "https://github.com/zhengdaqi/pilotdeck-rs/pull/137",
@@ -3738,6 +3930,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "delivery": {
             "pr": "https://github.com/zhengdaqi/pilotdeck-rs/pull/137",
@@ -3822,6 +4015,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -3907,6 +4101,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -3993,6 +4188,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -4077,6 +4273,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -4162,6 +4359,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -4248,6 +4446,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -4333,6 +4532,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": true,
@@ -4419,6 +4619,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": true,
@@ -4505,6 +4706,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": true,
@@ -4591,6 +4793,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -4672,6 +4875,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "阶段任务",
@@ -4778,6 +4982,7 @@
               "wholeProjectApproval": false
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "sharedExecutionGroup": "linux-acceptance",
           "linkedRelation": "共享执行环境，不自动视为同一验收断言或整组核销。",
@@ -4865,6 +5070,7 @@
             }
           },
           "independentRevisions": [],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "candidatePR": 142,
           "reviewQualifications": {
@@ -4959,6 +5165,7 @@
               "authorization": "pending"
             }
           ],
+          "independentScopeWithdrawals": [],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "N/A",
@@ -5147,7 +5354,7 @@
       "sha256": "bd98c27920b36bea4ccbfefe2b3e655ab4d24a69f08a893fa50658f36ec36acf"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-adjudications.json": {
-      "sha256": "7793338045be94e02cf5bbea605ed1e863dc301ed07c59a826b579db2054d473"
+      "sha256": "ac6309933fce8231da5c601141cb916f5deea615a8a08a5161e3a901774625cf"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-98-4-deepseek.md": {
       "sha256": "5f05b2dfba9dffeacb517efec7497a6b92895477d705d96d90bb7774c927bd7a"
@@ -5170,6 +5377,12 @@
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-apparatus-semantic-glm.md": {
       "sha256": "1e191487b6117c2d48d3371792c0c70a17c451c2035961dd59b4ce75ee18e490"
     },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-61-1-self-contract-deepseek.md": {
+      "sha256": "2e62c033fc5aace14d683f39abe8c0c9e18768ec3bd8c4e8752ea145460585cb"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-94-1-self-semantic-deepseek.md": {
+      "sha256": "f734e3df6d2ae95c4ac7d2a1b0e6bc7588ee19cfda32a210ddd0e4fca41e7f8f"
+    },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-ungraded-revisions.json": {
       "sha256": "4200f1a2521307b379572b2c45c70cff3acc08ae531224dc9d3e8a3f0b4ff6df"
     },
@@ -5178,6 +5391,21 @@
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md": {
       "sha256": "2d9ca0e0ea88aa300c0f5ebf4bcf16f180b60a6cf1dcc5b53e930bd7a5fdb72f"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-r5-rule-adjudication.json": {
+      "sha256": "6cd0512685f5a740a5616ad3f132583daeb715ed8ecd62fadebae45abc69a9e2"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-r5-approval-meaning-deepseek.md": {
+      "sha256": "9ae59939edf9644331ee0f1bc8b1d48c4bb07348729070b195df7fe8fe33bae3"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-r5-rule-adjudication-glm.json": {
+      "sha256": "acf1073f1807c32104ec00a751af1ed156f7f3a5ce17355730ee71746a3120ee"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-r5-approval-meaning-glm.md": {
+      "sha256": "50798bbbbdba15ee2bad5e9d8b987b3eb182f80c45269f6eb7781ac78088c66f"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md": {
+      "sha256": "3f0d9e9ec08fa1d660cd3e97f7936bc49294bfaad9108e564742cffb3647c009"
     }
   }
 }

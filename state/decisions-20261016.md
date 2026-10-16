@@ -138,3 +138,33 @@ R26后续廉价补项：driver原文已入仓，Calibration-Evidence当前指针
 选项与后果：将本次A-N1纯validator通过泛化到完整RPC会掩盖差异；立即加舍入/改oracle会变尺子；当前采用新增P1候选facet，confirmation=candidate/fixed=false，先独立定级和影响范围，再精确修数值解码。极小实际Rust probe中serde_json::from_str<Value>变1ULP，标准str.parse<f64>和serde_json序列化该标准值保持原值；证据只定位已测链，不代替依赖选型或全链复验。
 
 原则与断言：新暴露的确定性运行差异不因它来自额外验证而抹掉；已过范围与新失败范围分列。JSON用raw字符串保存两值、绑定原失败/诊断SHA、保持P1候选未修并明确nextAction，35项纯JSON核查包含此断言。原件见主仓_tmp/20261016-debt-cleanup/metadata/{success-api-report.md,success-api-extra-rpc-mismatch.json,success-api-float-probe.log}。
+
+## R35 测试构建启用JSON正确舍入（自决）
+
+卡在哪：139.1 dynamic Snapshot的原始十进制值经默认serde_json解析+1ULP，实测相对Node与标准Rust假FAIL；两独立家已判P1，尚未证产品路径。谁受影响：测试装置及其Cargo测试图，普通产品build范围须另证；可撤回，不改oracle/容差/冻结/意向。
+
+选项与后果：workspace普通依赖开feature会改变产品图；手写定点解析引入更多语义；gateway dev-dependency开启既有float_roundtrip在resolver3下限于含dev的构建，但test图同版本serde_json统一feature，绝不能称只改Snapshot函数。缓存1.0.151 archive与lock checksum及de.rs/lexical源已独立逐字核同，feature无新crate。采用gateway dev-dep，普通build与test分别看实际compiler fingerprint/消息，--all-targets不能代普通build。普通实现改动已有用户授权，无需新人批。
+
+原则与断言：修解码、保原件；真实数值位级回归和dynamic十原件完整RPC都须过，不能只validator变绿。SOURCE_FILES13→14绑定gateway manifest并更新精确负控；driver增加dynamic正式阶段并核恰1test/十唯一回执/原件前后SHA。ok:null/missing/nonbool两门廉价缺口同批修，不增新队列。独立方案见主仓_tmp/20261016-debt-cleanup/metadata/numeric-feature-scope.md；新candidate双家/CI未齐不核销139。
+
+## R36 只清可再生的旧incremental缓存（自决）
+
+卡在哪：五树与44.58GiB/46GiB使新feature/fresh证据窗口余量不足；不能删旧工作、可执行产物或原始记录腾空间。谁受影响：已交回root且无占用的113400-metadata编译加速缓存；作者明确本轮仅用120000。
+
+选项与后果：整删target损毁证据；放宽46上限违规则；只清debug/incremental可从保留Git输入/依赖源重新生成，影响仅重编速度。采用第三项。实际cache路径/非symlink/设备inode、Cargo target锁先核；所有非cache2510路径及文件SHA完整前后比，binary/deps/raw/source一律保留，任一漂移停止并留证，不扩到其它target。
+
+原则与断言：缓存与实验产物分列；只在明确所有权、无使用且可恢复时丢可再生缓存，不能以清理为由删除证据。限定计划及执行原件主仓_tmp/20261016-debt-cleanup/metadata/owned-incremental-prune-{plan,result}.json；这不是永久自动清理授权。新fresh窗口仍须完整du+明确预留小于46上限，独立target/真正Cargo产物绑定不降低。
+
+R36同片扩展：113400仅incremental清理后2510非cache路径/字节全同；新feature实际增长后总44.843GiB，新fresh保守1.4GiB仍不足。已明确归root、作者本轮从未使用的_build/20261016-104320 incremental为470228KiB，同样只清可恢复cache、保binary/deps/raw、目标锁和非cacheSHA全核。清后重新完整du，再以1.5GiB预留核新target，不扩为常设自动清理。
+
+R36续：104320仅incremental清理后6862非cache路径/字节全同；du因硬链接/统计范围等不保证按局部cache du等量下降，实际完整du仍44.58GiB，1.5GiB保守fresh预留不够。再将root独占、无构建者的112000-order同一可恢复incremental缓存（局部365592KiB）纳入本次精确清单，保留已录制的test executable/所有deps与原件；同样锁/非cacheSHA核后重新完整du再发窗口，不按估算批准。
+
+## R37 逐子项主次归类与等级轴分离（AI代批，待人复核）
+
+卡在哪：原31单55子项已有两家原始意见，类型抽取/范围限定常被混为全部待归类；一行同时含现缺陷、缺证和未来任务，不能靠选一个类型抹去其余债。谁受影响：清账排序与原始记录可追溯性。此归类可撤回，不动冻结/意向/等级/修复状态/期限，也不增加审批门。
+
+判据：当前实现或装置违反现行合同的候选主记真实缺陷；主要缺可复现证据、实效或威胁模型外加固的主记验收债务；已明确将来新增能力且当前合同未被证明违反的主记阶段任务。混合项列次类和具体未决事实，不能把候选叫已证。52.2仅A9措辞P3，依现行P3规则主记已知留白、不在本轮范围；这是P3例外，不强塞三类或增阻塞。
+
+执行：采纳主仓taxonomy/current-disposition-proposal.json的54个主次类型及逐项理由，52.2按上列P3例外。32项初始主类一致、22项协调者主次取舍和1项P3例外分列；其中85.1、98.1/.2的真实缺陷次类和独立异议、55.2/56.2的候选/unknown全保。所谓一致只指相应初始类型输入，不替后来等级修订或双家终审。proposal中旧13修订/单家R5/grade/state信息不得回灌，实际等级始终从最新独立原件重新计算。
+
+原则与断言：分类、等级、事实确认、交付状态和真人实效是分开的轴；改主次类不降低一个等级、不改一个fixed或到期节点、不清任何原始限定。协调者明确归类不等于两家已同意；原类型、分歧、PARTIAL和原needsCanonicalAdjudication逐字留存，增独立的类型处置状态与事实待核，不以抽取flag继续冒充尚未做归类。投影必须绑定原proposal/SHA及所引原文SHA，单字段变异拒绝；PR143仍过实际非作者四视角/三角色及双家终审。
