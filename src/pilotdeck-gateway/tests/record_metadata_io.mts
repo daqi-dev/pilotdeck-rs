@@ -44,6 +44,7 @@ function restrict(path:string,mode:number) {
 }
 const ids=['positive','collision-positive','projects-missing','projects-notdir','projects-denied-legacy','projects-denied-marker','chats-missing','chats-notdir','chats-denied','chats-loop'];
 let observations:any[]=[];
+let generation=0;
 function value(v:any):any {
  if(v&&typeof v.isDirectory==='function')return {directory:v.isDirectory(),size:v.size,birth_ms:v.birthtimeMs,ctime_ms:v.ctimeMs,mtime_ms:v.mtimeMs};
  if(Buffer.isBuffer(v))return {base64:v.toString('base64')};
@@ -52,18 +53,20 @@ function value(v:any):any {
  if(v&&typeof v.fd==='number')return {fd:v.fd};
  return v;
 }
-function trace(api:string,path:any,stack:string|undefined,result:any,error?:any) {
+function trace(token:number,api:string,path:any,stack:string|undefined,result:any,error?:any) {
+ if(token!==generation)return;
  observations.push({api,path:String(path),caller:stack,ok:!error,...(error?{code:error.code,syscall:error.syscall,message:error.message}:{result:value(result)})});
 }
 function install() {
- for(const name of ['statSync','readdirSync','readFileSync','existsSync']) (fs as any)[name]=function(path:any,...args:any[]){const stack=new Error().stack;try{const v=real['sync:'+name](path,...args);trace('fs.'+name,path,stack,v);return v;}catch(e){trace('fs.'+name,path,stack,null,e);throw e;}};
- for(const name of ['stat','readdir','readFile','open']) (fsp as any)[name]=async function(path:any,...args:any[]){const stack=new Error().stack;try{const v=await real['async:'+name](path,...args);trace('fsp.'+name,path,stack,v);
-  if(name==='open')for(const method of ['stat','read','readFile']){const fn=v[method].bind(v);v[method]=async(...a:any[])=>{const call=new Error().stack;try{const r=await fn(...a);trace('FileHandle.'+method,path,call,r);return r;}catch(e){trace('FileHandle.'+method,path,call,null,e);throw e;}};}
+ const token=++generation;
+ for(const name of ['statSync','readdirSync','readFileSync','existsSync']) (fs as any)[name]=function(path:any,...args:any[]){const stack=new Error().stack;try{const v=real['sync:'+name](path,...args);trace(token,'fs.'+name,path,stack,v);return v;}catch(e){trace(token,'fs.'+name,path,stack,null,e);throw e;}};
+ for(const name of ['stat','readdir','readFile','open']) (fsp as any)[name]=async function(path:any,...args:any[]){const stack=new Error().stack;try{const v=await real['async:'+name](path,...args);trace(token,'fsp.'+name,path,stack,v);
+  if(name==='open')for(const method of ['stat','read','readFile']){const fn=v[method].bind(v);v[method]=async(...a:any[])=>{const call=new Error().stack;try{const r=await fn(...a);trace(token,'FileHandle.'+method,path,call,r);return r;}catch(e){trace(token,'FileHandle.'+method,path,call,null,e);throw e;}};}
   return v;
- }catch(e){trace('fsp.'+name,path,stack,null,e);throw e;}};
+ }catch(e){trace(token,'fsp.'+name,path,stack,null,e);throw e;}};
  syncBuiltinESMExports();
 }
-function reset() {for(const name of ['statSync','readdirSync','readFileSync','existsSync'])(fs as any)[name]=real['sync:'+name];for(const name of ['stat','readdir','readFile','open'])(fsp as any)[name]=real['async:'+name];syncBuiltinESMExports();}
+function reset() {generation++;for(const name of ['statSync','readdirSync','readFileSync','existsSync'])(fs as any)[name]=real['sync:'+name];for(const name of ['stat','readdir','readFile','open'])(fsp as any)[name]=real['async:'+name];syncBuiltinESMExports();}
 function snapshot(paths:string[]) {
  const files:any={};for(const path of paths){let s;try{s=real['sync:statSync'](path);files[path]=value(s);}catch(e:any){files[path]={statError:e.code};continue;}
   if(s.isDirectory()){try{files[path].entries=real['sync:readdirSync'](path,{withFileTypes:true}).map((e:any)=>[e.name,e.isDirectory()]);}catch(e:any){files[path].entriesError=e.code;}}

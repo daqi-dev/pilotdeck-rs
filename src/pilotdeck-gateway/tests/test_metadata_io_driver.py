@@ -122,7 +122,7 @@ class EnvironmentControls(unittest.TestCase):
         self.assertNotIn('CARGO_HOME', node)
         self.assertNotIn('RUSTUP_HOME', node)
 
-    def test_source_inventory_is_exactly_the_fourteen_required_files(self):
+    def test_source_inventory_is_exactly_the_fifteen_required_files(self):
         expected = {
             'src/pilotdeck-gateway/src/metadata.rs', 'src/pilotdeck-gateway/src/metadata/tests.rs',
             'src/pilotdeck-gateway/src/pairing/tests.rs', 'src/pilotdeck-gateway/tests/record_metadata_io.mts',
@@ -131,8 +131,9 @@ class EnvironmentControls(unittest.TestCase):
             'src/pilotdeck-gateway/tests/fixtures/metadata/describe-io-errors.json',
             '.github/workflows/ci.yml', 'rust-toolchain.toml', 'src/Cargo.toml', 'src/Cargo.lock',
             'src/pilotdeck-gateway/Cargo.toml',
+            'src/pilotdeck-gateway/tests/test_metadata_observer.mjs',
         }
-        self.assertEqual(len(driver.SOURCE_FILES), 14)
+        self.assertEqual(len(driver.SOURCE_FILES), 15)
         self.assertEqual(set(driver.SOURCE_FILES), expected)
 
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
