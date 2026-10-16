@@ -86,3 +86,18 @@ ledger_fidelity独占a4运行权、源只读clean9f8a45251138d73ae14d7942c94fe80
 CLI已安全rebase mainb888为clean8d0a49ce8f9014bfe4631c9a68b6b5ff75514e4c；原7a7与988完整保存在codex/debt-upgrade-pre-main-20261016和原Git链，rebase冲突只MEMORY保两索引/board保main最新队列，旧CLI阶段记录按原Git追溯。587份src/.github/scripts/specs/.42cog不可变blob逐字同7a7，proof upgrade-rebase-cepq84ua/source-equality.json SHA79b7022413a0767f1db0008093ae1a31307545e8017227f16923c8f49f7a1dea；不倒填旧build或receipt为新HEAD。
 
 给ready_admission_real_payload_impl仅一次原26 helper Node suite，新唯一主仓_tmp目录、原绝对Node22/原HOME/cache、源clean8d前后SHA、旧be00/首轮失败全部SHA守恒。新fixture+proof allocated≤16777216B，采样停止阈值14680064B，逻辑字节同时核；每流1MiB/Node60s/总120s/ownedPGID最终回收。采样不能预先保证绝不超量，若仍超准确记失败、不得算PASS；达到阈值提前停止留2MiB封存与采样写入余量。先fresh全局du保证本窗+214748365B外留且总46GiB，另核在途无Cargo；不准Cargo/recorder18/Rust5/provider或新target、不替整PR138实证。固定26是原source-derived测试，不裁格以适配资源。本次2026-10-16T17:38:38.652516+08:00判断可撤回，第三次同具体项失败按仓规挂起。
+
+
+## R57 释放100602与102014两个已归还metadata缓存（自决）
+
+卡在哪：R55因实际E0277失败、新源码b794已仅显式Ok/Err修复；failed target与原件继续保留，原.80GiB门当前无足额组合，不能重写旧门或删partial。当前独立用途是为b794后续有界精确产物/真实矩阵准备空间，先清cache后root据实际du另判新窗；本卡不授权Cargo/Node/新target或修改任何判据。R56实际原helper26已26CHECKED/exit0，当前CLI8d CI也实际跑五个命名Rust用例成功，与本次cache删除无因果冒领。
+
+唯一两路径_build/20261016-100602/debug/incremental（uid502/dev16777230/inode42481833）与_build/20261016-102014/debug/incremental（同uid/dev/inode42501923）。原metadata worker revision-git-handoff-index releasedTargetsPreserve/0与/2及report11明确归还root、保noncache/原件；源码ebf/32c各12blob已按不可变Git对象核同，源和依赖可重建两cache。不是整个target可删；旧早期四cache归还不清，R54/R55partial/112000和所有binary/deps/raw继续保留。
+
+只读prepare在主仓_tmp/20261016-debt-cleanup/order-architecture/cache-metadata-pair-preflight-20261016-173947，indexf35a6d706282f1f84f41e6f1cc628e7e2cbb1398e2cb0262498304b7bc1bed36（20件3275841B）、snapshots951cf6c7c69542986826ec2b731333d0a806c2d9df29a103de75cfeb8b05b283、execute71e2f4ec4370542e0bc2fd9ff2821109979d9489f3f13ba6c2ed0e5acfd17db9。两noncache2815/2101、1120002356、R54partial534、R55partial1492完整路径/身份/内容SHA已准备，990raw+c990/3ed/currenta4b794800文件同；已返回Node26不会被误当cache写者。
+
+给ledger_fidelity仅上述精确cache逐inode unlink权限：执行时两遍临界重核本卡SHA/提交/所有预检文件SHA、根/父链uid/dev/inode/nonlink、所有条目mode/nlink/blocks/内容SHA、所有目标锁/实际FD和持有人、sealed引用精确pins/pointers。27锁须nonblocking并只放行实际ownPID+FD+path，不能泛放本PID；引用只有已核统计元数据，任何未知/漂移/写者/锁即停，不扩删其他根。以已核dirfd/O_NOFOLLOW锚父目录逐项删，file nlink只减实际unlink，dir nlink只减实际子目录，finally释放锁；完整noncache/oldpartial/112000/990raw/c990/3ed/a4源前后守恒，非cache hardlink变化仅允许本次unlink相应计数。
+
+last-link allocated预测266399744B，1272外链计零且各有保留见证，两根inode集合不交；预测不是释放事实。执行日志execute-*追加，原prepare index不改，最终execution-index另封。清后完整du交root，若用途窗口仍不足，只停该运行并转独立任务；不把cache清理或文档/CI部分通过当作#65/PR138/阶段完成。新更小产物窗若另判必须引用完整已成功target592562547B等实际证据、实际当前free与新硬上限，原.80门保持不变，本卡绝不预批该窗。
+
+原则与断言：保留失败原始证据与回收已归还可重建cache分别判断，cache权限不推导整个target或unknown对象可删。此卡2026-10-16T17:46:40.164711+08:00只执行两根、核全保全与真实du，资源数值不改善判分语义。

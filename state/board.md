@@ -1,5 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T17:46:40.164711+08:00 · helper26与当前CI5已实证，R57仅两cache**：CLI@8d0a49c原26完整CHECKED/exit0/无skip，R56原件2072file+1symlink root逐SHA核；当前CI38881943616两项绿且checkout精确8d/五命名Rust边界test实际各ok，raw06d2e6a8。PR138body当前8d/真实新范围/历史复用与欠项已gitleaks+readback，仍Draft/recorder18及两非作者最新增量欠；不再把CI实际5例说成完全NOT_RUN，也不冒本地artifact。a4b794序列化修仍待新产物。
+> R57仅准100602/102014两个metadata incremental临界重核后清，2815/2101noncache与990raw/112000/R54/R55partial全保；原.80门不变、不Cargo/Node/新target。worker给root完整du后再判独立执行窗，clearcache不等通过。中央仍原owner，实际GLM2+DS1在途/另DS sibling返回待核，F11仅外监督谓词14控制不冒真实七格，原P1待本家。
+
 > **2026-10-16T17:38:38.652516+08:00 · 两次失败精确记账/源码窄修**：R55新构建24.255s实exit101/reaped，无监督失败，ready_admission.rs523两Result序列化E0277；两guard+七格全NOT_RUN，execution-index5a58f376原21件与旧969/1120002356/R54partial534守恒。a4现cleanb794f27已显式Ok/Err投影窄修，proof059a6a85，仅静态，需新artifact实证；新free685752320B不足原.80窗，未发Cargo。仅100602+102014两已归还cache预测266399744B，仍不足原门，未清；其余未知/partial不动。
 > CLI helper26首轮8MiB采样门失败/26未证，原现场8,499,200B含110,592B超量如实保留；R56独立16MiB新窗提前2MiB停止、仅原Node26一次。CLI safe rebase mainb888至8d0a49c，587非state源blob同7a7，旧7a7/988保backupbranch，不冒旧运行。原中央继续173精确源码角色；capture/容量/序列化后差与实际运行仍待，65/138/31单/P0P1未核销。
 
