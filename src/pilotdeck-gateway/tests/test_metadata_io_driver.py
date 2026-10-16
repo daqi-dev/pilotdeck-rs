@@ -196,6 +196,70 @@ class EnvironmentControls(unittest.TestCase):
             with self.assertRaises(RuntimeError): driver.reject_protected_paths((self.home/suffix/'new',), self.home)
 
 
+class FailureRestoreControls(unittest.TestCase):
+    setUp = EnvironmentControls.setUp
+    def test_main_failure_still_restores_and_noop_exit_zero_fails(self):
+        import contextlib
+        import io
+        import json
+        for scenario in ('replay-failure', 'noop-restore'):
+            with self.subTest(scenario=scenario):
+                output = self.root / scenario
+                pf = driver.toolchain_preflight(self.toolchain, self.original, self.root)
+                names = []
+                permissions = []
+                def fake_run(command, cwd, environment, log, **kwargs):
+                    name = log.stem; names.append(name)
+                    text = ''
+                    code = 0
+                    fixture = output / 'metadata-io.json'
+                    if name == 'record':
+                        scratch = output / 'recording'
+                        (scratch / '.metadata-oracle-owner').write_text('owner')
+                        for n in range(3):
+                            path = scratch / str(n); path.mkdir(); path.chmod(0o111)
+                            permissions.append(dict(path=str(path), mode=0o755))
+                        fixture.write_text(json.dumps(dict(owner='owner', scratch=str(scratch),
+                            permissions=permissions, cases=[dict(id=str(n), status='RUN') for n in range(10)])))
+                    if name == 'replay':
+                        if scenario == 'replay-failure': code = 9
+                        text = 'test result: ok. 3 passed; 0 failed; 2 ignored;\n'
+                    if name == 'native-retained':
+                        text = 'test result: ok. 2 passed; 0 failed; 0 ignored;\n'
+                        text += ''.join('PDRS_NATIVE_METADATA_OK '+str(n)+'\n' for n in range(10))
+                    if name in ('replay', 'native-retained'):
+                        text += ''.join('PDRS_METADATA_PAIR_OK '+str(n)+'\n' for n in range(10))
+                    if name == 'restore':
+                        if scenario != 'noop-restore':
+                            for item in permissions: Path(item['path']).chmod(item['mode'])
+                        # A plausible receipt plus exit0 still cannot hide wrong modes.
+                        Path(str(fixture)+'.cleanup.json').write_text(json.dumps(dict(owner='owner', restored=3)))
+                    log.write_text(text)
+                    return dict(exit=code, reason=None, reaped=True, log=str(log))
+                with patch.dict(driver.os.environ, self.original, clear=True), \
+                     patch.object(driver, 'toolchain_preflight', return_value=pf), \
+                     patch.object(driver, 'source_snapshot', return_value={}), \
+                     patch.object(driver, 'rustup_snapshot', return_value={}), \
+                     patch.object(driver.shutil, 'which', return_value=str(self.toolchain/'bin/cargo')), \
+                     patch.object(driver, 'run_bounded', side_effect=fake_run), \
+                     patch.object(driver, 'check_postflight'), \
+                     patch.object(driver.subprocess, 'check_output', return_value='mock-head\n'), \
+                     patch.object(driver.subprocess, 'Popen', side_effect=AssertionError('no external process')), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    code = driver.main(['--baseline',str(self.root), '--output',str(output),
+                        '--target',str(self.root/'new-target'), '--toolchain',str(self.toolchain)])
+                result = json.loads((output/'verification.json').read_text())
+                self.assertEqual(code, 1)
+                self.assertFalse(result['success'])
+                self.assertEqual(names[-1], 'restore')
+                if scenario == 'replay-failure':
+                    self.assertEqual(names, ['record', 'replay', 'restore'])
+                    for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777, 0o755)
+                else:
+                    self.assertIn('permission not restored', result['error'])
+                    for item in permissions:Path(item['path']).chmod(0o755)
+
+
 class WatchdogControls(unittest.TestCase):
     def test_real_python_success_timeout_and_hard_output_limit(self):
         import sys
