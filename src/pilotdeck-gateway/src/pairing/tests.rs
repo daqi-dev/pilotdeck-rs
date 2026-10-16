@@ -1532,6 +1532,19 @@ async fn metadata_io_node_rpc_pairs_have_no_upstream_request() {
     .await;
 }
 #[tokio::test]
+async fn metadata_path_pairing_requires_the_production_audit_call() {
+    let mut fixture = crate::metadata::tests::fixture();
+    fixture["cases"][0]["errorTarget"] = "/not-the-production-target".into();
+    let task = tokio::spawn(metadata_io_pairs(fixture, crate::metadata::tests::snapshot));
+    let panic = task.await.unwrap_err().into_panic();
+    assert!(
+        panic
+            .downcast_ref::<String>()
+            .unwrap()
+            .contains("production must request")
+    );
+}
+#[tokio::test]
 #[ignore = "requires retained owned Node fixture before permission restoration"]
 async fn metadata_io_native_retained_pairs_have_no_upstream_request() {
     metadata_io_pairs(

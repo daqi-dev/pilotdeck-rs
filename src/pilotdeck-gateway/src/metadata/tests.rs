@@ -1,10 +1,13 @@
 use super::*;
 use crate::dispatch::{self, Route};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 const SOURCE: &str = include_str!("../../tests/fixtures/metadata/describe-io-errors.json");
+// Original Node recording bytes; provenance is indexed beside the fixture docs.
+const SOURCE_SHA256: &str = "995400bce07ef1bee5e4e0d6d3766343ae0229e21eac496394b6866e68518c7c";
 const IDS: [&str; 10] = [
     "positive",
     "collision-positive",
@@ -28,6 +31,14 @@ fn proof(row: &Value, api: &str, path: &str, code: &str, caller: &str) -> bool {
         })
     })
 }
+fn observation_method(api: &str) -> Option<&'static str> {
+    match api {
+        "fsp.readdir" | "fs.readdirSync" => Some("entries"),
+        "fsp.stat" | "fs.statSync" => Some("stat"),
+        "fsp.readFile" | "fs.readFileSync" => Some("read"),
+        _ => None,
+    }
+}
 fn complete(fixture: &Value) -> bool {
     let Some(rows) = fixture["cases"].as_array() else {
         return false;
@@ -42,6 +53,16 @@ fn complete(fixture: &Value) -> bool {
         return false;
     }
     rows.iter().all(|row| {
+        let Some(observations) = row["observations"].as_array() else {
+            return false;
+        };
+        if observations
+            .iter()
+            .filter(|o| o["ok"] == false)
+            .any(|o| o["api"].as_str().and_then(observation_method).is_none())
+        {
+            return false;
+        }
         let Some(id) = row["id"].as_str() else {
             return false;
         };
@@ -173,7 +194,15 @@ fn complete(fixture: &Value) -> bool {
     })
 }
 pub(crate) fn fixture() -> Value {
-    let fixture: Value = serde_json::from_str(SOURCE).unwrap();
+    recorded_fixture(SOURCE)
+}
+fn recorded_fixture(source: &str) -> Value {
+    assert_eq!(
+        format!("{:x}", Sha256::digest(source.as_bytes())),
+        SOURCE_SHA256,
+        "static fixture must match independently pinned original Node bytes"
+    );
+    let fixture: Value = serde_json::from_str(source).unwrap();
     assert!(
         complete(&fixture),
         "ten complete real RPC/errno cases required"
@@ -186,16 +215,28 @@ pub(crate) struct Snapshot {
 }
 #[derive(Clone, Default)]
 pub(crate) struct Requests(Arc<Mutex<Vec<EntryRequest>>>);
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct EntryRequest {
+    method: &'static str,
     path: PathBuf,
     result: Result<(), Option<i32>>,
 }
 impl Requests {
     fn entries(&self, path: &Path, result: &io::Result<Vec<(String, bool)>>) {
+        self.io("entries", path, result);
+    }
+    fn io<T>(&self, method: &'static str, path: &Path, result: &io::Result<T>) {
+        self.record(
+            method,
+            path,
+            result.as_ref().map(|_| ()).map_err(io::Error::raw_os_error),
+        );
+    }
+    fn record(&self, method: &'static str, path: &Path, result: Result<(), Option<i32>>) {
         self.0.lock().unwrap().push(EntryRequest {
+            method,
             path: path.into(),
-            result: result.as_ref().map(|_| ()).map_err(io::Error::raw_os_error),
+            result,
         });
     }
     pub(crate) fn assert_target(&self, row: &Value) {
@@ -205,10 +246,43 @@ impl Requests {
             .map_or(Ok(()), |code| Err(errno(code).raw_os_error()));
         assert!(
             self.0.lock().unwrap().contains(&EntryRequest {
+                method: "entries",
                 path: target,
                 result
             }),
             "{} production must request the recorded target and errno",
+            row["id"]
+        );
+        let expected = row["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|o| {
+                let api = o["api"].as_str().unwrap();
+                let method = observation_method(api).or_else(|| {
+                    (api == "fsp.open" && o["ok"] == true).then_some("session_summary")
+                })?;
+                Some(EntryRequest {
+                    method,
+                    path: o["path"].as_str().unwrap().into(),
+                    result: if o["ok"] == true {
+                        Ok(())
+                    } else {
+                        Err(errno(o["code"].as_str().unwrap()).raw_os_error())
+                    },
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        let actual = self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            actual, expected,
+            "{} production filesystem request contract",
             row["id"]
         );
         println!("PDRS_METADATA_PATH_OK {}", row["id"].as_str().unwrap());
@@ -225,13 +299,23 @@ impl<F: Files> Files for Observed<F> {
         result
     }
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        self.inner.read(path)
+        let result = self.inner.read(path);
+        self.requests.io("read", path, &result);
+        result
     }
     fn stat(&self, path: &Path) -> io::Result<Stat> {
-        self.inner.stat(path)
+        let result = self.inner.stat(path);
+        self.requests.io("stat", path, &result);
+        result
     }
     fn session_summary(&self, path: &Path, size: u64) -> Result<bool, ()> {
-        self.inner.session_summary(path, size)
+        let result = self.inner.session_summary(path, size);
+        self.requests.record(
+            "session_summary",
+            path,
+            result.as_ref().map(|_| ()).map_err(|_| None),
+        );
+        result
     }
 }
 fn errno(code: &str) -> io::Error {
@@ -329,12 +413,8 @@ pub(crate) fn snapshot(row: &Value) -> Metadata<Observed<Snapshot>> {
         .iter()
         .filter(|o| o["ok"] == false)
     {
-        let method = match o["api"].as_str().unwrap() {
-            "fsp.readdir" | "fs.readdirSync" => "entries",
-            "fsp.stat" | "fs.statSync" => "stat",
-            "fsp.readFile" | "fs.readFileSync" => "read",
-            _ => continue,
-        };
+        let method = observation_method(o["api"].as_str().unwrap())
+            .expect("supported error observation API required");
         let key = (method.into(), o["path"].as_str().unwrap().into());
         let code = o["code"].as_str().unwrap().to_string();
         if let Some(previous) = errors.insert(key, code.clone()) {
@@ -373,6 +453,132 @@ fn metadata_io_full_rpc_and_time_fields_match_real_default_node_chain() {
     for row in fixture["cases"].as_array().unwrap() {
         compare(row, &snapshot(row));
     }
+}
+#[test]
+fn static_fixture_anchor_rejects_rust_rewritten_facts_and_response() {
+    let original = fixture();
+    let mut forged = original.clone();
+    let row = &mut forged["cases"][0];
+    let storage = row["legacy"].as_str().unwrap().to_owned();
+    row["files"][&storage]["birth_ms"] =
+        (row["files"][&storage]["birth_ms"].as_f64().unwrap() + 1000.0).into();
+    let metadata = snapshot(row);
+    let request = dispatch::parse(row["request"].as_str().unwrap().as_bytes()).unwrap();
+    let Route::LocalResponse(actual) = dispatch::route_with_metadata(&request, Some(&metadata))
+    else {
+        panic!("local required")
+    };
+    row["response"] = String::from_utf8(actual).unwrap().into();
+    assert!(complete(&forged));
+    compare(&forged["cases"][0], &snapshot(&forged["cases"][0]));
+    for key in [
+        "baselineCommit",
+        "node",
+        "icu",
+        "platform",
+        "sources",
+        "owner",
+        "scratch",
+        "permissions",
+        "callPath",
+    ] {
+        assert_eq!(forged[key], original[key]);
+    }
+    assert_ne!(
+        forged["cases"][0]["response"],
+        original["cases"][0]["response"]
+    );
+    assert!(std::panic::catch_unwind(|| recorded_fixture(&forged.to_string())).is_err());
+    assert!(std::panic::catch_unwind(|| recorded_fixture(&format!("{SOURCE} "))).is_err());
+}
+#[test]
+fn metadata_path_compare_requires_the_production_audit_call() {
+    let mut row = fixture()["cases"][0].clone();
+    row["errorTarget"] = "/not-the-production-target".into();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compare(&row, &snapshot(&row))
+    }))
+    .unwrap_err();
+    assert!(
+        panic
+            .downcast_ref::<String>()
+            .unwrap()
+            .contains("production must request")
+    );
+}
+#[test]
+fn static_fixture_completeness_rejects_each_named_field_and_proof_axis() {
+    let fixture = fixture();
+    let mut wrong = fixture.clone();
+    let row = &mut wrong["cases"][0];
+    let mut request: Value = serde_json::from_str(row["request"].as_str().unwrap()).unwrap();
+    request["params"]["projectKey"] = "/wrong-project".into();
+    row["request"] = request.to_string().into();
+    assert!(!complete(&wrong));
+    for (field, value) in [
+        ("id", Value::from("wrong-id")),
+        ("ok", false.into()),
+        ("sessionCount", 0.into()),
+        ("lastActivity", Value::Null),
+        ("createdAt", Value::Null),
+    ] {
+        let mut wrong = fixture.clone();
+        let row = &mut wrong["cases"][0];
+        let mut response: Value = serde_json::from_str(row["response"].as_str().unwrap()).unwrap();
+        if matches!(field, "id" | "ok") {
+            response[field] = value;
+        } else {
+            response["result"][field] = value;
+        }
+        row["response"] = response.to_string().into();
+        assert!(!complete(&wrong), "{field}");
+    }
+    for field in ["caller", "path"] {
+        let mut wrong = fixture.clone();
+        let row = wrong["cases"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|r| r["id"] == "chats-loop")
+            .unwrap();
+        for observation in row["observations"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|o| o["ok"] == false)
+        {
+            observation[field] = "unrecorded".into();
+        }
+        assert!(!complete(&wrong), "proof {field}");
+    }
+    for (id, api) in [
+        ("projects-notdir", "fsp.readdir"),
+        ("projects-notdir", "fs.readdirSync"),
+        ("projects-denied-legacy", "fsp.readdir"),
+        ("projects-denied-legacy", "fs.readdirSync"),
+    ] {
+        let mut wrong = fixture.clone();
+        let row = wrong["cases"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|r| r["id"] == id)
+            .unwrap();
+        row["observations"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|o| o["api"] != api);
+        assert!(!complete(&wrong), "{id} missing {api}");
+    }
+    let mut unknown_api = fixture;
+    let row = &mut unknown_api["cases"][0];
+    let chats = row["chats"].clone();
+    row["observations"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"api":"fsp.unlink","path":chats,"ok":false,"code":"ENOENT"}));
+    assert!(!complete(&unknown_api));
+    assert!(std::panic::catch_unwind(|| snapshot(&unknown_api["cases"][0])).is_err());
 }
 #[test]
 fn snapshot_rejects_unregistered_paths_and_api_pairs_without_swallowable_errors() {

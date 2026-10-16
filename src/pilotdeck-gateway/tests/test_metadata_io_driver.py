@@ -122,15 +122,16 @@ class EnvironmentControls(unittest.TestCase):
         self.assertNotIn('CARGO_HOME', node)
         self.assertNotIn('RUSTUP_HOME', node)
 
-    def test_source_inventory_is_exactly_the_twelve_required_files(self):
+    def test_source_inventory_is_exactly_the_thirteen_required_files(self):
         expected = {
             'src/pilotdeck-gateway/src/metadata.rs', 'src/pilotdeck-gateway/src/metadata/tests.rs',
             'src/pilotdeck-gateway/src/pairing/tests.rs', 'src/pilotdeck-gateway/tests/record_metadata_io.mts',
             'src/pilotdeck-gateway/tests/check_metadata_io.py', 'src/pilotdeck-gateway/tests/test_metadata_io_driver.py',
             'src/pilotdeck-gateway/tests/baseline_source_guard.mjs', 'src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs',
+            'src/pilotdeck-gateway/tests/fixtures/metadata/describe-io-errors.json',
             '.github/workflows/ci.yml', 'rust-toolchain.toml', 'src/Cargo.toml', 'src/Cargo.lock',
         }
-        self.assertEqual(len(driver.SOURCE_FILES), 12)
+        self.assertEqual(len(driver.SOURCE_FILES), 13)
         self.assertEqual(set(driver.SOURCE_FILES), expected)
 
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
@@ -199,17 +200,20 @@ class EnvironmentControls(unittest.TestCase):
         with self.assertRaises(RuntimeError): driver.check_restore(fixture,plan)
 
     def test_postflight_rejects_source_binary_component_and_cache_changes(self):
-        for change in ('source', 'binary', 'components', 'rustup-entry', 'node-cache'):
+        for change in ('source', 'static-fixture', 'binary', 'components', 'rustup-entry', 'node-cache'):
             with self.subTest(change=change):
                 case = EnvironmentControls('test_missing_component_fails_before_any_proxy'); case.setUp()
                 try:
                     source=case.root/'source.rs'; source.write_text('original')
-                    with patch.object(driver, 'SOURCE_FILES', ('source.rs',)):
+                    fixture_name='src/pilotdeck-gateway/tests/fixtures/metadata/describe-io-errors.json'
+                    fixture=case.root/fixture_name;fixture.parent.mkdir(parents=True);fixture.write_text('{"original":true}')
+                    with patch.object(driver, 'SOURCE_FILES', ('source.rs',fixture_name)):
                         pf=driver.toolchain_preflight(case.toolchain,case.original,case.root)
                         before=driver.source_snapshot(case.root); rustup=driver.rustup_snapshot(case.home/'.rustup')
                         node=case.toolchain/'bin/rustfmt'; node_sha=driver.sha(node); node_home=case.root/'node-home';node_home.mkdir()
                         driver.check_postflight({},case.root,case.toolchain,case.original,pf,before,rustup,node,node_sha,node_home)
                         if change=='source': source.write_text('changed')
+                        if change=='static-fixture': fixture.write_text('{"forged":true}')
                         if change=='binary': (case.toolchain/'bin/rustc').write_text('changed binary')
                         if change=='components': (case.toolchain/'lib/rustlib/components').write_text('cargo-mock-host')
                         if change=='rustup-entry': (case.home/'.rustup/tmp').mkdir()
