@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **14:25新债登记**：DS实际P2-c已开#145（未知开子聚合状态/计数），前置于R42后首个reducer变更或首次新未知聚合入账先到者；144.2未来计数面保原单。最新open为33，原31/55+139/144的55c JSON尚未扩145，下一调度须同步这一快照外项，不能据旧32或局部零报清账完成。
+
 > ## 2026-10-16 14:24 · 本片调度交接（12:27:16启动，14:27:16前交后续）
 > 本片已推796a55c：17合法修订/三项P1、R41谓词/R42显式基线、恢复事实与写守卫记忆；该HEAD两CI38859488820实际绿。main仍7781b18、32open、四Draft，尚无新合并；52/85已实际同步P1标题/标签/评论并后核OPEN。原31/55类型落候选，事实与独立闸门未全部收敛，延期和真人实效继续未完成。
 > 最后P2a尾差只在两个ignored refresh validator的keep各补secondaryTypes，当前audit core64fead76225ec23edd9e691dbe15124c9428fd8bf7216682b3cc18a920c00f67、normalizerd4eb3413…；producer内存除asOf外与55c JSON全同，新显式64pin unique run-hzwpsj56真实41。源码/实际函数控制在secondary-type-guard-proof（原整链已拒，未夸旧假PASS），两家仍须核这2行；PR正文16f0f451…已更新当前pin/未终审状态。另新caller25证据indexa3ebe359…、扩展14轴18证据indexc68afb1b…交中央；DS已独立撤conditional整链假PASS，review缺字段KeyError是failclosed诊断面，当前caller已有execution.failure/exit2补偿待其定性。
