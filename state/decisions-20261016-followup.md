@@ -84,3 +84,8 @@ R64原36e精确Scripted/ReadBuf实际复现三小读pop3/实际9字节，空队�
 ## R66 只核外部loader禁磁盘缓存的新运行前提（自决）
 
 R61真实失败与1607原件保留；已安装tsx源码显式TSX_DISABLE_CACHE选择Map，故可先用独立外部wrapper验证同Node真实typedfixture，不动产品/基线/编译源。任务`_tmp/20261016-debt-cleanup/tsx-cacheoff-r66-r4j55gsg/task.md`，1MiB/768KiB提前/.20外留，Node20/总60/流64KiB，ledger唯一执行权；只tiny非产品控制，足门一次。本卡不是native重跑授权；若无cache实证成立，再按全新工具前提预登记Off caller回归，旧失败不抹。原则：失败后改变可实核执行前提，与换词重试区分；禁可再生磁盘cache不更改评分或基线源。
+
+
+## R67 有真实工具前提变化的caller一次新窗（自决，待R66完整门）
+
+旧R61失败原件/超量/EPERM未抹；R66若完成实证禁磁盘tsx cache，则新PDRS_ORDER_LOADER身份可让同f793精确产物现有Off caller回归在有界输出内运行。不重复旧loader条件，也不改默认业务或任何冻结评分。任务`_tmp/20261016-debt-cleanup/order-architecture/native-finish-r67-cacheoff-qmgy0ni2/task.md`只准备，须root核R66正式index/runner/source与freshdu后authority一次；8MiB/提前6/.20reserve，native child90/total120/流1MiB，六caller仅收尾证据。source800/基线1000/指定旧原件前后同，失败不PASS，原中央独立评审不替作者裁定F17。原则：外部可核前提改变才是新诊断，不以缩范围/换词重试挂起项。
