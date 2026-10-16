@@ -1,5 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 13:40 · 当前持有人与窄审进展
+> wt-a4m3由completion_domain_impl独占，codex/completion-domain-probe从379分出，预登记756658d；R40仅测试共同提交域，Node真实oracle/candidate各29行逐wire一致及21反控不代表全域兼容，P2/P3缺证、#65仍未完成。writer正封存，不抢写。其余四树root；中央debt_review_prepare唯一provider队列。实际磁盘上次45.327873GiB/46，新probe仅16MiB上限、无新Cargo/target。
+> F7同path异SHA已获GLM/DS实际独立确认修复，DS自行撤回不同ledger投影身份的条件P1；不扩为整PR批准。DS boundary用实际canonical消费者更正了投影误读，61.1原家族分歧仍取P1。GLM I1关于52.1/85.2测量分级仍待明确逐项结论，不虚造revision或自行降档。新algorithm F1四个可能松门先做独立consumer反例，确认后才窄修；旧封20原件不改。PR141环境三空held、134精确授权及真人实效继续未完成。
+
 > ## 2026-10-16 13:29 · R39落账与实际分类评审进展
 > 当前候选按中央合法33db1beb独立修订快照生成：98.4补初判真实SHA、134.2摘要纠正为保留本家原P1，原grade/MD不动、ac630历史保留。47.1当前假待办已按双scope撤回刷新，只留94两P1与未来真人实效/B3；94.1显式P2-b→P1取高来源。55项countingBasis说明旧count标记来源及useForGlobalDefectTotal=false，94.2旧false不抹其当前真实缺陷主类/P1。七保护轴/初判/限定不变；修订完整元数据由专门revision_lost逐字段核最新原件，不再被旧R37额外基线错误冻结。R39判断、candidate与57原件proof已交回root，正式normalizer→audit41→renderer通过，唯一JSON SHA0f1880146ccd243f0200d1c1cd8358c075a9215c0e41af056c2f1a962c3e3a24；原R37章节与行162保持。
 > F7真实前代41误放同path异SHA已封20项原件，producer逐引用一致/audit独立SHA集合的窄修在当前33db首尾冲突都拒；同SHA重复合法。F3新publisher写前绑定temp身份，真实成功/部分写错/replace错/foreign替换四控制通过，异常仅清自身同inode/dev常规文件，未知替换保留；没有fsync承诺、没有改真实canonical做反例。两项仍待实际非作者增量闭合，不拿机器结果充终审。
