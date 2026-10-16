@@ -23,12 +23,62 @@ impl Pair {
     }
 
     async fn finish(self) {
-        timeout(DEADLINE, self.task)
-            .await
-            .expect("pair must stop")
-            .unwrap()
-            .unwrap();
+        assert!(join_pair_task(self.task, DEADLINE).await, "pair must stop");
     }
+}
+
+// A timed-out JoinHandle must be aborted and awaited: dropping it detaches.
+async fn join_pair_task(mut task: JoinHandle<std::io::Result<()>>, deadline: Duration) -> bool {
+    match timeout(deadline, &mut task).await {
+        Ok(result) => {
+            result.unwrap().unwrap();
+            true
+        }
+        Err(_) => {
+            task.abort();
+            let _ = task.await; // Also handles completion racing with abort.
+            false
+        }
+    }
+}
+
+#[tokio::test]
+async fn pair_finish_timeout_aborts_and_awaits_the_task() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    struct Dropped(Arc<AtomicBool>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let dropped = Arc::new(AtomicBool::new(false));
+    let observed = dropped.clone();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
+        let _guard = Dropped(observed);
+        started.send(()).unwrap();
+        std::future::pending::<()>().await;
+        Ok(())
+    });
+    ready.await.unwrap();
+    assert!(!join_pair_task(task, Duration::from_millis(1)).await);
+    assert!(
+        dropped.load(Ordering::SeqCst),
+        "task was detached instead of awaited"
+    );
+}
+
+#[tokio::test]
+async fn pair_eof_guard_rejects_trailing_response_bytes() {
+    let (mut reader, mut writer) = tokio::io::duplex(1024);
+    write(&mut writer, b"responseextra").await;
+    read(&mut reader, b"response").await;
+    writer.shutdown().await.unwrap();
+    let checked = tokio::spawn(async move { eof(&mut reader).await });
+    assert!(checked.await.unwrap_err().is_panic());
 }
 
 async fn write(io: &mut DuplexStream, bytes: &[u8]) {
@@ -1465,6 +1515,7 @@ async fn metadata_io_pairs<F: crate::metadata::Files + Send + Sync + 'static>(
         read(&mut pair.server, &fence).await;
         silent(&mut pair.server).await;
         pair.server.shutdown().await.unwrap();
+        eof(&mut pair.client).await;
         pair.finish().await;
         println!("PDRS_METADATA_PAIR_OK {}", row["id"].as_str().unwrap());
     }
