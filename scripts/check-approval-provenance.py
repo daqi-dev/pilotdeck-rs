@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""CI provenance guard for small B2 approval originals; outside the frozen ruler.
+
+Trusts the reviewed manifest. It detects changed/missing originals, not a malicious
+actor editing both the manifest and the originals. It does not approve identities.
+"""
+import sys
+if not (sys.flags.isolated and sys.flags.ignore_environment and sys.flags.no_user_site
+        and sys.pycache_prefix is None):
+    raise SystemExit('Python isolation required: use python3 -I')
+sys.dont_write_bytecode = True
+
+import hashlib
+import json
+from pathlib import Path
+import re
+
+EXPECTED = frozenset(
+    'specs/ui-server-parity/approval/' + name
+    for name in ('calibration-summary.json', 'review-glm.md', 'review-claude.md', 'driver.log')
+)
+PREFIX = 'Approval-Source-SHA256:'
+
+
+def regular(path, root):
+    return (path.is_file() and not path.is_symlink()
+            and all(not parent.is_symlink() for parent in path.parents
+                    if parent == root or root in parent.parents))
+
+
+def check(root):
+    root = Path(root).absolute()
+    errors, sources = [], {}
+    manifest = root / 'specs/ui-server-parity/FROZEN.md'
+    try:
+        if not regular(manifest, root):
+            raise ValueError('manifest must be a regular file without symlink ancestors')
+        for number, line in enumerate(manifest.read_text(encoding='utf-8').splitlines(), 1):
+            if not line.startswith(PREFIX):
+                continue
+            match = re.fullmatch(r'Approval-Source-SHA256: ([a-f0-9]{64})  (.+)', line)
+            if not match:
+                errors.append(f'invalid approval source registration at line {number}')
+                continue
+            digest, path = match.groups()
+            if path not in EXPECTED:
+                errors.append(f'unknown approval source at line {number}')
+            elif path in sources:
+                errors.append(f'duplicate approval source: {path}')
+            else:
+                sources[path] = digest
+        if set(sources) != EXPECTED:
+            errors.append('approval source set must contain all four registered originals')
+        for name, expected in sources.items():
+            path = root / name
+            if not regular(path, root):
+                errors.append(f'missing/nonregular approval original: {name}')
+            elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                errors.append(f'approval original SHA256 mismatch: {name}')
+    except (OSError, UnicodeError, ValueError) as error:
+        errors.append(str(error))
+    return {'verdict': 'FAIL' if errors else 'PASS', 'checkedSources': len(sources), 'errors': errors}
+
+
+if __name__ == '__main__':
+    result = check(Path(__file__).resolve().parents[1])
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    raise SystemExit(result['verdict'] != 'PASS')

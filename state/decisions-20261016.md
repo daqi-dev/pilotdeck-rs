@@ -84,6 +84,8 @@
 
 依据主仓`_tmp/20261016-debt-cleanup/{approval-portability/,reviews/approval-candidate-*-deepseek.md,reviews/approval-candidate-simplify-glm.md}`。同类其他FROZEN只有具体实测成立才新增缺陷，未知项不捏造。
 
+R26后续廉价补项：driver原文已入仓，Calibration-Evidence当前指针同步；独立CI provenance guard校验四小原文与FROZEN声明SHA并跑变异负控。冻结checker与53注册/capture字节不变，CI规则层补身份门，不改定标或审批身份。该新具体实现仍交两家精确增量终审，不凭旧同意冒通过。
+
 ## R27 #120 子进程验收完整性（自决）
 
 卡在哪：公开测试按继承环境跳worker可只验1/13；--exact零匹配也exit0，子进程输出与运行无界。仅测试装置受影响，可撤回，不动冻结/意向。采用独立ignored worker：公开父入口无env分支，共享test-only helper清环境、限时30s/总输出64KiB，要求恰1个libtest通过和唯一case receipt，父级集合与预注册ID对等。旧四处同类启动也迁移。原则：子进程退出0不代表目标被验证；执行数、案例身份、资源上限必须共同证明。零匹配/无回执/重复回执/失败/超时/超输出负控落入test_process。
