@@ -64,3 +64,8 @@ ee9的33 OPEN由canonical cadb内31原单去113、加139/144/145得出；147是�
 ## R62 当前身份helper三条便宜永久控制（自决）
 
 当前d0/R60两家已确认隐藏位P1修复，但SOURCE_KIND可达空config目录、contract-only before与组合s位缺负控；按当前PR内便宜P2a同轮补。只改CLI测试文件，32→35，不改helper合同/判据/生产；任务`_tmp/20261016-debt-cleanup/upgrade-helper35-r62-prep-cla_wzhg/task.md`。ready_capture_fix独占CLI源码，先准备不运行，后续真实Node与非作者增量终审另守门。原则：一行可达同类缺口不能只因原评审写c就延期；保原scope判定与原件，不扩大R60运行覆盖。
+
+
+## R63 35身份控制独立新Node窗口（自决）
+
+R62仅测试改动已提交36e76a0/clean，三新增和G6精确码未跑；旧R60仍只32。给ledger_fidelity任务`_tmp/20261016-debt-cleanup/upgrade-helper35-r63-983ihfl7/task.md`，16MiB/14提前/.20外留，fresh完整du门后一次；Node60/总120/流1MiB，无Cargo/recorder18。R61实际失败不重试，保1607/50e63原件；该失败因native每格642临时文件，不能由不同35Gitfixture省略其事实。原则：新测试变更另实跑，复用旧证据有边界；资源监督为采样，真实超量不说硬quota。
