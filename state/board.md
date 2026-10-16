@@ -1,5 +1,16 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 14:07 · 三项P2-b上调P1已落当前账本
+> root已按R42显式采纳source-sealed pretype基线与3c22041c候选绑定，合法17修订SHA602d70dc；52.1 A脚本后缀、85.1 A依赖（cargo仍candidate/unknown）、85.2 C CLI/Python（pyc全链未跑）当前P1。不是误映A-cargo的错误17；旧14/错误17/原初判/PARTIAL全保。severity与historicalJudgmentSeverity按原effective-max算法联动，confirmation/state/fixed/prerequisite/count五轴、类型、到期不变。三项仍未修，不关闭issue、不推全链P0。正式normalize→显式pin core61699882的新unique-run audit→renderer41通过，JSON SHA55c0e27c83521843ba1fe428238311cc112dbcb2104cc7994ac21d61c7a42e27；仅保真非独立终审。
+> R42新43项proof/index2f42cc9b1bfc190407a136f0a37947c9321f3aa8c71056d959aff2922339cf94全SHA核，旧20/57/35共112仍一致。新taxonomy/run_current_ledger_audit.py每次mkdtemp唯一路径、AST唯一out重定向、exec前运行写边界，必传预期core SHA且核entry/core/ledger前后；不运行两个已封旧入口或覆盖自身封存结果。root正式发布audit前件保留在该次run；源身份/未来重跑限制如实留档。独立精确增量仍由中央唯一queue收敛，PR143待终审；PR141环境held/134精确授权/真人实效继续开放。
+> #65下一A0/A1/A2源码已准备推73ba5e3（预登记7869137），仅rustfmt解析/静态/去cfgtest后release token同，未Cargo/child/新产物；M1–M4执行变异仅计划。result-acquisition/index SHA6acb1ea65607f479ac55743c0387b13b8e00c27f358cdeb320090f31f4f5221c，19247B；旧29格即时证据不能替这些新格。五树全部交回root，无活跃产品writer/新target；下一产品实证是此源码的精确新产物与真实结果取得因果切面，先核资源再发窗口。
+
+> ## 2026-10-16 13:52 · 消费者松门修复、证据恢复与分级身份门
+> 当前root HEAD43844cc，两CI38857051636绿；main仍7781b18，32open/四Draft不变，无本片新合并。三ignored脚本root独占：新增静态41 requiredIDs、七保护字段必须存在、proposal原行55唯一，实际oldaccept→newreject及健康41齐；缺GLM/type旧时下游已拒，此次只补producer早拒，不夸此前全链假绿。新35文件consumer-contract-proof/index SHA860b3fb68eebdb2d555f95307074552b25bcc116bbcf3714747706f7d02d23c0；正规normalize→audit41→render已过，当前语义仍14修订，须按下一实际新合法原件重绑。
+> 新入口曾误写旧57中的一份audit，已停并保留事故新物；按同轮结构/原candidate身份/有界微秒重构命中原封SHA775d6a71恢复36178字节，非直接副本。root及central各核旧20+57全77无drift。新入口在exec前runtime/Path/open/replace限当前proof，4不存在哨兵外写及缺/重复anchor均先拒；旧verify只读归档。新memory记录适用边界，不宣称全系统sandbox。
+> I1第二次GLM有效但把85.2=C Python错映为85.1内A-cargo；错误17快照已原样留历史并回退当前33db14，未进canonical。52.1/85.1在各自范围明确P1，85.2待同家准确scope澄清，不因数字相同搬用错ID判断。新revision先next+稳定ID/title/facet/priorSource四列由root实核后才发布。R41纠正32/22/1为处置字段计数；主类同词另为41/13/1，9同词仍需次类裁量；原R37章/行/SHA不改。
+> #65原型1db50f7已冻结交root，真实29即时格同wire、21控制仅原件/运输模型，不是21真实调度变异；Astra async-next指出4顺序反控只是反转输出，host观察不能冒C0。下一唯一产品实证是实际JoinSet取走结果→后帧接纳→下游写，completion_domain_impl重新独占wt-a4m3仅准备test-only A0/A1/A2源码/预注册，≤1MiB、无Cargo/child/newtarget、14:10前交；#65/A5.4未清。其余四树root，中央唯一provider队列。13:42完整du45.352154GiB/46余679316KiB，五树及旧证据保护不变；14:27:16前交下一调度继续。
+
 > ## 2026-10-16 13:40 · 当前持有人与窄审进展
 > wt-a4m3由completion_domain_impl独占，codex/completion-domain-probe从379分出，预登记756658d；R40仅测试共同提交域，Node真实oracle/candidate各29行逐wire一致及21反控不代表全域兼容，P2/P3缺证、#65仍未完成。writer正封存，不抢写。其余四树root；中央debt_review_prepare唯一provider队列。实际磁盘上次45.327873GiB/46，新probe仅16MiB上限、无新Cargo/target。
 > F7同path异SHA已获GLM/DS实际独立确认修复，DS自行撤回不同ledger投影身份的条件P1；不扩为整PR批准。DS boundary用实际canonical消费者更正了投影误读，61.1原家族分歧仍取P1。GLM I1关于52.1/85.2测量分级仍待明确逐项结论，不虚造revision或自行降档。新algorithm F1四个可能松门先做独立consumer反例，确认后才窄修；旧封20原件不改。PR141环境三空held、134精确授权及真人实效继续未完成。
@@ -18,7 +29,7 @@
 > **资源/下一任务**：R38仅清124315与120000的incremental，1898/6065非cache路径/字节全同、binary/deps/fingerprint/raw全保；锁/路径/设备inode先核，清后完整du再发1GiB fresh额度，不按局部du估腾量。846 fresh后完整du23387188+24139644KiB=45.325119GiB/46，余707664KiB；五树皆root持有、无产品writer/锁。中央debt_review_prepare仍唯一provider queue；下一就绪为846独立concurrency增量/完整旧finding处置表及PR143实际角色，环境held及134精确授权/真人实效均继续未完成。当前片14:27:16前交接，后续heartbeat继续，不需逐单发车。
 
 > ## 2026-10-16 12:56 · 主次归类已落候选账本
-> R37现已正式投影55项：54项分为14真实缺陷主类、15阶段任务主类、25验收债务主类，另52.2唯一P3已知留白；该分布含已修历史范围，**不是未完成独立缺陷计数**。32项初始主类一致、22项协调者主次取舍、1项P3例外分别标注AI代批待人复核；不冒双家均同意。主次类型、原始分歧、PARTIAL/raw限定、等级、确认度、交付及到期节点分轴；所有保护字段对最新14graded/双R5前候选逐项守恒。41/41纯JSON审计、15账本+8采纳record+2派生器负控通过，仅证明保真，不代PR143独立合并闸门。唯一JSON state/issue-ledger.json，主仓taxonomy/disposition-report.md只由其派生；delivery远端核到12:54:58。数值currentCandidate仅0c11真实六stage/537索引，旧0957失败标历史，3a tiny不能继承fresh身份。
+> R37现已正式投影55项：54项分为14真实缺陷主类、15阶段任务主类、25验收债务主类，另52.2唯一P3已知留白；该分布含已修历史范围，**不是未完成独立缺陷计数**。32项原判可直接采纳、22项需协调者主次处置、1项P3例外分别标注AI代批待人复核；不冒双家均同意。主次类型、原始分歧、PARTIAL/raw限定、等级、确认度、交付及到期节点分轴；所有保护字段对最新14graded/双R5前候选逐项守恒。41/41纯JSON审计、15账本+8采纳record+2派生器负控通过，仅证明保真，不代PR143独立合并闸门。唯一JSON state/issue-ledger.json，主仓taxonomy/disposition-report.md只由其派生；delivery远端核到12:54:58。数值currentCandidate仅0c11真实六stage/537索引，旧0957失败标历史，3a tiny不能继承fresh身份。
 > PR141便宜三guard已提交推3a3a5a1、实际三份JSON384/386/386各十Snapshot与4漏遍历/receipt/reason变异齐，中央双家窄审在途。原作者现独占CLI仅核旧concurrency C01/C02观察器代际：单位真实Node已见reset后handle仍trace及受控迟到readdir混入下一数组，尚未证明Gateway曾触发；正做≤15min最小generation隔离及永久控制。新recorder真实链另由root核预算发窗口，不冒旧fresh通过。其余树root，五树/46GiB与中央唯一队列不变。
 
 > ## 2026-10-16 12:53 · 新调度片接续：数值P1修复实跑、归类落账中
