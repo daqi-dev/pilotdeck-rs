@@ -151,7 +151,7 @@ CLI旧26与8d CI5保历史；DS实际Git隐藏flag使clean:true+candidateHead的
 
 ## R74 未知能否完成的profile0 build-only诊断（自决·待复核）
 
-PR138 current2f欠本地产物+18；默认完整build无窗，directrustc无完整原argv不可准入。仅准备原cargo bin-only合同加CARGO_PROFILE_DEV_DEBUG=0的新独立target一次诊断，不动opt/assert/overflow/panic/features/冻结/原工具，不下载。任务`_tmp/20261016-debt-cleanup/profile0-build-r74-z9frs937/task.md`。新112MiB总cap/96提前/4proof/外留214748365B/fresh门332188877B是更早停止的未知成本诊断，不重写旧128门、原.65测试授权或46数值；不宣称可完成。先只有controller准备，无authority不运行。R73真实清后freshdu足门、owner/参数/监督独立必要核完root另发一次；任何失败留partial且不自动strip/重试。成功才另卡运行18，失败只停此路径继续独立依赖。原则：未知成本可在完整合同下做有界诊断，但不能把小预算包装成已有峰值证明或新验收通过。
+PR138 current2f欠本地产物+18；默认完整build无窗，directrustc无完整原argv不可准入。仅准备原cargo bin-only合同加CARGO_PROFILE_DEV_DEBUG=0的新独立target一次诊断，不动opt/assert/overflow/panic/features/冻结/原工具，不下载。任务`_tmp/20261016-debt-cleanup/profile0-build-r74-z9frs937/task.md`。新112MiB总cap/96提前/4proof/外留214748365B/fresh门332188877B是更早停止的未知成本诊断，不重写旧128门、原.65测试授权或46数值；不宣称可完成。4MiB proof 是整个O（含TMPDIR）共同子cap，同时计入112MiB总cap；任一资源/时间门到达即RUN_INVALID/诊断失败保partial，不是产品判分FAIL，不保证各独立上限可同时填满，也不截断后宣称成功。先只有controller准备，无authority不运行。R73真实清后freshdu足门、owner/参数/监督独立必要核完root另发一次；任何失败留partial且不自动strip/重试。成功才另卡运行18，失败只停此路径继续独立依赖。原则：未知成本可在完整合同下做有界诊断，但不能把小预算包装成已有峰值证明或新验收通过。
 
 R74执行合同消歧：原CARGO_HOME不等于只读cache，Cargo正常usage bookkeeping/锁允许且元数据前后记录，不许手动或自动清源cache；原offline保持（官方Cargo Book说明offline禁自动cache删除）。新增owned TMPDIR=proof/tmp并计总cap，与DEV_DEBUG唯一profile差异分列；不换原HOME/四wrapper，不宣称OS强制两目录写隔离。精确允许集合与来源链接见同任务temporary-path-supplement.md。新authority仍未给。
 
@@ -197,3 +197,8 @@ R78实际shared notify只醒bypass，barrier原8s在8001ms Elapsed，独立Notif
 ## R82 中断后的精确租约重新认领（自决）
 
 原R81卡/候选不改，旧21:05租约已失效。本次复核4b0ed47b索引证明源ca75/2f、原35件、cache/noncache/保留原件与无写者前提同；root新认领这两源码唯一写权，冻结至R81终态/明确失败或23:50先归还。新卡只恢复现时来源前提，不是cleanup/build authority，不借仍未闭合的两家尾审放行。原则：时效租约不继承，内容同一也须重新核持有人；事故停点据实际证据接回，不补写虚假的交接完成。证据`_tmp/20261016-debt-cleanup/scheduler-resume-2231-4hjc5ll1/task.md`。
+
+
+## R83 当前源租约与执行合同澄清（自决）
+
+2026-10-16T23:58:08.353743+08:00实际ca75与CLI2f clean、writer仅root，旧23:50租约已过；现重新冻结至资源临界终态/失败或00:20先交回。R81仍精确020004，authority未创建；新fixed-bytes loader/root acceptance与新1MiB方法必须两家收口才能执行，不以旧顺序P1闭合代表整体过门。R74 wholeO含TMPDIR、112/96/.20和300/360原数值均保，诊断未完成是INVALID，非测试结论。原则：资源预算是停止线，不是成功承诺；时效前提每次独立更新。

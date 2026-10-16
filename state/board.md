@@ -1,5 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T23:58:08.353743+08:00 · 当前节点独立收口与新漏**：原中央R80两家A/B窄门478cf2e6确认ca75同步Tap原1500ms P2a及当前真实负控/恢复/127pass已闭，仅该scope，整150/七格/M1/CLI18仍欠。R81先result-success再terminal的P1已由两家7真实故障控制闭；新pyc gap独立P1实际成立（校验源VALUE2仍执行旧VALUE1），不把dont_write当阻读，正新fixed-bytes loader＋reference_scan闭包与生产1MiB方法补核。旧3槽method因FD账簿/负fd前置ValueError记PARTIAL，已撤错误EBADF措辞，不假称全部通过。
+> R74快退leader的NonePGID残留已真实复现并仅清回自有组，原sealed不动；新guardian+exec前握手、严格PID归属及早期terminal机读回执准备中，原4MiB包含TMPDIR/112MiB总/96提前/.20外留不改，诊断资源/时间停止是RUN_INVALID而非产品判FAIL，也不承诺填满某预算必完成。R81/R74原无authority/未删/未Cargo。
+> **现时source lease**：旧23:50租约已过，root现在再次核ca75/CLI2f clean且无其他writer后重新认领冻结至资源临界终态/失败或00:20先归还；未复用旧时效。00:25前按实际写交接，原provider owner继续两家必要增量，不重试141环境/134冻结held。
+
 > **2026-10-16T23:17:33.651537+08:00 · 中断恢复/重新认领**：旧20:42命令实际已完成、state35fb/sourceca75推送到位；上一片22:25前未形成最终交接，本片按实际恢复，不补造按时退出。规则/四份/MEMORY、5树同b390、人手与unknown已核；当前36OPEN/5Draft，仍无新merge/关闭。ca75 CI38902157910实际两绿，真实共享Notify单guard指定断言left0/right1拒、两流raw完整非截断/sourceRestored同ca75 blob，恢复后两新Tap+三R68各唯一ok；synthetic bbfa91d tree50d3b594精确同ca75。indexd895ad7e root逐SHA核，仅该scope不冒七格；最终source双家尾审待。
 > **唯一资源下一/lease**：R81新复核index4b0ed47b root逐SHA核，原35件/37d697与controller6e8a、cache/noncache/旧六target/D6raw/29sealed/工具/源ca75+2f全同，34锁已释放/无build或外来FD；旧21:05租约过期不沿用。root现在重新认领a4ca75与CLI2f为唯一source writer并冻结至R81终态、明确失败或23:50先归还（若必要新source修则先撤本准入）；ready只新_tmp准备18，无树/运行lease。原O无authority/未删，4MiB仅8192B余，禁止再加报告，fresh authority后仍须完整cap门。最后完整du总49175502848B、余216621056B，仅当时实测不据预计回收launch；R74仍只有合同部分评审/无authority。
 > 原中央debt_review_prepare已接原sessions，旧PID均退，不另owner；优先R81必要新增收尾/实际callee+控制两家，再R74完整源必要门取得CLI当前artifact→18，R80/未读legacy源独立并发。141/134held/真人验收不重试。新片00:25前交接，后续调度自动继续。证据 `_tmp/20261016-debt-cleanup/scheduler-resume-2231-4hjc5ll1/`。
