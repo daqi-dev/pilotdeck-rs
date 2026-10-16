@@ -39,6 +39,17 @@ fn observation_method(api: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+fn success_observation_api(api: &str) -> bool {
+    observation_method(api).is_some()
+        || matches!(
+            api,
+            "fsp.open"
+                | "fs.existsSync"
+                | "FileHandle.stat"
+                | "FileHandle.read"
+                | "FileHandle.readFile"
+        )
+}
 fn complete(fixture: &Value) -> bool {
     let Some(rows) = fixture["cases"].as_array() else {
         return false;
@@ -56,11 +67,10 @@ fn complete(fixture: &Value) -> bool {
         let Some(observations) = row["observations"].as_array() else {
             return false;
         };
-        if observations
-            .iter()
-            .filter(|o| o["ok"] == false)
-            .any(|o| o["api"].as_str().and_then(observation_method).is_none())
-        {
+        if observations.iter().any(|o| {
+            (o["ok"] == false && o["api"].as_str().and_then(observation_method).is_none())
+                || (o["ok"] == true && !o["api"].as_str().is_some_and(success_observation_api))
+        }) {
             return false;
         }
         let Some(id) = row["id"].as_str() else {
@@ -259,6 +269,12 @@ impl Requests {
             .iter()
             .filter_map(|o| {
                 let api = o["api"].as_str().unwrap();
+                if o["ok"] == true {
+                    assert!(
+                        success_observation_api(api),
+                        "unsupported success observation API {api}"
+                    );
+                }
                 let method = observation_method(api).or_else(|| {
                     (api == "fsp.open" && o["ok"] == true).then_some("session_summary")
                 })?;
@@ -452,6 +468,75 @@ fn metadata_io_full_rpc_and_time_fields_match_real_default_node_chain() {
     let fixture = fixture();
     for row in fixture["cases"].as_array().unwrap() {
         compare(row, &snapshot(row));
+    }
+}
+#[test]
+fn metadata_success_api_validator_accepts_producer_closure_and_rejects_unknown() {
+    for api in [
+        "fs.statSync",
+        "fs.readdirSync",
+        "fs.readFileSync",
+        "fs.existsSync",
+        "fsp.stat",
+        "fsp.readdir",
+        "fsp.readFile",
+        "fsp.open",
+        "FileHandle.stat",
+        "FileHandle.read",
+        "FileHandle.readFile",
+    ] {
+        assert!(success_observation_api(api), "{api}");
+    }
+    let fixture = fixture();
+    for api in [
+        "fs.existsSync",
+        "FileHandle.stat",
+        "FileHandle.read",
+        "FileHandle.readFile",
+        "fsp.unlink",
+    ] {
+        let mut changed = fixture.clone();
+        let row = &mut changed["cases"][0];
+        let path = row["chats"].clone();
+        row["observations"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"api":api,"path":path,"ok":true,"result":null}));
+        if api == "fsp.unlink" {
+            assert!(!complete(&changed));
+            let row = &changed["cases"][0];
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                compare(row, &snapshot(row))
+            }))
+            .unwrap_err();
+            assert!(
+                panic
+                    .downcast_ref::<String>()
+                    .unwrap()
+                    .contains("unsupported success observation API")
+            );
+        } else {
+            assert!(complete(&changed), "{api}");
+            compare(&changed["cases"][0], &snapshot(&changed["cases"][0]));
+        }
+    }
+}
+#[test]
+#[ignore = "requires explicit recorded Node oracle; validator only"]
+fn metadata_success_api_recorded_oracle_validation() {
+    let fixture = live_fixture();
+    let rows = fixture["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 10);
+    for row in rows {
+        assert!(
+            row["observations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|o| o["ok"] == true)
+                .all(|o| o["api"].as_str().is_some_and(success_observation_api))
+        );
+        println!("PDRS_SUCCESS_API_ROW_OK {}", row["id"].as_str().unwrap());
     }
 }
 #[test]
