@@ -243,7 +243,7 @@ class FailureRestoreControls(unittest.TestCase):
         import contextlib
         import io
         import json
-        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'source-head-polluted', 'source-head-short', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'success'):
+        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'source-head-polluted', 'source-head-short', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'record-output-limit', 'success'):
             with self.subTest(scenario=scenario):
                 output = self.root / scenario
                 pf = driver.toolchain_preflight(self.toolchain, self.original, self.root)
@@ -258,14 +258,21 @@ class FailureRestoreControls(unittest.TestCase):
                         scratch = output / 'recording'
                         (scratch / '.metadata-oracle-owner').write_text('owner')
                         for n in range(1 if scenario.startswith('record-') else 3):
-                            path = scratch / str(n); path.mkdir(); path.chmod(0o111)
-                            permissions.append(dict(path=str(path), mode=0o755))
+                            path = scratch / str(n); path.mkdir(); path.chmod(0o755)
+                            permission = dict(path=str(path), mode=path.stat().st_mode & 0o777)
+                            permissions.append(permission)
+                            text += 'PDRS_METADATA_PERMISSION '+json.dumps(dict(
+                                baselineCommit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85',
+                                owner='owner',scratch=str(scratch),permission=permission))+'\n'
+                            self.assertEqual(path.stat().st_mode & 0o777, permission['mode'])
+                            self.assertEqual(permission['mode'], 0o755)
+                            path.chmod(0o111)
+                            self.assertEqual(path.stat().st_mode & 0o777, 0o111)
                         data=dict(baselineCommit='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85',owner='owner',scratch=str(scratch),
                                   permissions=permissions,cases=[dict(id=str(n),status='RUN') for n in range(10)])
-                        text=''.join('PDRS_METADATA_PERMISSION '+json.dumps(dict(
-                            baselineCommit=data['baselineCommit'],owner='owner',scratch=str(scratch),permission=item))+'\n' for item in permissions)
                         if scenario.startswith('record-'):
-                            code,reason = (9,None) if scenario=='record-failure' else (-9,'timeout')
+                            code,reason = {'record-failure':(9,None), 'record-timeout':(-9,'timeout'),
+                                           'record-output-limit':(-9,'output limit')}[scenario]
                         else:
                             serialized=json.dumps(data);fixture.write_text(serialized)
                             text+='PDRS_METADATA_ORACLE '+json.dumps(serialized)+'\n'
@@ -325,6 +332,10 @@ class FailureRestoreControls(unittest.TestCase):
                 self.assertEqual(names[-2:], ['restore','source-head'])
                 if scenario.startswith('record-'):
                     self.assertEqual(names,['record','restore','source-head'])
+                    expected = {'record-failure':'exit=9', 'record-timeout':'reason=timeout',
+                                'record-output-limit':'reason=output limit'}[scenario]
+                    self.assertIn(expected, result['error'])
+                    self.assertTrue(result['oracleGuard']['restored'])
                 if scenario == 'replay-failure':
                     self.assertEqual(names, ['record', 'replay', 'restore', 'source-head'])
                     for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777, 0o755)
@@ -343,7 +354,7 @@ class FailureRestoreControls(unittest.TestCase):
                 if scenario != 'noop-restore':
                     for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777,0o755)
                 for path in decoys:self.assertEqual(os.stat(path).st_mode & 0o777,0o700)
-                if scenario not in ('replay-failure','record-failure','record-timeout'):
+                if scenario != 'replay-failure' and not scenario.startswith('record-'):
                     native = next(r for r in result['runs'] if r['name']=='native-retained')
                     replay = next(r for r in result['runs'] if r['name']=='replay')
                     self.assertEqual(native['environment']['PDRS_METADATA_IO_LIVE'],str(output/'metadata-io.json'))
