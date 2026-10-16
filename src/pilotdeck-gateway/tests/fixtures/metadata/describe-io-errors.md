@@ -25,6 +25,13 @@ API/错误种类及结果时间属性；空、截短、重复、错方法、丢�
 NOT_RUN 负控均拒绝。完整 response 逐字节比较；配对测试要求上游下一帧只能是独立
 observer-fence，十项各自核对，无 describe_project 请求上游。
 
+Snapshot 只接受已登记事实或错误中的 API/path 组合；未知请求直接 panic，不能用
+可被产品吞掉的默认 ENOENT 代替。direct、pairing 和保留现场 Native 都记录生产实际
+entries 请求的路径与成功/errno，断言其使用该行 errorTarget；独立探测正确目录不算
+生产请求证据。这里只锁定目标请求，不要求 Rust 与 Node 的全部内部 I/O 轨迹一致。
+两个空 RPC 的 missing 场景保留错目录负控，expectedError 与 observation.code 各自有
+单轴负控；errorTarget 还必须匹配 home/projects 或 chats。
+
 权限以实际能力为前提。若 chmod 未能制造目标 EACCES，Node 标 NOT_RUN 并退出2；
 不能因为 root 或其他权限覆盖而记空 PASS。收集器保留受限目录到 Native 验证结束，
 随后以自有 owner marker 校验恢复三处权限。恢复之后只有固定 facts replay 仍适用；

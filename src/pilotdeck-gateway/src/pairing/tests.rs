@@ -1486,17 +1486,19 @@ async fn catalog_errno_worker() {
 
 async fn metadata_io_pairs<F: crate::metadata::Files + Send + Sync + 'static>(
     fixture: serde_json::Value,
-    make: impl Fn(&serde_json::Value) -> crate::metadata::Metadata<F>,
+    make: impl Fn(&serde_json::Value) -> crate::metadata::Metadata<crate::metadata::tests::Observed<F>>,
 ) {
     let rows = fixture["cases"].as_array().unwrap();
     assert_eq!(rows.len(), 10);
     for row in rows {
+        let metadata = make(row);
+        let requests = metadata.files.requests.clone();
         let (client, downstream) = tokio::io::duplex(1024 * 1024);
         let (upstream, server) = tokio::io::duplex(1024 * 1024);
         let mut pair = Pair {
             client,
             server,
-            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(make(row)))),
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
         };
         authenticate(&mut pair).await;
         let request = client_frame(0x81, 127, row["request"].as_str().unwrap().as_bytes());
@@ -1517,6 +1519,7 @@ async fn metadata_io_pairs<F: crate::metadata::Files + Send + Sync + 'static>(
         pair.server.shutdown().await.unwrap();
         eof(&mut pair.client).await;
         pair.finish().await;
+        requests.assert_target(row);
         println!("PDRS_METADATA_PAIR_OK {}", row["id"].as_str().unwrap());
     }
 }

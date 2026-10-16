@@ -2,6 +2,7 @@ use super::*;
 use crate::dispatch::{self, Route};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex};
 
 const SOURCE: &str = include_str!("../../tests/fixtures/metadata/describe-io-errors.json");
 const IDS: [&str; 10] = [
@@ -93,6 +94,14 @@ fn complete(fixture: &Value) -> bool {
         let projects = Path::new(row["home"].as_str().unwrap()).join("projects");
         let projects = projects.to_str().unwrap();
         let chats = row["chats"].as_str().unwrap();
+        let error_target = if id.starts_with("projects-") {
+            projects
+        } else {
+            chats
+        };
+        if row["errorTarget"].as_str() != Some(error_target) {
+            return false;
+        }
         match id {
             "positive" | "collision-positive" => row["expectedError"].is_null(),
             "projects-missing" => proof(
@@ -175,6 +184,56 @@ pub(crate) struct Snapshot {
     facts: Value,
     errors: HashMap<(String, String), String>,
 }
+#[derive(Clone, Default)]
+pub(crate) struct Requests(Arc<Mutex<Vec<EntryRequest>>>);
+#[derive(Debug, PartialEq)]
+struct EntryRequest {
+    path: PathBuf,
+    result: Result<(), Option<i32>>,
+}
+impl Requests {
+    fn entries(&self, path: &Path, result: &io::Result<Vec<(String, bool)>>) {
+        self.0.lock().unwrap().push(EntryRequest {
+            path: path.into(),
+            result: result.as_ref().map(|_| ()).map_err(io::Error::raw_os_error),
+        });
+    }
+    pub(crate) fn assert_target(&self, row: &Value) {
+        let target = PathBuf::from(row["errorTarget"].as_str().unwrap());
+        let result = row["expectedError"]
+            .as_str()
+            .map_or(Ok(()), |code| Err(errno(code).raw_os_error()));
+        assert!(
+            self.0.lock().unwrap().contains(&EntryRequest {
+                path: target,
+                result
+            }),
+            "{} production must request the recorded target and errno",
+            row["id"]
+        );
+        println!("PDRS_METADATA_PATH_OK {}", row["id"].as_str().unwrap());
+    }
+}
+pub(crate) struct Observed<F> {
+    inner: F,
+    pub(crate) requests: Requests,
+}
+impl<F: Files> Files for Observed<F> {
+    fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        let result = self.inner.entries(path);
+        self.requests.entries(path, &result);
+        result
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+    fn stat(&self, path: &Path) -> io::Result<Stat> {
+        self.inner.stat(path)
+    }
+    fn session_summary(&self, path: &Path, size: u64) -> Result<bool, ()> {
+        self.inner.session_summary(path, size)
+    }
+}
 fn errno(code: &str) -> io::Error {
     io::Error::from_raw_os_error(match code {
         "ENOENT" => libc::ENOENT,
@@ -186,9 +245,10 @@ fn errno(code: &str) -> io::Error {
 }
 impl Snapshot {
     fn fact(&self, path: &Path) -> io::Result<&Value> {
-        self.facts
+        Ok(self
+            .facts
             .get(path.to_str().unwrap())
-            .ok_or_else(|| errno("ENOENT"))
+            .unwrap_or_else(|| panic!("unrecorded filesystem path {}", path.display())))
     }
     fn error(&self, method: &str, path: &Path) -> io::Result<()> {
         match self
@@ -196,7 +256,21 @@ impl Snapshot {
             .get(&(method.into(), path.to_str().unwrap().into()))
         {
             Some(code) => Err(errno(code)),
-            None => Ok(()),
+            None => {
+                let fact = self.fact(path)?;
+                let registered = match method {
+                    "entries" => fact["entries"].is_array() || fact["entriesError"].is_string(),
+                    "read" => fact["bytes"].is_string() || fact["readError"].is_string(),
+                    "stat" => fact["directory"].is_boolean() || fact["statError"].is_string(),
+                    _ => false,
+                };
+                assert!(
+                    registered,
+                    "unrecorded filesystem API {method} at {}",
+                    path.display()
+                );
+                Ok(())
+            }
         }
     }
 }
@@ -204,7 +278,7 @@ impl Files for Snapshot {
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
         self.error("entries", path)?;
         let fact = self.fact(path)?;
-        if let Some(code) = fact["entriesError"].as_str().or(fact["statError"].as_str()) {
+        if let Some(code) = fact["entriesError"].as_str() {
             return Err(errno(code));
         }
         let mut entries = fact["entries"]
@@ -225,7 +299,7 @@ impl Files for Snapshot {
         use base64::Engine;
         self.error("read", path)?;
         let fact = self.fact(path)?;
-        if let Some(code) = fact["readError"].as_str().or(fact["statError"].as_str()) {
+        if let Some(code) = fact["readError"].as_str() {
             return Err(errno(code));
         }
         Ok(base64::engine::general_purpose::STANDARD
@@ -247,7 +321,7 @@ impl Files for Snapshot {
         })
     }
 }
-pub(crate) fn snapshot(row: &Value) -> Metadata<Snapshot> {
+pub(crate) fn snapshot(row: &Value) -> Metadata<Observed<Snapshot>> {
     let mut errors = HashMap::new();
     for o in row["observations"]
         .as_array()
@@ -270,18 +344,22 @@ pub(crate) fn snapshot(row: &Value) -> Metadata<Snapshot> {
     Metadata {
         home: row["home"].as_str().unwrap().into(),
         cwd: row["cwd"].as_str().unwrap().into(),
-        files: Snapshot {
-            facts: row["files"].clone(),
-            errors,
+        files: Observed {
+            inner: Snapshot {
+                facts: row["files"].clone(),
+                errors,
+            },
+            requests: Requests::default(),
         },
     }
 }
-fn compare<F: Files>(row: &Value, metadata: &Metadata<F>) {
+fn compare<F: Files>(row: &Value, metadata: &Metadata<Observed<F>>) {
     let request = dispatch::parse(row["request"].as_str().unwrap().as_bytes()).unwrap();
     let Route::LocalResponse(actual) = dispatch::route_with_metadata(&request, Some(metadata))
     else {
         panic!("describe_project must be local")
     };
+    metadata.files.requests.assert_target(row);
     assert_eq!(
         actual,
         row["response"].as_str().unwrap().as_bytes(),
@@ -293,6 +371,92 @@ fn compare<F: Files>(row: &Value, metadata: &Metadata<F>) {
 fn metadata_io_full_rpc_and_time_fields_match_real_default_node_chain() {
     let fixture = fixture();
     for row in fixture["cases"].as_array().unwrap() {
+        compare(row, &snapshot(row));
+    }
+}
+#[test]
+fn snapshot_rejects_unregistered_paths_and_api_pairs_without_swallowable_errors() {
+    let fixture = fixture();
+    let row = &fixture["cases"][0];
+    let metadata = snapshot(row);
+    let unknown = metadata.home.join("unrecorded");
+    for method in ["entries", "read", "stat"] {
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = metadata.files.inner.error(method, &unknown);
+        }))
+        .unwrap_err();
+        let message = panic.downcast_ref::<String>().unwrap();
+        assert!(message.contains("unrecorded filesystem path"), "{message}");
+    }
+    let directory = Path::new(row["chats"].as_str().unwrap());
+    for method in ["read", "unlink"] {
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = metadata.files.inner.error(method, directory);
+        }))
+        .unwrap_err();
+        let message = panic.downcast_ref::<String>().unwrap();
+        assert!(message.contains("unrecorded filesystem API"), "{message}");
+    }
+}
+#[test]
+fn snapshot_path_audit_rejects_unused_wrong_target_and_errno_even_for_empty_rpc() {
+    struct WrongDirectory {
+        inner: Snapshot,
+        target: PathBuf,
+    }
+    impl Files for WrongDirectory {
+        fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+            let typo = self.target.join("typo");
+            self.inner
+                .entries(if path == self.target { &typo } else { path })
+        }
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            self.inner.read(path)
+        }
+        fn stat(&self, path: &Path) -> io::Result<Stat> {
+            self.inner.stat(path)
+        }
+    }
+    let fixture = fixture();
+    for row in fixture["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] == "projects-missing" || row["id"] == "chats-missing")
+    {
+        let target = Path::new(row["errorTarget"].as_str().unwrap());
+        for wrong in [None, Some(target.join("typo")), Some(target.into())] {
+            let requests = Requests::default();
+            if let Some(path) = wrong {
+                let error = if path == target {
+                    io::Error::other("not a recorded errno")
+                } else {
+                    errno("ENOENT")
+                };
+                requests.entries(&path, &Err(error));
+            }
+            assert!(std::panic::catch_unwind(|| requests.assert_target(row)).is_err());
+        }
+        let original = snapshot(row);
+        let wrong = Metadata {
+            home: original.home,
+            cwd: original.cwd,
+            files: Observed {
+                inner: WrongDirectory {
+                    inner: original.files.inner,
+                    target: target.into(),
+                },
+                requests: original.files.requests,
+            },
+        };
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compare(row, &wrong)))
+            .unwrap_err();
+        assert!(
+            panic
+                .downcast_ref::<String>()
+                .unwrap()
+                .contains("unrecorded filesystem path")
+        );
         compare(row, &snapshot(row));
     }
 }
@@ -376,6 +540,28 @@ fn metadata_io_completeness_rejects_missing_cases_method_and_each_helper_error()
         o["code"] = "EACCES".into();
     }
     assert!(!complete(&wrong_code));
+    let mut wrong_observation = fixture.clone();
+    let row = wrong_observation["cases"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|r| r["id"] == "chats-loop")
+        .unwrap();
+    for observation in row["observations"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .filter(|o| o["ok"] == false)
+    {
+        observation["code"] = "EACCES".into();
+    }
+    assert!(
+        !complete(&wrong_observation),
+        "observation errno must be independently anchored"
+    );
+    let mut wrong_target = fixture.clone();
+    wrong_target["cases"][0]["errorTarget"] = "/unrecorded-target".into();
+    assert!(!complete(&wrong_target));
     let mut broken = fixture;
     broken["cases"][0]["status"] = "NOT_RUN".into();
     assert!(!complete(&broken));
@@ -387,11 +573,14 @@ pub(crate) fn live_fixture() -> Value {
     assert!(complete(&fixture));
     fixture
 }
-pub(crate) fn native(row: &Value) -> Metadata<NativeFiles> {
+pub(crate) fn native(row: &Value) -> Metadata<Observed<NativeFiles>> {
     Metadata {
         home: row["home"].as_str().unwrap().into(),
         cwd: row["cwd"].as_str().unwrap().into(),
-        files: NativeFiles,
+        files: Observed {
+            inner: NativeFiles,
+            requests: Requests::default(),
+        },
     }
 }
 #[test]
@@ -401,18 +590,6 @@ fn metadata_io_native_retained_files_match_full_node_rpc() {
     let rows = fixture["cases"].as_array().unwrap();
     for row in rows {
         let metadata = native(row);
-        if let Some(code) = row["expectedError"].as_str() {
-            let error = metadata
-                .files
-                .entries(Path::new(row["errorTarget"].as_str().unwrap()))
-                .unwrap_err();
-            assert_eq!(
-                crate::node_io::lookup(&error).unwrap().0,
-                code,
-                "{} actual errno",
-                row["id"]
-            );
-        }
         compare(row, &metadata);
         println!("PDRS_NATIVE_METADATA_OK {}", row["id"].as_str().unwrap());
     }
