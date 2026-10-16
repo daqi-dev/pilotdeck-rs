@@ -804,3 +804,6 @@ fn scan_metadata_summary(reader: &mut impl Read) -> io::Result<bool> {
     }
     Ok(metadata_summary(&JsValue::Object(merged)))
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

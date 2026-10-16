@@ -1433,3 +1433,56 @@ async fn catalog_errno_worker() {
     pair.finish().await;
     crate::test_process::receipt(row["id"].as_str().unwrap());
 }
+
+async fn metadata_io_pairs<F: crate::metadata::Files + Send + Sync + 'static>(
+    fixture: serde_json::Value,
+    make: impl Fn(&serde_json::Value) -> crate::metadata::Metadata<F>,
+) {
+    let rows = fixture["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 10);
+    for row in rows {
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(make(row)))),
+        };
+        authenticate(&mut pair).await;
+        let request = client_frame(0x81, 127, row["request"].as_str().unwrap().as_bytes());
+        write(&mut pair.client, &request).await;
+        read(
+            &mut pair.client,
+            &server_frame(1, row["response"].as_str().unwrap().as_bytes()),
+        )
+        .await;
+        let fence = client_frame(
+            0x81,
+            127,
+            br#"{"type":"request","id":"metadata-io-fence","method":"describe_server"}"#,
+        );
+        write(&mut pair.client, &fence).await;
+        read(&mut pair.server, &fence).await;
+        silent(&mut pair.server).await;
+        pair.server.shutdown().await.unwrap();
+        pair.finish().await;
+        println!("PDRS_METADATA_PAIR_OK {}", row["id"].as_str().unwrap());
+    }
+}
+#[tokio::test]
+async fn metadata_io_node_rpc_pairs_have_no_upstream_request() {
+    metadata_io_pairs(
+        crate::metadata::tests::fixture(),
+        crate::metadata::tests::snapshot,
+    )
+    .await;
+}
+#[tokio::test]
+#[ignore = "requires retained owned Node fixture before permission restoration"]
+async fn metadata_io_native_retained_pairs_have_no_upstream_request() {
+    metadata_io_pairs(
+        crate::metadata::tests::live_fixture(),
+        crate::metadata::tests::native,
+    )
+    .await;
+}

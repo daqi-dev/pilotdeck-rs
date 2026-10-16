@@ -1,0 +1,1859 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "platform": "darwin",
+  "owner": "2205739e-9a67-4dcc-bfd5-2dcd964c789e",
+  "scratch": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording",
+  "permissions": [
+    {
+      "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects",
+      "mode": 493
+    },
+    {
+      "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects",
+      "mode": 493
+    },
+    {
+      "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/chats",
+      "mode": 493
+    }
+  ],
+  "sources": {
+    "src/gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "src/web/server/listProjects.ts": "b12e71223d9667950a41dccc1215bfcca6b4cb9999f5ef43439286940131f210",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/session/storage/SessionList.ts": "f0649c933de46d312fd5f519734999ae191fddf82956369c6c67a203140a8d9d",
+    "src/session/storage/SessionLiteReader.ts": "23fd1df4ffa04a12d8ae12bfa815b2856283c5dfdec4d8e28786da0777fcabad"
+  },
+  "callPath": [
+    "GatewayWsConnection",
+    "describeWebProject",
+    "resolveProjectStorageDir",
+    "summarizeProject",
+    "getPilotProjectChatDir",
+    "listProjectSessions"
+  ],
+  "cases": [
+    {
+      "id": "positive",
+      "status": "RUN",
+      "expectedError": null,
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"positive\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"positive\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project\",\"sessionCount\":1,\"lastActivity\":1792108801234,\"createdAt\":1792112780398.466}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780398.1753,
+          "ctime_ms": 1792112780398.2822,
+          "mtime_ms": 1792112780398.2822,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780398.2808,
+          "ctime_ms": 1792112780398.4148,
+          "mtime_ms": 1792112780398.4148,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780398.4136,
+          "ctime_ms": 1792112780398.4675,
+          "mtime_ms": 1792112780398.4675,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780398.466,
+          "ctime_ms": 1792112780398.585,
+          "mtime_ms": 1792112780398.585,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/.cwd": {
+          "directory": false,
+          "size": 95,
+          "birth_ms": 1792112780398.5835,
+          "ctime_ms": 1792112780398.6125,
+          "mtime_ms": 1792112780398.6125,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9tZXRhZGF0YS9yZWNvcmRpbmcvY2FzZXMvcG9zaXRpdmUvcHJvamVjdAo="
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780398.5203,
+          "ctime_ms": 1792112780398.6724,
+          "mtime_ms": 1792112780398.6724,
+          "entries": [
+            [
+              "visible.jsonl",
+              false
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats/visible.jsonl": {
+          "directory": false,
+          "size": 150,
+          "birth_ms": 1792108801234,
+          "ctime_ms": 1792112780398.7363,
+          "mtime_ms": 1792108801234,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780398.228,
+          "ctime_ms": 1792112780398.228,
+          "mtime_ms": 1792112780398.228,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780398.466,
+            "ctime_ms": 1792112780398.585,
+            "mtime_ms": 1792112780398.585
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780398.466,
+            "ctime_ms": 1792112780398.585,
+            "mtime_ms": 1792112780398.585
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792112780398.228,
+            "ctime_ms": 1792112780398.228,
+            "mtime_ms": 1792112780398.228
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            "visible.jsonl"
+          ]
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:15:28)\n    at readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:22)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:24)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": false,
+            "size": 150,
+            "birth_ms": 1792108801234,
+            "ctime_ms": 1792112780398.7363,
+            "mtime_ms": 1792108801234
+          }
+        },
+        {
+          "api": "fsp.open",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:20:26)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "fd": 16
+          }
+        },
+        {
+          "api": "FileHandle.read",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-positive-project/chats/visible.jsonl",
+          "caller": "Error\n    at FileHandle.v.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:49:136)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:23:39)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "bytesRead": 150,
+            "base64": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+          }
+        }
+      ]
+    },
+    {
+      "id": "collision-positive",
+      "status": "RUN",
+      "expectedError": null,
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-collision-positive-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats",
+      "request": "{\"type\":\"request\",\"id\":\"collision-positive\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"collision-positive\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project\",\"sessionCount\":1,\"lastActivity\":1792108801234,\"createdAt\":1792112780404.753}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780404.537,
+          "ctime_ms": 1792112780404.6448,
+          "mtime_ms": 1792112780404.6448,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780404.6438,
+          "ctime_ms": 1792112780404.7048,
+          "mtime_ms": 1792112780404.7048,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780404.7039,
+          "ctime_ms": 1792112780404.759,
+          "mtime_ms": 1792112780404.759,
+          "entries": [
+            [
+              "collision-registered",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780404.753,
+          "ctime_ms": 1792112780404.897,
+          "mtime_ms": 1792112780404.897,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/.cwd": {
+          "directory": false,
+          "size": 105,
+          "birth_ms": 1792112780404.8955,
+          "ctime_ms": 1792112780404.9287,
+          "mtime_ms": 1792112780404.9287,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9tZXRhZGF0YS9yZWNvcmRpbmcvY2FzZXMvY29sbGlzaW9uLXBvc2l0aXZlL3Byb2plY3QK"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780404.8145,
+          "ctime_ms": 1792112780404.9907,
+          "mtime_ms": 1792112780404.9907,
+          "entries": [
+            [
+              "visible.jsonl",
+              false
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats/visible.jsonl": {
+          "directory": false,
+          "size": 150,
+          "birth_ms": 1792108801234,
+          "ctime_ms": 1792112780405.048,
+          "mtime_ms": 1792108801234,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780404.5862,
+          "ctime_ms": 1792112780404.5862,
+          "mtime_ms": 1792112780404.5862,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-collision-positive-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": false,
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-collision-positive-project'"
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:146:21)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "collision-registered",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:153:29)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780404.753,
+            "ctime_ms": 1792112780404.897,
+            "mtime_ms": 1792112780404.897
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "collision-registered",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792112780404.5862,
+            "ctime_ms": 1792112780404.5862,
+            "mtime_ms": 1792112780404.5862
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            "visible.jsonl"
+          ]
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:15:28)\n    at readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:22)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:24)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": false,
+            "size": 150,
+            "birth_ms": 1792108801234,
+            "ctime_ms": 1792112780405.048,
+            "mtime_ms": 1792108801234
+          }
+        },
+        {
+          "api": "fsp.open",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:20:26)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "fd": 16
+          }
+        },
+        {
+          "api": "FileHandle.read",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/collision-positive/home/projects/collision-registered/chats/visible.jsonl",
+          "caller": "Error\n    at FileHandle.v.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:49:136)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:23:39)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "bytesRead": 150,
+            "base64": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+          }
+        }
+      ]
+    },
+    {
+      "id": "projects-missing",
+      "status": "RUN",
+      "expectedError": "ENOENT",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"projects-missing\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"projects-missing\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/project\",\"sessionCount\":0}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780407.1597,
+          "ctime_ms": 1792112780407.2932,
+          "mtime_ms": 1792112780407.2932,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780407.292,
+          "ctime_ms": 1792112780408.2686,
+          "mtime_ms": 1792112780408.2686,
+          "entries": [
+            [
+              "projects.held",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects": {
+          "statError": "ENOENT"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project": {
+          "statError": "ENOENT"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project/.cwd": {
+          "statError": "ENOENT"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project/chats": {
+          "statError": "ENOENT"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project/chats/visible.jsonl": {
+          "statError": "ENOENT"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780407.2305,
+          "ctime_ms": 1792112780407.2305,
+          "mtime_ms": 1792112780407.2305,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": false,
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project'"
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:146:21)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOENT",
+          "syscall": "scandir",
+          "message": "ENOENT: no such file or directory, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects'"
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": false
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOENT",
+          "syscall": "scandir",
+          "message": "ENOENT: no such file or directory, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-missing-project/chats'"
+        }
+      ]
+    },
+    {
+      "id": "projects-notdir",
+      "status": "RUN",
+      "expectedError": "ENOTDIR",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"projects-notdir\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"projects-notdir\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/project\",\"sessionCount\":0}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780409.1035,
+          "ctime_ms": 1792112780409.2183,
+          "mtime_ms": 1792112780409.2183,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780409.2166,
+          "ctime_ms": 1792112780410.0427,
+          "mtime_ms": 1792112780410.0427,
+          "entries": [
+            [
+              "projects",
+              false
+            ],
+            [
+              "projects.held",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects": {
+          "directory": false,
+          "size": 13,
+          "birth_ms": 1792112780410.04,
+          "ctime_ms": 1792112780410.0674,
+          "mtime_ms": 1792112780410.0674,
+          "bytes": "bm90IGRpcmVjdG9yeQ=="
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project": {
+          "statError": "ENOTDIR"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project/.cwd": {
+          "statError": "ENOTDIR"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project/chats": {
+          "statError": "ENOTDIR"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project/chats/visible.jsonl": {
+          "statError": "ENOTDIR"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780409.164,
+          "ctime_ms": 1792112780409.164,
+          "mtime_ms": 1792112780409.164,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": false,
+          "code": "ENOTDIR",
+          "syscall": "stat",
+          "message": "ENOTDIR: not a directory, stat '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project'"
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:146:21)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOTDIR",
+          "syscall": "scandir",
+          "message": "ENOTDIR: not a directory, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects'"
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOTDIR",
+          "syscall": "scandir",
+          "message": "ENOTDIR: not a directory, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects'"
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOTDIR",
+          "syscall": "scandir",
+          "message": "ENOTDIR: not a directory, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-notdir-project/chats'"
+        }
+      ]
+    },
+    {
+      "id": "projects-denied-legacy",
+      "status": "RUN",
+      "expectedError": "EACCES",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"projects-denied-legacy\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"projects-denied-legacy\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/project\",\"sessionCount\":1,\"lastActivity\":1792108801234}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780410.9846,
+          "ctime_ms": 1792112780411.0923,
+          "mtime_ms": 1792112780411.0923,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780411.0903,
+          "ctime_ms": 1792112780411.1646,
+          "mtime_ms": 1792112780411.1646,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780411.163,
+          "ctime_ms": 1792112780411.808,
+          "mtime_ms": 1792112780411.2168,
+          "entriesError": "EACCES"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780411.2156,
+          "ctime_ms": 1792112780411.2727,
+          "mtime_ms": 1792112780411.2727,
+          "entries": [
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780411.2715,
+          "ctime_ms": 1792112780411.3389,
+          "mtime_ms": 1792112780411.3389,
+          "entries": [
+            [
+              "visible.jsonl",
+              false
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/chats/visible.jsonl": {
+          "directory": false,
+          "size": 150,
+          "birth_ms": 1792108801234,
+          "ctime_ms": 1792112780411.4053,
+          "mtime_ms": 1792108801234,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780411.0374,
+          "ctime_ms": 1792112780411.0374,
+          "mtime_ms": 1792112780411.0374,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 96,
+            "birth_ms": 1792112780411.2156,
+            "ctime_ms": 1792112780411.2727,
+            "mtime_ms": 1792112780411.2727
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOENT",
+          "syscall": "open",
+          "message": "ENOENT: no such file or directory, open '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/.cwd'"
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:146:21)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "EACCES",
+          "syscall": "scandir",
+          "message": "EACCES: permission denied, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects'"
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "EACCES",
+          "syscall": "scandir",
+          "message": "EACCES: permission denied, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects'"
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            "visible.jsonl"
+          ]
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:15:28)\n    at readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:22)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:24)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": false,
+            "size": 150,
+            "birth_ms": 1792108801234,
+            "ctime_ms": 1792112780411.4053,
+            "mtime_ms": 1792108801234
+          }
+        },
+        {
+          "api": "fsp.open",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:20:26)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "fd": 16
+          }
+        },
+        {
+          "api": "FileHandle.read",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-legacy/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-legacy-project/chats/visible.jsonl",
+          "caller": "Error\n    at FileHandle.v.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:49:136)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:23:39)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "bytesRead": 150,
+            "base64": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+          }
+        }
+      ]
+    },
+    {
+      "id": "projects-denied-marker",
+      "status": "RUN",
+      "expectedError": "EACCES",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"projects-denied-marker\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"projects-denied-marker\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/project\",\"sessionCount\":1,\"lastActivity\":1792108801234,\"createdAt\":1792112780413.2424}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780413.0017,
+          "ctime_ms": 1792112780413.1157,
+          "mtime_ms": 1792112780413.1157,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780413.112,
+          "ctime_ms": 1792112780413.187,
+          "mtime_ms": 1792112780413.187,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780413.1829,
+          "ctime_ms": 1792112780413.9324,
+          "mtime_ms": 1792112780413.2434,
+          "entriesError": "EACCES"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780413.2424,
+          "ctime_ms": 1792112780413.3608,
+          "mtime_ms": 1792112780413.3608,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/.cwd": {
+          "directory": false,
+          "size": 109,
+          "birth_ms": 1792112780413.3596,
+          "ctime_ms": 1792112780413.3853,
+          "mtime_ms": 1792112780413.3853,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9tZXRhZGF0YS9yZWNvcmRpbmcvY2FzZXMvcHJvamVjdHMtZGVuaWVkLW1hcmtlci9wcm9qZWN0Cg=="
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780413.2974,
+          "ctime_ms": 1792112780413.4453,
+          "mtime_ms": 1792112780413.4453,
+          "entries": [
+            [
+              "visible.jsonl",
+              false
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/chats/visible.jsonl": {
+          "directory": false,
+          "size": 150,
+          "birth_ms": 1792108801234,
+          "ctime_ms": 1792112780413.527,
+          "mtime_ms": 1792108801234,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780413.0583,
+          "ctime_ms": 1792112780413.0583,
+          "mtime_ms": 1792112780413.0583,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780413.2424,
+            "ctime_ms": 1792112780413.3608,
+            "mtime_ms": 1792112780413.3608
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780413.2424,
+            "ctime_ms": 1792112780413.3608,
+            "mtime_ms": 1792112780413.3608
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "EACCES",
+          "syscall": "scandir",
+          "message": "EACCES: permission denied, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects'"
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            "visible.jsonl"
+          ]
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:15:28)\n    at readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:22)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:24)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": false,
+            "size": 150,
+            "birth_ms": 1792108801234,
+            "ctime_ms": 1792112780413.527,
+            "mtime_ms": 1792108801234
+          }
+        },
+        {
+          "api": "fsp.open",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:20:26)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "fd": 16
+          }
+        },
+        {
+          "api": "FileHandle.read",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/projects-denied-marker/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-projects-denied-marker-project/chats/visible.jsonl",
+          "caller": "Error\n    at FileHandle.v.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:49:136)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:23:39)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "bytesRead": 150,
+            "base64": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+          }
+        }
+      ]
+    },
+    {
+      "id": "chats-missing",
+      "status": "RUN",
+      "expectedError": "ENOENT",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/chats",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"chats-missing\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"chats-missing\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project\",\"sessionCount\":0,\"createdAt\":1792112780415.2595}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780415.0557,
+          "ctime_ms": 1792112780415.159,
+          "mtime_ms": 1792112780415.159,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780415.1577,
+          "ctime_ms": 1792112780415.2126,
+          "mtime_ms": 1792112780415.2126,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780415.2114,
+          "ctime_ms": 1792112780415.2607,
+          "mtime_ms": 1792112780415.2607,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780415.2595,
+          "ctime_ms": 1792112780416.0046,
+          "mtime_ms": 1792112780416.0046,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats.held",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/.cwd": {
+          "directory": false,
+          "size": 100,
+          "birth_ms": 1792112780415.367,
+          "ctime_ms": 1792112780415.3972,
+          "mtime_ms": 1792112780415.3972,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9tZXRhZGF0YS9yZWNvcmRpbmcvY2FzZXMvY2hhdHMtbWlzc2luZy9wcm9qZWN0Cg=="
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/chats": {
+          "statError": "ENOENT"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/chats/visible.jsonl": {
+          "statError": "ENOENT"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780415.109,
+          "ctime_ms": 1792112780415.109,
+          "mtime_ms": 1792112780415.109,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780415.2595,
+            "ctime_ms": 1792112780416.0046,
+            "mtime_ms": 1792112780416.0046
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780415.2595,
+            "ctime_ms": 1792112780416.0046,
+            "mtime_ms": 1792112780416.0046
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792112780415.109,
+            "ctime_ms": 1792112780415.109,
+            "mtime_ms": 1792112780415.109
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOENT",
+          "syscall": "scandir",
+          "message": "ENOENT: no such file or directory, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-missing/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-missing-project/chats'"
+        }
+      ]
+    },
+    {
+      "id": "chats-notdir",
+      "status": "RUN",
+      "expectedError": "ENOTDIR",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/chats",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"chats-notdir\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"chats-notdir\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project\",\"sessionCount\":0,\"createdAt\":1792112780417.3672}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780417.1506,
+          "ctime_ms": 1792112780417.2524,
+          "mtime_ms": 1792112780417.2524,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780417.2493,
+          "ctime_ms": 1792112780417.3152,
+          "mtime_ms": 1792112780417.3152,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780417.3142,
+          "ctime_ms": 1792112780417.3682,
+          "mtime_ms": 1792112780417.3682,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project": {
+          "directory": true,
+          "size": 160,
+          "birth_ms": 1792112780417.3672,
+          "ctime_ms": 1792112780418.119,
+          "mtime_ms": 1792112780418.119,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              false
+            ],
+            [
+              "chats.held",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/.cwd": {
+          "directory": false,
+          "size": 99,
+          "birth_ms": 1792112780417.493,
+          "ctime_ms": 1792112780417.5198,
+          "mtime_ms": 1792112780417.5198,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9tZXRhZGF0YS9yZWNvcmRpbmcvY2FzZXMvY2hhdHMtbm90ZGlyL3Byb2plY3QK"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/chats": {
+          "directory": false,
+          "size": 13,
+          "birth_ms": 1792112780418.1177,
+          "ctime_ms": 1792112780418.142,
+          "mtime_ms": 1792112780418.142,
+          "bytes": "bm90IGRpcmVjdG9yeQ=="
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/chats/visible.jsonl": {
+          "statError": "ENOTDIR"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780417.2017,
+          "ctime_ms": 1792112780417.2017,
+          "mtime_ms": 1792112780417.2017,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 160,
+            "birth_ms": 1792112780417.3672,
+            "ctime_ms": 1792112780418.119,
+            "mtime_ms": 1792112780418.119
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 160,
+            "birth_ms": 1792112780417.3672,
+            "ctime_ms": 1792112780418.119,
+            "mtime_ms": 1792112780418.119
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792112780417.2017,
+            "ctime_ms": 1792112780417.2017,
+            "mtime_ms": 1792112780417.2017
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOTDIR",
+          "syscall": "scandir",
+          "message": "ENOTDIR: not a directory, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-notdir/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-notdir-project/chats'"
+        }
+      ]
+    },
+    {
+      "id": "chats-denied",
+      "status": "RUN",
+      "expectedError": "EACCES",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/chats",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"chats-denied\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"chats-denied\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project\",\"sessionCount\":0,\"createdAt\":1792112780419.5122}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780419.3237,
+          "ctime_ms": 1792112780419.4124,
+          "mtime_ms": 1792112780419.4124,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780419.4114,
+          "ctime_ms": 1792112780419.464,
+          "mtime_ms": 1792112780419.464,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780419.4631,
+          "ctime_ms": 1792112780419.5132,
+          "mtime_ms": 1792112780419.5132,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780419.5122,
+          "ctime_ms": 1792112780419.5999,
+          "mtime_ms": 1792112780419.5999,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/.cwd": {
+          "directory": false,
+          "size": 99,
+          "birth_ms": 1792112780419.5984,
+          "ctime_ms": 1792112780419.6206,
+          "mtime_ms": 1792112780419.6206,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9tZXRhZGF0YS9yZWNvcmRpbmcvY2FzZXMvY2hhdHMtZGVuaWVkL3Byb2plY3QK"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780419.5547,
+          "ctime_ms": 1792112780420.0334,
+          "mtime_ms": 1792112780419.6682,
+          "entriesError": "EACCES"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/chats/visible.jsonl": {
+          "statError": "EACCES"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780419.369,
+          "ctime_ms": 1792112780419.369,
+          "mtime_ms": 1792112780419.369,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780419.5122,
+            "ctime_ms": 1792112780419.5999,
+            "mtime_ms": 1792112780419.5999
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792112780419.5122,
+            "ctime_ms": 1792112780419.5999,
+            "mtime_ms": 1792112780419.5999
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792112780419.369,
+            "ctime_ms": 1792112780419.369,
+            "mtime_ms": 1792112780419.369
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "EACCES",
+          "syscall": "scandir",
+          "message": "EACCES: permission denied, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-denied/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-denied-project/chats'"
+        }
+      ]
+    },
+    {
+      "id": "chats-loop",
+      "status": "RUN",
+      "expectedError": "ELOOP",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/chats",
+      "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop",
+      "project": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"chats-loop\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"chats-loop\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project\",\"sessionCount\":0,\"createdAt\":1792112780421.3542}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792112780421.1282,
+          "ctime_ms": 1792112780421.2373,
+          "mtime_ms": 1792112780421.2373,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780421.2363,
+          "ctime_ms": 1792112780421.2954,
+          "mtime_ms": 1792112780421.2954,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792112780421.2944,
+          "ctime_ms": 1792112780421.3552,
+          "mtime_ms": 1792112780421.3552,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project": {
+          "directory": true,
+          "size": 160,
+          "birth_ms": 1792112780421.3542,
+          "ctime_ms": 1792112780422.172,
+          "mtime_ms": 1792112780422.172,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              false
+            ],
+            [
+              "chats.held",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/.cwd": {
+          "directory": false,
+          "size": 97,
+          "birth_ms": 1792112780421.4675,
+          "ctime_ms": 1792112780421.4934,
+          "mtime_ms": 1792112780421.4934,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9tZXRhZGF0YS9yZWNvcmRpbmcvY2FzZXMvY2hhdHMtbG9vcC9wcm9qZWN0Cg=="
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/chats": {
+          "statError": "ELOOP"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/chats/visible.jsonl": {
+          "statError": "ELOOP"
+        },
+        "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792112780421.1826,
+          "ctime_ms": 1792112780421.1826,
+          "mtime_ms": 1792112780421.1826,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:74:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:77:184)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 160,
+            "birth_ms": 1792112780421.3542,
+            "ctime_ms": 1792112780422.172,
+            "mtime_ms": 1792112780422.172
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 160,
+            "birth_ms": 1792112780421.3542,
+            "ctime_ms": 1792112780422.172,
+            "mtime_ms": 1792112780422.172
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:47:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792112780421.1826,
+            "ctime_ms": 1792112780421.1826,
+            "mtime_ms": 1792112780421.1826
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/20261015-100000-cli-server/src/pilotdeck-gateway/tests/record_metadata_io.mts:48:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ELOOP",
+          "syscall": "scandir",
+          "message": "ELOOP: too many symbolic links encountered, scandir '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/metadata/recording/cases/chats-loop/home/projects/Users-da-ws-pilotdeck-rs-_tmp-20261016-debt-cleanup-metadata-recording-cases-chats-loop-project/chats'"
+        }
+      ]
+    }
+  ]
+}
