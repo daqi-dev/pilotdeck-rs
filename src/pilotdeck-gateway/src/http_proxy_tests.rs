@@ -54,6 +54,25 @@ impl AsyncWrite for Scripted {
 }
 
 async fn boundary_case(head: &[u8], split_headers: bool, split_later: bool, later: Vec<u8>) {
+    boundary_stream(head, split_headers, split_later, later, false)
+        .await
+        .expect("complete upstream stream must match exactly through EOF");
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct StreamMismatch {
+    code: &'static str,
+    expected: Vec<u8>,
+    actual: Vec<u8>,
+}
+
+async fn boundary_stream(
+    head: &[u8],
+    split_headers: bool,
+    split_later: bool,
+    later: Vec<u8>,
+    duplicate: bool,
+) -> Result<(), StreamMismatch> {
     let (io, mut client) = tokio::io::duplex(4096);
     let (upstream, mut host) = tokio::io::duplex(4096);
     let count = Arc::new(AtomicUsize::new(0));
@@ -121,13 +140,15 @@ async fn boundary_case(head: &[u8], split_headers: bool, split_later: bool, late
     }
     assert!(headers.starts_with(b"HTTP/1.1 101"));
     client.write_all(&after).await.unwrap();
+    if duplicate {
+        client.write_all(&later).await.unwrap();
+    }
     let expected = [later, after].concat();
-    let mut actual = vec![0; expected.len()];
-    host.read_exact(&mut actual).await.unwrap();
-    assert_eq!(
-        actual, expected,
-        "only the initial HTTP read head is discarded"
-    );
+    // Real downstream FIN ends the production send pump. Retain the owned host
+    // reader until upstream EOF, so a correct prefix cannot hide extra bytes.
+    client.shutdown().await.unwrap();
+    let mut actual = Vec::new();
+    host.read_to_end(&mut actual).await.unwrap();
     host.shutdown().await.unwrap();
     let mut output = Vec::new();
     client.read_to_end(&mut output).await.unwrap();
@@ -137,6 +158,31 @@ async fn boundary_case(head: &[u8], split_headers: bool, split_later: bool, late
     );
     pair.await.unwrap().unwrap();
     server.await.unwrap().unwrap();
+    if actual != expected {
+        return Err(StreamMismatch {
+            code: "UPSTREAM_FULL_STREAM_MISMATCH",
+            expected,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn actual_trailing_duplicate_is_rejected_by_full_stream_gate() {
+    timeout(Duration::from_secs(3), async {
+        let later = client_frame(0x81, 126, b"pre101 frame preserved once");
+        let result = boundary_stream(&[], false, false, later.clone(), true).await;
+        let rejected = result.expect_err("actual duplicate must be rejected by common gate");
+        assert_eq!(rejected.code, "UPSTREAM_FULL_STREAM_MISMATCH");
+        assert_eq!(
+            rejected.actual,
+            [rejected.expected, later].concat(),
+            "negative must actually deliver exactly the trailing duplicate"
+        );
+    })
+    .await
+    .expect("actual duplicate must reach the same EOF byte gate");
 }
 
 #[tokio::test]
@@ -304,7 +350,7 @@ fn cancelling_service_lease_wakes_paused_reader() {
         paused: true,
         waker: None,
     }));
-    let (io, _client) = tokio::io::duplex(64);
+    let (io, mut client) = tokio::io::duplex(64);
     let mut gated = UpgradeReadGate {
         stream: io,
         state: state.clone(),
@@ -324,6 +370,22 @@ fn cancelling_service_lease_wakes_paused_reader() {
     drop(service_future);
     assert!(!state.lock().unwrap().paused);
     assert_eq!(counter.0.load(Ordering::SeqCst), 1);
+    let mut write_context = Context::from_waker(&waker);
+    assert!(matches!(
+        Pin::new(&mut client).poll_write(&mut write_context, b"R"),
+        Poll::Ready(Ok(1))
+    ));
+    let mut bytes = [0; 1];
+    let mut buffer = ReadBuf::new(&mut bytes);
+    assert!(matches!(
+        Pin::new(&mut gated).poll_read(&mut cx, &mut buffer),
+        Poll::Ready(Ok(()))
+    ));
+    assert_eq!(
+        buffer.filled(),
+        b"R",
+        "same gate must read actual bytes after lease drop"
+    );
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@ node src/pilotdeck-gateway/tests/upgrade/record.mjs \
   /absolute/path/to/new/evidence-output
 ```
 
-输出目录必须不存在。基线需已有 dist 与依赖；调用者先从独立 target 的 Cargo JSON compiler-artifact 绑定当前产品源码与二进制，不能靠共享产物路径代替来源证明。脚本核产品目录无未提交修改，记录 HEAD 与输入二进制/基线源码及 dist 的前后 SHA；脚本或 cfg(test) 提交导致的 HEAD 变化须由产品源码 hash 关联。
+输出目录必须不存在。基线需已有 dist 与依赖；调用者先从独立 target 的 Cargo JSON compiler-artifact 绑定当前产品源码与二进制，不能靠共享产物路径代替来源证明。`source_identity.mjs` 的固定 `producerInputs` 合同在创建输出/child/listener前核源码HEAD、包级清单/SHA、staged/unstaged、scoped untracked（含ignored）及build/config存在/缺失；cleanup后重复验证，漂移保存FAIL与诊断。仅state/docs改动不挡。新路径依赖须更新合同。`report.sourceIdentity.version=1`与既有binary前后SHA分开；源码快照**不证明**外部binary由该HEAD编译，caller仍须保Cargo artifact来源。旧report缺此字段为legacy，保原件，不追认或作废旧运行。未来helper对照用显式新owned目录：`PDRS_SOURCE_IDENTITY_FIXTURES=/absolute/new-owned-parent node --test src/pilotdeck-gateway/tests/upgrade/source_identity.test.mjs`；本次源码准备未运行。
 
 只启动自有 loopback 监听，隔离 HOME/PILOT_HOME/TMPDIR/数据库/工作目录，无模型调用或真实用户目录访问。就绪轮询有界，协议时序以真实 101 屏障、socket data 和实际异常为依据。子进程、stdio 与日志分别有界收尾；SIGINT/SIGTERM 进入同一个 finally 清理。
 
