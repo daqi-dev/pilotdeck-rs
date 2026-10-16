@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T17:03:11.626375+08:00 · R54实际新窗**：R53单cache已清/保全root核同，最新余1238650880B达新1.10GiB门；ledger_fidelity仅获a4@17334d2运行权，目标20261016-170311/outputready-admission-r54-run-vifvft2v，target+proof≤0.90GiB/外留0.20/总600s/Cargo300s/每test60s/每流1MiB，只4正常2反控首次一次。源码仍root冻结、不抢写；失败保全，不复用旧artifact或盲重跑。PR146远端仍8f7独立尾审/两CI绿；root状态资源分支独立，不扩其评审scope。
+
 > **2026-10-16T16:55:42+08:00资源接续**：R52单位facet已有双家独立gate0318f152，只闭资源单位；PR146远端8f7d67b两家tiny尾差/M3契约仍待，不预批合并。a4 clean17334d2共用门源码已root/Astra核同且六格NOT_RUN；source packet仅只读备料，不抢源。R53仅授权093057一个incremental临界重核后清理，保全noncache/942原件/旧精确产物，实际du回root再另发0.90GiB窗；不自动Cargo/Node。root状态树改用codex/ready-admission-resource-20261016，原PR146分支8f7与f8交接分支保留，中央原owner不变。
 
 > **2026-10-16 16:35接续**：root核main589f6bf/34open/四Draft，五树与旧原件保留，中央原owner继续GLM/DS独审；原f8dfd1c交接分支已推不改。PR146单位P1有R52精确消歧候选，双口径du原件可复算，独立两家确认前不开新构建。a4@9758299源码已归还且六格全PREPARED_NOT_RUN；Astra只读发现X1/X2目前靠mutant专用panic拒、缺同一健康因果/wire门，先修测试判据后再申请精确产物窗，65/P3/A5.4未清。唯一下一实现仍该共同ReadyAdmission矩阵，无新队列/held解封。

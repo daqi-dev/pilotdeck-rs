@@ -47,3 +47,16 @@ R44两目标执行后真实余量仅0.975994GiB，低于1.20，按卡停在Cargo
 清后完整du实数交root，不Cargo/Node/新target。只有root据新HEAD clean/资源现况另发一次更小0.90GiB窗口、外留0.20GiB（实际门至少1181116007B）才开构建；原1GiB/1.20门不修改，未够门只停本实验。此处只批准可恢复cache清理，不预批准该新窗或任何评分/阶段完成。
 
 原则与断言：缓存授权精确到当次对象及临界条件，保留报告不推导整个目录可删；全部不可再生证据继续保留。实际释放由全局du证明，后续运行必须有独立新窗，清理成功不能替编译/验收通过。
+
+
+## R54 ReadyAdmission首次精确产物与四正常两反控（AI代批，待人复核）
+
+R53仅清093057 cache完成，index001e1c1608261fd824a238245b013bc94d5298b127cf9c621c7ad2405ba42527的15原件已root逐SHA/size核；6029noncache/旧1120002356与942原件/c990/3ed守恒。2026-10-16T17:03:11.626375+08:00完整du总48153473024B，46GiB口径余1238650880B≥1181116007B；原始值在本次root-preflight.json，清理预测不替代此实数。
+
+给ledger_fidelity独占wt-a4m3运行权（不写源），source17334d2d93f6a1b98bde641a8e2ce6475c18fabf clean；原两P1共用门修复仅root/Astra静态核同，GLM/DS终审仍待。本次唯一新target为_build/20261016-170311，唯一输出_tmp/20261016-debt-cleanup/order-architecture/ready-admission-r54-run-vifvft2v，task/execution-spec来自order-architecture/ready-admission-common-audit-20261016-163800/index f685d4da5ee3eac8356dd2132a7e660a4eae4e105af8af38ed24af5d861c5987。单位gate0318f152前提保持，仅本次显式override源树205旧单位简写，不改源码HEAD或倒填旧实验。
+
+这是独立更小窗：新target+本输出逻辑字节合计≤966367641B（向下取0.90GiB），全局外留≥214748365B（向上取0.20GiB），当前门1181116007B；既有1GiB/1.20窗不变。持续监督总46GiB/此窗/余量与输出量，触限仅终止本轮自有进程组并wait/reap、保所有失败原件，不删旧物补预算。600s总限；Cargo独立≤300s（编译不是实验格，不套60s测试限），每个精确test≤60s/每流1MiB，Node host内部15s只作失败护栏；首次build失败不选旧artifact、健康格失败不盲跑后续、不重试固定矩阵。
+
+按execution-spec原绝对Rust1.99/原HOME-cache、四wrapper显式空、offline/locked/jobs2、incremental0；Cargo JSON中实际唯一lib test executable必须在此新target内，存完整原始编译输出、source/tool/manifest/prereg前后SHA、artifact路径/大小/SHA，不复用旧c990/3ed。只一次D1+/D1−/A+/A−及X1/X2，反控须有真正hit/W0/C0与同一audit.json具体R2_REQUIRED/COMMIT_SEQUENCE_VIOLATION拒，setup/timeout/0test不是成功；四健康必须两共用audit都Ok且完整动态wire一致。仅六格，没有额外恢复格、没有旧A0/全量53/自然窗口重跑。所有自有PGID与host都须finally回收，旧942原件/112000/精确二进制/source/tools前后核。
+
+原则与断言：显式接纳子域实验不代表默认产品修复，成功也只记录该子域与装置，#65.1默认反例/65.2自然窗/P3/A5.4/真人实效继续未完成；失败保原始具体断言并转独立工作，不换期望让结果变绿。资源判断可撤回、判分语义与冻结标准均不动。
