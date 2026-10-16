@@ -128,3 +128,13 @@ R26后续廉价补项：driver原文已入仓，Calibration-Evidence当前指针
 谁受影响：PR141、A4/#46验收可信性。账本可撤回；不改冻结、评分、Node原件或意向；不新增平行子项队列。选项是保留旧P2遗漏当前P1，或按现行P2-b取P1并保留历史P2。执行后者，确认度与in-review/fixed=false分列；P0下载事件139.2独立保持OPEN。
 
 原则与断言：候选修复不能提前降低存量等级；影响测量结论的具体漏洞按P1记至独立闭合。JSON保留historicalSnapshotSeverity=P2、current severity=P1、DS原文SHA与9e候选证据SHA，33项旧账保真核查与新项字段断言分别验证。依据主仓_tmp/20261016-debt-cleanup/reviews/metadata-path-correction-deepseek.md及metadata/provenance-report.md。
+
+## R34 动态Snapshot数值复算差异另列未修facet（AI代批，待人复核）
+
+卡在哪：A-N1额外尝试将9e动态Node原件完整Snapshot RPC重放，collision-positive的JSON facts.birth_ms与Node createdAt raw均1792123157858.0955，Rust变1792123157858.0957。最初口头把facts也误说成0957，现以原始JSON/log精确更正，不能为了绿改期望。
+
+谁受影响：动态facts重放可复现性及139.1；原9e静态三replay和真Native十+pair十并未执行此动态Snapshot路径，不能一概抹去或扩张其成功范围。可撤回分类，不改冻结/意向/原件或生产。
+
+选项与后果：将本次A-N1纯validator通过泛化到完整RPC会掩盖差异；立即加舍入/改oracle会变尺子；当前采用新增P1候选facet，confirmation=candidate/fixed=false，先独立定级和影响范围，再精确修数值解码。极小实际Rust probe中serde_json::from_str<Value>变1ULP，标准str.parse<f64>和serde_json序列化该标准值保持原值；证据只定位已测链，不代替依赖选型或全链复验。
+
+原则与断言：新暴露的确定性运行差异不因它来自额外验证而抹掉；已过范围与新失败范围分列。JSON用raw字符串保存两值、绑定原失败/诊断SHA、保持P1候选未修并明确nextAction，35项纯JSON核查包含此断言。原件见主仓_tmp/20261016-debt-cleanup/metadata/{success-api-report.md,success-api-extra-rpc-mismatch.json,success-api-float-probe.log}。

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "ALL_ROWS_RECEIVED_SCOPE_QUALIFICATIONS_RECONCILIATION_REQUIRED",
-  "asOf": "2026-10-16T04:05:11.526154+00:00",
+  "asOf": "2026-10-16T04:21:41.439596+00:00",
   "remoteStatusAsOf": "2026-10-16T04:03:13.500106+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
@@ -92,7 +92,35 @@
             "candidateEvidenceSha256": "fbe0fa408d6c46bf676cad4bde5c1f0708178a57da3cdd843211d4d737e75827",
             "fixed": false,
             "note": "修复候选与负控成功不等于独立双家、整PR及当前CI闭合；旧P2保留，当前取高P1。"
-          }
+          },
+          "currentCandidate": {
+            "head": "7079c3512cb9d267000dd450c90eab8a81cbdcb0",
+            "previousFullDriverHead": "9e164859b8a4d7148dfce03b706ce1f9da6a537d",
+            "scope": "A-N1 pure success-API validator/control tail; no new Native/Node/fresh driver run",
+            "index": "_tmp/20261016-debt-cleanup/metadata/success-api-handoff-index.json",
+            "indexSha256": "2d31c1447687d21784b4d159c141aacfc46cf67457178e8fe475ce4eb1c789c5",
+            "wholePRApproved": false
+          },
+          "openFacets": [
+            {
+              "id": "dynamic-snapshot-number",
+              "severity": "P1",
+              "confirmation": "candidate",
+              "fixed": false,
+              "state": "pending-independent-adjudication",
+              "rawInput": "1792123157858.0955",
+              "nodeCreatedAt": "1792123157858.0955",
+              "snapshotCreatedAt": "1792123157858.0957",
+              "scope": "Dynamic recorded facts through Snapshot full RPC differs; prior static3 replay and real Native10/pair10 are different executed scopes.",
+              "runtimeProbe": "serde_json from_str<Value> differs by 1 ULP from standard str.parse<f64>; no oracle/rounding/dependency change",
+              "evidence": [
+                "_tmp/20261016-debt-cleanup/metadata/success-api-extra-rpc-mismatch.json",
+                "_tmp/20261016-debt-cleanup/metadata/success-api-float-probe.log",
+                "_tmp/20261016-debt-cleanup/metadata/success-api-node-float-probe.json"
+              ],
+              "nextAction": "Independent grade/scope confirmation then exact numeric-decoding fix and appropriate replay; do not rewrite expectations to green."
+            }
+          ]
         },
         {
           "id": "139.2",
@@ -566,21 +594,38 @@
               "basis": "initial"
             },
             "glm": {
-              "severity": "N/A",
-              "basis": "initial"
+              "severity": "P1",
+              "basis": "independent-revision"
             }
           },
-          "independentRevisions": [],
+          "independentRevisions": [
+            {
+              "id": "47.1",
+              "family": "GLM",
+              "primaryKind": "阶段任务",
+              "severity": "P1",
+              "confirmation": "confirmed",
+              "confirmationScope": "Debt as modelasserted; mandatoryhumanreplacement interpretation requiresR5normativeclarification, originalraw preserved",
+              "state": "pending",
+              "source": "taxonomy-dispute-apparatus-acceptance-glm.md",
+              "sourceSHA256": "cc63acbfc63e26358da31322f5108d2d20329667d19972474e9273197e705615",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "N/A",
+              "priorSource": "taxonomy-apparatus-final-glm.md",
+              "priorSourceSHA256": "3f0d9e9ec08fa1d660cd3e97f7936bc49294bfaad9108e564742cffb3647c009",
+              "disposition": "revise NAtoP1 retained highgrade based on claimedhumanapprovalgate; explicitlywithdraw new signaturecarrier but actualR5OR-AIrule scope unresolved; no author downgrade",
+              "prerequisite": "B3 beforeclosure; R5approvalvshumanreal-efficacy separate",
+              "wholeProjectApproval": false,
+              "countIndependent": false,
+              "aggregateScope": "parentphase/acceptance debt, not independentrepeatof113/94",
+              "normativeClarificationPending": true
+            }
+          ],
           "independentUngradedRevisions": [],
           "typeDisagreement": {
             "deepseek": "验收债务",
             "glm": "阶段任务",
             "resolution": "待事实归一；保留DS主类与分歧，不倒写原文"
-          },
-          "gradeDisagreement": {
-            "deepseek": "P1",
-            "glm": "N/A",
-            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           },
           "aggregates": [
             "113.1",
@@ -1293,10 +1338,30 @@
             },
             "glm": {
               "severity": "N/A",
-              "basis": "initial"
+              "basis": "independent-revision"
             }
           },
-          "independentRevisions": [],
+          "independentRevisions": [
+            {
+              "id": "61.1",
+              "family": "GLM",
+              "primaryKind": "验收债务",
+              "severity": "N/A",
+              "confirmation": "confirmed",
+              "confirmationScope": "Debtconfirmed, current F3 overdue/status not certified; actualnewside report pending",
+              "state": "pending",
+              "source": "taxonomy-dispute-apparatus-semantic-glm.md",
+              "sourceSHA256": "1e191487b6117c2d48d3371792c0c70a17c451c2035961dd59b4ce75ee18e490",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "N/A",
+              "priorSource": "taxonomy-apparatus-final-glm.md",
+              "priorSourceSHA256": "3f0d9e9ec08fa1d660cd3e97f7936bc49294bfaad9108e564742cffb3647c009",
+              "disposition": "reaffirm NA for plannedF3gate notcurrentcompletion; DSinitialP1 remainsunwithdrawn, highcandidate mustnot silentlylower; triggerdue/noactualreport ormisclaimedpass=>P1",
+              "prerequisite": "F3",
+              "wholeProjectApproval": false,
+              "semanticDisputePending": true
+            }
+          ],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "P1",
@@ -1370,10 +1435,29 @@
             },
             "glm": {
               "severity": "P1",
-              "basis": "initial"
+              "basis": "independent-revision"
             }
           },
-          "independentRevisions": [],
+          "independentRevisions": [
+            {
+              "id": "61.2",
+              "family": "GLM",
+              "primaryKind": "真实缺陷",
+              "severity": "P1",
+              "confirmation": "confirmed",
+              "confirmationScope": "Dependencybindinggap confirmed; actualfalsePASS/FAILcandidate/unmeasured",
+              "state": "pending",
+              "source": "taxonomy-dispute-apparatus-acceptance-glm.md",
+              "sourceSHA256": "cc63acbfc63e26358da31322f5108d2d20329667d19972474e9273197e705615",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P1",
+              "priorSource": "taxonomy-apparatus-final-glm.md",
+              "priorSourceSHA256": "3f0d9e9ec08fa1d660cd3e97f7936bc49294bfaad9108e564742cffb3647c009",
+              "disposition": "reaffirm P1 measurement-affectingdependencygap, no proofcurrentfalsePASS; controlleddependencyprobe pending, wholeF2notfixed",
+              "prerequisite": "F2/#58 beforefe-parityevidenceusedagain",
+              "wholeProjectApproval": false
+            }
+          ],
           "independentUngradedRevisions": [],
           "gradeDisagreement": {
             "deepseek": "P2",
@@ -2338,10 +2422,30 @@
             },
             "glm": {
               "severity": "P2",
-              "basis": "initial"
+              "basis": "independent-revision"
             }
           },
-          "independentRevisions": [],
+          "independentRevisions": [
+            {
+              "id": "94.1",
+              "family": "GLM",
+              "primaryKind": "真实缺陷",
+              "severity": "P2",
+              "confirmation": "confirmed",
+              "confirmationScope": "Helper-level commentidentity confirmed, systemfullgate unknown/pending, nofalsePASS proved",
+              "state": "pending",
+              "source": "taxonomy-dispute-apparatus-semantic-glm.md",
+              "sourceSHA256": "1e191487b6117c2d48d3371792c0c70a17c451c2035961dd59b4ce75ee18e490",
+              "sourceType": "independent-dispute-adjudication",
+              "priorSeverity": "P2",
+              "priorSource": "taxonomy-apparatus-final-glm.md",
+              "priorSourceSHA256": "3f0d9e9ec08fa1d660cd3e97f7936bc49294bfaad9108e564742cffb3647c009",
+              "disposition": "reaffirmP2 helpergap andfullgateunknown; modelP2-b explanation narrows tocomparison-only andswapsb/cheaplabels, semanticqualification stillneedsnormativecheck ratherthan numericalsamegradeconvergence",
+              "prerequisite": "beforefirstB3Rustroute takeover",
+              "wholeProjectApproval": false,
+              "semanticDisputePending": true
+            }
+          ],
           "independentUngradedRevisions": [],
           "reviewQualifications": {
             "glmPartial": false,
@@ -5027,6 +5131,15 @@
     "_tmp/20261016-debt-cleanup/reviews/metadata-path-correction-deepseek.md": {
       "sha256": "69d6fda15807a1cd94e30453365602ed766f6a6987901e443ba55120a02f2300"
     },
+    "_tmp/20261016-debt-cleanup/metadata/success-api-extra-rpc-mismatch.json": {
+      "sha256": "eb013a35854f986e0878b71b1bea96f63bfbc069745953c6e6a682d77e3f13e4"
+    },
+    "_tmp/20261016-debt-cleanup/metadata/success-api-float-probe.log": {
+      "sha256": "16cc705a9a22e3c21e0859321b070e2f27a644fa3d2ae0c83addad683ced9269"
+    },
+    "_tmp/20261016-debt-cleanup/metadata/success-api-node-float-probe.json": {
+      "sha256": "184f27d91683581d80eae99abcefdf47b3204e73ba1c7781abc3a881329bcc7c"
+    },
     "_tmp/20261016-debt-cleanup/taxonomy/runtime-incident-issue.json": {
       "sha256": "d418578cbf79cec1016c356994e75f268f76b0b095a4a276ea836e700873eabf"
     },
@@ -5034,7 +5147,7 @@
       "sha256": "bd98c27920b36bea4ccbfefe2b3e655ab4d24a69f08a893fa50658f36ec36acf"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-adjudications.json": {
-      "sha256": "41327ecda881728055742ed4eb23e3c58b482569e380384a61da8b8e226cd0dc"
+      "sha256": "7793338045be94e02cf5bbea605ed1e863dc301ed07c59a826b579db2054d473"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-98-4-deepseek.md": {
       "sha256": "5f05b2dfba9dffeacb517efec7497a6b92895477d705d96d90bb7774c927bd7a"
@@ -5050,6 +5163,12 @@
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-linux-linked-glm.md": {
       "sha256": "cbe679b838bdf6346d91e346fe882ae666cf804ddf8cd19ad16c6385c2f03153"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-apparatus-acceptance-glm.md": {
+      "sha256": "cc63acbfc63e26358da31322f5108d2d20329667d19972474e9273197e705615"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/taxonomy-dispute-apparatus-semantic-glm.md": {
+      "sha256": "1e191487b6117c2d48d3371792c0c70a17c451c2035961dd59b4ce75ee18e490"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-ungraded-revisions.json": {
       "sha256": "4200f1a2521307b379572b2c45c70cff3acc08ae531224dc9d3e8a3f0b4ff6df"
