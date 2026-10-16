@@ -131,3 +131,14 @@ R58残余已实exit0，660file+30内部dir+2根仅两cache，last-link112590848B
 先exact三辅助：pairing::order_probe::ready_finish_rejects_existing_stderr_file_after_successful_child、pairing::order_probe::bounded_host_log_rejects_first_excess_byte、pairing::order_probe::ready_admission::ready_wire_exact_capacity_round_trip。第三是新永久Tokio真实写满再读回护栏，共享原唯一1MiB常量，尚未跑，不冒旧两guard覆盖。随后仍同七格D1+/D1-/A+/A-/X1/X2/D1+-restore，同artifact/common gate，恢复格独立runID/output；不native自然窗/全量53、不临时增加case。健康双audit Ok/fullwire；反控实际hit/W0/C0+共同具体R2_REQUIRED或COMMIT_SEQUENCE_VIOLATION拒，test0/ACCEPTED逃逸外监督必须拒；setup/timeout/0test不算负控成功。每格含负控核两host实际reap、stderr joined/complete/bytes/abortfalse及wire总长度。native旧caller本身未重跑，复用helper不冒全native验收。
 
 执行前后保旧942+R5315+R5412，extraRetainedIndices再精确钉R5521/R5734/R5838/DNS17/native与guard proof；1120002356/R54partial534/R55partial1492全路径/身份/content/c990/3ed、TS1000与3config/current800与工具/新prereg/authority SHA和root提交均保持。root提交后create_new authority绑定本卡/HEAD/index/source/target/预算，ledger仅一次--execute，旧prereg index只读、execution-index另封。失败实报不重试，#65.1默认反例/65.2自然窗/P3/A5.4/冻结授权/真人实效继续未完成。2026-10-16T18:08:09.502487+08:00的资源自决待复核不改变判分语义。
+
+
+## R60 新source d0f的32 helper格独立16MiB窗（AI代批，待人复核）
+
+R59已完成3辅助+七格：五健康双Ok、X1/X2 actual101+具体共同拒；sourcef793新artifactefbcc3f7…结束后SHA同，11PGID回收，4689原件execution-index619ffc8400c1ff3bd5cee2bc9fc1e9f4751a0ca259a5161b57899d8fa85fb22a已root逐size/SHA核。只证TS真实payload+Tokio duplex/TS内存Socket显式子域，不证默认生产/自然窗；native旧caller本身未重跑，独立最终尾审待。du23660612+24298488KiB余282005504B为postflight时点，report/index新约1MB另计，当前要再freshdu。
+
+CLI旧26与8d CI5保历史；DS实际Git隐藏flag使clean:true+candidateHead的当前P1已源码候选22ac拒S与小写h/s，d0fad9808e1f646907103e62d2ef17122e3850ab再补真实requiredtree缺失SOURCE_TREE。missingroot控制是额外项，不冒A1tree已覆盖；新增共6例至32，仍未跑/独立终审欠，PR138不合并。原31准备与26事实不覆。
+
+给ledger_fidelity仅sourceclean d0f一次原helper32 Node suite，输出_tmp/20261016-debt-cleanup/upgrade-helper32-r60-3p81nw_x，task原绝对Node22/原HOME-cache；fixture+proof allocated≤16777216B，提前14680064B门留2MiB、逻辑同计、采样不是内核硬quota，child60s/总120/流1MiB、自有PGID finally实际wait/reap。先freshdu≥本窗+214748365B外留且总46GiB/无Cargo；R59已封，不产生du竞态。所有scope按本输出task与两新source封索引执行，旧be00/26/首失败/两新source/R59与工具/源前后守恒。TAP1pass+32唯一CHECKED全部原件才算helper子范围通过；失败保全不重试，不recorder18/Cargo/provider/新target/旧物删除或产品验收。
+
+原则：新增真实失败场景要以新source/新数据验证，历史成功不冒覆盖新source；资源窗口与证据范围分别计。2026-10-16T18:17:49.133045+08:00资源判断待人复核，未改变评分/冻结或原失败。
