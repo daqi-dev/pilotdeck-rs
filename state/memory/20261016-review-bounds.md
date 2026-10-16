@@ -19,3 +19,5 @@ type: feedback
 检查JSON先用正向白名单取keys、计数、哈希和有限叶路径；未知字典不能用“排除几个大字段”后整块打印。含rawText/内嵌JSON的文件不用裸rg或全文输出：必须加`--max-columns 200 --max-columns-preview`，或在Python中只输出命中路径和前120字符。一次只读需要的有界片段；原件保留在文件，避免工具截断掩盖真正证据。
 
 执行派发：给已完成或idle的worker新任务必须用`followup_task`；`send_message`只用于正在运行任务的steer。dispatch后核running状态或首条进度，queued消息不代表已经开工。2026-10-16协调中第三次出现idle消息只排队，故固化为执行规则。
+
+验证到提交必须失败即停：一次临时核验把FROZEN表的16位前缀误当完整SHA，断言失败后同shell下一行仍提交。实际README完整SHA此前已匹配，后续正确前缀核验通过；这不代表命令编排可靠。断言和提交分成依赖调用，读取exit0后再提交；不能用无`set -e`的换行串联当闸门，所有失败原始输出照留。
