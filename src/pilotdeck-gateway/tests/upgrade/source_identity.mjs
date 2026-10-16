@@ -61,7 +61,7 @@ export function captureSourceIdentity(root){
   const tracked=paths(git(root,['ls-files','-z','--',...scopes.map(p=>':(literal)'+p)])).sort(order);
   if(!tracked.length||new Set(tracked).size!==tracked.length)fail('SOURCE_FILE_SET','empty/duplicate source set');
   for(const required of producerInputs.required)if(!tracked.includes(required))fail('SOURCE_REQUIRED','required source missing from tracked set',{path:required});
-  for(const tree of producerInputs.trees){if(!stat(root,tree).isDirectory()||!tracked.some(p=>p.startsWith(tree+'/')))fail('SOURCE_TREE','required source tree empty',{path:tree});}
+  for(const tree of producerInputs.trees){if(!stat(root,tree,true)?.isDirectory()||!tracked.some(p=>p.startsWith(tree+'/')))fail('SOURCE_TREE','required source tree empty',{path:tree});}
   const optional=producerInputs.optional.map(path=>{const value=stat(root,path,true);if(value&&!value.isFile())fail('SOURCE_KIND','optional build/config input must be regular file',{path});return {path,present:value!==null};});
   const files=tracked.map(path=>{if(!stat(root,path).isFile())fail('SOURCE_KIND','tracked input is not regular file',{path});return {path,sha256:hash(readFileSync(join(root,path)))};});
   clean(root);if(git(root,['rev-parse','HEAD']).toString().trim()!==head)fail('SOURCE_HEAD_DRIFT','HEAD changed during identity snapshot');

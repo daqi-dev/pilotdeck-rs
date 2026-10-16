@@ -78,7 +78,13 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
   run('G11-tracked-symlink',f=>{const path='src/pilotdeck-gateway/src/upstream.rs';unlinkSync(join(f.root,path));symlinkSync('main.rs',join(f.root,path));f.git('add','--',path);f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_SYMLINK'});});
   run('G11-not-repository',f=>{mkdirSync(join(f.root,'empty'));assert.throws(()=>captureSourceIdentity(join(f.root,'empty')),{code:'SOURCE_ROOT'});});
   run('G11-git-command-error',f=>{f.put('.git/config','[invalid\n');assert.throws(()=>captureSourceIdentity(f.root),error=>Number.isInteger(error.status)&&error.status!==0);});
-  assert.equal(rows.length,31,'all registered source-identity rows completed');
-  assert.equal(new Set(rows.map(row=>row.id)).size,31,'all source-identity row IDs unique');
+  run('G12-missing-tree-clean',f=>{
+    const tree='src/pilotdeck-protocol/src';unlinkSync(join(f.root,tree,'entry.rs'));f.git('add','-u');f.commit();
+    const holding=join(mkdtempSync(join(parent,'missing-tree-held-')),'source');renameSync(join(f.root,tree),holding);
+    try{assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_TREE'});}
+    finally{renameSync(holding,join(f.root,tree));}
+  });
+  assert.equal(rows.length,32,'all registered source-identity rows completed');
+  assert.equal(new Set(rows.map(row=>row.id)).size,32,'all source-identity row IDs unique');
   completed=true;
 });
