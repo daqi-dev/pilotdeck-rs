@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **16:56资源接续**：R52单位facet已有双家独立gate0318f152，只闭资源单位；PR146远端8f7d67b两家tiny尾差/M3契约仍待，不预批合并。a4 clean17334d2共用门源码已root/Astra核同且六格NOT_RUN；source packet仅只读备料，不抢源。R53仅授权093057一个incremental临界重核后清理，保全noncache/942原件/旧精确产物，实际du回root再另发0.90GiB窗；不自动Cargo/Node。root状态树改用codex/ready-admission-resource-20261016，原PR146分支8f7与f8交接分支保留，中央原owner不变。
+
 > **2026-10-16 16:35接续**：root核main589f6bf/34open/四Draft，五树与旧原件保留，中央原owner继续GLM/DS独审；原f8dfd1c交接分支已推不改。PR146单位P1有R52精确消歧候选，双口径du原件可复算，独立两家确认前不开新构建。a4@9758299源码已归还且六格全PREPARED_NOT_RUN；Astra只读发现X1/X2目前靠mutant专用panic拒、缺同一健康因果/wire门，先修测试判据后再申请精确产物窗，65/P3/A5.4未清。唯一下一实现仍该共同ReadyAdmission矩阵，无新队列/held解封。
 
 > **15:56 独立任务按依赖继续**：Astra已独立解码134原件并给65唯一下一依赖，按R50交GPT-6.1在空闲a4准备TS真实list OutcomeOwned→显式接纳门→原RPC H1的小映射源码，先预登记/15min/1MiB，不发Node/Cargo新窗、不动资源基线/生产Rust/冻结、不核销65。与CLI的GLM identity候选、中央必要独立审阅各自隔离；共享派发仍原owner。中央新dispatcher独立24控制抓两P2a（父子写lease、监视异常后过早free），当前owner同轮修，暂不扩新派发，原在途/历史保留；并发能力已实际重叠不抹成无缺口。

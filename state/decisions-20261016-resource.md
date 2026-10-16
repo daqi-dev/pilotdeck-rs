@@ -32,3 +32,18 @@ R44两目标执行后真实余量仅0.975994GiB，低于1.20，按卡停在Cargo
 清后先回root实际du，不启动Cargo/Node。若实际余量达到1.20GiB且总量不超46，再由root给一次全新纯时间戳_build/YYYYMMDD-HHMMSS与新实验输出合计1GiB硬窗；600s总上限、每child60s、每流1MiB、终于回收owned PGID，四wrapper显式空、原绝对Rust1.99与原HOME/cache、offline/locked/jobs2、incremental0。源码9df46654只准备完，后续需真实新artifact与A1/A2前后健康+四mutant八格；不重跑A0，不改原validator，不以setup/EOF/超时/0test冒负控成功。新oracle若旧identity门不能复用须显式报root，不暗加Node任务。
 
 原则与断言：资源释放按真实last-link allocated与完整du核；缓存清理授权必须落到精确对象和当次门，不能泛化为清target或实验原件。非cache/封存SHA守恒、1.20开窗门、1GiB执行窗与46总上限任何一项不满足就只停相关动作，继续独立工作。
+
+
+## R53 只释放093057自有可恢复缓存（自决）
+
+卡在哪：#65共用验收门候选17334d2已静态复核，首次精确产物仍缺空间；覆盖旧产物会丢身份。R52单位facet经GLM157.433s/DS89.472s独立确认，unit-scope-gate.json SHA0318f1523bc5cfcaa861443ec494dc1f696f86ec42d13de968248ea45921f900（主仓_tmp/20261016-debt-cleanup/reviews），只闭该单位，不是PR146或#65全通过。按已说明du1024/46GiB核当前资源，不改变人定46数值。
+
+唯一允许清理的对象是_build/20261016-093057/debug/incremental（uid502/dev16777230/inode42432864；target父42432855/debug父42432857）。原holder debt_catalog_impl的archive-implementation/handoff-index.json与source94030771明确已结束/target保留；本卡仅把可由Git源码与原依赖重建的incremental缓存释出，全部noncache/binary/deps/build/fingerprint与原始实验证据继续保留，不把“停止占用”冒成整个target可删。当前root持有该归还对象，无人手cache产物。
+
+执行者ledger_fidelity仅对这一根作临界重核与精确unlink。只读plan resource-ready-admission-prep-161835/index6e22424b…、前检cache-ready-admission-preflight-1645/index add24c1f6fc3ba2eb20efdff7ca6439395fbc027598b43ddfe3c2749a180c84d都在主仓_tmp/20261016-debt-cleanup/order-architecture/。1897cache条目、6029 noncache与旧1120002356条目完整身份/字节SHA已准备；last-link allocated预测494833664B，1373外链计零并有保留路径见证，预测不当已释放。原guard只是readonly、实际execute已拒且无删除primitive，本卡不改变或执行旧guard原件，另建唯一执行入口/目录。
+
+删除前必须再次核卡与unit gate全部精确SHA、根/父链非symlink及uid/dev/inode/各条目mode/nlink/blocks/内容SHA、所有target锁和Cargo/rustc/FD、最新sealed引用与保留要求；新未知项/漂移/写者/锁任何一项不清即停相关动作，不补清其他根。临界锁仅允许本PID和已登记精确FD路径，不能泛放本PID。保留按inode实际删链接清单，noncache前后路径/身份/size/SHA守恒，nlink只许减本次实际unlink次数。旧112000全部、R45 745/R48 134/R51 63共942原件及c990/3ed确切产物逐SHA前后核；其余旧工作/并行研究/源文件/人手材料一律不动。
+
+清后完整du实数交root，不Cargo/Node/新target。只有root据新HEAD clean/资源现况另发一次更小0.90GiB窗口、外留0.20GiB（实际门至少1181116007B）才开构建；原1GiB/1.20门不修改，未够门只停本实验。此处只批准可恢复cache清理，不预批准该新窗或任何评分/阶段完成。
+
+原则与断言：缓存授权精确到当次对象及临界条件，保留报告不推导整个目录可删；全部不可再生证据继续保留。实际释放由全局du证明，后续运行必须有独立新窗，清理成功不能替编译/验收通过。
