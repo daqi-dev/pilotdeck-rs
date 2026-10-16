@@ -1,5 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T18:32:59.811178+08:00 · 本片接续/R61预登记**：规则/.42cog四份/MEMORY及实际5树/34OPEN/3Draft/mainb888已核；wt-d6 a798由root，a4f793与CLI d0无写者，中央原owner继续独立在途。R59正式runtime四角色范围门42e0已成，P2三分仍欠；不核销整65。R61只用同HEAD精确efbcc产物验证legacy finish现有六caller一次/16MiB/外留.20GiB，不新Cargo、不重跑Natural/A0；任务见R61决策与原件目录。资源归属与CLI最新bin→recorder18路线各只读并行调查，未清未知cache。
+
 > **2026-10-16T18:26:29.314455+08:00 · 两小时调度交接（继续开发，不是暂停）**：本片16:30接续；PR146已 rebase 合并 main `b888563135723127fdb70c89701092ab2166cca2`，五树 CLAUDE 共同 SHA b390fbdbf661f9a21def245b8d90688a5c3bc5b4fcea4dd3268a92830801f1f5。单一协调者多 job 已实际 GLM2+DeepSeek2 重叠；GLM可接实现/修复/测试，但本片三次实现候选空输出未形成GLM代码，实际新增源为GPT，仍由GLM/DeepSeek非作者审。原中央 debt_review_prepare 继续，所有在途和挂起原件保留，不新队列、不重试held。
 > **交付与未完成**：初始31单/55子项分类已由PR143入main，canonical cadb未改；当前实时 34 OPEN issue、3 OPEN PR（均Draft），延期继续算未完成，无存量清零。PR138已推 `d0fad9808e1f646907103e62d2ef17122e3850ab`，当前两CI绿；R60 helper32实际32唯一CHECKED/exit0/reaped，2556文件+1link root全SHA核（gzip43fd0603，补充67b96d43）。S/h及root/tree已实测，组合s没有；实际CLI785，旧800计数原件另件更正。最新recorder18、本地产物来源与独立终审仍欠，保持Draft。
 > **#65真实子域**：a4已推 `f7938095711cd2e175dc4a5fb69586a61bf3adc2`；R59新artifact efbcc3f7前后同，3辅助各1pass，四正常+恢复共五健康共同Ok，X1/R2_REQUIRED与X2/COMMIT_SEQUENCE_VIOLATION实际101共同拒；14host完整回收、11PGID无残留；4689原件 index619ffc84 root全核。仅显式ReadyAdmission子域，真实TS RPC payload+Tokio duplex；默认生产/自然窗口/P3/A5.4/真人实效未验，不关闭65。

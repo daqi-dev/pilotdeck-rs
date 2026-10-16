@@ -52,3 +52,10 @@ root给现空闲wt-a4m3独占源码准备，先预登记task/matrix并提交指�
 R52候选边界与历史对账补充：本PR的CLAUDE b390fbdb…目前只在wt-d6候选，其他四树仍20518046；原人定并发立即适用，单位候选须两家确认后按持有人/实验封存点安全同步，未把候选五树同SHA说成已完成。R48八格=前后A1/A2四健康+M1–M4四负控，source9df、artifact3ed；R51五格=T0/T1/T2/N1/N2，source13ff且仅TS内存adapter。ReadyAdmission准备六格=四正常D1+/D1−/A+/A−与X1/X2，source975；其共用门后续修复173仍未跑，不倒填成R48/R51结论。Git已实核9df→13ff→975→173祖先链（其间c401只是规则同步），不是同一运行artifact；完整谱系/33旧OPEN清单与当时source身份见主仓_tmp/20261016-debt-cleanup/reviews/root-policy-tail-1655/facts.json。
 
 ee9的33 OPEN由canonical cadb内31原单去113、加139/144/145得出；147是之后新开，当前实读34，不能倒改旧快照。六项历史精确fixed只指19.1、65.5、98.3旧source guard、120.1、120.2、113.1；不扩成这些整单或当前全部缺陷已修。
+
+
+## R61 复用同HEAD精确产物验证legacy finish caller（自决，AI代批待人复核）
+
+卡在哪：GLM F17/DS source已确认finish共享修复，但旧native caller没有运行证据；属于当前源码范围便宜的验证债。谁受影响：显式测试装置调用者，非默认生产/自然竞争窗口结论。可撤回、不动冻结/意向/业务实现。选择同f793精确R59产物已有ignored六格只跑一次，任务`_tmp/20261016-debt-cleanup/order-architecture/native-finish-r61-1838/task.md`；不用旧HEAD binary冒新，也不重复自然模式至合意。
+
+16MiB新proof、14MiB提前门、外留214748365B、总120s/child90s/每流1MiB；fresh完整du达门、源码/工具/基线/4689sealed前后同才准。失败原件保全只停该项，原中央评审继续。只证caller finish/capture/reap，65.1/65.2/P3/A5.4/真人仍未闭。原则：源码同一实现不替实际caller回归，精确产物可复用但不得扩大已观察语义。
