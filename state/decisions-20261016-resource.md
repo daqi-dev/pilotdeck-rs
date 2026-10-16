@@ -175,3 +175,10 @@ R75实际40.698s失败：preflight与post full du均20s timeout，groups[]、无
 ## R78 见证最终打印格式的最后一轮修正（自决）
 
 R77 full du前后过、compile原format串错误exit1/reaped/residual[]，Notify未启动，post输入CHECKED；原件不改。新task`_tmp/20261016-debt-cleanup/order-architecture/acquisition-notify-print-r78-i_fytjc5/task.md`只最终JSON println转义，runner与算法、8s/资源/字节/原工具判据全不改。root可一次authority，本轮失败则此见证路径挂起、不第四次改写；转独立实际Tap CI等工作，P1不作者撤。R73仍无authority不重叠。原则：准备态解析不等于类型/宏检查，输出表达式错误不冒被测语义结论，连续控制器失败要收口而非无限试。
+
+
+## R79 实测后的Notify源码修复及资源分流（自决）
+
+R78实际shared notify只醒bypass，barrier原8s在8001ms Elapsed，独立Notify两个时点真通过；53.838s/两个PGID已回收/indexf5598807/postCHECKED，仅primitive不冒全Tap。任务`_tmp/20261016-debt-cleanup/order-architecture/acquisition-notify-apply-r79-1e4zl8y6/task.md`按R76候选两src修专用Notify/同义hash/实际Tap两永久guard，仍新CI与两非作者闸门。
+
+为不让临时资源管线阻塞当前P1：R73若20:18前最终两家必要门闭合，root先一次精确清cache并全后核，再释放source；否则本片明确R73未执行、无authority，解除a4预备freeze去落R79，旧R73 SOURCES=07eb自动失效不得偷跑，后续须新source保全。CLI2f不动；R74只准备，没独立闸门/足资源窗不launch。全局5树/46、未知/非cache/旧原件保护不变。原则：未开临界窗口不占住独立修复，保全输入一变即旧准入失效，不能拿旧批准执行新现场。
