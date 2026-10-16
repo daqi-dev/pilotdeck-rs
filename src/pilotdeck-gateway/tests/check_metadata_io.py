@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
+import selectors
+import stat
 import subprocess
 import time
 import tomllib
@@ -14,6 +17,76 @@ import tomllib
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+SOURCE_FILES = (
+    'src/pilotdeck-gateway/src/metadata.rs', 'src/pilotdeck-gateway/src/metadata/tests.rs',
+    'src/pilotdeck-gateway/src/pairing/tests.rs', 'src/pilotdeck-gateway/tests/record_metadata_io.mts',
+    'src/pilotdeck-gateway/tests/check_metadata_io.py', 'src/pilotdeck-gateway/tests/test_metadata_io_driver.py',
+    'src/pilotdeck-gateway/tests/baseline_source_guard.mjs', 'src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs',
+    '.github/workflows/ci.yml', 'rust-toolchain.toml', 'src/Cargo.toml', 'src/Cargo.lock',
+)
+
+
+def source_snapshot(root):
+    result = {}
+    for name in SOURCE_FILES:
+        path = root / name
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError('required source missing or redirected: ' + name)
+        result[name] = sha(path)
+    return result
+
+
+def rustup_snapshot(root):
+    rows = []
+    def visit(path):
+        if not os.path.lexists(path):
+            rows.append((str(path.relative_to(root)), 'missing'))
+            return
+        value = path.lstat()
+        kind = 'link' if stat.S_ISLNK(value.st_mode) else 'dir' if stat.S_ISDIR(value.st_mode) else 'file'
+        rows.append((str(path.relative_to(root)), kind, value.st_size, value.st_mtime_ns,
+                     os.readlink(path) if kind == 'link' else None))
+        if kind == 'dir':
+            for child in sorted(path.iterdir()):
+                visit(child)
+    for name in ('toolchains', 'downloads', 'tmp'):
+        visit(root / name)
+    return dict(roots=['toolchains', 'downloads', 'tmp'], entries=len(rows), sha256=hashlib.sha256(json.dumps(rows).encode()).hexdigest())
+
+
+def check_receipts(text, marker, ids):
+    actual = re.findall(r'\b' + re.escape(marker) + r' (\S+)', text)
+    if len(actual) != 10 or len(ids) != 10 or set(actual) != set(ids) or any(not value for value in ids):
+        raise RuntimeError(marker + ': expected ten unique actual-case receipts')
+
+
+def check_restore(fixture):
+    oracle = json.loads(fixture.read_text())
+    scratch = Path(oracle['scratch']).resolve(strict=True)
+    if not oracle.get('owner') or (scratch / '.metadata-oracle-owner').read_text() != oracle['owner']:
+        raise RuntimeError('restore owner mismatch')
+    permissions = oracle['permissions']
+    receipt = json.loads(Path(str(fixture) + '.cleanup.json').read_text())
+    if len(permissions) != 3 or len({item['path'] for item in permissions}) != 3:
+        raise RuntimeError('three unique permission targets required')
+    if receipt.get('owner') != oracle['owner'] or type(receipt.get('restored')) is not int or receipt['restored'] != 3:
+        raise RuntimeError('restore receipt owner/count mismatch')
+    for item in permissions:
+        path = Path(item['path'])
+        if not path.resolve(strict=True).is_relative_to(scratch) or path.is_symlink():
+            raise RuntimeError('restore target outside owner')
+        if type(item['mode']) is not int or stat.S_IMODE(path.stat().st_mode) != item['mode']:
+            raise RuntimeError('permission not restored: ' + str(path))
+    return receipt
+
+
+def reject_protected_paths(paths, home):
+    for location in paths:
+        for protected in (home/'.pilotdeck', home/'.cargo', home/'.rustup', home/'ws/PilotDeck-rust-program-20261009'):
+            if location.resolve().is_relative_to(protected.resolve()):
+                raise RuntimeError('protected output/target: ' + str(location))
 
 
 def toolchain_preflight(toolchain, original, root):
@@ -48,23 +121,108 @@ def toolchain_preflight(toolchain, original, root):
                 componentsSha256=sha(components_file), binaries=binaries)
 
 
-def environments(original, preflight, scratch, target):
-    cargo = dict(original, HOME=preflight['home'], CARGO_HOME=preflight['cargoHome'],
-                 RUSTUP_HOME=preflight['rustupHome'], RUSTUP_AUTO_INSTALL='0',
-                 RUSTC=preflight['binaries']['rustc']['path'], RUSTDOC=preflight['binaries']['rustdoc']['path'],
-                 RUSTC_WRAPPER='', RUSTC_WORKSPACE_WRAPPER='',
+def environments(original, preflight, scratch, target, node_executable=None, git_executable=None):
+    # Build-affecting Cargo/Rust flags, proxy and wrapper aliases never flow from
+    # the caller. Locale and ordinary temp settings are the only inherited keys.
+    allowed = ('LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TMPDIR', 'SYSTEMROOT', 'WINDIR')
+    cargo = {key: original[key] for key in allowed if key in original}
+    cargo.update(HOME=preflight['home'], CARGO_HOME=preflight['cargoHome'], RUSTUP_HOME=preflight['rustupHome'],
+                 RUSTUP_AUTO_INSTALL='0', RUSTC=preflight['binaries']['rustc']['path'],
+                 RUSTDOC=preflight['binaries']['rustdoc']['path'], RUSTC_WRAPPER='', RUSTC_WORKSPACE_WRAPPER='',
                  CARGO_BUILD_RUSTC_WRAPPER='', CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER='',
                  CARGO_TARGET_DIR=str(target), CARGO_BUILD_JOBS='2',
-                 PATH=str(Path(preflight['toolchain']) / 'bin') + os.pathsep + original.get('PATH', ''))
-    # Removing a wrapper variable exposes Cargo config or CARGO_BUILD_* again.
-    # Explicit empty values override both sources and disable wrapper execution.
-    for key in ('RUSTUP_TOOLCHAIN', 'PDRS_METADATA_IO_LIVE'):
-        cargo.pop(key, None)
-    node = dict(cargo, HOME=str(scratch / 'isolation/home'), TMPDIR=str(scratch / 'isolation/tmp'),
-                PILOT_HOME=str(scratch / 'isolation/home'), PILOTDECK_SKIP_BROWSER_OPEN='1', SKIP_BROWSER_OPEN='1')
+                 PATH=str(Path(preflight['toolchain'])/'bin') + os.pathsep + os.defpath)
+    node = {key: original[key] for key in allowed if key in original}
+    node.update(HOME=str(scratch/'isolation/home'), TMPDIR=str(scratch/'isolation/tmp'),
+                PILOT_HOME=str(scratch/'isolation/home'), PILOTDECK_SKIP_BROWSER_OPEN='1', SKIP_BROWSER_OPEN='1',
+                PATH=os.pathsep.join(dict.fromkeys([str(Path(value).parent) for value in
+                     (node_executable, git_executable) if value] + os.defpath.split(os.pathsep))))
     for key in ('XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME'):
-        node[key] = str(scratch / 'isolation/xdg')
+        node[key] = str(scratch/'isolation/xdg')
     return cargo, node
+
+
+def check_postflight(result, root, toolchain, original, preflight, sources_before, rustup_before,
+                     node_executable, node_before, node_home):
+    result['sourcesAfter'] = source_snapshot(root)
+    result['toolsAfter'] = toolchain_preflight(toolchain, original, root)
+    result['rustupAfter'] = rustup_snapshot(Path(preflight['rustupHome']))
+    if result['sourcesAfter'] != sources_before:
+        raise RuntimeError('source changed during verification')
+    if result['toolsAfter'] != {key: value for key, value in preflight.items() if key in result['toolsAfter']}:
+        raise RuntimeError('original toolchain changed during verification')
+    if result['rustupAfter'] != rustup_before or sha(node_executable) != node_before:
+        raise RuntimeError('monitored rustup subtrees or Node executable changed')
+    for name in ('.cargo', '.rustup'):
+        if os.path.lexists(node_home/name):
+            raise RuntimeError('tool cache appeared in isolated Node HOME: ' + name)
+
+
+def stop_group(child):
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+        return False
+    except ProcessLookupError:
+        return True  # legitimate exit-between-poll-and-kill race
+
+
+def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024):
+    start = time.monotonic()
+    reason, wait_error, code, gone = None, None, None, False
+    with log.open('xb') as stream:
+        child = subprocess.Popen(command, cwd=cwd, env=environment, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            with selectors.DefaultSelector() as selector:
+                os.set_blocking(child.stdout.fileno(), False)
+                selector.register(child.stdout, selectors.EVENT_READ)
+                pipe_open, written = True, 0
+                while pipe_open or child.poll() is None:
+                    if time.monotonic()-start > deadline:
+                        reason = 'timeout'
+                        break
+                    if not pipe_open:
+                        time.sleep(0.025)
+                        continue
+                    for key, _ in selector.select(0.025):
+                        try:
+                            chunk = os.read(key.fd, min(65536, limit-written+1))
+                        except BlockingIOError:
+                            continue
+                        if not chunk:
+                            selector.unregister(child.stdout)
+                            pipe_open = False
+                            break
+                        keep = min(len(chunk), limit-written)
+                        stream.write(chunk[:keep]); written += keep
+                        if keep != len(chunk):
+                            reason = 'output limit'
+                            break
+                    if reason:
+                        break
+            if reason:
+                gone = stop_group(child)
+            try:
+                code = child.wait(timeout=5)
+            except subprocess.TimeoutExpired as exc:
+                wait_error = str(exc)
+                reason = reason or 'wait timeout'
+                gone = stop_group(child) or gone
+                try:
+                    code = child.wait(timeout=5)
+                except subprocess.TimeoutExpired as second:
+                    wait_error += '\n' + str(second)
+        finally:
+            child.stdout.close()
+            if child.poll() is None:
+                gone = stop_group(child) or gone
+                try:
+                    code = child.wait(timeout=5)
+                except subprocess.TimeoutExpired as exc:
+                    reason, wait_error = reason or 'wait timeout', str(exc)
+    return dict(argv=list(map(str, command)), exit=code, reason=reason, waitError=wait_error,
+                groupAlreadyGone=gone, reaped=code is not None, pid=child.pid,
+                seconds=round(time.monotonic()-start,3), log=str(log), sha256=sha(log))
 
 
 def main(argv=None):
@@ -79,19 +237,32 @@ def main(argv=None):
     root = repo.parent
     original = dict(os.environ)
     preflight = toolchain_preflight(args.toolchain, original, root)
+    sources_before = source_snapshot(root)
+    rustup_before = rustup_snapshot(Path(preflight['rustupHome']))
+    node_executable = Path(shutil.which('node', path=original.get('PATH')) or '').resolve(strict=True)
+    git_executable = Path(shutil.which('git', path=original.get('PATH')) or '').resolve(strict=True)
+    for executable in (node_executable, git_executable):
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise RuntimeError('required original Node/Git executable missing')
+    node_before = sha(node_executable)
     target = args.target.resolve()
+    reject_protected_paths((target, args.output), Path(preflight['home']))
     if target.exists() and any(target.iterdir()):
         raise RuntimeError('fresh target required; prior incident target products are not admitted')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     scratch = output / 'recording'
-    cargo_env, node_env = environments(original, preflight, scratch, target)
+    cargo_env, node_env = environments(original, preflight, scratch, target, node_executable, git_executable)
     whitelist = ('HOME', 'CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_AUTO_INSTALL', 'RUSTC', 'RUSTDOC',
                  'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER',
                  'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER', 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'PATH')
     preflight['cargoEnvironment'] = {key: cargo_env[key] for key in whitelist}
     preflight['nodeHome'] = node_env['HOME']
     preflight['cargoArgvPrefix'] = [preflight['binaries']['cargo']['path']]
+    preflight['sourcesBefore'] = sources_before
+    preflight['rustupBefore'] = rustup_before
+    preflight['nodeExecutable'] = dict(path=str(node_executable), sha256=node_before)
+    preflight['nodeEnvironment'] = node_env
     preflight['driverSha256'] = sha(Path(__file__).resolve())
     (output / 'preflight.json').write_text(json.dumps(preflight, indent=2)+'\n')
     if args.preflight_only:
@@ -105,36 +276,17 @@ def main(argv=None):
 
     def run(name, command, *, deadline=90, environment=None):
         log = output / (name + '.log')
-        start = time.monotonic()
-        reason = None
-        with log.open('wb') as stream:
-            child = subprocess.Popen(command, cwd=root, env=environment or cargo_env, stdout=stream,
-                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
-            try:
-                while child.poll() is None:
-                    if time.monotonic() - start > deadline or log.stat().st_size > 1024 * 1024:
-                        reason = 'timeout' if time.monotonic() - start > deadline else 'output limit'
-                        os.killpg(child.pid, signal.SIGKILL)
-                        break
-                    time.sleep(0.025)
-                code = child.wait(timeout=5)
-            finally:
-                if child.poll() is None:
-                    os.killpg(child.pid, signal.SIGKILL)
-                    child.wait(timeout=5)
-        data = log.read_bytes()
-        if len(data) > 1024 * 1024:
-            reason = 'output limit'
-        runs.append(dict(name=name, argv=list(map(str, command)), exit=code, reason=reason,
-                         seconds=round(time.monotonic()-start, 3), log=str(log), sha256=hashlib.sha256(data).hexdigest()))
-        if code != 0 or reason:
-            raise RuntimeError(f'{name}: exit={code}, reason={reason}; see {log}')
-        return data.decode()
+        result = run_bounded(command, root, environment or cargo_env, log, deadline=deadline)
+        result['name'] = name
+        runs.append(result)
+        if result['exit'] != 0 or result['reason'] or not result['reaped']:
+            raise RuntimeError(f'{name}: exit={result["exit"]}, reason={result["reason"]}; see {log}')
+        return log.read_text()
 
     success, error = False, None
     try:
         baseline = args.baseline.resolve()
-        node = ['node', '--import', str(root / 'scripts/gateway-parity/watcher.mjs'), '--import',
+        node = [str(node_executable), '--import', str(root / 'scripts/gateway-parity/watcher.mjs'), '--import',
                 str(baseline / 'node_modules/tsx/dist/loader.mjs'), str(recorder)]
         run('record', node + [str(baseline), str(fixture), str(scratch)], environment=node_env)
         oracle = json.loads(fixture.read_text())
@@ -152,24 +304,26 @@ def main(argv=None):
             raise RuntimeError('expected exactly two retained Native tests')
         for marker, text in [('PDRS_NATIVE_METADATA_OK', native), ('PDRS_METADATA_PAIR_OK', native),
                              ('PDRS_METADATA_PAIR_OK', replay)]:
-            receipts = re.findall(r'\b' + marker + r' (\S+)', text)
-            if len(receipts) != 10 or set(receipts) != ids:
-                raise RuntimeError(f'{marker}: expected ten unique actual-case receipts')
+            check_receipts(text, marker, ids)
         success = True
     except Exception as exc:
         error = str(exc)
     finally:
         if fixture.exists():
             try:
-                run('restore', ['node', str(recorder), '--restore', str(fixture)], deadline=15, environment=node_env)
+                run('restore', node + ['--restore', str(fixture)], deadline=15, environment=node_env)
+                check_restore(fixture)
             except Exception as exc:
                 success, error = False, (error or '') + '\ncleanup: ' + str(exc)
-        sources = ['pilotdeck-gateway/src/metadata.rs', 'pilotdeck-gateway/src/metadata/tests.rs',
-                   'pilotdeck-gateway/src/pairing/tests.rs', 'pilotdeck-gateway/tests/record_metadata_io.mts',
-                   'pilotdeck-gateway/tests/check_metadata_io.py']
-        manifest = dict(success=success, error=error, runs=runs, preflight=preflight,
-                        sourceHead=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
-                        sources={name: sha(repo/name) if (repo/name).is_file() else None for name in sources})
+        postflight = {}
+        try:
+            check_postflight(postflight, root, args.toolchain, original, preflight, sources_before,
+                             rustup_before, node_executable, node_before, Path(node_env['HOME']))
+        except Exception as exc:
+            success, error = False, (error or '') + '\npostflight: ' + str(exc)
+        manifest = dict(success=success, error=error, runs=runs, preflight=preflight, postflight=postflight,
+                        sourceHead=subprocess.check_output([str(git_executable), 'rev-parse', 'HEAD'], cwd=root,
+                                                          env=cargo_env, text=True).strip(), sources=sources_before)
         (output / 'verification.json').write_text(json.dumps(manifest, indent=2)+'\n')
     print(json.dumps({'success': success, 'error': error, 'output': str(output)}))
     return 0 if success else 1

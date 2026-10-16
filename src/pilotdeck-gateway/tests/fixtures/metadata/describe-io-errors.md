@@ -56,3 +56,23 @@ python3 -m unittest discover -s src/pilotdeck-gateway/tests -p test_metadata_io_
 本批不改变产品吞错行为或冻结装置。Linux真实 errno/非法目录项仍由 #117/#133 验证。
 本轮曾发生隔离HOME触发rustup自动安装事故；事实、下载现场、停点与修复待验状态只在
 state/board.md 和 state/memory/20261016-runner-home.md 维护，不以本说明代替独立审阅。
+
+复现护栏补强（PR141增量）：录制器在第一次动态 import 前和采集结束后，逐字节
+绑定固定 cc7c4e6 的全部 `src/` Git blob；缺文件、改字节、源码树内未登记/ignored
+影子文件、同内容 symlink 都拒绝。只核 HEAD 不足以证明实际执行源码；`node --test
+src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs` 用自有 Git fixture 验证七种
+正负控，不修改 resources。源码树之外的依赖闭合仍由 #85 跟进。
+
+驱动只继承 locale/普通临时目录白名单，剥除调用者的 RUSTFLAGS/CARGO_*/NODE_OPTIONS
+等注入；Node/Git 固定实际可执行位置，Rust 四 wrapper 仍明确空串。所有列明 source
+必须存在，执行后重新核 source、六工具与 components SHA、Node SHA；原 rustup 的
+`toolchains/downloads/tmp` 记录 type/size/mtime/link 前后摘要（不含 atime），Node
+隔离 HOME 下出现 .cargo/.rustup 即失败。该快照只证明本次受监控子树，不追认旧事故
+之前不存在的历史快照。子进程通过 pipe 有界读取，总日志至多1MiB；timeout/超输出
+必须 kill/reap 并保留原因和 wait 记录。Python watchdog 负控只运行本 Python 解释器，
+不尝试缺失 Rust 安装或下载。
+
+finally 除退出码外，读取 owner/restored=3 的严格回执，并对三处实际权限逐一 stat；
+缺/错回执和 no-op 都失败。恢复命令复用收集时相同 watcher/tsx loader。恢复后只能
+重放固定 facts。CI 跑纯源绑定与环境/receipt/恢复/watchdog 负控；本机十项受限目录
+Native 与 pairing 实测证据另存主仓 revision-verified，不由 CI mock 代填。
