@@ -137,6 +137,8 @@
 > **本候选**：#113的1e7两家完整终审已确认F8原件内容/driver当前指针修复，53注册/capture/checker/评分逐字节不变，仍无需新26轮；四原件Git blob再与归档逐字节核验一致。准备保全后同步新main，再跑最终CI/双家元差异补审才合入。#47历史专项负控P2/真人验收不变。
 > **在途与红线**：#56旧四P2已由两家确认，C1双连接隔离已实际测20项；新增GLM F1为suffix状态只录不比，按P2-b作P1，已补checker/八控制并正复采18真实样本。#139首次驱动把Node隔离HOME传Cargo，rustup在_tmp自动下载工具链，触碰不下载预编译二进制红线，P0事件未闭合；失败/463MiB下载现场隔离保留不用。root核六原工具链SHA/预检后只准绝对绑定原安装、新target/offline恢复；重测成功不等于独立P0审阅通过。
 > **余账**：31单55子项分类仍欠GLM若干批，不报最终总数；#134真实越界P0及精确安全差异授权门、#65顺序P1、#52+#85A组合冻结前置仍未完成。五树，build12G+tmp23G约35G低于46G；当前片08:24启动、10:24前交接，后续调度继续，pdrs首次定时执行尚未发生。
+> ## 2026-10-16 · #56 真实默认TS HTTP入口补证（产品b38ea44不变）
+> root持有wt-a4m3，仅新增tests/upgrade录制器/观察器与本段。原型真实TS默认CLI经透明relay扣住101，直连/候选各3初始head×2后来分块共12格PASS；TS实际upgradehead逐字节核对，后来hello/post/FENCE各一次、无INITIAL pong，全部自有进程停止。可移植版本同12格复采PASS、前后binary/基线hash相同，SIGTERM负控FAIL且自有进程全停/cleanupErrors空，原始/失败记录主仓`_tmp/20261016-debt-cleanup/upgrade/ts-http-oracle/`；Rust初始read归属继续靠同PR scripted生产路径矩阵，不能从TCP write次数推断。真实TS补证与harness增量须两家终审；#65/A4和人工验收仍未完成。
 
 > ## 2026-10-16 · PR137增量边界修复
 > DS增量确认首轮廉价finding闭合，另P2指出非root宽松/FUSE文件系统也可能无法制造chmod EACCES；测试按独立std::fs::read_dir真实能力与被测entries一致性标不可达，而非仅geteuid或被测scan；原生probe有EACCES而wrapper吞成Ok必FAIL，变异负控锁定；录制错误replay仍必跑。此分支当前宿主未实际触发，不假称root/FUSE实效通过。metadata三入口证据债已绑定#139，前置A4/#46收尾，延期仍未完成；#120第三项/#117保持OPEN。
