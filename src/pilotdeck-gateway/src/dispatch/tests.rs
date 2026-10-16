@@ -501,6 +501,46 @@ impl Drop for ListProjectFixture {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
+fn denied_errno_unavailable<T, U>(observed: &io::Result<T>, native_probe: &io::Result<U>) -> bool {
+    match native_probe {
+        Ok(_) => {
+            assert!(
+                observed.is_ok(),
+                "wrapper failed although native permission probe succeeded"
+            );
+            true
+        }
+        Err(error) => {
+            assert_eq!(
+                crate::node_io::lookup(error).map(|row| row.0),
+                Some("EACCES")
+            );
+            assert!(
+                observed.is_err(),
+                "wrapper swallowed independently observed EACCES"
+            );
+            false
+        }
+    }
+}
+
+#[test]
+fn denied_errno_guard_rejects_swallowed_native_error() {
+    let success = || Ok::<_, io::Error>(Vec::<()>::new());
+    let denied = || Err::<Vec<()>, _>(io::Error::from_raw_os_error(libc::EACCES));
+    assert!(!denied_errno_unavailable(&denied(), &denied()));
+    assert!(denied_errno_unavailable(&success(), &success()));
+    assert!(std::panic::catch_unwind(|| denied_errno_unavailable(&success(), &denied())).is_err());
+    assert!(std::panic::catch_unwind(|| denied_errno_unavailable(&denied(), &success())).is_err());
+    assert!(
+        std::panic::catch_unwind(|| denied_errno_unavailable(
+            &denied(),
+            &Err::<Vec<()>, _>(io::Error::from_raw_os_error(libc::ENOENT))
+        ))
+        .is_err()
+    );
+}
+
 #[test]
 fn list_projects_preserves_real_node_scandir_error_suppression() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
@@ -521,9 +561,16 @@ fn list_projects_preserves_real_node_scandir_error_suppression() {
         let name = row["name"].as_str().unwrap();
         let actual = ListProjectFixture::new(name);
         let scan = actual.metadata.files.entries(&actual.root.join("projects"));
+        let unavailable = if name == "denied" {
+            let probe = std::fs::read_dir(actual.root.join("projects"))
+                .and_then(|entries| entries.collect::<io::Result<Vec<_>>>());
+            denied_errno_unavailable(&scan, &probe)
+        } else {
+            false
+        };
         if name == "empty" {
             assert!(scan.unwrap().is_empty());
-        } else if name == "denied" && scan.is_ok() {
+        } else if unavailable {
             // Root or a permissive filesystem may ignore chmod denial. Keep
             // recorded error replay below mandatory and report this boundary.
             eprintln!(
