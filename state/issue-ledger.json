@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "PENDING_SECOND_FAMILY_CLASSIFICATION",
-  "asOf": "2026-10-16T02:11:38.567520+00:00",
+  "asOf": "2026-10-16T02:54:30.626097+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
   "productHead": "8745ddd3e1bcfca634a6355f5b2e12084f5c6931",
@@ -98,6 +98,42 @@
             "_tmp/20261016-debt-cleanup/reviews/metadata-wrapper-reset/proof.json"
           ],
           "note": "后续成功与候选不抹去已发生事故；双独立审阅和CI闭合前不fixed。"
+        }
+      ]
+    },
+    {
+      "number": 144,
+      "url": "https://github.com/zhengdaqi/pilotdeck-rs/issues/144",
+      "githubState": "OPEN",
+      "subitems": [
+        {
+          "id": "144.1",
+          "title": "外审no-tools未落执行器，未知原状态的通用tmp删除",
+          "primaryType": "真实缺陷",
+          "severity": "P0",
+          "confirmation": "candidate",
+          "state": "in-review",
+          "fixed": false,
+          "prerequisite": "恢复受影响通道以及相关PR合并闸门",
+          "evidence": [
+            "_tmp/20261016-debt-cleanup/reviews/tool-boundary-incident.md"
+          ],
+          "note": "已证越只读任务执行边界，按硬红线从严留P0候选；当前执行器防护在核，不能用配置或CHANNEL_OK冒通过。"
+        },
+        {
+          "id": "144.2",
+          "title": "通用tmp删除前所有权与内容未核，历史影响未知",
+          "primaryType": "验收债务",
+          "severity": "N/A",
+          "confirmation": "unknown",
+          "state": "pending",
+          "fixed": false,
+          "prerequisite": "issue144关闭与事故影响结论",
+          "classificationPending": true,
+          "evidence": [
+            "_tmp/20261016-debt-cleanup/reviews/tool-boundary-incident.md"
+          ],
+          "note": "没有删除前stat/listing；不推断用户数据已丢，也不得以重建birthtime宣称无损。未知继续记未完成。"
         }
       ]
     }
@@ -3051,7 +3087,10 @@
       "sha256": "fdec676701af446b25161da0dd5098afd4aadd682ef94963b8c70ab8c5f9b520"
     },
     "_tmp/20261016-debt-cleanup/taxonomy/delivery-status.json": {
-      "sha256": "eeb88daae9a439656f0da95569c2828578e5ce48aaa7bb4103c75b68945159bf"
+      "sha256": "8894f989e6c25070fed9da8cd0cbaf3f4263b149ae811c031b157b2c6e9b63ef"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/runtime-incident-issue.json": {
+      "sha256": "d418578cbf79cec1016c356994e75f268f76b0b095a4a276ea836e700873eabf"
     },
     "_tmp/20261016-debt-cleanup/taxonomy/open-issues-20261016T002453Z.json": {
       "sha256": "bd98c27920b36bea4ccbfefe2b3e655ab4d24a69f08a893fa50658f36ec36acf"
