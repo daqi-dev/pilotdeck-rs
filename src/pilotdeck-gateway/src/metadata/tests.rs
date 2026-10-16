@@ -332,6 +332,21 @@ fn metadata_io_completeness_rejects_missing_cases_method_and_each_helper_error()
             .retain(|o| o["api"] != api);
         assert!(!complete(&broken), "{id} {api}");
     }
+    let mut missing_legacy_stat = fixture.clone();
+    let row = missing_legacy_stat["cases"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|r| r["id"] == "projects-denied-legacy")
+        .unwrap();
+    let legacy_path = row["legacy"].clone();
+    row["observations"].as_array_mut().unwrap().retain(|o| {
+        !(o["api"] == "fsp.stat"
+            && o["path"] == legacy_path
+            && o["ok"] == true
+            && o["result"]["directory"] == true)
+    });
+    assert!(!complete(&missing_legacy_stat));
     let mut wrong_code = fixture.clone();
     let row = wrong_code["cases"]
         .as_array_mut()
