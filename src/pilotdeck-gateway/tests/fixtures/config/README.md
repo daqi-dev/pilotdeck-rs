@@ -58,11 +58,29 @@ SHA-256 和调用路径在原件顶层。global 配置的 exists/stat 与 read �
 `_tmp/20261016-debt-cleanup/catalog/raw-recording/cases/*/raw-rpc.json`。
 入库 fixture 仅把案例根映射为 `/fixture`，文件字节中的根也作相同映射。
 
-收集脚本为主仓 `_tmp/20261016-debt-cleanup/catalog/record_catalog_io.mts`；
-同目录 `source-binding.json` 绑定脚本、源码、fixture 及 13 份 raw 哈希。
-复录参数依次为固定 baseline 目录、全新输出 JSON、全新 scratch；沿用
-本页前述隔离 HOME/XDG/TMPDIR 和 tsx 调用，必须非 root，并设置两项浏览器
-guard。脚本只创建隔离文件，transport 无监听，不启动 gateway 或模型进程。
+维护版收集脚本为 `tests/record_catalog_io.mts`；初录脚本和来源哈希仍保留在
+主仓 `_tmp/20261016-debt-cleanup/catalog/`。维护版要求固定基线、全新输出和
+scratch，并拒绝 root；参数依次为 baseline 目录、输出 JSON、scratch。
+它只创建隔离文件，transport 无监听，不启动 gateway 或模型进程。复现：
+
+```sh
+CATALOG_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck
+CATALOG_SCRATCH="$(mktemp -d /private/tmp/pdrs-catalog-io.XXXXXX)"
+mkdir -p "$CATALOG_SCRATCH/isolation/home" "$CATALOG_SCRATCH/isolation/xdg" "$CATALOG_SCRATCH/isolation/tmp"
+env HOME="$CATALOG_SCRATCH/isolation/home" \
+  XDG_CONFIG_HOME="$CATALOG_SCRATCH/isolation/xdg" \
+  XDG_CACHE_HOME="$CATALOG_SCRATCH/isolation/xdg" \
+  XDG_DATA_HOME="$CATALOG_SCRATCH/isolation/xdg" TMPDIR="$CATALOG_SCRATCH/isolation/tmp" \
+  PILOT_HOME="$CATALOG_SCRATCH/isolation/home" \
+  PILOTDECK_SKIP_BROWSER_OPEN=1 SKIP_BROWSER_OPEN=1 \
+  node --import "$PWD/scripts/gateway-parity/watcher.mjs" \
+  --import "$CATALOG_BASELINE/node_modules/tsx/dist/loader.mjs" \
+  src/pilotdeck-gateway/tests/record_catalog_io.mts "$CATALOG_BASELINE" \
+  "$CATALOG_SCRATCH/catalog.json" "$CATALOG_SCRATCH"
+```
+
+维护版已在全新目录复录13项，request/response/load/io/env/process字段与入库
+原件逐项一致；真实stat size随scratch字节长度变化，不修改既有fixture。
 
 Rust 必跑测试锁定 13 个唯一非空 ID、RPC method 和两阶段观测，空/截短/重复
 负控均拒绝；完整 wire 和 loader diagnostics 分别比较。独立 pairing 从真实
@@ -75,3 +93,10 @@ Node 原始 request/response 验证本地应答，随后 forwarded observer-fenc
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway catalog --locked --offline
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway method_whitelists_equal_source_oracle_errno_sets --locked --offline
 ```
+
+公开父测试始终跑完整13项，不读取行号环境变量；专用ignored worker由共享
+`test_process` helper以清空环境启动，30秒/64KiB总输出为界，要求恰一个
+libtest通过结果及一个来自实际案例ID的回执。父级固定集合与13个唯一回执
+对账。旧CJK及两项locale启动也复用此门；零匹配、无/错/重复回执、失败、
+超时、超输出均有必跑负控。ignored worker不单独算验收，它们必须被父测试
+调用并通过回执核对；CI正常测试仍执行全部父入口。

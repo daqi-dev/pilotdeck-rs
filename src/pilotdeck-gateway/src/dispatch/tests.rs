@@ -523,6 +523,12 @@ fn list_projects_preserves_real_node_scandir_error_suppression() {
         let scan = actual.metadata.files.entries(&actual.root.join("projects"));
         if name == "empty" {
             assert!(scan.unwrap().is_empty());
+        } else if name == "denied" && scan.is_ok() && rustix::process::geteuid().is_root() {
+            // Privileged hosts cannot reproduce EACCES with chmod. Keep the
+            // recorded error replay below mandatory and report this boundary.
+            eprintln!(
+                "PDRS_UNAVAILABLE real-EACCES: privileged host; recorded EACCES replay required"
+            );
         } else {
             let error = scan.unwrap_err();
             assert_eq!(
@@ -542,5 +548,33 @@ fn list_projects_preserves_real_node_scandir_error_suppression() {
             serde_json::from_slice::<serde_json::Value>(&response).unwrap(),
             row["response"]
         );
+        if name == "denied" {
+            struct RecordedDenied;
+            impl Files for RecordedDenied {
+                fn entries(&self, _: &Path) -> io::Result<Vec<(String, bool)>> {
+                    Err(io::Error::from_raw_os_error(libc::EACCES))
+                }
+                fn read(&self, _: &Path) -> io::Result<Vec<u8>> {
+                    panic!("scandir failure must not read")
+                }
+                fn stat(&self, _: &Path) -> io::Result<Stat> {
+                    panic!("scandir failure must not stat")
+                }
+            }
+            let recorded = Metadata {
+                home: actual.metadata.home.clone(),
+                cwd: actual.metadata.cwd.clone(),
+                files: RecordedDenied,
+            };
+            let Route::LocalResponse(response) =
+                route_with_metadata(&parse(request.as_bytes()).unwrap(), Some(&recorded))
+            else {
+                panic!("recorded EACCES must stay local")
+            };
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&response).unwrap(),
+                row["response"]
+            );
+        }
     }
 }

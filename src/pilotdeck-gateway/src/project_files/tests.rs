@@ -797,47 +797,42 @@ fn round4() -> Value {
 
 #[test]
 fn node_round4_sliced_latin1_list_responses() {
-    node_locale_list_responses(
-        round4(),
-        "project_files::tests::node_round4_sliced_latin1_list_responses",
-    );
+    run_node_locale("round4");
 }
-
 #[test]
 fn node_round5_two_byte_parent_list_responses() {
-    node_locale_list_responses(
-        serde_json::from_str(include_str!(
+    run_node_locale("round5");
+}
+fn locale_fixture(kind: &str) -> Value {
+    match kind {
+        "round4" => round4(),
+        "round5" => serde_json::from_str(include_str!(
             "../../tests/fixtures/project-files/node-runtime-round5.json"
         ))
         .unwrap(),
-        "project_files::tests::node_round5_two_byte_parent_list_responses",
+        _ => panic!("unknown locale fixture {kind}"),
+    }
+}
+fn run_node_locale(kind: &str) {
+    let fixture = locale_fixture(kind);
+    crate::test_process::run_cases(
+        "project_files::tests::node_locale_worker",
+        vec![(
+            kind.into(),
+            vec![
+                (
+                    "LANG".into(),
+                    fixture["env"]["LANG"].as_str().unwrap().into(),
+                ),
+                ("PDRS_LOCALE_FIXTURE".into(), kind.into()),
+            ],
+        )],
     );
 }
-
-fn node_locale_list_responses(fixture: Value, test_name: &str) {
-    // A separate process sets the locale without racing other tests' env reads.
-    const CHILD: &str = "PDRS_FILES_LOCALE_CHILD";
-    if std::env::var_os(CHILD).is_none() {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("LC_") || key == "LANG" {
-                command.env_remove(key);
-            }
-        }
-        let output = command
-            .args(["--exact", test_name, "--nocapture"])
-            .env(CHILD, "1")
-            .env("LANG", fixture["env"]["LANG"].as_str().unwrap())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
+#[test]
+#[ignore = "only launched by locale fixture parents"]
+fn node_locale_worker() {
+    let fixture = locale_fixture(&std::env::var("PDRS_LOCALE_FIXTURE").unwrap());
     let metadata = snapshot_metadata(&fixture);
     for case in fixture["cases"].as_array().unwrap() {
         let request = case["request"].as_str().unwrap();
@@ -853,6 +848,7 @@ fn node_locale_list_responses(fixture: Value, test_name: &str) {
             case["tag"]
         );
     }
+    crate::test_process::receipt(&std::env::var("PDRS_LOCALE_FIXTURE").unwrap());
 }
 
 #[cfg(unix)]
@@ -1010,38 +1006,28 @@ fn cjk_fixture_rejects_empty_or_truncated_rows_and_requests() {
 
 #[test]
 fn cjk_requests_match_node_byte_for_byte() {
-    cjk_matrix("project_files::tests::cjk_requests_match_node_byte_for_byte");
-}
-
-fn cjk_matrix(test_name: &str) {
-    const CHILD: &str = "PDRS_CJK_ROW";
     let fixture = cjk_fixture();
     assert_cjk_fixture_complete(&fixture);
     let rows = fixture["rows"].as_array().unwrap();
-    let Ok(index) = std::env::var(CHILD) else {
-        for (index, row) in rows.iter().enumerate() {
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-            command.args(["--exact", test_name, "--nocapture"]);
-            for (key, _) in std::env::vars_os() {
-                if key.to_string_lossy().starts_with("LC_")
-                    || matches!(key.to_str(), Some("LANG" | "PILOT_HOME"))
-                {
-                    command.env_remove(key);
-                }
-            }
-            for (key, value) in row["env"].as_object().unwrap() {
-                command.env(key, value.as_str().unwrap());
-            }
-            let output = command.env(CHILD, index.to_string()).output().unwrap();
-            assert!(
-                output.status.success(),
-                "row {index}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        return;
-    };
-    let index: usize = index.parse().unwrap();
+    crate::test_process::run_cases(
+        "project_files::tests::cjk_matrix_worker",
+        rows.iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let mut env = crate::test_process::json_env(&row["env"]);
+                env.push(("PDRS_FIXTURE_ROW".into(), index.to_string()));
+                (format!("cjk-files-{index}"), env)
+            })
+            .collect(),
+    );
+}
+#[test]
+#[ignore = "only launched by complete CJK matrix"]
+fn cjk_matrix_worker() {
+    let fixture = cjk_fixture();
+    assert_cjk_fixture_complete(&fixture);
+    let rows = fixture["rows"].as_array().unwrap();
+    let index: usize = std::env::var("PDRS_FIXTURE_ROW").unwrap().parse().unwrap();
     let row = &rows[index];
     let locale = node_locale(|key| std::env::var(key).ok());
     assert_eq!(locale.to_string(), row["resolved"]["locale"]);
@@ -1077,6 +1063,7 @@ fn cjk_matrix(test_name: &str) {
             "row {index}: {tag}"
         );
     }
+    crate::test_process::receipt(&format!("cjk-files-{index}"));
 }
 
 pub(crate) fn round6() -> Value {

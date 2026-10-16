@@ -10,6 +10,8 @@ mod node_io;
 mod pairing;
 mod project_files;
 mod session_model;
+#[cfg(test)]
+mod test_process;
 mod upstream;
 
 use bytes::Bytes;
