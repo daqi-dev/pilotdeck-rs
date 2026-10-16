@@ -1,10 +1,14 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 第三轮：#138 已合并、#56 已关，#141 评审中，清理完成
+> **合并**：PR #138（WS 握手字节保留）经两家非作者评审（GLM+Claude 均无 P0/P1）+ 134 Rust 测试 + 18 真 TCP 样本 PASS（产品源码 SHA 与原件逐字节一致核验）后 rebase 合入 main@2944ef5；issue #56 已关。邮箱核验：作者 noreply ✅、committer 主邮箱为 CLAUDE.md §五已知服务端缺口（人侧未勾 private），非新问题。
+> **#141 评审**：GLM 一家已过（无 P0/P1，全实测：16 Rust 测试 + observer/driver/guard 三套正负控，`_tmp/20261017-pr141-review/glm-review.md`）；Claude 第二家后台进行中（`_tmp/20261017-pr141-review/claude-review.md`）。收敛后合并 → 评估关 #139（P0）。
+> **清理（人已授权）**：4 个 codex worktree 全删（cli-server/wt-a4m3/wt-d6/wt-p2c，frame-resource-probe 领先 2 提交已先推远端）；`_tmp` 证据用 `rsync -aH --sparse` 归档至 `_tmp/archive/worktrees-20261017/`（115M——wt-a4m3 的 isolated 快照是稀疏文件+硬链接，勿用裸 rsync 展开）。_build 23G→17G。wt-p2c 的 none/ 为 Node v22 运行时缓存（300K），已核无证据价值，随树删除。
+> **通道矩阵（实测）**：`gpt-6.1-sol` ✅ / `gpt-6-astra` ✅（llm-center /v1 直连，codex CLI 默认 astra+ultra）；`claude-sonnet-5-5` ✅ / `claude-opus-5-5` ✅ / `claude-fable-5-1` ❌渠道未启用 / `claude-fable-5-5` ❌挂起；GLM（本会话）✅。搭配建议：实现=codex(astra-ultra)｜评审A=Claude(sonnet-5-5)｜评审B=GLM｜重活/仲裁=opus-5-5 或 6.1-sol；正交原则=谁写谁不审。
+> **下一步**：① 收 Claude #141 评审→合并→关 #139；② #142/#150/#151 处置（#151 纯文档 Draft 直接关）；③ 开 #46（A4 主线）；④ 阶段 D #122。
+
 > ## 2026-10-17 · 第二轮：PR#153 已开，#138 评审中（GLM 一家已过）
-> **做了**：① 开 PR #153（CLAUDE.md 精简 + 本板接续段，dev/resume-20261017@57a55ac）；② #138 双 CI 已绿、MERGEABLE、此前零评审——GLM 第一家评审完成：**无 P0/P1**（九项逐查 + simplify 四视角，原件 `_tmp/20261017-pr138-review/glm-review.md`）；③ Claude Code 通道修复：CLI 2.1.296 不认 settings 里的 `claude-fable-5-1`，网关（llm-center）有效名为 `claude-sonnet-5-5`，用 `claude -p --model claude-sonnet-5-5` 绕过；第二家评审已在后台跑（任务 `_tmp/20261017-pr138-review/task-claude.md` → claude-review.md）。
-> **重启后接着做**：① 收 claude-review.md，两家收敛 → #138 从 Draft 转正 → rebase 合并（不带 --delete-branch）→ 核邮箱；② 关纯文档 Draft PR #151（codex 交接文，无代码）；③ #141（metadata errno，#139 P0 前置）同流程；④ 开 #46（A4 主线）；⑤ 阶段 D #122 起。分工不变：codex 写实现、Claude Code 评审、GLM 协调+评审。
-> **待人（一句话即可）**：授权回收 4 个 codex worktree（cli-server/wt-a4m3/wt-d6/wt-p2c）及旧 target——磁盘 46G 满、worktree 5 个满，阶段 D/A4 需要构建空间；分支均已推远端不丢代码，删除前先把各树未归档的 _tmp 证据 rsync 进主仓。wt-p2c 有未跟踪 none/ 目录，删除前核一眼。
-> **已用授权**：推送/开 PR/合并/关 issue 按 CLAUDE.md 第 14 条直接执行；本轮未做任何删除。
+> **做了**：① 开 PR #153（CLAUDE.md 精简 + 本板接续段）；② #138 双 CI 已绿、此前零评审——GLM 第一家评审完成：**无 P0/P1**（原件 `_tmp/20261017-pr138-review/glm-review.md`）；③ Claude Code 通道修复：CLI 2.1.296 不认 settings 里的 `claude-fable-5-1`，网关（llm-center）有效名为 `claude-sonnet-5-5`。工作树清理授权已在第三轮落实。
 
 > ## 2026-10-17 · 人定「开发优先」重启（main @ b888563 + 本提交）
 > **人判**：CLAUDE.md 被 codex 官僚化改写（dfa7df3 起）后，会话陷入写文档循环——origin/main 领先的 48 个提交几乎全是 docs，board 变成无人能接续的密码文。本提交精简 CLAUDE.md（恢复 f80089a 的简洁度 + 保留人定框架 + 新增「开发优先」最高优先规则）。
