@@ -29,3 +29,10 @@ type: feedback
 三次原件`reviews/metadata-latest-source-environment-glm-exit.json`、`metadata-latest-tool-env-glm-exit.json`、`metadata-environment-third-glm-exit.json`分别300.085/300.095/300.040秒、timeout=true、textCount=0，均不算有效审阅；路径前缀为主仓`_tmp/20261016-debt-cleanup/`。第三次虽有逐字可复用preflight和新0c11实际环境/postflight这两个实质新前提，仍未取得final，故当前环境核心scope挂起，不再第四次改写/缩包/变换措辞或重复延时。raw/stderr/task与SHA保留，不归因供应商、过滤或任一事件先后；不凭其它scope成功填此缺口。
 
 只停该scope及依赖它的合并。转真正独立的任务/角色；不同memory函数、31单账本或独立产品问题须有各自明确源范围，不能借此重新包装同一环境核心。将来解除挂起须记录新的外部状态或独立事实，明确为何能改变这类失败；旧健康probe与纯拆包不是新前提。pre-provider硬门失败且未发请求单独记，不算完成一次provider评审，也不可拿旧门证据绕过当场准入。
+
+
+### 统一协调允许多请求（2026-10-16 人定）
+
+单一协调者负责认领、派发和登记，不是每provider只能一在途。独立只读角色、不同issue调查及隔离实现按依赖并发；额度按实际限流单独管理，同session/写目录/全量对拍仍各守互斥。上文R24“单GLM串行”仅记当时有界诊断，不能升格为当前全通道策略。实际多job指针在主仓reviews/central-current-status.json，旧journal/PID不重新派发；当前owner安全更新registry，保留在途及所有原始证据，不启动第二协调者。并发变化不解除三空或其它已挂起scope。
+
+GLM可参与实现/修复/测试；每个scope登记实际作者，GLM所写delta交DeepSeek+独立GPT，GPT所写仍GLM+DeepSeek。硬0实现只生成候选文本，实际写入须已核worktree持有人机械应用；模型不得以评审身份批准自己的改动，混合作者须重新核独立谱系数量。
