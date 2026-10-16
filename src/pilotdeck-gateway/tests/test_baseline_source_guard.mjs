@@ -8,8 +8,8 @@ import {createHash} from 'node:crypto';
 import {bindSourceTree} from './baseline_source_guard.mjs';
 function fixture() {
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'metadata-source-'));
- const git=(...args)=>execFileSync('git',['-C',root,...args],{stdio:['ignore','pipe','pipe']}).toString().trim();
- git('init');fs.mkdirSync(path.join(root,'src'));fs.writeFileSync(path.join(root,'src/main.ts'),'export const value=1;\n');fs.writeFileSync(path.join(root,'.gitignore'),'src/ignored/\n');git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','fixture');
+ const git=(...args)=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',root,...args],{stdio:['ignore','pipe','pipe']}).toString().trim();
+ git('init');fs.mkdirSync(path.join(root,'src'));fs.writeFileSync(path.join(root,'src/main.ts'),'export const value=1;\n');fs.writeFileSync(path.join(root,'.gitignore'),'src/ignored/\n');git('add','.');git('commit','-m','fixture');
  return {root,git,ref:git('rev-parse','HEAD')};
 }
 for (const mutation of ['healthy','dirty','missing','untracked','ignored','symlink','assume-unchanged']) test(mutation,t=>{
