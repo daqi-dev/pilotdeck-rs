@@ -1,4 +1,4 @@
-//! No listener, sleeps or scheduler guesses: each queued chunk is one read.
+//! Queued nonempty chunks cap reads; byte counters follow actual ReadBuf fills.
 use super::*;
 use crate::frame::client_frame;
 use std::{
@@ -17,7 +17,7 @@ const REQUEST: &[u8] = b"GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgr
 struct Scripted {
     io: DuplexStream,
     reads: VecDeque<Vec<u8>>,
-    count: Arc<AtomicUsize>,
+    bytes_read: Arc<AtomicUsize>,
 }
 impl AsyncRead for Scripted {
     fn poll_read(
@@ -25,16 +25,26 @@ impl AsyncRead for Scripted {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        if let Some(mut chunk) = self.reads.pop_front() {
-            let count = chunk.len().min(buf.remaining());
-            buf.put_slice(&chunk[..count]);
-            if count < chunk.len() {
-                self.reads.push_front(chunk.split_off(count));
-            }
-            self.count.fetch_add(1, Ordering::SeqCst);
+        if buf.remaining() == 0 {
             return Poll::Ready(Ok(()));
         }
-        Pin::new(&mut self.io).poll_read(cx, buf)
+        while let Some(mut chunk) = self.reads.pop_front() {
+            if chunk.is_empty() {
+                continue;
+            }
+            let amount = chunk.len().min(buf.remaining());
+            buf.put_slice(&chunk[..amount]);
+            if amount < chunk.len() {
+                self.reads.push_front(chunk.split_off(amount));
+            }
+            self.bytes_read.fetch_add(amount, Ordering::SeqCst);
+            return Poll::Ready(Ok(()));
+        }
+        let before = buf.filled().len();
+        let result = Pin::new(&mut self.io).poll_read(cx, buf);
+        self.bytes_read
+            .fetch_add(buf.filled().len() - before, Ordering::SeqCst);
+        result
     }
 }
 impl AsyncWrite for Scripted {
@@ -53,8 +63,135 @@ impl AsyncWrite for Scripted {
     }
 }
 
-async fn boundary_case(head: &[u8], split_headers: bool, split_later: bool, later: Vec<u8>) {
-    boundary_stream(head, split_headers, split_later, later, false)
+const HEADER_SPLITS: [usize; 6] = [
+    0,
+    REQUEST.len() / 2,
+    REQUEST.len() - 4,
+    REQUEST.len() - 3,
+    REQUEST.len() - 2,
+    REQUEST.len() - 1,
+];
+
+fn append_later_reads(reads: &mut VecDeque<Vec<u8>>, later: &[u8], split_later: bool) {
+    let split_at = if split_later {
+        later.len().min(5)
+    } else {
+        later.len()
+    };
+    for chunk in [&later[..split_at], &later[split_at..]] {
+        if !chunk.is_empty() {
+            reads.push_back(chunk.to_vec());
+        }
+    }
+}
+
+fn scripted_fixture(reads: VecDeque<Vec<u8>>) -> (Scripted, DuplexStream, Arc<AtomicUsize>) {
+    let (io, peer) = tokio::io::duplex(64);
+    let bytes_read = Arc::new(AtomicUsize::new(0));
+    (
+        Scripted {
+            io,
+            reads,
+            bytes_read: bytes_read.clone(),
+        },
+        peer,
+        bytes_read,
+    )
+}
+
+#[test]
+fn scripted_small_readbufs_count_bytes_and_delegate_after_queue() {
+    let (mut stream, mut peer, bytes_read) = scripted_fixture([b"123456789".to_vec()].into());
+    let mut cx = Context::from_waker(Waker::noop());
+    for (index, expected) in [b"123", b"456", b"789"].into_iter().enumerate() {
+        let mut storage = [0_u8; 3];
+        let mut buffer = ReadBuf::new(&mut storage);
+        assert!(matches!(
+            Pin::new(&mut stream).poll_read(&mut cx, &mut buffer),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(buffer.filled(), expected);
+        assert_eq!(bytes_read.load(Ordering::SeqCst), (index + 1) * 3);
+    }
+    assert!(stream.reads.is_empty());
+    assert!(matches!(
+        Pin::new(&mut peer).poll_write(&mut cx, b"XY"),
+        Poll::Ready(Ok(2))
+    ));
+    let mut storage = [0_u8; 3];
+    let mut buffer = ReadBuf::new(&mut storage);
+    buffer.put_slice(b"!");
+    assert!(matches!(
+        Pin::new(&mut stream).poll_read(&mut cx, &mut buffer),
+        Poll::Ready(Ok(()))
+    ));
+    assert_eq!(buffer.filled(), b"!XY");
+    assert_eq!(
+        bytes_read.load(Ordering::SeqCst),
+        11,
+        "do not count prefilled bytes"
+    );
+}
+
+#[test]
+fn scripted_empty_chunks_do_not_signal_eof_before_payload() {
+    let (mut stream, _peer, bytes_read) = scripted_fixture([Vec::new(), b"R".to_vec()].into());
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut storage = [0_u8; 1];
+    let mut buffer = ReadBuf::new(&mut storage);
+    assert!(matches!(
+        Pin::new(&mut stream).poll_read(&mut cx, &mut buffer),
+        Poll::Ready(Ok(()))
+    ));
+    assert_eq!(buffer.filled(), b"R");
+    assert_eq!(bytes_read.load(Ordering::SeqCst), 1);
+    assert!(stream.reads.is_empty());
+}
+
+#[test]
+fn scripted_zero_capacity_does_not_consume_queued_input() {
+    let (mut stream, _peer, bytes_read) = scripted_fixture([Vec::new(), b"R".to_vec()].into());
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut empty = [];
+    assert!(matches!(
+        Pin::new(&mut stream).poll_read(&mut cx, &mut ReadBuf::new(&mut empty)),
+        Poll::Ready(Ok(()))
+    ));
+    assert_eq!(stream.reads.len(), 2);
+    assert_eq!(bytes_read.load(Ordering::SeqCst), 0);
+    let mut storage = [0_u8; 1];
+    let mut buffer = ReadBuf::new(&mut storage);
+    assert!(matches!(
+        Pin::new(&mut stream).poll_read(&mut cx, &mut buffer),
+        Poll::Ready(Ok(()))
+    ));
+    assert_eq!(buffer.filled(), b"R");
+    assert_eq!(bytes_read.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn scripted_short_later_reads_preserve_payload_and_following_byte() {
+    timeout(Duration::from_secs(3), async {
+        for length in 0..=5 {
+            let later = vec![b'L'; length];
+            for split_later in [false, true] {
+                let mut reads = VecDeque::new();
+                append_later_reads(&mut reads, &later, split_later);
+                reads.push_back(b"R".to_vec());
+                let (mut stream, _peer, bytes_read) = scripted_fixture(reads);
+                let mut actual = vec![0_u8; length + 1];
+                stream.read_exact(&mut actual).await.unwrap();
+                assert_eq!(actual, [later.as_slice(), b"R"].concat());
+                assert_eq!(bytes_read.load(Ordering::SeqCst), length + 1);
+            }
+        }
+    })
+    .await
+    .expect("short later chunks must not panic or create false EOF");
+}
+
+async fn boundary_case(head: &[u8], split_at: usize, split_later: bool, later: Vec<u8>) {
+    boundary_stream(head, split_at, split_later, later, false)
         .await
         .expect("complete upstream stream must match exactly through EOF");
 }
@@ -68,34 +205,32 @@ struct StreamMismatch {
 
 async fn boundary_stream(
     head: &[u8],
-    split_headers: bool,
+    split_at: usize,
     split_later: bool,
     later: Vec<u8>,
     duplicate: bool,
 ) -> Result<(), StreamMismatch> {
     let (io, mut client) = tokio::io::duplex(4096);
     let (upstream, mut host) = tokio::io::duplex(4096);
-    let count = Arc::new(AtomicUsize::new(0));
+    let bytes_read = Arc::new(AtomicUsize::new(0));
     let after = client_frame(0x81, 127, b"post101 frame preserved once");
     let mut reads = VecDeque::new();
-    let split = if split_headers { REQUEST.len() / 2 } else { 0 };
-    if split != 0 {
-        reads.push_back(REQUEST[..split].to_vec());
+    assert!(
+        split_at < REQUEST.len(),
+        "header split must leave a nonempty final read"
+    );
+    if split_at != 0 {
+        reads.push_back(REQUEST[..split_at].to_vec());
     }
-    let mut last_http_read = REQUEST[split..].to_vec();
+    let mut last_http_read = REQUEST[split_at..].to_vec();
     last_http_read.extend_from_slice(head);
     reads.push_back(last_http_read);
-    let http_reads = reads.len();
-    if split_later {
-        reads.push_back(later[..5].to_vec());
-        reads.push_back(later[5..].to_vec());
-    } else {
-        reads.push_back(later.clone());
-    }
+    let http_bytes = REQUEST.len() + head.len();
+    append_later_reads(&mut reads, &later, split_later);
     let io = Scripted {
         io,
         reads,
-        count: count.clone(),
+        bytes_read: bytes_read.clone(),
     };
     let (upgrade_tx, upgrade_rx) = oneshot::channel();
     let upgrade_tx = Mutex::new(Some(upgrade_tx));
@@ -128,7 +263,7 @@ async fn boundary_stream(
     })
     .await;
     let (upgrade, lease) = upgrade_rx.await.unwrap();
-    assert_eq!(count.load(Ordering::SeqCst), http_reads);
+    assert_eq!(bytes_read.load(Ordering::SeqCst), http_bytes);
     release_tx.send(()).unwrap();
     let server = tokio::spawn(server);
     let upgraded = upgrade.await.unwrap();
@@ -175,7 +310,7 @@ async fn boundary_stream(
 async fn actual_trailing_duplicate_is_rejected_by_full_stream_gate() {
     timeout(Duration::from_secs(3), async {
         let later = client_frame(0x81, 126, b"pre101 frame preserved once");
-        let result = boundary_stream(&[], false, false, later.clone(), true).await;
+        let result = boundary_stream(&[], 0, false, later.clone(), true).await;
         let rejected = result.expect_err("actual duplicate must be rejected by common gate");
         assert_eq!(rejected.code, "UPSTREAM_FULL_STREAM_MISMATCH");
         assert_eq!(
@@ -193,11 +328,11 @@ async fn pre101_reads_survive_and_only_initial_head_is_discarded() {
     timeout(Duration::from_secs(3), async {
         let full = client_frame(0x81, 127, b"discarded HTTP head");
         for head in [&[][..], full.as_slice(), &full[..5]] {
-            for split_headers in [false, true] {
+            for split_at in HEADER_SPLITS {
                 for split_later in [false, true] {
                     boundary_case(
                         head,
-                        split_headers,
+                        split_at,
                         split_later,
                         client_frame(0x81, 126, b"pre101 frame preserved once"),
                     )
@@ -395,12 +530,12 @@ fn cancelling_service_lease_wakes_paused_reader() {
 async fn ungated_hyper_control_pre_reads_later_frame_into_discarded_buffer() {
     timeout(Duration::from_secs(3), async {
         let (io, _client) = tokio::io::duplex(4096);
-        let count = Arc::new(AtomicUsize::new(0));
+        let bytes_read = Arc::new(AtomicUsize::new(0));
         let later = client_frame(0x81, 126, b"lost by old whole-buffer drop");
         let io = Scripted {
             io,
             reads: [REQUEST.to_vec(), later.clone()].into(),
-            count: count.clone(),
+            bytes_read: bytes_read.clone(),
         };
         let (upgrade_tx, upgrade_rx) = oneshot::channel();
         let upgrade_tx = Mutex::new(Some(upgrade_tx));
@@ -436,9 +571,9 @@ async fn ungated_hyper_control_pre_reads_later_frame_into_discarded_buffer() {
         .await;
         let upgrade = upgrade_rx.await.unwrap();
         assert_eq!(
-            count.load(Ordering::SeqCst),
-            2,
-            "ungated Hyper consumed the later read before 101"
+            bytes_read.load(Ordering::SeqCst),
+            REQUEST.len() + later.len(),
+            "ungated Hyper consumed the later bytes before 101"
         );
         release_tx.send(()).unwrap();
         let server = tokio::spawn(server);
@@ -461,12 +596,13 @@ async fn ungated_hyper_control_pre_reads_later_frame_into_discarded_buffer() {
 async fn blocked_failure_wakes_hyper_and_serves_already_available_next_request() {
     timeout(Duration::from_secs(3), async {
         let (io, mut client) = tokio::io::duplex(4096);
-        let count = Arc::new(AtomicUsize::new(0));
+        let bytes_read = Arc::new(AtomicUsize::new(0));
         let next = b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".to_vec();
+        let expected_bytes = REQUEST.len() + next.len();
         let io = Scripted {
             io,
             reads: [REQUEST.to_vec(), next].into(),
-            count: count.clone(),
+            bytes_read: bytes_read.clone(),
         };
         let (release_tx, release_rx) = oneshot::channel();
         let release_rx = Mutex::new(Some(release_rx));
@@ -496,9 +632,9 @@ async fn blocked_failure_wakes_hyper_and_serves_already_available_next_request()
         })
         .await;
         assert_eq!(
-            count.load(Ordering::SeqCst),
-            1,
-            "next request is gated while upgrade is pending"
+            bytes_read.load(Ordering::SeqCst),
+            REQUEST.len(),
+            "next request bytes are gated while upgrade is pending"
         );
         release_tx.send(()).unwrap();
         let server = tokio::spawn(server);
@@ -507,7 +643,7 @@ async fn blocked_failure_wakes_hyper_and_serves_already_available_next_request()
         assert_eq!(output.matches("HTTP/1.1 502").count(), 1);
         assert_eq!(output.matches("HTTP/1.1 200").count(), 1);
         assert!(output.ends_with("healthy"));
-        assert_eq!(count.load(Ordering::SeqCst), 2);
+        assert_eq!(bytes_read.load(Ordering::SeqCst), expected_bytes);
         server.await.unwrap().unwrap();
     })
     .await
@@ -519,12 +655,12 @@ async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
     timeout(Duration::from_secs(3), async {
         let (io, mut client) = tokio::io::duplex(4096);
         let (upstream, mut host) = tokio::io::duplex(4096);
-        let count = Arc::new(AtomicUsize::new(0));
+        let bytes_read = Arc::new(AtomicUsize::new(0));
         let frame = client_frame(0x81, 126, b"frame before FIN");
         let io = Scripted {
             io,
             reads: [REQUEST.to_vec(), frame.clone()].into(),
-            count: count.clone(),
+            bytes_read: bytes_read.clone(),
         };
         let (upgrade_tx, upgrade_rx) = oneshot::channel();
         let upgrade_tx = Mutex::new(Some(upgrade_tx));
@@ -554,7 +690,7 @@ async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
         })
         .await;
         client.shutdown().await.unwrap();
-        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert_eq!(bytes_read.load(Ordering::SeqCst), REQUEST.len());
         let (upgraded, lease) = upgrade_rx.await.unwrap();
         release_tx.send(()).unwrap();
         let server = tokio::spawn(server);
@@ -564,6 +700,10 @@ async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
         let mut actual = Vec::new();
         host.read_to_end(&mut actual).await.unwrap();
         assert_eq!(actual, frame);
+        assert_eq!(
+            bytes_read.load(Ordering::SeqCst),
+            REQUEST.len() + frame.len()
+        );
         pair.await.unwrap().unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).await.unwrap();
@@ -578,8 +718,8 @@ async fn upgrade_after_client_halfclose_preserves_pending_frame_then_ends() {
 async fn initial_partial_frame_suffix_is_not_rejoined_with_discarded_prefix() {
     timeout(Duration::from_secs(3), async {
         let full = client_frame(0x81, 127, b"discarded HTTP head");
-        for split_headers in [false, true] {
-            boundary_case(&full[..5], split_headers, false, full[5..].to_vec()).await;
+        for split_at in [0, REQUEST.len() / 2] {
+            boundary_case(&full[..5], split_at, false, full[5..].to_vec()).await;
         }
     })
     .await
@@ -617,14 +757,15 @@ async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
                 }
             });
             let (io, mut client) = tokio::io::duplex(4096);
-            let count = Arc::new(AtomicUsize::new(0));
+            let bytes_read = Arc::new(AtomicUsize::new(0));
             let trailing = if valid_http_head {
                 b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".to_vec()
             } else {
                 client_frame(0x81, 126, b"invalid HTTP head")
             };
             let initial = [REQUEST, trailing.as_slice()].concat();
-            let io = Scripted { io, reads: [initial].into(), count: count.clone() };
+            let initial_bytes = initial.len();
+            let io = Scripted { io, reads: [initial].into(), bytes_read: bytes_read.clone() };
             let proxy = Arc::new(Proxy {
                 upstream: origin,
                 client: Client::builder(TokioExecutor::new()).build_http(),
@@ -634,7 +775,7 @@ async fn production_failure_with_initial_head_terminates_or_recovers_as_http() {
             client.read_to_string(&mut response).await.unwrap();
             assert!(response.starts_with("HTTP/1.1 502"), "{response}");
             assert_eq!(response.matches("HTTP/1.1 502").count(), 1);
-            assert_eq!(count.load(Ordering::SeqCst), 1);
+            assert_eq!(bytes_read.load(Ordering::SeqCst), initial_bytes);
             let result = server.await.unwrap();
             if valid_http_head {
                 assert_eq!(response.matches("HTTP/1.1 200").count(), 1, "{response}");
