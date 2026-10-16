@@ -570,6 +570,8 @@ async fn ungated_hyper_control_pre_reads_later_frame_into_discarded_buffer() {
         })
         .await;
         let upgrade = upgrade_rx.await.unwrap();
+        // This control assumes Hyper's first-poll read buffer holds REQUEST plus later;
+        // revisit the control if Hyper's buffering strategy changes.
         assert_eq!(
             bytes_read.load(Ordering::SeqCst),
             REQUEST.len() + later.len(),
