@@ -147,3 +147,8 @@ CLI旧26与8d CI5保历史；DS实际Git隐藏flag使clean:true+candidateHead的
 ## R73 归还链闭合后的093443唯一可重建缓存（自决·待复核）
 
 18:29报告漏掉revision-task:13“root释放的独占093443 target”，本轮原文46d1索引补齐；writer doc-report停止交root无在途，wrapperreset原工具/同4b5源成功及事故原件均保，不再要求旧明示删除授权。root现决定释放仅`_build/20261016-093443/debug/incremental`可重建cache，以新精确guard/owner/引用/非cache外链与锁检查为执行前提；不是删除旧工作/证据、不是扩至090514、partial或未知cache。任务`_tmp/20261016-debt-cleanup/order-architecture/cache093443-r73-cjxnkc5j/task.md`先仅准备≤2MiB，独立必要增量核后root另给authority一次。当前lastlink110997504B只是旧估，fresh全du决定实际资源，不称满足旧128MiB+0.20门；本卡不授权任何新build。原则：已归还owner可明确解除可重建cache保留，原件/产物与未证关联不能随cache删。
+
+
+## R74 未知能否完成的profile0 build-only诊断（自决·待复核）
+
+PR138 current2f欠本地产物+18；默认完整build无窗，directrustc无完整原argv不可准入。仅准备原cargo bin-only合同加CARGO_PROFILE_DEV_DEBUG=0的新独立target一次诊断，不动opt/assert/overflow/panic/features/冻结/原工具，不下载。任务`_tmp/20261016-debt-cleanup/profile0-build-r74-z9frs937/task.md`。新112MiB总cap/96提前/4proof/外留214748365B/fresh门332188877B是更早停止的未知成本诊断，不重写旧128门、原.65测试授权或46数值；不宣称可完成。先只有controller准备，无authority不运行。R73真实清后freshdu足门、owner/参数/监督独立必要核完root另发一次；任何失败留partial且不自动strip/重试。成功才另卡运行18，失败只停此路径继续独立依赖。原则：未知成本可在完整合同下做有界诊断，但不能把小预算包装成已有峰值证明或新验收通过。
