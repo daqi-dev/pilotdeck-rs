@@ -1,5 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> **2026-10-16T18:08:09.502487+08:00 · R58完成/R59一次新窗**：两精确cache现已清，新增lastlink112590848B/38原件fbd5全保，原R57失败与672事实不改；root新du余933400576B。a4最终cleanf793，nativefinish复用与exactcapacity永久guard已源码准备；DNS子scope双家fixed不扩大。R59仅独立.65GiB（旧.80不变）/外留.20/门912680551B、root对800实际字节核HEAD blob、indexde65/controller8955：新artifact后3辅助+原7格一次，均NOT_RUN至原件出齐，root卡/source保持到终态。
+> CLI8d真实26+CI5仍只原范围；DS新增actualGit隐藏flag对照表明clean:true+candidateHead存在当前节点P1（S/h），未修/不合PR138，独立新小修另派不碰a4窗口。当前31/55/34OPEN、延期与人验不清零。
+
 > **2026-10-16T17:57:51.478819+08:00 · DNS窄修/残余R58**：a4 clean48bdeff，旧DNS64实际调用62marker2deny→新64全deny，另34named仅身份；proof91f86b9e，双child回收，无历史外联断言，GLM/DS尚待。R57只672file后APFS nlink门停/0dir、34原件c8f2全保；root同卷双次真实控制证全部directentry均减nlink。R58仅新入口清原两根残余，24原件010dfb67/48b800源全核，执行后du回root；无自动Cargo/新target。R59独立.65GiB仍只准备。
 
 > **2026-10-16T17:46:40.164711+08:00 · helper26与当前CI5已实证，R57仅两cache**：CLI@8d0a49c原26完整CHECKED/exit0/无skip，R56原件2072file+1symlink root逐SHA核；当前CI38881943616两项绿且checkout精确8d/五命名Rust边界test实际各ok，raw06d2e6a8。PR138body当前8d/真实新范围/历史复用与欠项已gitleaks+readback，仍Draft/recorder18及两非作者最新增量欠；不再把CI实际5例说成完全NOT_RUN，也不冒本地artifact。a4b794序列化修仍待新产物。

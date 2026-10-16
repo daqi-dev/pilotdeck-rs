@@ -116,3 +116,18 @@ root同dev16777230真实小fixture创建两文件/一目录再移除，nlink[2,3
 本卡2026-10-16T17:57:51.478819+08:00给ledger_fidelity仅新入口一次--execute这两根残余，root提交后create_new authority绑定卡SHA/HEAD/index/uid/dev/inode/newBuildfalse。两遍临界原全部门、26锁只放实际ownPID+FD+path；1024原件（990+R5734）、2815/2101noncache、1120002356/R54partial534/R55partial1492、当前48b800与tool/c990/3ed前后守恒。未知/漂移即停，finally释放锁；原index不改、execute追加、execution-index另封，freshdu回root再判新窗，禁止Cargo/Node/新target。原.80门不动。
 
 原则与断言：底层FS属性先同卷最小实测，修正以原实际unlink、新基线与新入口承接；不以读码猜测解禁、不覆盖旧失败、不外推删除权。
+
+
+## R59 最终f793的独立0.65GiB精确产物与三个辅助/七格（AI代批，待人复核）
+
+R58残余已实exit0，660file+30内部dir+2根仅两cache，last-link112590848B与R57原153808896B分列合266399744B。38原件execution-indexfbd5d518b776c1dd3f7d793a0da99a4f039fee00e2182d3658c0e2ddd15f0843、1024旧raw/所有noncache/112000/R54/R55partial/源工具/二进制后核同，26锁释放。原失败和partial不删。root最近完整du23073188+24249784KiB，free933400576B；本卡后controller在mkdir前再freshdu，不足即停。
+
+本次为独立更小新窗，不修改或沿用原.80/.90门：新target+本输出逻辑cap697932185B（0.65GiB向下），外留214748365B，开窗free≥912680551B（保守多1）。依据原R48真正完整成功target+proof592562547B，留105369638B；新源码小增不证明必装得下，触门只回收本轮ownedPGID并保全失败，不继续缩窗或删旧物补预算。总46GiB、600s总/Cargo300/每test60/流1MiB；采样不是内核quota，任何实际超量准确FAIL/INVALID，不自称严格未超。其它任务只少量源文/评审，不发并行Cargo或产品Node。
+
+给ledger_fidelity独占只读a4运行权，最终cleanf7938095711cd2e175dc4a5fb69586a61bf3adc2。root逐800常规文件对照不可变HEAD blob，git隐藏index hints不能给不同字节准入；source-binding SHA2ebc1d81336673f9ddcba16f7ac3229328cc07f3b40ee829468c317218d11aad、源173以来六path精确delta。e6完整capture/890容量/b794显式OkErr/48b DNS/fcc旧native复用finish/f793共享原1MiB容量真实guard均保，独立精确尾审仍欠；DNS单scope两家fixed gate05e2cfe…不等整个Ready或项目通过。
+
+唯一输出_tmp/20261016-debt-cleanup/order-architecture/ready-admission-r59-prep-0c23ix74，indexde65dc53a3f2bb52b3a7d9fcfa0518d31fada3bdca1febebd9ebd5b900f57b43（11件），controller8955738927a33c255b20ebe41aaa0b1c1e480c46c8e949ba4c3304f9f5e3450f；无authority入口已真实REFUSED。唯一新target由本卡authority指定实际纯时间戳，不存在才可建。源/脚本/任务/矩阵/三工具hash前后核；编译原绝对Rust1.99/原HOME-cache/四wrapper空/offline/locked/jobs2/incremental0，CargoJSON新唯一lib test exe/SHA与BUILD_SOURCE_HEAD必须f793，不借旧产物。
+
+先exact三辅助：pairing::order_probe::ready_finish_rejects_existing_stderr_file_after_successful_child、pairing::order_probe::bounded_host_log_rejects_first_excess_byte、pairing::order_probe::ready_admission::ready_wire_exact_capacity_round_trip。第三是新永久Tokio真实写满再读回护栏，共享原唯一1MiB常量，尚未跑，不冒旧两guard覆盖。随后仍同七格D1+/D1-/A+/A-/X1/X2/D1+-restore，同artifact/common gate，恢复格独立runID/output；不native自然窗/全量53、不临时增加case。健康双audit Ok/fullwire；反控实际hit/W0/C0+共同具体R2_REQUIRED或COMMIT_SEQUENCE_VIOLATION拒，test0/ACCEPTED逃逸外监督必须拒；setup/timeout/0test不算负控成功。每格含负控核两host实际reap、stderr joined/complete/bytes/abortfalse及wire总长度。native旧caller本身未重跑，复用helper不冒全native验收。
+
+执行前后保旧942+R5315+R5412，extraRetainedIndices再精确钉R5521/R5734/R5838/DNS17/native与guard proof；1120002356/R54partial534/R55partial1492全路径/身份/content/c990/3ed、TS1000与3config/current800与工具/新prereg/authority SHA和root提交均保持。root提交后create_new authority绑定本卡/HEAD/index/source/target/预算，ledger仅一次--execute，旧prereg index只读、execution-index另封。失败实报不重试，#65.1默认反例/65.2自然窗/P3/A5.4/冻结授权/真人实效继续未完成。2026-10-16T18:08:09.502487+08:00的资源自决待复核不改变判分语义。
