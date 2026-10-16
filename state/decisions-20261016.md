@@ -168,3 +168,9 @@ R36续：104320仅incremental清理后6862非cache路径/字节全同；du因硬
 执行：采纳主仓taxonomy/current-disposition-proposal.json的54个主次类型及逐项理由，52.2按上列P3例外。32项初始主类一致、22项协调者主次取舍和1项P3例外分列；其中85.1、98.1/.2的真实缺陷次类和独立异议、55.2/56.2的候选/unknown全保。所谓一致只指相应初始类型输入，不替后来等级修订或双家终审。proposal中旧13修订/单家R5/grade/state信息不得回灌，实际等级始终从最新独立原件重新计算。
 
 原则与断言：分类、等级、事实确认、交付状态和真人实效是分开的轴；改主次类不降低一个等级、不改一个fixed或到期节点、不清任何原始限定。协调者明确归类不等于两家已同意；原类型、分歧、PARTIAL和原needsCanonicalAdjudication逐字留存，增独立的类型处置状态与事实待核，不以抽取flag继续冒充尚未做归类。投影必须绑定原proposal/SHA及所引原文SHA，单字段变异拒绝；PR143仍过实际非作者四视角/三角色及双家终审。
+
+## R38 新观察器复验的两个精确缓存目标（R36本片延续，自决）
+
+R36本片第四个精确目标：124315-metadata实际fresh已结束并交回root，12:57进程清单无Cargo/rustc占用，作者只用120000并已冻结；其incremental局部253116KiB。新8460123观察器代际修复改变record源码，需要新真实录制。仍只清124315/debug/incremental，保0c11实跑binary/deps/fingerprint及537原件，锁/路径/设备inode/全部非cache SHA前后同才成立。清后用实际完整du核1GiB fresh预留，容量未满足则仅继续独立审阅，不降低driver fresh门、不动生产/冻结。旧fresh体积736432KiB为预留依据，不拿它冒新HEAD产物。
+
+R36第五个精确目标：124315清理后1898个非cache路径/字节全同，实际总45.124GiB仍不足1GiB预留，局部du不能当全局腾出量。作者已明确120000/124315均无占用并交回root，当前无Cargo/rustc；仅纳入120000/debug/incremental（局部847876KiB），保其所有当前与历史测试binary/deps/fingerprint/回归原件。执行相同路径/锁/设备inode及非cache全SHA后重新完整du；满足才发新独立target窗口，不将该清单扩成其它目录删除授权。

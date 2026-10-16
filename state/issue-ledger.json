@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewStatus": "ALL_ROWS_RECEIVED_SCOPE_QUALIFICATIONS_RECONCILIATION_REQUIRED",
-  "asOf": "2026-10-16T04:55:04.227771+00:00",
+  "asOf": "2026-10-16T05:08:40.726533+00:00",
   "remoteStatusAsOf": "2026-10-16T04:54:58.583176+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
@@ -6480,7 +6480,7 @@
       "sha256": "fed0192fe82cedbd6722347e275fb07f25566bfb23bbfb2a94d1017ae953f597"
     },
     "_build/wt-d6/state/decisions-20261016.md": {
-      "sha256": "5e0e86e64be07b3850f2e3e05b9af26664d056dd85b09cd88797ff558230b0eb"
+      "sha256": "7657bbc55624d5b65fe49c6eada262a6b750bfd4344068ebabed4cfa6ccf71f5"
     },
     "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md": {
       "sha256": "d24b95fa28b30fef8691d701207027bea5168dc740086018355e38b20d064e44"

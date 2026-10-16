@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 13:05 · 846观察器真实链通过，环境核心按三次失败挂起
+> PR141当前84601238bec016ecad78c60ed655567007c12046已推/CLI clean冻结交root。C01/C02单位实际旧代4红→隔离后5绿→去guard4红→恢复5绿；仅装置observer代际，不证实际Gateway曾触发。新130100独立target完整fresh先observer5，再15源driver六stage全0/reaped，真实Node10/静态3/动态恰1test十unique386token/Native2test十Native十pair/恢复3/sourceHead846，15源逐项等Git/工具与组件/rustup/产物前后同。530原件observer-fresh-handoff-index.json SHA34b00385c629cec97b3adad3263b43edbe020707740886c7aaba05177ca8d005；target735300KiB、compile27.714s，未复造多次Cargo。0c11与3a旧索引不改，3a三cheap守卫两家已独立确认修复且当HEAD两CI绿，846新CI与独立窄审另核。
+> **失败与转线**：GLM环境核心第3次300.040s/text0仍无有效final（前两次300.085/300.095）；本scope挂起，不第四改写/拆包重试，依赖它的PR141合并未过。三次原件/SHA保留，memory/review-bounds沉淀，不断言供应商/filter或SIGTERM/socket先后。真正独立memory-capture必要scope仍在当前唯一队列，不是环境第四变体；之后PR143新R37/双R5/聚合实际角色优先。PR138旧boundary也保持其三空失败的held，只有确有新执行前提才能恢复，单纯拆包不能解挂；不让单线失败停全项目。
+> **已交付的清账进展**：33d7d73账本主次归类已推、该HEAD两CI实际绿；9张issue已按当前未完成子项最高已记录等级同步标签/两标题及逐项证据评论：19/46/47/61/94/115/119/120/132，后核标签一致，32open未变。阶段父单继承P0/P1有明确聚合说明，不重复计独立缺陷。PR143正文已改41审计/14修订/双R5/R37，实际四角色备料仅PREPARED_NOT_REVIEWED，未冒通过。
+> **资源/下一任务**：R38仅清124315与120000的incremental，1898/6065非cache路径/字节全同、binary/deps/fingerprint/raw全保；锁/路径/设备inode先核，清后完整du再发1GiB fresh额度，不按局部du估腾量。846 fresh后完整du23387188+24139644KiB=45.325119GiB/46，余707664KiB；五树皆root持有、无产品writer/锁。中央debt_review_prepare仍唯一provider queue；下一就绪为846独立concurrency增量/完整旧finding处置表及PR143实际角色，环境held及134精确授权/真人实效均继续未完成。当前片14:27:16前交接，后续heartbeat继续，不需逐单发车。
+
 > ## 2026-10-16 12:56 · 主次归类已落候选账本
 > R37现已正式投影55项：54项分为14真实缺陷主类、15阶段任务主类、25验收债务主类，另52.2唯一P3已知留白；该分布含已修历史范围，**不是未完成独立缺陷计数**。32项初始主类一致、22项协调者主次取舍、1项P3例外分别标注AI代批待人复核；不冒双家均同意。主次类型、原始分歧、PARTIAL/raw限定、等级、确认度、交付及到期节点分轴；所有保护字段对最新14graded/双R5前候选逐项守恒。41/41纯JSON审计、15账本+8采纳record+2派生器负控通过，仅证明保真，不代PR143独立合并闸门。唯一JSON state/issue-ledger.json，主仓taxonomy/disposition-report.md只由其派生；delivery远端核到12:54:58。数值currentCandidate仅0c11真实六stage/537索引，旧0957失败标历史，3a tiny不能继承fresh身份。
 > PR141便宜三guard已提交推3a3a5a1、实际三份JSON384/386/386各十Snapshot与4漏遍历/receipt/reason变异齐，中央双家窄审在途。原作者现独占CLI仅核旧concurrency C01/C02观察器代际：单位真实Node已见reset后handle仍trace及受控迟到readdir混入下一数组，尚未证明Gateway曾触发；正做≤15min最小generation隔离及永久控制。新recorder真实链另由root核预算发窗口，不冒旧fresh通过。其余树root，五树/46GiB与中央唯一队列不变。
