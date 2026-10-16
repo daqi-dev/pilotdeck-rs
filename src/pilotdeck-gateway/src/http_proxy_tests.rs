@@ -143,12 +143,14 @@ async fn boundary_stream(
     if duplicate {
         client.write_all(&later).await.unwrap();
     }
+    let prefix_len = after.len() + later.len();
+    // The negative waits for its actual injected bytes before terminating. This
+    // is a causal hit barrier, not the verdict: both paths still read through EOF.
+    let mut actual = vec![0; prefix_len + if duplicate { later.len() } else { 0 }];
+    host.read_exact(&mut actual).await.unwrap();
     let expected = [later, after].concat();
-    // Real downstream FIN ends the production send pump. Retain the owned host
-    // reader until upstream EOF, so a correct prefix cannot hide extra bytes.
-    client.shutdown().await.unwrap();
-    let mut actual = Vec::new();
-    host.read_to_end(&mut actual).await.unwrap();
+    // Preserve the original upstream-FIN termination path. Once the production
+    // pair is reaped its owned writer is dropped, giving this reader real EOF.
     host.shutdown().await.unwrap();
     let mut output = Vec::new();
     client.read_to_end(&mut output).await.unwrap();
@@ -158,6 +160,7 @@ async fn boundary_stream(
     );
     pair.await.unwrap().unwrap();
     server.await.unwrap().unwrap();
+    host.read_to_end(&mut actual).await.unwrap();
     if actual != expected {
         return Err(StreamMismatch {
             code: "UPSTREAM_FULL_STREAM_MISMATCH",
