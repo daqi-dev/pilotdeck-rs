@@ -23,7 +23,7 @@
 
 执行：保留debt_review_prepare唯一中央派发持有人，取消每provider默认单在途限制。独立角色/调查/不同issue可并发，同task修复→复审、同session必要上下文及同写目录依赖照旧。每job登记task/source/authorFamily/reviewerFamily/owner/output/session/PID/依赖/传输与实质状态；额度是可配置执行参数，依据真实限流调整，不能把单scope失败推广全模型串行。新多job注册与原子claim/complete由当前中央owner安全更新，旧自动queue仍停，不启动竞争调度者，不杀在途，不改原件/旧journal；当前权威指针仍主仓_tmp/20261016-debt-cleanup/reviews/central-current-status.json及central-handoff.md。
 
-GLM可写实现候选与测试，不以审阅硬0入口冒充filesystem写权限：本次先让GLM经既有硬0入口生成PR138 identity源码/测试patch，由中央operator机械应用到已独占CLI树，operator不擅自补写代码。该精确GLM新增delta交DeepSeek与独立GPT评审；旧GPT产品scope仍GLM+DeepSeek，混合作者须逐scope登记，不能让实现者终审自己或借作者变更省略旧阻塞。源码only阶段不发新Cargo/Node窗，限1MiB/15min，后续测试须按实际资源单独分配。
+GLM可写实现候选与测试，不以审阅硬0入口冒充filesystem写权限：本次先让GLM经既有硬0入口生成PR138 identity源码/测试patch，由中央operator机械应用到已独占CLI树，operator不擅自补写代码。该精确GLM新增delta交DeepSeek与独立GPT评审；旧GPT产品scope仍GLM+DeepSeek，混合作者须逐scope登记，不能让实现者终审自己或借作者变更省略旧阻塞。源码only阶段不发新Cargo/Node窗，限1MiB/15min，后续测试须按实际资源单独分配。首次GLM产物应用前须留完整raw/final与SHA、精确提取规则及候选字节SHA；全文候选文件只以create_new落入已认领目录并核落地SHA，source-only不虚造Git提交；Git patch另留apply-check、实际diff及commit SHA。operator实质改写代码即重新登记混合作者并核足两家非作者，不能仍记GLM独作。
 
 截至15:44的执行记录（后续完成态看board15:48）：各树同步采用已核原SHA上的精确增量并单独提交，不覆盖未知内容。wt-d6、CLI、wt-p2c与root已同步；wt-a4m3正运行绑定9df的新产物八格，由当前持有人读最新人规则并留rules-override.json立即适用，在原实验postflight/index封存后再单独同步CLAUDE，保护HEAD/产物身份。CLI已从归还metadata c77安全切回原upgrade988再同步，旧分支/证据保留，现仅GLM identity任务可写。
 
