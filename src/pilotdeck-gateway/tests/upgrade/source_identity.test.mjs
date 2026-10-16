@@ -1,4 +1,4 @@
-// PREPARED_NOT_RUN. Actual helper and actual native Git, no product process.
+// Source identity regression fixtures using native Git and an explicit owned parent.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,unlinkSync,symlinkSync,renameSync} from 'node:fs';
@@ -39,7 +39,12 @@ test('source identity fixed producerInputs git fixture matrix',t=>{
     ['G11-newline','src/pilotdeck-gateway/src/space\n name.rs',true],
   ])run(id,f=>{f.put(path,'changed\n');if(staged)f.git('add','--',path);if(id==='G2-staged')assert.doesNotThrow(()=>f.git('diff','--exit-code','--','src/pilotdeck-gateway/src','src/Cargo.toml','src/Cargo.lock'));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
   run('G3-index-worktree-cancel',f=>{const path='src/pilotdeck-gateway/src/upstream.rs';const original=readFileSync(join(f.root,path));f.put(path,'staged\n');f.git('add','--',path);f.put(path,original);assert.doesNotThrow(()=>f.git('diff','HEAD','--exit-code','--',path));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
-  for(const [id,path]of [['G6-untracked','src/pilotdeck-gateway/src/new.rs'],['G6-ignored-source','src/pilotdeck-gateway/src/ignored.rs'],['G6-ignored-build','src/pilotdeck-gateway/build.rs'],['G6-ignored-config','.cargo/config.toml']])run(id,f=>{f.put(path,'untracked\n');assert.throws(()=>captureSourceIdentity(f.root),error=>['SOURCE_DIRTY','SOURCE_UNTRACKED'].includes(error.code));});
+  for(const [id,path,code]of [
+    ['G6-untracked','src/pilotdeck-gateway/src/new.rs','SOURCE_DIRTY'],
+    ['G6-ignored-source','src/pilotdeck-gateway/src/ignored.rs','SOURCE_UNTRACKED'],
+    ['G6-ignored-build','src/pilotdeck-gateway/build.rs','SOURCE_UNTRACKED'],
+    ['G6-ignored-config','.cargo/config.toml','SOURCE_UNTRACKED'],
+  ])run(id,f=>{f.put(path,'untracked\n');assert.throws(()=>captureSourceIdentity(f.root),{code});});
   run('G7-deleted',f=>{unlinkSync(join(f.root,'src/pilotdeck-gateway/Cargo.toml'));assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_DIRTY'});});
   run('G7-missing-required-clean',f=>{unlinkSync(join(f.root,'src/pilotdeck-gateway/Cargo.toml'));f.git('add','-u');f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_REQUIRED'});});
   run('G7-empty-tree-clean',f=>{unlinkSync(join(f.root,'src/pilotdeck-protocol/src/entry.rs'));f.git('add','-u');f.commit();assert.throws(()=>captureSourceIdentity(f.root),{code:'SOURCE_TREE'});});
