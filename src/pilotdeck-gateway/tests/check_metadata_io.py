@@ -262,14 +262,15 @@ def stop_group(child):
         return True  # legitimate exit-between-poll-and-kill race
 
 
-def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024):
+def run_bounded(command, cwd, environment, log, *, deadline=90, limit=1024*1024, discard_stderr=False):
     start = time.monotonic()
     reason, wait_error, code, gone = None, None, None, False
     captured = bytearray()
     written = 0
     with log.open('xb') as stream:
         child = subprocess.Popen(command, cwd=cwd, env=environment, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+                                 stderr=subprocess.DEVNULL if discard_stderr else subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
         try:
             with selectors.DefaultSelector() as selector:
                 os.set_blocking(child.stdout.fileno(), False)
@@ -397,15 +398,16 @@ def main(argv=None):
     runs = []
     snapshot = None
 
-    def run(name, command, *, deadline=90, environment=None):
+    def run(name, command, *, deadline=90, environment=None, discard_stderr=False):
         nonlocal snapshot
         if snapshot is not None and name in ('replay', 'native-retained'):
             unchanged_oracle(fixture, snapshot)
         log = output / (name + '.log')
         actual_environment = cargo_env if environment is None else environment
-        result = run_bounded(command, root, actual_environment, log, deadline=deadline)
+        result = run_bounded(command, root, actual_environment, log, deadline=deadline, discard_stderr=discard_stderr)
         stdout = result.pop('stdout')
         result['name'] = name
+        result['stderrPolicy'] = 'discarded' if discard_stderr else 'merged'
         result['environment'] = dict(actual_environment)
         runs.append(result)
         if name == 'record':
@@ -479,9 +481,9 @@ def main(argv=None):
         source_head = None
         try:
             source_head = run('source-head', [str(git_executable), '--no-replace-objects',
-                                             'rev-parse', 'HEAD'], deadline=10).strip()
-            if not source_head:
-                raise RuntimeError('empty source HEAD')
+                                             'rev-parse', 'HEAD'], deadline=10, discard_stderr=True).strip()
+            if not re.fullmatch('[0-9a-f]{40}', source_head):
+                raise RuntimeError('source HEAD must be exactly forty lowercase hex digits')
         except Exception as exc:
             source_head = None
             success, error = False, (error or '') + '\nsource-head: ' + str(exc)
