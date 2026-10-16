@@ -1,5 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 第四轮：#138、#141 双双合并，P0 链清偿推进
+> **合并**：#141（metadata 三路径 errno 回放 + baseline_source_guard 工具链护栏 + CI observer job）经两家非作者评审（GLM 全实测 + Claude 无 P0/P1，R2 由协调者裁决维持 P2）+ 作者轮 r2（guard `GIT_*` env 清洗 + 影子仓库负控 + git 路径参数化 + md 三标注）+ rebase 到新 main 后 CI 三绿，rebase 合入 main@1b5798b。#139（P0）**暂不关闭**——新开 #154（P2-跟进：session 文件级 errno 补证，前置于 #139 关闭），按 P2 折中「到点必还」执行。
+> **累计（今日四轮）**：#138+#141 两笔真实代码合并、#56 关闭、#151 关闭、#154 登记、4 worktree 清理回收 6G（归档 115M 于 `_tmp/archive/worktrees-20261017/`，含 wt-pr41）、CLAUDE.md 精简（PR #153 已 rebase 新 main 待合并）。
+> **教训**：① worktree `_tmp` 归档必须 `rsync -aH --sparse`（codex 用硬链接+稀疏文件，裸 rsync 展开 8.4G）；② 管道 `cmd | tail` 会吞非零退出码，checkout 失败后 && 链继续执行导致误提交到错误分支（已 cherry-pick 修复 + force-with-lease 还原）；③ codex 沙箱仍不能写 worktree 的 git 元数据，提交/rebase 由协调者接手；④ write 全文件会覆盖 board 历史——board 只用 edit 插段。
+> **通道矩阵（实测 2026-10-17）**：`gpt-6-astra` ✅（codex CLI 默认，ultra）｜`gpt-6.1-sol` ✅（llm-center /v1 直连）｜`claude-sonnet-5-5` ✅｜`claude-opus-5-5` ✅｜`claude-fable-5-1` ❌｜`claude-fable-5-5` ❌挂起｜GLM ✅。搭配：实现=codex(astra-ultra)，评审A=Claude(sonnet-5-5)，评审B=GLM，重活/仲裁=opus-5-5/6.1-sol；谁写谁不审。
+> **下一步（重启即做）**：① 合并 #153（CI 已绿）；② 做 #154（15 分钟级：扩展 record_metadata_io.mts 录文件级 errno 原件→回放→双家评审→合并→关 #139）；③ 开 #46（A4 主线：gateway 透传 + 10 method 本地化，P0）；④ #142（待 #134 精确授权，问人）/ #150（装置，A4 需要时评估）；⑤ 阶段 D #122 起。
+
 > ## 2026-10-17 · 第三轮：#138 已合并、#56 已关，#141 评审中，清理完成
 > **合并**：PR #138（WS 握手字节保留）经两家非作者评审（GLM+Claude 均无 P0/P1）+ 134 Rust 测试 + 18 真 TCP 样本 PASS（产品源码 SHA 与原件逐字节一致核验）后 rebase 合入 main@2944ef5；issue #56 已关。邮箱核验：作者 noreply ✅、committer 主邮箱为 CLAUDE.md §五已知服务端缺口（人侧未勾 private），非新问题。
 > **#141 评审**：GLM 一家已过（无 P0/P1，全实测：16 Rust 测试 + observer/driver/guard 三套正负控，`_tmp/20261017-pr141-review/glm-review.md`）；Claude 第二家后台进行中（`_tmp/20261017-pr141-review/claude-review.md`）。收敛后合并 → 评估关 #139（P0）。
