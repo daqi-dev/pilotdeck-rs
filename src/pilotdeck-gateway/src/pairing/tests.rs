@@ -1401,3 +1401,67 @@ async fn mapped_but_unmeasured_project_errnos_forward_original_frames_and_relay_
     pair.server.shutdown().await.unwrap();
     pair.finish().await;
 }
+
+#[tokio::test]
+async fn catalog_errno_oracles_reply_locally_with_no_upstream_request() {
+    let fixture = crate::session_model::tests::catalog_io_fixture();
+    let rows = fixture["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 13);
+    const CHILD: &str = "PDRS_CATALOG_ERRNO_ROW";
+    let Ok(index) = std::env::var(CHILD) else {
+        for (index, row) in rows.iter().enumerate() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "pairing::tests::catalog_errno_oracles_reply_locally_with_no_upstream_request",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .envs(
+                    row["env"]
+                        .as_object()
+                        .unwrap()
+                        .iter()
+                        .map(|(k, v)| (k, v.as_str().unwrap())),
+                )
+                .env(CHILD, index.to_string())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return;
+    };
+    let row = &rows[index.parse::<usize>().unwrap()];
+    let metadata = crate::session_model::tests::snapshot(row);
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    let request = client_frame(0x81, 127, row["request"].as_str().unwrap().as_bytes());
+    write(&mut pair.client, &request).await;
+    read(
+        &mut pair.client,
+        &server_frame(1, row["response"].as_str().unwrap().as_bytes()),
+    )
+    .await;
+    let sentinel = client_frame(
+        0x81,
+        127,
+        br#"{"type":"request","id":"observer-fence","method":"describe_server"}"#,
+    );
+    write(&mut pair.client, &sentinel).await;
+    // The very next upstream bytes must be the fence, not a catalog request.
+    read(&mut pair.server, &sentinel).await;
+    silent(&mut pair.server).await;
+    pair.server.shutdown().await.unwrap();
+    pair.finish().await;
+}

@@ -1,0 +1,3001 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "platform": "darwin",
+  "sourceHashes": {
+    "src/gateway/dialog/modelCatalog.ts": "87b5ce892aefec8f2148e44b30fb78cc9c93f6140e206e44be454aa3b7ab507d",
+    "src/pilot/config/loadPilotConfig.ts": "0d666bd5dec52b805be7066b7538d54919bd601b43286bdf9acf4a1354581d6e",
+    "src/gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f"
+  },
+  "callPath": [
+    "GatewayWsConnection.handleRequest",
+    "gateway.modelCatalogList",
+    "listModelCatalog",
+    "loadPilotConfig"
+  ],
+  "routerCalls": 0,
+  "cases": [
+    {
+      "id": "io-global-stat-denied",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-stat-denied\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-stat-denied\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_MISSING\",\"message\":\"Config must contain an agent section.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "statError": "EACCES"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "stat-denied",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "stat",
+            "code": "EACCES",
+            "syscall": "stat",
+            "message": "EACCES: permission denied, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "stat",
+            "code": "EACCES",
+            "syscall": "stat",
+            "message": "EACCES: permission denied, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-stat-missing",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-stat-missing\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-stat-missing\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_MISSING\",\"message\":\"Config must contain an agent section.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "statError": "ENOENT"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "stat-missing",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "stat",
+            "code": "ENOENT",
+            "syscall": "stat",
+            "message": "ENOENT: no such file or directory, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "stat",
+            "code": "ENOENT",
+            "syscall": "stat",
+            "message": "ENOENT: no such file or directory, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-stat-notdir",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-stat-notdir\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-stat-notdir\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_MISSING\",\"message\":\"Config must contain an agent section.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "statError": "ENOTDIR"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "stat-notdir",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "stat",
+            "code": "ENOTDIR",
+            "syscall": "stat",
+            "message": "ENOTDIR: not a directory, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "stat",
+            "code": "ENOTDIR",
+            "syscall": "stat",
+            "message": "ENOTDIR: not a directory, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-read-denied",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-read-denied\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-read-denied\",\"ok\":false,\"error\":{\"code\":\"CONFIG_READ_FAILED\",\"message\":\"Failed to read default config.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_READ_FAILED",
+        "message": "Failed to read default config.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_READ_FAILED",
+            "severity": "fatal",
+            "message": "Failed to read default config.",
+            "path": "/fixture/global/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "/fixture/global/pilotdeck.yaml"
+            },
+            "hint": "EACCES: permission denied, open '/fixture/global/pilotdeck.yaml'",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "readError": "EACCES"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "read-denied",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "read",
+            "code": "EACCES",
+            "syscall": "open",
+            "message": "EACCES: permission denied, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "read",
+            "code": "EACCES",
+            "syscall": "open",
+            "message": "EACCES: permission denied, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-read-missing",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-read-missing\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-read-missing\",\"ok\":false,\"error\":{\"code\":\"CONFIG_READ_FAILED\",\"message\":\"Failed to read default config.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_READ_FAILED",
+        "message": "Failed to read default config.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_READ_FAILED",
+            "severity": "fatal",
+            "message": "Failed to read default config.",
+            "path": "/fixture/global/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "/fixture/global/pilotdeck.yaml"
+            },
+            "hint": "ENOENT: no such file or directory, open '/fixture/global/pilotdeck.yaml'",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "readError": "ENOENT"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "read-missing",
+        "race": true,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "read",
+            "code": "ENOENT",
+            "syscall": "open",
+            "message": "ENOENT: no such file or directory, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "read",
+            "code": "ENOENT",
+            "syscall": "open",
+            "message": "ENOENT: no such file or directory, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-read-notdir",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-read-notdir\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-read-notdir\",\"ok\":false,\"error\":{\"code\":\"CONFIG_READ_FAILED\",\"message\":\"Failed to read default config.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_READ_FAILED",
+        "message": "Failed to read default config.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_READ_FAILED",
+            "severity": "fatal",
+            "message": "Failed to read default config.",
+            "path": "/fixture/global/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "/fixture/global/pilotdeck.yaml"
+            },
+            "hint": "ENOTDIR: not a directory, open '/fixture/global/pilotdeck.yaml'",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "readError": "ENOTDIR"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "read-notdir",
+        "race": true,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "read",
+            "code": "ENOTDIR",
+            "syscall": "open",
+            "message": "ENOTDIR: not a directory, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "read",
+            "code": "ENOTDIR",
+            "syscall": "open",
+            "message": "ENOTDIR: not a directory, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-read-directory",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-read-directory\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-read-directory\",\"ok\":false,\"error\":{\"code\":\"CONFIG_READ_FAILED\",\"message\":\"Failed to read default config.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_READ_FAILED",
+        "message": "Failed to read default config.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_READ_FAILED",
+            "severity": "fatal",
+            "message": "Failed to read default config.",
+            "path": "/fixture/global/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "/fixture/global/pilotdeck.yaml"
+            },
+            "hint": "EISDIR: illegal operation on a directory, read",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "readError": "EISDIR"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "read-directory",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "read",
+            "code": "EISDIR",
+            "syscall": "read",
+            "message": "EISDIR: illegal operation on a directory, read"
+          },
+          {
+            "phase": "rpc",
+            "stage": "read",
+            "code": "EISDIR",
+            "syscall": "read",
+            "message": "EISDIR: illegal operation on a directory, read"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-stat-longname",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-stat-longname\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-stat-longname\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_MISSING\",\"message\":\"Config must contain an agent section.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "statError": "ENAMETOOLONG"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "stat-longname",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "stat",
+            "code": "ENAMETOOLONG",
+            "syscall": "stat",
+            "message": "ENAMETOOLONG: name too long, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "stat",
+            "code": "ENAMETOOLONG",
+            "syscall": "stat",
+            "message": "ENAMETOOLONG: name too long, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-read-longname",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-read-longname\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-read-longname\",\"ok\":false,\"error\":{\"code\":\"CONFIG_READ_FAILED\",\"message\":\"Failed to read default config.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_READ_FAILED",
+        "message": "Failed to read default config.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_READ_FAILED",
+            "severity": "fatal",
+            "message": "Failed to read default config.",
+            "path": "/fixture/global/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "/fixture/global/pilotdeck.yaml"
+            },
+            "hint": "ENAMETOOLONG: name too long, open '/fixture/global/pilotdeck.yaml'",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "readError": "ENAMETOOLONG"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "read-longname",
+        "race": true,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "read",
+            "code": "ENAMETOOLONG",
+            "syscall": "open",
+            "message": "ENAMETOOLONG: name too long, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "read",
+            "code": "ENAMETOOLONG",
+            "syscall": "open",
+            "message": "ENAMETOOLONG: name too long, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-stat-loop",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-stat-loop\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-stat-loop\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_MISSING\",\"message\":\"Config must contain an agent section.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "statError": "ELOOP"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 88,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 277,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "stat-loop",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "stat",
+            "code": "ELOOP",
+            "syscall": "stat",
+            "message": "ELOOP: too many symbolic links encountered, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "stat",
+            "code": "ELOOP",
+            "syscall": "stat",
+            "message": "ELOOP: too many symbolic links encountered, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-read-loop",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-read-loop\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-read-loop\",\"ok\":false,\"error\":{\"code\":\"CONFIG_READ_FAILED\",\"message\":\"Failed to read default config.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_READ_FAILED",
+        "message": "Failed to read default config.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_READ_FAILED",
+            "severity": "fatal",
+            "message": "Failed to read default config.",
+            "path": "/fixture/global/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "/fixture/global/pilotdeck.yaml"
+            },
+            "hint": "ELOOP: too many symbolic links encountered, open '/fixture/global/pilotdeck.yaml'",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "readError": "ELOOP"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 89,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 278,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "read-loop",
+        "race": true,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "read",
+            "code": "ELOOP",
+            "syscall": "open",
+            "message": "ELOOP: too many symbolic links encountered, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "read",
+            "code": "ELOOP",
+            "syscall": "open",
+            "message": "ELOOP: too many symbolic links encountered, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-stat-deep",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-stat-deep\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-stat-deep\",\"ok\":false,\"error\":{\"code\":\"CONFIG_AGENT_MISSING\",\"message\":\"Config must contain an agent section.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "statError": "ELOOP"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 89,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 278,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "stat-deep",
+        "race": false,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "stat",
+            "code": "ELOOP",
+            "syscall": "stat",
+            "message": "ELOOP: too many symbolic links encountered, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "stat",
+            "code": "ELOOP",
+            "syscall": "stat",
+            "message": "ELOOP: too many symbolic links encountered, stat '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    },
+    {
+      "id": "io-global-read-deep",
+      "home": "/fixture/home",
+      "cwd": "/fixture",
+      "env": {
+        "PILOT_HOME": "/fixture/home",
+        "PILOTDECK_CONFIG_PATH": "/fixture/global/pilotdeck.yaml"
+      },
+      "request": "{\"type\":\"request\",\"id\":\"io-global-read-deep\",\"method\":\"model_catalog_list\",\"params\":{}}",
+      "response": "{\"type\":\"response\",\"id\":\"io-global-read-deep\",\"ok\":false,\"error\":{\"code\":\"CONFIG_READ_FAILED\",\"message\":\"Failed to read default config.\"}}",
+      "load": {
+        "ok": false,
+        "code": "CONFIG_READ_FAILED",
+        "message": "Failed to read default config.",
+        "diagnostics": [
+          {
+            "code": "CONFIG_READ_FAILED",
+            "severity": "fatal",
+            "message": "Failed to read default config.",
+            "path": "/fixture/global/pilotdeck.yaml",
+            "source": {
+              "kind": "default",
+              "path": "/fixture/global/pilotdeck.yaml"
+            },
+            "hint": "ELOOP: too many symbolic links encountered, open '/fixture/global/pilotdeck.yaml'",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_SCHEMA_VERSION_MISSING",
+            "severity": "warning",
+            "message": "schemaVersion is missing; assuming schemaVersion 1.",
+            "path": "schemaVersion",
+            "recoverable": true
+          },
+          {
+            "code": "CONFIG_AGENT_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain an agent section.",
+            "path": "agent",
+            "recoverable": false
+          },
+          {
+            "code": "CONFIG_MODEL_MISSING",
+            "severity": "fatal",
+            "message": "Config must contain a model section.",
+            "path": "model",
+            "recoverable": false
+          }
+        ]
+      },
+      "files": {
+        "/fixture": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              "global",
+              true
+            ],
+            [
+              "home",
+              true
+            ]
+          ]
+        },
+        "/fixture/global": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/global/pilotdeck.yaml": {
+          "directory": false,
+          "size": 211,
+          "bytes": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiBwYXJpdHkvZGV0ZXJtaW5pc3RpY30KbW9kZWw6CiAgcHJvdmlkZXJzOgogICAgcGFyaXR5OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLmludmFsaWQvdjEKICAgICAgYXBpS2V5OiBtb2NrLW9ubHkKICAgICAgbW9kZWxzOgogICAgICAgIGRldGVybWluaXN0aWM6IHt9Cg==",
+          "readError": "ELOOP"
+        },
+        "/fixture/home": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              ".pilotdeck",
+              true
+            ],
+            [
+              "projects",
+              true
+            ],
+            [
+              "staffdeck",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "pilotdeck.yaml",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/.pilotdeck/pilotdeck.yaml": {
+          "directory": false,
+          "size": 2,
+          "bytes": "e30="
+        },
+        "/fixture/home/projects": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "registered",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered": {
+          "directory": true,
+          "size": 128,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/.cwd": {
+          "directory": false,
+          "size": 89,
+          "bytes": "L2ZpeHR1cmUvaG9tZQo="
+        },
+        "/fixture/home/projects/registered/chats": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "web:fixture.jsonl",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/projects/registered/chats/web:fixture.jsonl": {
+          "directory": false,
+          "size": 0,
+          "bytes": ""
+        },
+        "/fixture/home/staffdeck": {
+          "directory": true,
+          "size": 160,
+          "entries": [
+            [
+              "b",
+              true
+            ],
+            [
+              "project-bindings.json",
+              false
+            ],
+            [
+              "project-bindings.json.lock",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b": {
+          "directory": true,
+          "size": 96,
+          "entries": [
+            [
+              "sops.json",
+              false
+            ]
+          ]
+        },
+        "/fixture/home/staffdeck/b/sops.json": {
+          "directory": false,
+          "size": 23,
+          "bytes": "eyJzb3BzIjpbeyJpZCI6InNvcCJ9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json": {
+          "directory": false,
+          "size": 278,
+          "bytes": "eyJ2ZXJzaW9uIjoxLCJpbnN0YWxsYXRpb25JZCI6ImkiLCJwcm9qZWN0cyI6W3sicHJvamVjdFJvb3QiOiIvZml4dHVyZS9ob21lIiwiYmluZGluZ0lkIjoiYiIsImFnZW50SWQiOiJhIiwib3JpZ2luIjoiaHR0cHM6Ly9zdGFmZmRlY2suaW52YWxpZCIsInRlbmFudElkIjoidGVuYW50Iiwic3RhdHVzIjoiYm91bmQiLCJydW50aW1lUmVhZHkiOnRydWV9XX0="
+        },
+        "/fixture/home/staffdeck/project-bindings.json.lock": {
+          "directory": false,
+          "size": 7,
+          "bytes": "aW52YWxpZA=="
+        }
+      },
+      "io": {
+        "target": "/fixture/global/pilotdeck.yaml",
+        "scenario": "read-deep",
+        "race": true,
+        "observations": [
+          {
+            "phase": "loader",
+            "stage": "read",
+            "code": "ELOOP",
+            "syscall": "open",
+            "message": "ELOOP: too many symbolic links encountered, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          },
+          {
+            "phase": "rpc",
+            "stage": "read",
+            "code": "ELOOP",
+            "syscall": "open",
+            "message": "ELOOP: too many symbolic links encountered, open '/fixture/global/pilotdeck.yaml'",
+            "path": "/fixture/global/pilotdeck.yaml"
+          }
+        ]
+      },
+      "process": {
+        "pid": 0,
+        "alive": false,
+        "eperm": false,
+        "killCalls": [],
+        "loadKillCalls": []
+      },
+      "forward": false,
+      "loadForward": false
+    }
+  ]
+}
