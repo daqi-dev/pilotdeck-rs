@@ -89,6 +89,17 @@ def reject_protected_paths(paths, home):
                 raise RuntimeError('protected output/target: ' + str(location))
 
 
+def external_git(executable, roots):
+    executable = executable.resolve(strict=True)
+    for start in roots:
+        start = start.resolve()
+        for root in (start, *start.parents):
+            if root == start or (root/'.git').exists():
+                if executable.is_relative_to(root):
+                    raise RuntimeError('workspace-local Git rejected: ' + str(executable))
+    return executable
+
+
 def toolchain_preflight(toolchain, original, root):
     """Read existing installation only. Never launch rustup, Cargo or a proxy."""
     home = Path(original['HOME'])
@@ -139,11 +150,13 @@ def environments(original, preflight, scratch, target, node_executable=None, git
                      (node_executable, git_executable) if value] + os.defpath.split(os.pathsep))))
     for key in ('XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME'):
         node[key] = str(scratch/'isolation/xdg')
+    if git_executable:
+        node['PDRS_METADATA_GIT'] = str(git_executable)
     return cargo, node
 
 
 def check_postflight(result, root, toolchain, original, preflight, sources_before, rustup_before,
-                     node_executable, node_before, node_home):
+                     node_executable, node_before, node_home, git_executable=None, git_before=None):
     result['sourcesAfter'] = source_snapshot(root)
     result['toolsAfter'] = toolchain_preflight(toolchain, original, root)
     result['rustupAfter'] = rustup_snapshot(Path(preflight['rustupHome']))
@@ -151,6 +164,10 @@ def check_postflight(result, root, toolchain, original, preflight, sources_befor
         raise RuntimeError('source changed during verification')
     if result['toolsAfter'] != {key: value for key, value in preflight.items() if key in result['toolsAfter']}:
         raise RuntimeError('original toolchain changed during verification')
+    if git_executable is not None:
+        result['gitAfter'] = dict(path=str(git_executable), sha256=sha(git_executable))
+        if result['gitAfter']['sha256'] != git_before:
+            raise RuntimeError('Git executable changed during verification')
     if result['rustupAfter'] != rustup_before or sha(node_executable) != node_before:
         raise RuntimeError('monitored rustup subtrees or Node executable changed')
     for name in ('.cargo', '.rustup'):
@@ -244,6 +261,8 @@ def main(argv=None):
     for executable in (node_executable, git_executable):
         if not executable.is_file() or not os.access(executable, os.X_OK):
             raise RuntimeError('required original Node/Git executable missing')
+    git_executable = external_git(git_executable, (root, args.baseline))
+    git_before = sha(git_executable)
     node_before = sha(node_executable)
     target = args.target.resolve()
     reject_protected_paths((target, args.output), Path(preflight['home']))
@@ -262,6 +281,7 @@ def main(argv=None):
     preflight['sourcesBefore'] = sources_before
     preflight['rustupBefore'] = rustup_before
     preflight['nodeExecutable'] = dict(path=str(node_executable), sha256=node_before)
+    preflight['gitExecutable'] = dict(path=str(git_executable), sha256=git_before)
     preflight['nodeEnvironment'] = node_env
     preflight['driverSha256'] = sha(Path(__file__).resolve())
     (output / 'preflight.json').write_text(json.dumps(preflight, indent=2)+'\n')
@@ -318,7 +338,7 @@ def main(argv=None):
         postflight = {}
         try:
             check_postflight(postflight, root, args.toolchain, original, preflight, sources_before,
-                             rustup_before, node_executable, node_before, Path(node_env['HOME']))
+                             rustup_before, node_executable, node_before, Path(node_env['HOME']), git_executable, git_before)
         except Exception as exc:
             success, error = False, (error or '') + '\npostflight: ' + str(exc)
         manifest = dict(success=success, error=error, runs=runs, preflight=preflight, postflight=postflight,
