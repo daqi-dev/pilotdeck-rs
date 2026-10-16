@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -28,8 +29,22 @@ def git(root, *args):
     ).stdout
 
 
+def emit_raw(stream, label):
+    """Emit original child bytes, with explicit framing and any truncation."""
+    stream.flush()
+    size = os.fstat(stream.fileno()).st_size
+    stream.seek(0)
+    raw = stream.read(CAP)
+    sys.stdout.flush()
+    output = sys.stdout.buffer
+    output.write((f"\nR80_RAW_{label}_BEGIN bytes={len(raw)} observed={size} cap={CAP}\n").encode())
+    output.write(raw)
+    output.write((f"\nR80_RAW_{label}_END truncated={str(size > CAP).lower()}\n").encode())
+    output.flush()
+
+
 def run_bounded(argv, root):
-    """Limit runtime and each stream; kill the owned process group on failure."""
+    """Sample runtime/output limits; preserve bounded raw even on failure."""
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         child = subprocess.Popen(argv, cwd=root, stdout=out, stderr=err, start_new_session=True)
         started = time.monotonic()
@@ -50,19 +65,24 @@ def run_bounded(argv, root):
                 raise RuntimeError("negative-control output limit")
             return code, stdout, stderr
         finally:
-            # Also terminate any residual compiler child in this owned group.
             try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                # Some hosts deny signalling an already reaped process group.
-                # A still-running owned leader is always an infrastructure failure.
-                if child.poll() is None:
-                    child.kill()
+                try:
+                    # A live or residual group belongs only to this new session.
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError as exc:
+                    # A reaped leader does not prove that its group is empty.
+                    if child.poll() is None:
+                        child.kill()
+                    raise RuntimeError("negative-control group cleanup EPERM; infrastructure failure") from exc
+                finally:
                     child.wait()
-                    raise
-            child.wait()
+            finally:
+                # Read these files before closing them on every exit path,
+                # including timeouts, overflow, cleanup and semantic failures.
+                emit_raw(out, "STDOUT")
+                emit_raw(err, "STDERR")
 
 
 def verify_failure(code, stdout, stderr):
