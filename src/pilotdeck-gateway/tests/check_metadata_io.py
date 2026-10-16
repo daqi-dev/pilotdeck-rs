@@ -27,6 +27,7 @@ SOURCE_FILES = (
     'src/pilotdeck-gateway/tests/fixtures/metadata/describe-io-errors.json',
     '.github/workflows/ci.yml', 'rust-toolchain.toml', 'src/Cargo.toml', 'src/Cargo.lock',
     'src/pilotdeck-gateway/Cargo.toml',
+    'src/pilotdeck-gateway/tests/test_metadata_observer.mjs',
 )
 
 

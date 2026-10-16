@@ -147,3 +147,11 @@ BND2输入交接：录制器每次真实chmod前先同步写出原path/mode计�
 record非零/超时/超输出时，即使尚无最终oracle或工作文件，已同步提交的permission计划仍在内存，finally按已发生步骤恢复1至3处。杀子进程后有界drain内核pipe中剩余字节，保留已写计划；直接子进程和持stdout后代控制见Python测试。旧`--restore fixture`缺原计划参数会拒绝；自动驱动把可信内存计划作为独立参数传给Node，standalone调用不能重新信任可改fixture来选择恢复对象。
 
 该保证针对本批自有fixture数据跨阶段替换；目录/owner marker所有权检查继续执行。实际目录对象被移动/替换的恢复能力不由这批数据绑定证明。P0历史及独立终审仍按board处理。
+
+observer 生命周期：每次 install 捕获本代 token，reset 立即使旧代失效；同步、异步和
+已返回 FileHandle 的成功/错误 trace 共用这条边界，底层调用与返回值保持原样。
+`test_metadata_observer.mjs` 提取本仓观察器原字节，以 Node22.22 strip-types 执行，
+覆盖 reset 后旧 handle、pending handle、跨代延迟真实 readdir 的成功/ENOENT，以及
+新代正常11种成功 API；每个 child 有5秒/1MiB上限。它不执行 Gateway，也不证明
+Gateway 曾触发跨代写入。该控制新增到来源集合，现为15项；新 recorder 的正式录制
+与完整重放是否已执行，以 observer 交接索引中明确的范围为准，旧完整链不追认。

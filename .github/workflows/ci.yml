@@ -6,6 +6,16 @@ on:
     branches: [main]
 
 jobs:
+  metadata-observer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+      - name: metadata observer generation 正负控（自有文件）
+        run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
+
   # job 名 = 分支保护里的必需状态检查名，改这里要同步改保护规则
   check:
     runs-on: ubuntu-latest
