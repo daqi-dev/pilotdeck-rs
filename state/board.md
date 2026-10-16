@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 人定「开发优先」重启（main @ b888563 + 本提交）
+> **人判**：CLAUDE.md 被 codex 官僚化改写（dfa7df3 起）后，会话陷入写文档循环——origin/main 领先的 48 个提交几乎全是 docs，board 变成无人能接续的密码文。本提交精简 CLAUDE.md（恢复 f80089a 的简洁度 + 保留人定框架 + 新增「开发优先」最高优先规则）。
+> **现场核实**：main 已含全部实质成果（ICU collation、gateway errno、set-merge、A5.1 账本、exp014/015 fixtures），`cargo check --workspace` 通过。旁线研究 009/010 已保存在 codex/a5-112-resume@c7d9f53。
+> **下一步（按序）**：① 救 Draft PR #138（WS 握手字节保留，真代码，对应 P1 #56）与 #141（metadata errno，对应 P0 前置 #139）走完评审合并；② 评估 #142/#150 去留，关闭纯文档 PR #151；③ 开 #46（A4 gateway 透传 + 10 method 本地化，P0 主线）；④ 阶段 D（#122 起）。分工：codex 写实现、Claude Code 一路评审、GLM 协调+评审。
+> **资源**：_build+_tmp 已到 46G 上限、worktree 5 个满；开新树前必须先清理回收（wt-p2c 的未跟踪 none/ 已在主仓，可清）。下方 codex 密码文段落一律作历史，不作为当前指令。
+
 > **2026-10-16 16:35接续**：root核main589f6bf/34open/四Draft，五树与旧原件保留，中央原owner继续GLM/DS独审；原f8dfd1c交接分支已推不改。PR146单位P1有R52精确消歧候选，双口径du原件可复算，独立两家确认前不开新构建。a4@9758299源码已归还且六格全PREPARED_NOT_RUN；Astra只读发现X1/X2目前靠mutant专用panic拒、缺同一健康因果/wire门，先修测试判据后再申请精确产物窗，65/P3/A5.4未清。唯一下一实现仍该共同ReadyAdmission矩阵，无新队列/held解封。
 
 > **15:56 独立任务按依赖继续**：Astra已独立解码134原件并给65唯一下一依赖，按R50交GPT-6.1在空闲a4准备TS真实list OutcomeOwned→显式接纳门→原RPC H1的小映射源码，先预登记/15min/1MiB，不发Node/Cargo新窗、不动资源基线/生产Rust/冻结、不核销65。与CLI的GLM identity候选、中央必要独立审阅各自隔离；共享派发仍原owner。中央新dispatcher独立24控制抓两P2a（父子写lease、监视异常后过早free），当前owner同轮修，暂不扩新派发，原在途/历史保留；并发能力已实际重叠不抹成无缺口。
