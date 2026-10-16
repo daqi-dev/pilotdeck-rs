@@ -52,9 +52,13 @@ def environments(original, preflight, scratch, target):
     cargo = dict(original, HOME=preflight['home'], CARGO_HOME=preflight['cargoHome'],
                  RUSTUP_HOME=preflight['rustupHome'], RUSTUP_AUTO_INSTALL='0',
                  RUSTC=preflight['binaries']['rustc']['path'], RUSTDOC=preflight['binaries']['rustdoc']['path'],
+                 RUSTC_WRAPPER='', RUSTC_WORKSPACE_WRAPPER='',
+                 CARGO_BUILD_RUSTC_WRAPPER='', CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER='',
                  CARGO_TARGET_DIR=str(target), CARGO_BUILD_JOBS='2',
                  PATH=str(Path(preflight['toolchain']) / 'bin') + os.pathsep + original.get('PATH', ''))
-    for key in ('RUSTUP_TOOLCHAIN', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'PDRS_METADATA_IO_LIVE'):
+    # Removing a wrapper variable exposes Cargo config or CARGO_BUILD_* again.
+    # Explicit empty values override both sources and disable wrapper execution.
+    for key in ('RUSTUP_TOOLCHAIN', 'PDRS_METADATA_IO_LIVE'):
         cargo.pop(key, None)
     node = dict(cargo, HOME=str(scratch / 'isolation/home'), TMPDIR=str(scratch / 'isolation/tmp'),
                 PILOT_HOME=str(scratch / 'isolation/home'), PILOTDECK_SKIP_BROWSER_OPEN='1', SKIP_BROWSER_OPEN='1')
@@ -83,7 +87,8 @@ def main(argv=None):
     scratch = output / 'recording'
     cargo_env, node_env = environments(original, preflight, scratch, target)
     whitelist = ('HOME', 'CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_AUTO_INSTALL', 'RUSTC', 'RUSTDOC',
-                 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'PATH')
+                 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER',
+                 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER', 'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'PATH')
     preflight['cargoEnvironment'] = {key: cargo_env[key] for key in whitelist}
     preflight['nodeHome'] = node_env['HOME']
     preflight['cargoArgvPrefix'] = [preflight['binaries']['cargo']['path']]
