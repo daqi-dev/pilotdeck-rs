@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reviewStatus": "PENDING_SECOND_FAMILY",
-  "asOf": "2026-10-16T01:43:57.398260+00:00",
+  "reviewStatus": "PENDING_SECOND_FAMILY_CLASSIFICATION",
+  "asOf": "2026-10-16T02:11:38.567520+00:00",
   "snapshotAsOf": "2026-10-16T00:24:53Z",
   "sourceWorktreeHead": "8fae6244d14bbd2bf6150451dafc6b57db988115",
   "productHead": "8745ddd3e1bcfca634a6355f5b2e12084f5c6931",
@@ -50,12 +50,18 @@
     "阶段任务、当前真实缺陷、验收债按子项区分；未来目标未实现不自动作为当前行为缺陷。",
     "级别与确认度/状态分列；分歧未独立仲裁前取高档candidate，不把待证当通过。",
     "延期、部分完成、待验仍未完成；accepted-risk表示既有人定接受风险，不等于修复。",
-    "聚合门及linked证据债不重复累加成独立产品缺陷；P0/P1/P2总数不得从55行直接相加。",
-    "本账只绑定31单快照；新发现另登记并扩展快照，不能靠关闭父单或改标签清零。"
+    "聚合门不重复累加成独立产品缺陷；linked只说明关联，不自动视为同一债务；总数不得从55行直接相加。",
+    "本账只绑定31单快照；新发现另登记并扩展快照，不能靠关闭父单或改标签清零。",
+    "historicalJudgmentSeverity为本轮对历史问题的归一判断，不代表原issue标签；未定等级不参与低档rank排序，fix-only不计初始分类覆盖。"
   ],
   "independentReviewCoverage": {
-    "deepseek": 55,
-    "glm": 26,
+    "deepseekReceivedRows": 55,
+    "deepseekGradeJudgments": 53,
+    "deepseekTypeJudgments": 55,
+    "glmReceivedRows": 37,
+    "glmGradeJudgments": 36,
+    "glmTypeJudgments": 33,
+    "glmFixOnlyConfirmations": 1,
     "expectedSnapshotSubitems": 55
   },
   "currentMain": "7781b18e195afbc90d696be575c7bc6ad6662e0b",
@@ -108,69 +114,102 @@
           "title": "budget_limit终态",
           "primaryType": "真实缺陷",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "fixed",
           "fixed": true,
           "prerequisite": "本issue",
           "authorizationGate": false,
-          "currentRecord": "PR27已修，不能抵消剩余两场景",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-19.md:16"
           ],
-          "nextAction": "保留原5/5证据，不重跑全量",
+          "nextAction": "保留已交付证据；父单余项继续按依赖推进，不重复派发本项。",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "FIXED",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "N/A",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "fixed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "N/A",
               "primaryKind": "真实缺陷",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 7
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 7,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷(已修)",
+              "severityRaw": "N/A残余：PR27合入，历次k=5回归 sidecar_budget_limit 5/5（issue-19.md:16）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "PR27已修，不能抵消剩余两场景",
+          "snapshotNextAction": "保留原5/5证据，不重跑全量",
+          "currentStateNote": "已核销的明确子项范围；父单其余范围不随之关闭。",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
+          "fixScope": "explicit-subitem-only",
+          "historicalConfirmationBasis": "deepseek",
+          "confirmationBasis": "historical-scope-source-review",
+          "closureEvidence": [
+            "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+          ]
         },
         {
           "id": "19.2",
           "title": "deadline ×2宿主收尾",
           "primaryType": "真实缺陷",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A7.7及C收尾",
           "authorizationGate": false,
-          "currentRecord": "延期未完成；历史51/53仍FAIL；D4方向已批但实现/评分未验",
           "evidence": [
             "docs/plan/005_phase-a-session-domain.md:128",
             "docs/experiments/exp015-a52b-session-fixtures/readme.md:177"
           ],
           "nextAction": "先A5.4登记A19-HOST精确期望与冻结，再A7实现；保留帧/durable/registry独立断言",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P1",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P1",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P1",
               "primaryKind": "真实缺陷",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 8
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 8,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷+验收债务",
+              "severityRaw": "P1：deadline×2各4/5，剩余1/5为Rust侧多一条宿主 gateway_submit_failed，直接挡53/53（对拍结论级）；D4人批两步延期（plan:128；:131口径仍标「候选」）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "延期未完成；历史51/53仍FAIL；D4方向已批但实现/评分未验",
+          "snapshotNextAction": "先A5.4登记A19-HOST精确期望与冻结，再A7实现；保留帧/durable/registry独立断言",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         }
       ]
     },
@@ -185,48 +224,61 @@
           "title": "archive三项本地化",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A4收尾",
           "authorizationGate": false,
-          "currentRecord": "7/10，候选未合main，受#134门约束",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-46.md:7",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-134.md:7"
           ],
           "nextAction": "接回D6普通路径候选，真实A2十method与上游零请求",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "partial",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "supplement": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-supplement-deepseek.md"
             },
             "glm": {
               "severity": "N/A",
               "primaryKind": "阶段任务",
               "confirmation": "confirmed",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 15
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 15,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "阶段任务",
+              "severityRaw": "N/A（计划内未完成不自动P1；无假完成声明，完成前不得标A4完成）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "7/10，候选未合main，受#134门约束",
+          "snapshotNextAction": "接回D6普通路径候选，真实A2十method与上游零请求",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         },
         {
           "id": "46.2",
           "title": "协议/错误/安全前置与真实UI",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "partial",
           "fixed": false,
           "prerequisite": "A4收尾",
           "authorizationGate": false,
-          "currentRecord": "#56/#120/#134未完；真人/桌面未验",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-46.md:16",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-56.md:13",
@@ -234,22 +286,38 @@
           ],
           "nextAction": "分别清子单，准备真人步骤，模型不能填真人通过",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "见子项",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "N/A",
               "primaryKind": "验收债务",
               "confirmation": "confirmed",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 16
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 16,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（聚合行）",
+              "severityRaw": "N/A（不与子单重复计数；内含P0 134.1、P1 134.2/120.1、P2 120.2及#56）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "#56/#120/#134未完；真人/桌面未验",
+          "snapshotNextAction": "分别清子单，准备真人步骤，模型不能填真人通过",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "aggregate",
+          "countAsIndependentDefect": false,
           "gradeDisagreement": {
             "deepseek": "P1",
             "glm": "N/A",
@@ -278,28 +346,60 @@
           "title": "B2装置与冻结可复现性",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "partial",
           "fixed": false,
           "prerequisite": "B3前",
           "authorizationGate": false,
-          "currentRecord": "装置/定标历史已交付，#113仍阻可携带复核，父issue未收尾",
           "evidence": [
             "specs/ui-server-parity/FROZEN.md:10",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-47.md:7"
           ],
-          "nextAction": "修#113并核机器闸门，逐项对照产物后收父单",
+          "nextAction": "复核剩余94子项与真人验收门；不重开R5已接受的签名风险，不再把113写成当前阻塞。",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "P1子门#113",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "unresolvedInterpretation": "DS withdrew signature requirement after R5; still conflates pending human re-review with new blocking human gate. Further clarification pending; overall P1 independently remains due113 portability.",
+              "supplement": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-supplement-deepseek.md"
             },
-            "glm": null
+            "glm": {
+              "severity": "N/A",
+              "primaryKind": "阶段任务",
+              "confirmation": "confirmed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 17,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "阶段任务+验收债务（父聚合，不与#113等子单重复计数）",
+              "severityRaw": "N/A：B3 未到期；开工时 #113 未清→P1（到期验收缺失）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "装置/定标历史已交付，#113仍阻可携带复核，父issue未收尾",
+          "snapshotNextAction": "修#113并核机器闸门，逐项对照产物后收父单",
+          "currentStateNote": "聚合门仍未完成；113已由PR140核销，剩余94与真人验收及解释分歧继续。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "aggregate",
+          "countAsIndependentDefect": false,
+          "typeDisagreement": {
+            "deepseek": "验收债务",
+            "glm": "阶段任务",
+            "resolution": "待事实归一；保留DS主类与分歧，不倒写原文"
+          },
+          "gradeDisagreement": {
+            "deepseek": "P1",
+            "glm": "N/A",
+            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           },
           "aggregates": [
             "113.1",
@@ -320,58 +420,99 @@
           "id": "52.1",
           "title": "未登记.js/.cjs/.ts漏检",
           "primaryType": "真实缺陷",
-          "severity": "P1",
-          "severityAtSnapshot": "P1",
-          "confirmation": "candidate",
+          "severity": "P2",
+          "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A5.3",
           "authorizationGate": false,
-          "currentRecord": "未修；3后缀与未登记即FAIL规则相反，旧import解释只覆盖部分接入",
           "evidence": [
             "scripts/gateway-parity/common.py:44",
             "specs/gateway-parity/FROZEN.md:5"
           ],
           "nextAction": "隔离副本验证独立/导入/副作用三路径；扩后缀并负控；依冻结流程评审和真实复算。假评分PASS须独立实证再升P0",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "P1-candidate",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": {
+              "severity": "P2",
+              "primaryKind": null,
+              "confirmation": null,
+              "source": "_tmp/20261016-debt-cleanup/reviews/suffix-predecision-glm.md",
+              "sourceLine": 3,
+              "sourceType": "dedicated-predecision-output-extraction",
+              "kindRaw": null,
+              "severityRaw": "#52 现级 **P2**",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "未修；3后缀与未登记即FAIL规则相反，旧import解释只覆盖部分接入",
+          "snapshotNextAction": "隔离副本验证独立/导入/副作用三路径；扩后缀并负控；依冻结流程评审和真实复算。假评分PASS须独立实证再升P0",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         },
         {
           "id": "52.2",
           "title": "A9文案等",
           "primaryType": "验收债务",
           "severity": "P3",
-          "severityAtSnapshot": "P3",
           "confirmation": "confirmed",
           "state": "known-gap",
           "fixed": false,
           "prerequisite": "不在本轮范围",
           "authorizationGate": false,
-          "currentRecord": "不新增P3 issue、不阻塞",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-52.md:10"
           ],
           "nextAction": "保留简短记录",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "P3",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P3",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "accepted-risk",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "note": "P3 known blank, no new issue/blocker. accepted-risk state means explicitly retained scope blank, not fixed."
             },
-            "glm": null
-          }
+            "glm": {
+              "severity": "P3",
+              "primaryKind": null,
+              "confirmation": "confirmed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 18,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "—（措辞留白，不入三类）",
+              "severityRaw": "P3",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P3",
+          "snapshotRecord": "不新增P3 issue、不阻塞",
+          "snapshotNextAction": "保留简短记录",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -386,13 +527,11 @@
           "title": "capture后Completed前未复查hard-stop",
           "primaryType": "真实缺陷",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A7.7",
           "authorizationGate": false,
-          "currentRecord": "三处分支仍仅if deadline，未证绕过真实EventSink后果",
           "evidence": [
             "src/pilotdeck-agent/src/turn.rs:2664",
             "src/pilotdeck-agent/src/turn.rs:2717",
@@ -400,65 +539,94 @@
           ],
           "nextAction": "barrier注入capture结算到emit之间hard-stop，核真实发布与unknown责任；证实错误即P1，未知effect重执行则P0",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2-pending-runtime",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "真实缺陷",
               "confirmation": "candidate",
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 9
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 9,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷候选+验收债务",
+              "severityRaw": "P2：turn.rs:2664/2717/4281三处守卫仅查deadline未复查hard_stop_cause，无错误输出证据；A7.7要求sidecar crash断言构成缺口",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "三处分支仍仅if deadline，未证绕过真实EventSink后果",
+          "snapshotNextAction": "barrier注入capture结算到emit之间hard-stop，核真实发布与unknown责任；证实错误即P1，未知effect重执行则P0",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         },
         {
           "id": "55.2",
           "title": "计时线程/Requested/loop-top边角",
           "primaryType": "真实缺陷",
           "severity": "P3",
-          "severityAtSnapshot": "P3",
           "confirmation": "unknown",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A7.7附近复核",
           "authorizationGate": false,
-          "currentRecord": "旧不可达/措辞描述不自动变真缺陷，也不把P3堆成P2",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-55.md:9"
           ],
           "nextAction": "实测可达错误则按事实升P1，其余留白",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P3-pending-runtime",
             "deepseek": {
-              "severity": "N/A",
-              "primaryType": "真实缺陷",
+              "primaryKind": "真实缺陷",
+              "severity": null,
               "confirmation": "unknown",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "classificationStatus": "undetermined",
+              "severityRaw": "未定/待实测；可达错误→P1，确证不可达→P3。",
+              "extractionSeverity": "N/A"
             },
             "glm": {
               "severity": "P3",
               "primaryKind": "验收债务",
               "confirmation": "unknown",
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 10
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 10,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务(复核)",
+              "severityRaw": "P3：计时线程窗口/server.rs:143不可达角/loop-top空等5s均为留白，无错误输出",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P3",
+          "snapshotRecord": "旧不可达/措辞描述不自动变真缺陷，也不把P3堆成P2",
+          "snapshotNextAction": "实测可达错误则按事实升P1，其余留白",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": true,
+          "classificationStatus": "undetermined",
           "typeDisagreement": {
             "deepseek": "真实缺陷",
             "glm": "验收债务",
             "resolution": "待事实归一；保留DS主类与分歧，不倒写原文"
-          },
-          "gradeDisagreement": {
-            "deepseek": "N/A",
-            "glm": "P3",
-            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           }
         }
       ]
@@ -474,83 +642,111 @@
           "title": "101前另次write字节丢失",
           "primaryType": "真实缺陷",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "candidate",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A4收尾",
           "authorizationGate": false,
-          "currentRecord": "代码仍丢read_buf，旧记录有TS差异；当前公共入口交错待补",
           "evidence": [
             "src/pilotdeck-gateway/src/http_proxy.rs:144",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-56.md:7"
           ],
-          "nextAction": "TCP barrier区分同写head与后续单独frame；TS也丢head，不能盲目保留所有read_buf",
+          "nextAction": "完成新有界boundary实际角色及最终增量双家审阅/CI；不重跑前提未变的真实18样本。",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P1-candidate",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P1",
-              "primaryType": "真实缺陷",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "真实缺陷",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 11
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 11,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷候选+验收债务",
+              "severityRaw": "P2：hyper预读丢read_buf代码自证（http_proxy.rs:144-147）；TS对「单独write」是否当帧处理属运行时事实未证（Node upgrade语义不可读码定，TS亦丢head）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "代码仍丢read_buf，旧记录有TS差异；当前公共入口交错待补",
+          "snapshotNextAction": "TCP barrier区分同写head与后续单独frame；TS也丢head，不能盲目保留所有read_buf",
+          "currentStateNote": "真实18样本/C1/F1已补，PR138仍draft未合入；实际boundary与最终同步双家闸门未齐。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true,
           "gradeDisagreement": {
             "deepseek": "P1",
             "glm": "P2",
             "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
-          }
+          },
+          "candidatePR": 138
         },
         {
           "id": "56.2",
           "title": "每帧缓冲无上限",
           "primaryType": "真实缺陷",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
-          "confirmation": "candidate",
+          "confirmation": "unknown",
           "state": "pending",
           "fixed": false,
           "prerequisite": "整体安全验收",
           "authorizationGate": false,
-          "currentRecord": "与TS相同尚未证明Rust新缺陷；同TS不免安全验证",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-56.md:10"
           ],
           "nextAction": "先登记有界资源探针；若可达DoS则P0另列，不能编造已验证",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "UNVERIFIED",
             "deepseek": {
-              "severity": "N/A",
-              "primaryType": "真实缺陷",
+              "primaryKind": "真实缺陷",
+              "severity": null,
               "confirmation": "unknown",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "classificationStatus": "undetermined",
+              "severityRaw": "未定/待实测；可达DoS→P0，不可达且登记资源上限→P3。",
+              "extractionSeverity": "N/A"
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 12
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 12,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务(安全)",
+              "severityRaw": "P2：每帧无界缓冲与TS同怪癖，非基线偏差；外部可达DoS未证（若证→P0另列，同TS不免安全验证）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "与TS相同尚未证明Rust新缺陷；同TS不免安全验证",
+          "snapshotNextAction": "先登记有界资源探针；若可达DoS则P0另列，不能编造已验证",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": true,
+          "classificationStatus": "undetermined",
           "typeDisagreement": {
             "deepseek": "真实缺陷",
             "glm": "验收债务",
             "resolution": "待事实归一；保留DS主类与分歧，不倒写原文"
-          },
-          "gradeDisagreement": {
-            "deepseek": "N/A",
-            "glm": "P2",
-            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           }
         }
       ]
@@ -566,29 +762,49 @@
           "title": "F2 runner/A34处置/B部署/D黑盒",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F3前，部分F5前",
           "authorizationGate": false,
-          "currentRecord": "局部旧侧流式8/8、D13已交付；37行为覆盖与双侧未完成",
           "evidence": [
             "docs/plan/004_frontend.md:74",
             "scripts/fe-parity/README.md:247"
           ],
           "nextAction": "清#61/#98/#115机器面，明确外部输入，补A34清单与双侧结果后收父单",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "partial",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": {
+              "severity": "N/A",
+              "primaryKind": "阶段任务",
+              "confirmation": "confirmed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 19,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "阶段任务+验收债务",
+              "severityRaw": "N/A：F3 未到期；届时 A34/B矩阵/双侧37例未清→P1",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "局部旧侧流式8/8、D13已交付；37行为覆盖与双侧未完成",
+          "snapshotNextAction": "清#61/#98/#115机器面，明确外部输入，补A34清单与双侧结果后收父单",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -603,13 +819,11 @@
           "title": "真实全量多profile防skip验收",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "原#74前置已过，现F3前",
           "authorizationGate": false,
-          "currentRecord": "旧侧真实原件已对账，新侧NOT_RUN仍未完成",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-61.md:17",
             "scripts/fe-parity/README.md:108",
@@ -617,15 +831,42 @@
           ],
           "nextAction": "完整真实报告逐身份对账，新侧缺功能面时如实红，不假造通过",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "P1-evidence",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
+            "glm": {
+              "severity": "N/A",
+              "primaryKind": "验收债务",
+              "confirmation": "confirmed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 20,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务",
+              "severityRaw": "N/A：现约 F3 未到期；F3 未清→P1（contract=README:108 逐身份验收）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "旧侧真实原件已对账，新侧NOT_RUN仍未完成",
+          "snapshotNextAction": "完整真实报告逐身份对账，新侧缺功能面时如实红，不假造通过",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
+          "gradeDisagreement": {
+            "deepseek": "P1",
+            "glm": "N/A",
+            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           }
         },
         {
@@ -633,27 +874,52 @@
           "title": "node_modules完整性未核",
           "primaryType": "真实缺陷",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "candidate",
           "state": "pending",
           "fixed": false,
           "prerequisite": "F2收尾",
           "authorizationGate": false,
-          "currentRecord": "README明确残余信任，未修",
           "evidence": [
             "scripts/fe-parity/README.md:112"
           ],
           "nextAction": "受控修改真实loader/Playwright依赖作负控，绑定执行依赖，不写只读baseline；假计分PASS再升P0",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "P1-candidate-P2b",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
+            "glm": {
+              "severity": "P1",
+              "primaryKind": "真实缺陷",
+              "confirmation": null,
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 21,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷+验收债务",
+              "severityRaw": "**P1**（b类：node_modules 未核可致 fe-parity 假PASS/假FAIL；#87 校准门证据已被引用而依赖未核）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "README明确残余信任，未修",
+          "snapshotNextAction": "受控修改真实loader/Playwright依赖作负控，绑定执行依赖，不写只读baseline；假计分PASS再升P0",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true,
+          "gradeDisagreement": {
+            "deepseek": "P2",
+            "glm": "P1",
+            "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           }
         }
       ]
@@ -669,35 +935,49 @@
           "title": "mixed-batch immediate-forward应答顺序",
           "primaryType": "真实缺陷",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "candidate",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A5.4",
           "authorizationGate": false,
-          "currentRecord": "当前wire golden与assert_ne明确证实错误输出，未修",
           "evidence": [
             "src/pilotdeck-gateway/src/pairing/tests.rs:991",
             "src/pilotdeck-gateway/src/pairing/tests.rs:1023"
           ],
           "nextAction": "隔离修派发/完成次序，保留delayed-forward和ping/close边界，不全串行",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P1",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P1",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P1",
               "primaryKind": "真实缺陷",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 13
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 13,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷",
+              "severityRaw": "P1：wire golden+assert_ne钉住 local→forwarded 与TS forwarded→local 相反（tests.rs:991-1026），当前错误输出成立",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "当前wire golden与assert_ne明确证实错误输出，未修",
+          "snapshotNextAction": "隔离修派发/完成次序，保留delayed-forward和ping/close边界，不全串行",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true,
           "confirmationNote": "保留高档P1 candidate；golden与最小装配不冒充真实默认生产同连接顺序实测。"
         },
         {
@@ -705,35 +985,49 @@
           "title": "spawn_blocking同缓冲帧超车",
           "primaryType": "真实缺陷",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "candidate",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A5.4",
           "authorizationGate": false,
-          "currentRecord": "未修；job只在整缓冲后poll，具体交错需运行时证据",
           "evidence": [
             "src/pilotdeck-gateway/src/pairing.rs:155",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-65.md:17"
           ],
           "nextAction": "barrier固定前job已完成但后帧仍解析，录TS/Rust全序，与上一子项合批",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P1-candidate",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P1",
-              "primaryType": "真实缺陷",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "真实缺陷",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 14
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 14,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷候选+验收债务",
+              "severityRaw": "P2：pairing.rs:155-163机制存在（completion整缓冲后才poll），具体交错下TS/Rust全序差异无运行时证据",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "未修；job只在整缓冲后poll，具体交错需运行时证据",
+          "snapshotNextAction": "barrier固定前job已完成但后帧仍解析，录TS/Rust全序，与上一子项合批",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true,
           "gradeDisagreement": {
             "deepseek": "P1",
             "glm": "P2",
@@ -746,35 +1040,51 @@
           "title": "Linux raw-byte目录名排序",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A8.6/#133",
           "authorizationGate": false,
-          "currentRecord": "未完成；D6函数级解码不代表真实FS",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-65.md:24",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-133.md:7"
           ],
           "nextAction": "与#133合批真实Linux源构建/wire验收，不新建同义债",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 15
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 15,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "平台验收债务",
+              "severityRaw": "P2：Linux非UTF-8名按lossy排序与libuv原始字节序可差；D6仅函数级22组对照（issue-133.md:7-9），真实FS端到端未做",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "未完成；D6函数级解码不代表真实FS",
+          "snapshotNextAction": "与#133合批真实Linux源构建/wire验收，不新建同义债",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
+          "sharedExecutionGroup": "linux-acceptance",
+          "linkedRelation": "共享执行环境，不自动视为同一验收断言或整组核销。",
           "linkedEvidenceDebt": [
             "117.1",
             "133.1"
@@ -785,68 +1095,104 @@
           "title": "Windows排序",
           "primaryType": "验收债务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
-          "confirmation": "candidate",
+          "confirmation": "unknown",
           "state": "pending",
           "fixed": false,
           "prerequisite": "仅纳入目标平台时定义",
           "authorizationGate": false,
-          "currentRecord": "当前macOS/Linux目标外，非已修，不能擅改意向",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-65.md:24"
           ],
           "nextAction": "查已有平台范围原件，诚实保留未支持，不以scope CLOSED记修复",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "SCOPE-PENDING",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "N/A",
-              "primaryType": "验收债务",
               "confirmation": "unknown",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "humanOrScopeActionPending": true,
+              "classificationStatus": "scope-gate"
             },
             "glm": {
               "severity": "N/A",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 16
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 16,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务(范围决策门)",
+              "severityRaw": "N/A：Windows不在当前目标平台（仅macOS/Linux验收）；范围外≠无风险，纳入需授权",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "当前macOS/Linux目标外，非已修，不能擅改意向",
+          "snapshotNextAction": "查已有平台范围原件，诚实保留未支持，不以scope CLOSED记修复",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
+          "humanOrScopeActionPending": true
         },
         {
           "id": "65.5",
           "title": "广泛非ASCII双遍历/截断点分流",
           "primaryType": "真实缺陷",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "fixed",
           "fixed": true,
           "prerequisite": "D6",
           "authorizationGate": false,
-          "currentRecord": "D6仅核销此两项，父单剩余债继续OPEN",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-65.md:28"
           ],
-          "nextAction": "复用D6原证据，不重跑108条/大扫描",
+          "nextAction": "保留已交付证据；父单余项继续按依赖推进，不重复派发本项。",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "FIXED",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "N/A",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "fixed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "N/A",
               "primaryKind": "真实缺陷",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 17
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 17,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷(已修)",
+              "severityRaw": "N/A残余：D6 PR#136合入main eb76e4a、双必需CI绿、双家终审无P0/P1/P2、108条CJK实测过；核销的正是评论1第2、3项",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "D6仅核销此两项，父单剩余债继续OPEN",
+          "snapshotNextAction": "复用D6原证据，不重跑108条/大扫描",
+          "currentStateNote": "已核销的明确子项范围；父单其余范围不随之关闭。",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
+          "fixScope": "explicit-subitem-only",
+          "historicalConfirmationBasis": "deepseek",
+          "confirmationBasis": "historical-scope-source-review",
+          "closureEvidence": [
+            "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+          ]
         }
       ]
     },
@@ -861,29 +1207,50 @@
           "title": "A5.1/A5.2证据及A5.3/A5.4",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A6前",
           "authorizationGate": false,
-          "currentRecord": "账本/360/四格20/历史WS75已交付，原生拓扑/定标冻结仍未闭合",
           "evidence": [
             "docs/plan/005_phase-a-session-domain.md:63",
             "docs/experiments/exp015-a52b-session-fixtures/readme.md:177"
           ],
           "nextAction": "先清#52/#65/#85-A，再补A5.3和A5.4精确期望；#112关单不等于A5通过",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "partial",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "supplement": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-supplement-deepseek.md"
             },
-            "glm": null
-          }
+            "glm": {
+              "severity": "N/A",
+              "primaryKind": "阶段任务",
+              "confirmation": "confirmed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 22,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "阶段任务+验收债务",
+              "severityRaw": "N/A：A6 未到期；A5 收口按计划核验",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "账本/360/四格20/历史WS75已交付，原生拓扑/定标冻结仍未闭合",
+          "snapshotNextAction": "先清#52/#65/#85-A，再补A5.3和A5.4精确期望；#112关单不等于A5通过",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -898,13 +1265,11 @@
           "title": "A侧node_modules/cargo输入未绑定",
           "primaryType": "真实缺陷",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "candidate",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A5.4",
           "authorizationGate": false,
-          "currentRecord": "实际TS driver用未摘要loader；cargo/CARGO_HOME真实输入闭包待核",
           "evidence": [
             "scripts/gateway-parity/run_round.py:98",
             "scripts/gateway-parity/run_round.py:176",
@@ -915,26 +1280,36 @@
             "status": "pending-second-family",
             "gptCandidate": "P1-candidate-P2b",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "实际TS driver用未摘要loader；cargo/CARGO_HOME真实输入闭包待核",
+          "snapshotNextAction": "隔离改写实际依赖/config/build input，核具体能影响结论的路径，参考B2闭包策略，按冻结流程",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         },
         {
           "id": "85.2",
           "title": "C未登记文件跳过/Python不隔离",
           "primaryType": "真实缺陷",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A7.7",
           "authorizationGate": false,
-          "currentRecord": "check_frozen CLI允许ok=true/fully_registered=false，但root实测完整check_ruler要求fully_frozen会拦，不能报告全链P0",
           "evidence": [
             "scripts/parity/check_frozen.py:49",
             "scripts/parity/check_frozen.py:61",
@@ -946,13 +1321,25 @@
             "status": "pending-second-family",
             "gptCandidate": "P1-candidate",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/issue85-52-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "check_frozen CLI允许ok=true/fully_registered=false，但root实测完整check_ruler要求fully_frozen会拦，不能报告全链P0",
+          "snapshotNextAction": "分别核CLI契约与评分全链，影子模块/pyc/未登记实际执行路径需独立实测；根审计已否定直接从CLI0推全链假PASS",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         }
       ]
     },
@@ -967,103 +1354,145 @@
           "title": "子码观察缺口和47真实漏项",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A6.4/A7首次涉及PR",
           "authorizationGate": false,
-          "currentRecord": "旧补丁未合，47漏项不能算已修；R6不进计分",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-91.md:26",
             "docs/reviews/004_p2-cleanup.md:3"
           ],
           "nextAction": "先解#120容量，再按最终source批量补账与负控",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": "confirmed",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 17
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 17,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（规划索引）",
+              "severityRaw": "P2（R6不进计分；47漏项真实、当前无错误输出）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "旧补丁未合，47漏项不能算已修；R6不进计分",
+          "snapshotNextAction": "先解#120容量，再按最终source批量补账与负控",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         },
         {
           "id": "91.2",
           "title": "第9跳helper返回码",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A6.4",
           "authorizationGate": false,
-          "currentRecord": "动态占位不等于完整明细，未完成",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-91.md:10"
           ],
           "nextAction": "按真实调用闭包补码，不无限递归追静态深度",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": "candidate",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 18
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 18,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（规划索引）",
+              "severityRaw": "P2",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "动态占位不等于完整明细，未完成",
+          "snapshotNextAction": "按真实调用闭包补码，不无限递归追静态深度",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "unresolved",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         },
         {
           "id": "91.3",
           "title": "stopReason映射",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A7.5",
           "authorizationGate": false,
-          "currentRecord": "未完成",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-91.md:11"
           ],
           "nextAction": "会话method实施前补真实映射和caseID",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": "candidate",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 19
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 19,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（规划索引）",
+              "severityRaw": "P2",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "未完成",
+          "snapshotNextAction": "会话method实施前补真实映射和caseID",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "unresolved",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1078,56 +1507,102 @@
           "title": "白名单注释作为身份",
           "primaryType": "真实缺陷",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "B3首个Rust接管路由",
           "authorizationGate": false,
-          "currentRecord": "未修；当前名单仅zhengdaqi无注释，不能说已被利用",
           "evidence": [
             "scripts/ui-server-parity/apparatus.py:391",
             "specs/ui-server-parity/human-approvers.txt:1"
           ],
           "nextAction": "明确忽略/拒绝注释并负控；若实际允许非批准身份过门按P0安全/假通过，冻结程序仍需走",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "P2a-pending-probe",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "supplement": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-supplement-deepseek.md"
             },
-            "glm": null
-          }
+            "glm": {
+              "severity": "P2",
+              "primaryKind": "真实缺陷",
+              "confirmation": null,
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 23,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷（装置边界缺口）",
+              "severityRaw": "**P2**（c：前置 B3；routes=[] 不触发，名单受 FROZEN 哈希，触发须模型外同时篡改）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "未修；当前名单仅zhengdaqi无注释，不能说已被利用",
+          "snapshotNextAction": "明确忽略/拒绝注释并负控；若实际允许非批准身份过门按P0安全/假通过，冻结程序仍需走",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         },
         {
           "id": "94.2",
           "title": "宿主PyYAML未绑定",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "B3前",
           "authorizationGate": false,
-          "currentRecord": "实际import yaml解析workspace，版本不进hash",
           "evidence": [
             "scripts/ui-server-parity/common.py:93"
           ],
           "nextAction": "确定性受限解析器或绑定实际parser源码/版本；真实workspace复算",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "P1-candidate-P2b",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
+            "glm": {
+              "severity": "P1",
+              "primaryKind": "真实缺陷",
+              "confirmation": null,
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 24,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷+验收债务",
+              "severityRaw": "**P1**（b类：宿主 PyYAML 版本不进 hash、解析可变→清单/审计漏检误判；B2 已交付定标依赖未绑定解析器；基线含 pnpm-workspace.yaml 时路径现役）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "实际import yaml解析workspace，版本不进hash",
+          "snapshotNextAction": "确定性受限解析器或绑定实际parser源码/版本；真实workspace复算",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
+          "typeDisagreement": {
+            "deepseek": "验收债务",
+            "glm": "真实缺陷",
+            "resolution": "待事实归一；保留DS主类与分歧，不倒写原文"
           }
         },
         {
@@ -1135,28 +1610,48 @@
           "title": "字符串人批可伪造",
           "primaryType": "验收债务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "accepted-risk",
           "fixed": false,
           "prerequisite": "既有人定A",
           "authorizationGate": false,
-          "currentRecord": "维持字符串白名单是风险接受，非修复或强认证",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-94.md:17"
           ],
           "nextAction": "保留精确威胁模型/评审门；新场景超范围另登记",
           "review": {
-            "status": "pending-second-family",
+            "status": "two-family-inputs",
             "gptCandidate": "ACCEPTED-RISK-NOT-FIXED",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "N/A",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md"
+              "state": "accepted-risk",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": {
+              "severity": "N/A",
+              "primaryKind": null,
+              "confirmation": "confirmed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-apparatus-final-glm.md",
+              "sourceLine": 25,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "—（人定接受的残余风险，非未修缺陷）",
+              "severityRaw": "N/A（R4 威胁模型外；#94→A 人定）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "维持字符串白名单是风险接受，非修复或强认证",
+          "snapshotNextAction": "保留精确威胁模型/评审门；新场景超范围另登记",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1171,13 +1666,11 @@
           "title": "updater真实可执行文件未核",
           "primaryType": "真实缺陷",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F3",
           "authorizationGate": false,
-          "currentRecord": "延期未完成；主动伪装原威胁模型外",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-98.md:7",
             "scripts/fe-parity/README.md:331"
@@ -1187,26 +1680,36 @@
             "status": "pending-second-family",
             "gptCandidate": "P2c",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "延期未完成；主动伪装原威胁模型外",
+          "snapshotNextAction": "核真实txt executable/路径和祖先，不把argv当执行物证明",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         },
         {
           "id": "98.2",
           "title": "retryNodeHomes重采argv",
           "primaryType": "真实缺陷",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F3",
           "authorizationGate": false,
-          "currentRecord": "延期未完成；普通真实进程绕HOME审计则升P1",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-98.md:8"
           ],
@@ -1215,54 +1718,80 @@
             "status": "pending-second-family",
             "gptCandidate": "P2c",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P2",
-              "primaryType": "真实缺陷",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "延期未完成；普通真实进程绕HOME审计则升P1",
+          "snapshotNextAction": "绑定PID/PPID/PGID/argv前后身份，确定性注入重采改变/PID重用",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": true
         },
         {
           "id": "98.3",
           "title": "soffice路径",
           "primaryType": "真实缺陷",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "fixed",
           "fixed": true,
           "prerequisite": "历史节点",
           "authorizationGate": false,
-          "currentRecord": "旧评论明确已修，不因父单OPEN重复算未修",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-98.md:17"
           ],
-          "nextAction": "查实际断言，不重复造补丁",
+          "nextAction": "保留已交付证据；父单余项继续按依赖推进，不重复派发本项。",
           "review": {
             "status": "pending-second-family",
             "gptCandidate": "FIXED",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "N/A",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-source-final-deepseek.md"
+              "state": "fixed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-source-final-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "note": "source-confirmed historical soffice guard only; actual F3 two-side runtime remains pending; a/b/c source gaps explicitly closed, no new synonymous debt"
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "旧评论明确已修，不因父单OPEN重复算未修",
+          "snapshotNextAction": "查实际断言，不重复造补丁",
+          "currentStateNote": "仅旧soffice路径护栏源码已修；真实soffice执行与F3双侧验收仍未完成。",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
+          "fixScope": "historical-source-guard-only",
+          "historicalConfirmationBasis": "deepseek",
+          "confirmationBasis": "historical-scope-source-review",
+          "closureEvidence": [
+            "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-source-final-deepseek.md"
+          ]
         },
         {
           "id": "98.4",
           "title": "D只有13行为守护/11级联",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F4 skills/files，F5 session",
           "authorizationGate": false,
-          "currentRecord": "4基线失效/11级联保留，未有全行为验收",
           "evidence": [
             "scripts/fe-parity/README.md:247",
             "docs/plan/004_frontend.md:97"
@@ -1272,13 +1801,25 @@
             "status": "pending-second-family",
             "gptCandidate": "P1-evidence",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "4基线失效/11级联保留，未有全行为验收",
+          "snapshotNextAction": "补本仓黑盒；MATCHED_FAIL只对账一致，不等于功能通过",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1293,35 +1834,61 @@
           "title": "B2冻结校验依赖未入库证据",
           "primaryType": "验收债务",
           "severity": "N/A",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "fixed",
           "fixed": true,
           "prerequisite": "B3前",
           "authorizationGate": false,
-          "currentRecord": "全新checkout无_tmp原件不能通过；哈希53一致不等于审批证据可复核",
           "evidence": [
             "specs/ui-server-parity/FROZEN.md:10",
             "scripts/ui-server-parity/check_frozen.py:84",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-113.md:7"
           ],
-          "nextAction": "入库最小定标/两家审阅材料与SHA，保留原件；新checkout验证；不把允许访问主仓_tmp当可携带修复",
+          "nextAction": "保留已交付证据；父单余项继续按依赖推进，不重复派发本项。",
           "review": {
-            "status": "pending-second-family",
+            "status": "independent-fix-confirmation-only",
             "gptCandidate": "P1",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/issue113-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/issue113-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
+            "glm": {
+              "severity": null,
+              "primaryKind": null,
+              "confirmation": null,
+              "source": "_tmp/20261016-debt-cleanup/reviews/approval-provenance-final-glm.md",
+              "sourceLine": 7,
+              "sourceType": "specific-fix-confirmation",
+              "kindRaw": null,
+              "severityRaw": null,
+              "scopeNote": "Specific-fix confirmation only; no initial taxonomy grade invented. Original filtered generic scope not retried; DS initialP1 and root actual closure evidence separate.",
+              "note": "只确认具体修复；原文无初始分级，不填造历史级别或分类。"
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "全新checkout无_tmp原件不能通过；哈希53一致不等于审批证据可复核",
+          "snapshotNextAction": "入库最小定标/两家审阅材料与SHA，保留原件；新checkout验证；不把允许访问主仓_tmp当可携带修复",
+          "currentStateNote": "本子项已由PR140合入main核销；仅限该子项。",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
           "delivery": {
             "pr": "https://github.com/zhengdaqi/pilotdeck-rs/pull/140",
             "mergeCommit": "7781b18e195afbc90d696be575c7bc6ad6662e0b",
             "status": "MERGED"
-          }
+          },
+          "fixScope": "explicit-subitem-only",
+          "historicalConfirmationBasis": "deepseek",
+          "confirmationBasis": "merged-delivery-and-independent-closure",
+          "closureEvidence": [
+            "https://github.com/zhengdaqi/pilotdeck-rs/pull/140"
+          ]
         }
       ]
     },
@@ -1336,13 +1903,11 @@
           "title": "oldSideNondeterministic人工转绿途径缺失",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F3首次配对",
           "authorizationGate": false,
-          "currentRecord": "未完成；现在保持红，不是假PASS",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-115.md:9"
           ],
@@ -1351,26 +1916,37 @@
             "status": "pending-second-family",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "humanOrScopeActionPending": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "未完成；现在保持红，不是假PASS",
+          "snapshotNextAction": "定义证据/人确认载体和机器校验，真实人动作仍待做",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         },
         {
           "id": "115.2",
           "title": "短命esbuild/node env无证据",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F3",
           "authorizationGate": false,
-          "currentRecord": "未完成；声明审计范围内漏副作用则升级",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-115.md:10"
           ],
@@ -1379,26 +1955,36 @@
             "status": "pending-second-family",
             "gptCandidate": "P2-pending-probe",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "未完成；声明审计范围内漏副作用则升级",
+          "snapshotNextAction": "追spawn继承env/生命周期，或精确威胁模型边界经独立审阅",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         },
         {
           "id": "115.3",
           "title": "StaffDeck锁定源码/运行时/种子缺失",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F3",
           "authorizationGate": false,
-          "currentRecord": "2格4身份/7实例BLOCKED，不是修复",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-115.md:11"
           ],
@@ -1407,13 +1993,26 @@
             "status": "pending-second-family",
             "gptCandidate": "BLOCKED-NOT-DONE",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-frontend-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "humanOrScopeActionPending": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "2格4身份/7实例BLOCKED，不是修复",
+          "snapshotNextAction": "查可授权现有来源，先准备manifest/launcher契约；独立面继续",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1428,40 +2027,56 @@
           "title": "Linux errno映射未实测",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A8.6",
           "authorizationGate": false,
-          "currentRecord": "macOS65不能代Linux，当前无已证错误",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-117.md:7",
             "src/pilotdeck-gateway/src/node_io/generated.rs:4"
           ],
           "nextAction": "与#133共用Linux源构建runner，核实际Node/libuv集合/版本",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 20
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 20,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（平台）",
+              "severityRaw": "P2（无已证错误输出；Linux集合未实测，macOS65不能代）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "macOS65不能代Linux，当前无已证错误",
+          "snapshotNextAction": "与#133共用Linux源构建runner，核实际Node/libuv集合/版本",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
           "gradeDisagreement": {
             "deepseek": "P1",
             "glm": "P2",
             "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           },
+          "sharedExecutionGroup": "linux-acceptance",
+          "linkedRelation": "共享执行环境，不自动视为同一验收断言或整组核销。",
           "linkedEvidenceDebt": [
             "65.3",
             "133.1"
@@ -1480,68 +2095,96 @@
           "title": "Queued到dispatch前retire窗口缺确定性测试",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "C收尾53/53",
           "authorizationGate": false,
-          "currentRecord": "并行150次不等于确定性窗口覆盖，未完成",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-119.md:9"
           ],
           "nextAction": "barrier固定Queued/未派发，retire后核不发送及owner责任释放",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 18
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 18,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务(测试缺口)",
+              "severityRaw": "P2：Queued→派发前退役窗口无确定性测试；评审并行150次≠窗口覆盖",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "并行150次不等于确定性窗口覆盖，未完成",
+          "snapshotNextAction": "barrier固定Queued/未派发，retire后核不发送及owner责任释放",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         },
         {
           "id": "119.2",
           "title": "CI式并行负载验证",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "C收尾53/53",
           "authorizationGate": false,
-          "currentRecord": "单进程循环1000次已有，CI并发待验",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-119.md:10"
           ],
           "nextAction": "定向transport并行验证exact binary，不全量53场景",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-runtime-final-glm.md",
-              "sourceLine": 19
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-runtime-final-glm.md",
+              "sourceLine": 19,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务",
+              "severityRaw": "P2：单进程1000次已有，CI式并发负载未验",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "单进程循环1000次已有，CI并发待验",
+          "snapshotNextAction": "定向transport并行验证exact binary，不全量53场景",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1556,55 +2199,72 @@
           "title": "catalog errno白名单缺专用真实系统错误RPC原件",
           "primaryType": "验收债务",
           "severity": "N/A",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "fixed",
           "fixed": true,
           "prerequisite": "A4收尾",
           "authorizationGate": false,
-          "currentRecord": "已有catalog32/diagnostics2696的RPC原件（含missing/directory），不覆盖来自session-model IO原件的更广errno白名单；余证未完成",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-120.md:9",
             "src/pilotdeck-gateway/tests/record_config_catalog.mts:64",
             "src/pilotdeck-gateway/tests/record_config_catalog.mts:85",
             "src/pilotdeck-gateway/src/config/mod.rs:383"
           ],
-          "nextAction": "真实catalog公共RPC录errno正负控，核本地/转发与完整wire",
+          "nextAction": "保留已交付证据；父单余项继续按依赖推进，不重复派发本项。",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P1",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P1",
               "primaryKind": "验收债务",
               "confirmation": "confirmed",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 21
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 21,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（证据）",
+              "severityRaw": "P1（catalog已本地交付在main+到期A4收尾而method专用errno原件缺失；白名单误分类可致对拍假PASS/假FAIL，按P2-b升P1）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "已有catalog32/diagnostics2696的RPC原件（含missing/directory），不覆盖来自session-model IO原件的更广errno白名单；余证未完成",
+          "snapshotNextAction": "真实catalog公共RPC录errno正负控，核本地/转发与完整wire",
+          "currentStateNote": "本子项已由PR137合入main核销；仅限该子项。",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
           "delivery": {
             "pr": "https://github.com/zhengdaqi/pilotdeck-rs/pull/137",
             "mergeCommit": "f171bcb3ac74f9e5b2b99ac30e6b97fd27bf9bfb",
             "status": "MERGED"
-          }
+          },
+          "fixScope": "explicit-subitem-only",
+          "historicalConfirmationBasis": "two-family-inputs",
+          "confirmationBasis": "merged-delivery-and-independent-closure",
+          "closureEvidence": [
+            "https://github.com/zhengdaqi/pilotdeck-rs/pull/137"
+          ]
         },
         {
           "id": "120.2",
           "title": "list_projects吞所有错误",
           "primaryType": "验收债务",
           "severity": "N/A",
-          "severityAtSnapshot": "P2",
           "confirmation": "confirmed",
           "state": "fixed",
           "fixed": true,
           "prerequisite": "A4收尾",
           "authorizationGate": false,
-          "currentRecord": "固定Node22公开WS入口4样本ENOENT/ENOTDIR/EACCES/empty实际均ok:true projects:[]；源码与Rust吞错方向一致；新证据已补，独立终审待过",
           "evidence": [
             "src/pilotdeck-gateway/src/metadata.rs:333",
             "resources/PilotDeck/src/cli/GatewayDialogBundle.ts:49",
@@ -1612,64 +2272,100 @@
             "resources/PilotDeck/src/web/server/listProjects.ts:30",
             "_tmp/20261016-debt-cleanup/gateway-audit/list-project-errors.json:1"
           ],
-          "nextAction": "独立审阅原始fs错误/权限finally恢复/完整wire，并与Rust同入口确认后按子项核销；不改变吞错行为",
+          "nextAction": "保留已交付证据；父单余项继续按依赖推进，不重复派发本项。",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2-evidence-CANDIDATE-RESOLVED",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "candidate",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "supplement": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-supplement-deepseek.md"
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 22
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 22,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务",
+              "severityRaw": "P2（候选标签不合规，归一为P2；TS侧证实、Rust侧未测，无矛盾证据）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "固定Node22公开WS入口4样本ENOENT/ENOTDIR/EACCES/empty实际均ok:true projects:[]；源码与Rust吞错方向一致；新证据已补，独立终审待过",
+          "snapshotNextAction": "独立审阅原始fs错误/权限finally恢复/完整wire，并与Rust同入口确认后按子项核销；不改变吞错行为",
+          "currentStateNote": "本子项已由PR137合入main核销；仅限该子项。",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
           "delivery": {
             "pr": "https://github.com/zhengdaqi/pilotdeck-rs/pull/137",
             "mergeCommit": "f171bcb3ac74f9e5b2b99ac30e6b97fd27bf9bfb",
             "status": "MERGED"
-          }
+          },
+          "fixScope": "explicit-subitem-only",
+          "historicalConfirmationBasis": "deepseek",
+          "confirmationBasis": "merged-delivery-and-independent-closure",
+          "closureEvidence": [
+            "https://github.com/zhengdaqi/pilotdeck-rs/pull/137"
+          ]
         },
         {
           "id": "120.3",
           "title": "账本1.5MB上限导致引用/链压缩",
           "primaryType": "验收债务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A6首次账本回写",
           "authorizationGate": false,
-          "currentRecord": "结构仍阻47项回填，未修；R6不进评分",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-120.md:11",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-91.md:26"
           ],
           "nextAction": "唯一数据源分片/索引，校验完整集合引用；严禁删事实凑上限",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P2",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": "confirmed",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 23
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 23,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（结构）",
+              "severityRaw": "P2（不进计分但阻47项回填与后续回写）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "结构仍阻47项回填，未修；R6不进评分",
+          "snapshotNextAction": "唯一数据源分片/索引，校验完整集合引用；严禁删事实凑上限",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1684,13 +2380,11 @@
           "title": "CLI D0装置与TS定标",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "可先行",
           "authorizationGate": false,
-          "currentRecord": "未实现；范围已定义",
           "evidence": [
             "docs/plan/006_phase-d-cli.md:15",
             "docs/plan/006_phase-d-cli.md:23"
@@ -1700,13 +2394,25 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "未实现；范围已定义",
+          "snapshotNextAction": "隔离四面比较/TS自比/负控，不用候选parser当标准",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1721,13 +2427,11 @@
           "title": "CLI D1命令与真实验收",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "D0后，真实gateway联调A8后",
           "authorizationGate": false,
-          "currentRecord": "版本骨架不等于CLI完成，候选不符原分流",
           "evidence": [
             "docs/plan/006_phase-d-cli.md:9",
             "docs/plan/006_phase-d-cli.md:16"
@@ -1737,13 +2441,26 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stage-contract-cwd-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stage-contract-cwd-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "independentCorrection": "DS withdrew initial P1 after current contract source: planned unsupported capability and unmerged candidate do not imply delivered-contract violation. All nine stage items still unfinished; GLM actual-contract batch pending."
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "版本骨架不等于CLI完成，候选不符原分流",
+          "snapshotNextAction": "按原argv/help/default逐叶实现，mock可先行，真人CLI待验",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1758,13 +2475,11 @@
           "title": "CLI D2默认/未知argv/chat/cron/skills/gateway",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "D0/D1后；A8真实联调，server UI还需B6",
           "authorizationGate": false,
-          "currentRecord": "未实现",
           "evidence": [
             "docs/plan/006_phase-d-cli.md:17"
           ],
@@ -1773,13 +2488,25 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "未实现",
+          "snapshotNextAction": "mock/local子面先行，完整输出/退出/落盘对照",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1794,13 +2521,11 @@
           "title": "CLI D3 setup/update",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "D0且SDK/本地命令之后",
           "authorizationGate": false,
-          "currentRecord": "未实现，禁止真实更新用户安装",
           "evidence": [
             "docs/plan/006_phase-d-cli.md:18",
             "docs/plan/006_phase-d-cli.md:29"
@@ -1810,13 +2535,25 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "未实现，禁止真实更新用户安装",
+          "snapshotNextAction": "仅mock验证取消/失败/凭据/切换恢复，不下载预编译二进制",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1831,13 +2568,11 @@
           "title": "TUI D4 PTY/中文/信号/终端恢复",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "PTY装置可先行，真实gateway联调A8后",
           "authorizationGate": false,
-          "currentRecord": "未实现/待真人；pipe不能代PTY",
           "evidence": [
             "docs/plan/006_phase-d-cli.md:19",
             "docs/plan/006_phase-d-cli.md:35"
@@ -1847,13 +2582,26 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "humanOrScopeActionPending": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "未实现/待真人；pipe不能代PTY",
+          "snapshotNextAction": "PTY驱动先行，真人CLI实际任务单列",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1868,13 +2616,11 @@
           "title": "A6到A8全入口/宿主/TS退役",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "A4完整+A5判据后",
           "authorizationGate": false,
-          "currentRecord": "未完成；#132/#133/#117等A8必还",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-127.md:7",
             "docs/plan/005_phase-a-session-domain.md:154"
@@ -1884,13 +2630,25 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "未完成；#132/#133/#117等A8必还",
+          "snapshotNextAction": "先清A4/A5门；provider可按R6准备，禁止提前声称gateway/helper退役",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1905,13 +2663,11 @@
           "title": "B3到B6路由/UI恢复/桌面编排",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A8+B1/B2+#113/#94",
           "authorizationGate": false,
-          "currentRecord": "未完成，当前不放行B3产品实施",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-128.md:7",
             "docs/plan/003_phase-b-ui-server.md:13"
@@ -1921,13 +2677,26 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "humanOrScopeActionPending": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "未完成，当前不放行B3产品实施",
+          "snapshotNextAction": "先清B2可复现机器债，按共享资源准备路由，完整真人恢复后闭合",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1942,13 +2711,11 @@
           "title": "F3到F6页面/旧前端及双壳退役",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "F2/#61/#98/#115及计划B依赖",
           "authorizationGate": false,
-          "currentRecord": "未完成；旧侧局部绿不代新侧",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-129.md:7",
             "docs/plan/004_frontend.md:82"
@@ -1958,13 +2725,26 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stages-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "humanOrScopeActionPending": true
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "未完成；旧侧局部绿不代新侧",
+          "snapshotNextAction": "先清F2机器/输入债，独立准备可做，不用scope CLOSED核销",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -1979,13 +2759,11 @@
           "title": "Sidecar TCP/custom factory不支持",
           "primaryType": "阶段任务",
           "severity": "N/A",
-          "severityAtSnapshot": "N/A",
           "confirmation": "candidate",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "整体退役之前必须完成审计/实现或批准差异",
           "authorizationGate": false,
-          "currentRecord": "Rust明确不支持，stdio51/53不覆盖这些profile",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-130.md:7",
             "docs/plan/006_phase-d-cli.md:9"
@@ -1995,13 +2773,26 @@
             "status": "pending-second-family",
             "gptCandidate": "N/A-known-profile-gap",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "N/A",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stage-contract-cwd-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-stage-contract-cwd-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "independentCorrection": "DS withdrew initial P1 after current contract source: planned unsupported capability and unmerged candidate do not imply delivered-contract violation. All nine stage items still unfinished; GLM actual-contract batch pending."
             },
-            "glm": null
-          }
+            "glm": null,
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "N/A",
+          "snapshotRecord": "Rust明确不支持，stdio51/53不覆盖这些profile",
+          "snapshotNextAction": "审计真实入口contract/profile，准备独立验收；不擅改冻结stdio拓扑。“前置整体退役完成”非等整体完成才补",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": true,
+          "recordRole": "item",
+          "countAsIndependentDefect": false
         }
       ]
     },
@@ -2016,35 +2807,49 @@
           "title": "孤立UTF16需精确TS宿主排序",
           "primaryType": "阶段任务",
           "severity": "P2",
-          "severityAtSnapshot": "P2",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A8完全退役TS gateway/#127",
           "authorizationGate": false,
-          "currentRecord": "延期未完成；host边界保真，不是外部结果已错，也非原生已完成",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-132.md:7",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-132.md:11"
           ],
           "nextAction": "选保留illformed UTF16原生排序，真实RPC多locale及上游零请求；禁猜PUA映射",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "阶段任务",
               "severity": "P2",
-              "primaryType": "阶段任务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
-              "confirmation": null,
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 24
-            }
+              "confirmation": "confirmed",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 24,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（原生化/退役）",
+              "severityRaw": "P2（host边界保真、外部结果无错；阻A8零TS目标，非当前对拍错）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P2",
+          "snapshotRecord": "延期未完成；host边界保真，不是外部结果已错，也非原生已完成",
+          "snapshotNextAction": "选保留illformed UTF16原生排序，真实RPC多locale及上游零请求；禁猜PUA映射",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
           "typeDisagreement": {
             "deepseek": "阶段任务",
             "glm": "验收债务",
@@ -2064,40 +2869,56 @@
           "title": "Linux真实非法UTF8 dirent无端到端证据",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "deferred",
           "fixed": false,
           "prerequisite": "A8/#127",
           "authorizationGate": false,
-          "currentRecord": "延期未完成；22组函数一致，macOS EILSEQ无真实文件",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-133.md:7",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-133.md:11"
           ],
           "nextAction": "与#117合批Linux真实FS/源构建，保留原bytes/UTF16排序/type/wire",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P2",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "P1",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "deferred",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P2",
               "primaryKind": "验收债务",
               "confirmation": null,
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 25
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 25,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务（平台）",
+              "severityRaw": "P2（22组函数级一致但无Linux端到端；无已证错误）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "延期未完成；22组函数一致，macOS EILSEQ无真实文件",
+          "snapshotNextAction": "与#117合批Linux真实FS/源构建，保留原bytes/UTF16排序/type/wire",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": false,
           "gradeDisagreement": {
             "deepseek": "P1",
             "glm": "P2",
             "resolution": "按现行规则取高，独立仲裁前不降档；聚合/授权门不另算独立行为缺陷"
           },
+          "sharedExecutionGroup": "linux-acceptance",
+          "linkedRelation": "共享执行环境，不自动视为同一验收断言或整组核销。",
           "linkedEvidenceDebt": [
             "65.3",
             "117.1"
@@ -2116,70 +2937,100 @@
           "title": "archive静态外链/TOCTOU根外读取",
           "primaryType": "真实缺陷",
           "severity": "P0",
-          "severityAtSnapshot": "P0",
-          "confirmation": "candidate",
+          "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "archive合并/A4收尾",
           "authorizationGate": false,
-          "currentRecord": "main尚转发TS；9条TS公开入口探针已补，当前Rust/ancestor-root欠证",
           "evidence": [
             "_tmp/20261016-debt-cleanup/taxonomy/issue-134.md:19",
             "_tmp/20261016-archive-resume/security-probes/report.md:1"
           ],
           "nextAction": "接回D6安全候选，真实Rust安全拒绝/上游零请求，补root/ancestor和内链正控；禁恢复不安全读以求绿",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "P0-baseline-confirmed",
             "deepseek": {
+              "primaryKind": "真实缺陷",
               "severity": "P0",
-              "primaryType": "真实缺陷",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true
             },
             "glm": {
               "severity": "P0",
               "primaryKind": "真实缺陷",
               "confirmation": null,
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 26
-            }
-          }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 26,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "真实缺陷（基线安全）+验收债务",
+              "severityRaw": "P0（安全：9条真实探针证实TS三method静态外链/TOCTOU读根外并返回内容；main现转发=暴露在交付路径；若无登记合并还会令尺子假通过）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
+          },
+          "historicalJudgmentSeverity": "P0",
+          "snapshotRecord": "main尚转发TS；9条TS公开入口探针已补，当前Rust/ancestor-root欠证",
+          "snapshotNextAction": "接回D6安全候选，真实Rust安全拒绝/上游零请求，补root/ancestor和内链正控；禁恢复不安全读以求绿",
+          "currentStateNote": "PR142安全候选与真实探针已准备，当前main风险未核销；精确授权/独立闸门/A2仍待。",
+          "confirmationBasis": "deepseek",
+          "classificationPending": false,
+          "recordRole": "item",
+          "countAsIndependentDefect": true,
+          "candidatePR": 142
         },
         {
           "id": "134.2",
           "title": "新安全差异授权与冻结登记",
           "primaryType": "验收债务",
           "severity": "P1",
-          "severityAtSnapshot": "P1",
           "confirmation": "confirmed",
           "state": "pending",
           "fixed": false,
           "prerequisite": "archive相应合并前",
           "authorizationGate": true,
-          "currentRecord": "#68只覆盖project_file_read，不足3archive；未登记重冻结",
           "evidence": [
             "specs/gateway-parity/accepted-diffs.md:16",
             "_tmp/20261016-debt-cleanup/taxonomy/issue-134.md:25"
           ],
           "nextAction": "先完整可评审候选/探针/两家评审，再集中给精确最终授权；持续开发不推导新评分语义批准",
           "review": {
-            "status": "two-families",
+            "status": "two-family-inputs",
             "gptCandidate": "AUTH-GATE-NOT-DONE",
             "deepseek": {
+              "primaryKind": "验收债务",
               "severity": "N/A",
-              "primaryType": "验收债务",
               "confirmation": "confirmed",
-              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md"
+              "state": "pending",
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-deepseek.md",
+              "sourceType": "single-family-output-extraction",
+              "needsSecondFamily": true,
+              "authorization": true
             },
             "glm": {
               "severity": "P1",
               "primaryKind": "验收债务",
               "confirmation": "confirmed",
-              "source": "taxonomy-gateway-final-glm.md",
-              "sourceLine": 27
-            }
+              "source": "_tmp/20261016-debt-cleanup/reviews/taxonomy-gateway-final-glm.md",
+              "sourceLine": 27,
+              "sourceType": "single-family-output-extraction",
+              "kindRaw": "验收债务+决策门（authorization）",
+              "severityRaw": "P1（accepted-diffs.md:16明示后续method须另登记，#68范围不足；未授权登记属冻结语义变更红线且直接改判分口径。候选标签不属合规等级，归一P1）",
+              "scopeNote": null
+            },
+            "adjudicationStatus": "pending"
           },
+          "historicalJudgmentSeverity": "P1",
+          "snapshotRecord": "#68只覆盖project_file_read，不足3archive；未登记重冻结",
+          "snapshotNextAction": "先完整可评审候选/探针/两家评审，再集中给精确最终授权；持续开发不推导新评分语义批准",
+          "currentStateNote": "未完成；延期、候选与待验均不表示修复。",
+          "confirmationBasis": "two-family-inputs",
+          "classificationPending": false,
+          "recordRole": "authorization-gate",
+          "countAsIndependentDefect": false,
           "gradeDisagreement": {
             "deepseek": "N/A",
             "glm": "P1",
@@ -2188,5 +3039,22 @@
         }
       ]
     }
-  ]
+  ],
+  "inputBindings": {
+    "_tmp/20261016-debt-cleanup/taxonomy/classification.json": {
+      "sha256": "a346569b8754dd81fd9c41b46433330ace6a527dae976bd8aa3834f525f9fb1f"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/deepseek-judgments.json": {
+      "sha256": "48874279c4411e7fd82941eef6b67497dc000ed0093ca03c018edb7bd25fc92b"
+    },
+    "_tmp/20261016-debt-cleanup/reviews/glm-judgments.json": {
+      "sha256": "fdec676701af446b25161da0dd5098afd4aadd682ef94963b8c70ab8c5f9b520"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/delivery-status.json": {
+      "sha256": "eeb88daae9a439656f0da95569c2828578e5ce48aaa7bb4103c75b68945159bf"
+    },
+    "_tmp/20261016-debt-cleanup/taxonomy/open-issues-20261016T002453Z.json": {
+      "sha256": "bd98c27920b36bea4ccbfefe2b3e655ab4d24a69f08a893fa50658f36ec36acf"
+    }
+  }
 }

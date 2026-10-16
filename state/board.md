@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-16 · 账本保真纠偏与三条候选现状
+> 唯一总账`state/issue-ledger.json`按原31单55子项维护，新139两项另列；113/120前两项只按已合并PR140/137核销，当前仍31open。分类输入DS55、GLM37份，其中等级36/类型33/仅修复确认1；不是37项完整分类，更不是全仓归零。DS55.2/56.2真实原文为未定待实测，保留null/raw与候选；65.4为范围门N/A。snapshot与当前行动分列，98.3仅旧源码护栏已修，聚合不重复计故障，共享Linux环境不合并不同断言。五输入SHA/写前一致性与原子写入、独立纯JSON27项核查通过；后续两家分类及分歧仍未齐。
+> PR141实现者独占CLI树：ebf9653新source guard逐一核cc7的1000个src Git blob并拒shadow；7个Node/15个Python控制，新target100602完整10RUN/3replay/10Native+10pair/实际三权限恢复/postflight通过。六原工具SHA、四wrapper空串、Cargo/Node白名单与源码/tool/rustup元数据前后绑定；P0事故与失败463MiB现场保留。作者正补finally失败mock尾差，原实现不变；两家增量/实际boundary与新CI未闭合，不核销139。
+> PR138现988807d已推、两项CI绿；真实18样本和C1/F1原件有效，actual boundary仍欠。旧大包三次空final挂起，新fresh小包只准备/校验、未调用；不合并/不关闭56.2/65。PR142现d148860同步main，27候选与10main文件逐字节核对、冻结候选差异空；安全探针完成但精确授权/独立闸门/A2仍待，保持draft。
+> root持有wt-d6/wt-a4m3/wt-p2c与主树；CLI仍仅作者写。五树与全部原件保留，无新增树；#52+#85A组合登记卡已备，#65默认生产顺序证据仍欠。08:24片10:24前交接后续调度，既有pdrs已查存在，首次执行尚未证实。
+
 > ## 2026-10-16 09:42 · #113已核销，ledger归一及剩余P0/P1继续
 > PR140于09:38 rebase合入main7781b18，#113已CLOSED；合并后邮箱检查仍为服务端committer主邮箱。PR137/#120前两项此前已核销，#120整单仍OPEN；原31单减113加新139，目前仍31 open，不能解释为31缺陷或清零。
 > root复用wt-d6为codex/debt-ledger@7781b18，准备唯一分类总账；GLM runtime13子项已审，剩四批/85仍待，未输出最终分类总数。#65顺序保留高档P1，golden/最小装配不冒充真实默认装配确定性确认，完整生产顺序证据仍欠。
