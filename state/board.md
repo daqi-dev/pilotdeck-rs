@@ -26,6 +26,8 @@
 > **隔离**：root复用wt-d6新分支codex/debt-cleanup；旧codex/d6-resume@a3a39b2保留，主树研究及状态未提交改动原样保留。五树/build7.6G+tmp22G，未增worktree。taxonomy、gateway audit、GLM/DeepSeek准备三路只读，证据主仓`_tmp/20261016-debt-cleanup/`。
 > **先处理的候选**：#85/#52装置漏登记可能假PASS，先有界实测；#113新checkout批准证据不可复现；#65应答顺序/#56 pre101按P1复核；#134真实越界读取和精确差异门分别计账，不凭旧标签降级。分类仍审中，不报全局P0/P1/P2=0，不擅改冻结语义；受阻项只停相关动作。当前片10:24前写交接并接续。
 
+> **08:50进展**：31单拆55子项，DeepSeek首轮全覆盖、GLM分类仍待，未称最终重分级。#120前两项PR137（wt-p2c/f8c32ea）独立三角色/四视角发现继承env少跑、child零匹配、无界/权限前提、负控缺口，现作者同树修复；未过闸门不算还债。#56候选PR138（wt-a4m3/b38ea44）exact Cargo A2八场景十readonly七local PASS，前后binary及装置hash相同、direct/proxy自有进程全停、绑定link已撤；特定pre101 TS边界证据与双外审仍核中。#65按R25保留P1，不走违反G7的整批host捷径；#134根外读取已实测按P0保留，精确安全差异授权仍单列。#113仅在_tmp准备三原文可移植候选，53注册/capture不动、原10pairs/26clocks复核及隔离检出PASS；真实冻结未改，等两家对具体diff闭合。
+
 > ## 2026-10-16 · 本轮交付与两小时接续点（随PR135）
 > **已合入main**：#131入口总账/阶段D计划（678条、263 HTTP独立对账）；#118四组P2清账（main a13a930，#101/#95/#76/#105已关闭）；D6 #136于02:55以rebase合入 `eb76e4a`，候选a3a39b2的check与gateway-schema-baseline均绿、GLM/DeepSeek最终P0/P1/P2为0。合并后核邮箱，服务端committer隐私缺口仍在，未改main历史。
 > **#112随PR135交付**：20次真实stdio四格均unknown/DEADLINE_EXCEEDED（model2/tool8）、append72组360条完整字段等价、历史WS15×5稳定且与main对应；来源/空集/差异/不稳定失败闸门、观察错误与cleanup控制均完成。两家实际simplify/三角色后终审零问题；原始证据`_tmp/20261016-a5-112/`及exp014/015。原ecf6fa5已本地/远端保留，四提交rebase新main仅冲突合并board/决策；脚本/报告/记忆14文件与原tip逐字节相同、D6产品与新main相同。新HEAD续审及两项CI以PR135实时记录为准，本段不替代合并闸门。
