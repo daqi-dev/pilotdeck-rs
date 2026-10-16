@@ -152,3 +152,5 @@ CLI旧26与8d CI5保历史；DS实际Git隐藏flag使clean:true+candidateHead的
 ## R74 未知能否完成的profile0 build-only诊断（自决·待复核）
 
 PR138 current2f欠本地产物+18；默认完整build无窗，directrustc无完整原argv不可准入。仅准备原cargo bin-only合同加CARGO_PROFILE_DEV_DEBUG=0的新独立target一次诊断，不动opt/assert/overflow/panic/features/冻结/原工具，不下载。任务`_tmp/20261016-debt-cleanup/profile0-build-r74-z9frs937/task.md`。新112MiB总cap/96提前/4proof/外留214748365B/fresh门332188877B是更早停止的未知成本诊断，不重写旧128门、原.65测试授权或46数值；不宣称可完成。先只有controller准备，无authority不运行。R73真实清后freshdu足门、owner/参数/监督独立必要核完root另发一次；任何失败留partial且不自动strip/重试。成功才另卡运行18，失败只停此路径继续独立依赖。原则：未知成本可在完整合同下做有界诊断，但不能把小预算包装成已有峰值证明或新验收通过。
+
+R74执行合同消歧：原CARGO_HOME不等于只读cache，Cargo正常usage bookkeeping/锁允许且元数据前后记录，不许手动或自动清源cache；原offline保持（官方Cargo Book说明offline禁自动cache删除）。新增owned TMPDIR=proof/tmp并计总cap，与DEV_DEBUG唯一profile差异分列；不换原HOME/四wrapper，不宣称OS强制两目录写隔离。精确允许集合与来源链接见同任务temporary-path-supplement.md。新authority仍未给。
