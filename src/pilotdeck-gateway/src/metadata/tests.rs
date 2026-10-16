@@ -67,9 +67,10 @@ fn complete(fixture: &Value) -> bool {
         let Some(observations) = row["observations"].as_array() else {
             return false;
         };
-        if observations.iter().any(|o| {
-            (o["ok"] == false && o["api"].as_str().and_then(observation_method).is_none())
-                || (o["ok"] == true && !o["api"].as_str().is_some_and(success_observation_api))
+        if observations.iter().any(|o| match o["ok"].as_bool() {
+            Some(false) => o["api"].as_str().and_then(observation_method).is_none(),
+            Some(true) => !o["api"].as_str().is_some_and(success_observation_api),
+            None => true,
         }) {
             return false;
         }
@@ -268,20 +269,20 @@ impl Requests {
             .unwrap()
             .iter()
             .filter_map(|o| {
+                let ok = o["ok"].as_bool().expect("observation ok must be boolean");
                 let api = o["api"].as_str().unwrap();
-                if o["ok"] == true {
+                if ok {
                     assert!(
                         success_observation_api(api),
                         "unsupported success observation API {api}"
                     );
                 }
-                let method = observation_method(api).or_else(|| {
-                    (api == "fsp.open" && o["ok"] == true).then_some("session_summary")
-                })?;
+                let method = observation_method(api)
+                    .or_else(|| (api == "fsp.open" && ok).then_some("session_summary"))?;
                 Some(EntryRequest {
                     method,
                     path: o["path"].as_str().unwrap().into(),
-                    result: if o["ok"] == true {
+                    result: if ok {
                         Ok(())
                     } else {
                         Err(errno(o["code"].as_str().unwrap()).raw_os_error())
@@ -468,6 +469,133 @@ fn metadata_io_full_rpc_and_time_fields_match_real_default_node_chain() {
     let fixture = fixture();
     for row in fixture["cases"].as_array().unwrap() {
         compare(row, &snapshot(row));
+    }
+}
+#[test]
+fn metadata_numeric_recorded_decimal_matches_node_bits() {
+    let raw = "1792123157858.0955";
+    let standard: f64 = raw.parse().unwrap();
+    assert_eq!(standard.to_bits(), 0x427a142dd3d62187);
+    let parsed: Value = serde_json::from_str(raw).unwrap();
+    assert_eq!(
+        parsed.as_f64().unwrap().to_bits(),
+        standard.to_bits(),
+        "recorded Node decimal must retain its double bits"
+    );
+}
+fn assert_json_number_bits(source: &str) -> usize {
+    use serde_json::value::RawValue;
+    fn walk(raw: &RawValue) -> usize {
+        let text = raw.get();
+        match text.as_bytes()[0] {
+            b'{' => serde_json::from_str::<HashMap<String, Box<RawValue>>>(text)
+                .unwrap()
+                .into_iter()
+                .map(|(key, value)| {
+                    if matches!(key.as_str(), "request" | "response") {
+                        let wire: String = serde_json::from_str(value.get()).unwrap();
+                        assert_json_number_bits(&wire)
+                    } else {
+                        walk(&value)
+                    }
+                })
+                .sum(),
+            b'[' => serde_json::from_str::<Vec<Box<RawValue>>>(text)
+                .unwrap()
+                .iter()
+                .map(|value| walk(value))
+                .sum(),
+            b'-' | b'0'..=b'9' => {
+                let standard: f64 = text.parse().unwrap();
+                let parsed: Value = serde_json::from_str(text).unwrap();
+                assert_eq!(
+                    parsed.as_f64().unwrap().to_bits(),
+                    standard.to_bits(),
+                    "JSON number {text}"
+                );
+                1
+            }
+            _ => 0,
+        }
+    }
+    let raw: Box<RawValue> = serde_json::from_str(source).unwrap();
+    walk(&raw)
+}
+#[test]
+fn metadata_numeric_static_tokens_preserve_standard_double_bits() {
+    let count = assert_json_number_bits(SOURCE);
+    assert!(count > 0);
+    println!("PDRS_NUMERIC_STATIC_TOKENS {count}");
+}
+#[test]
+#[ignore = "requires explicit recorded Node oracle; full Snapshot RPC replay"]
+fn metadata_numeric_dynamic_snapshot_full_rpc_matches_node() {
+    let path =
+        std::env::var("PDRS_METADATA_IO_LIVE").expect("explicit recorded Node oracle required");
+    let source = std::fs::read_to_string(path).unwrap();
+    let count = assert_json_number_bits(&source);
+    assert!(count > 0);
+    println!("PDRS_NUMERIC_DYNAMIC_TOKENS {count}");
+    let fixture: Value = serde_json::from_str(&source).unwrap();
+    assert!(complete(&fixture));
+    let rows = fixture["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 10);
+    for row in rows {
+        compare(row, &snapshot(row));
+        println!("PDRS_NUMERIC_SNAPSHOT_OK {}", row["id"].as_str().unwrap());
+    }
+}
+fn malformed_observation_ok_cases() -> Vec<Option<Value>> {
+    vec![
+        None,
+        Some(Value::Null),
+        Some("true".into()),
+        Some(0.into()),
+        Some(Value::Array(vec![])),
+        Some(serde_json::json!({})),
+    ]
+}
+fn fixture_with_observation_ok(ok: Option<Value>) -> Value {
+    let mut fixture = fixture();
+    let row = &mut fixture["cases"][0];
+    let mut observation =
+        serde_json::json!({"api":"fs.existsSync","path":row["chats"],"ok":true,"result":true});
+    match ok {
+        Some(value) => observation["ok"] = value,
+        None => {
+            observation.as_object_mut().unwrap().remove("ok");
+        }
+    }
+    row["observations"]
+        .as_array_mut()
+        .unwrap()
+        .push(observation);
+    fixture
+}
+#[test]
+fn metadata_observation_ok_complete_requires_boolean() {
+    for ok in malformed_observation_ok_cases() {
+        assert!(
+            !complete(&fixture_with_observation_ok(ok)),
+            "observation ok must be boolean"
+        );
+    }
+}
+#[test]
+fn metadata_observation_ok_consumer_requires_boolean() {
+    for ok in malformed_observation_ok_cases() {
+        let fixture = fixture_with_observation_ok(ok);
+        let row = &fixture["cases"][0];
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compare(row, &snapshot(row))
+        }))
+        .unwrap_err();
+        assert!(
+            panic
+                .downcast_ref::<String>()
+                .unwrap()
+                .contains("observation ok must be boolean")
+        );
     }
 }
 #[test]

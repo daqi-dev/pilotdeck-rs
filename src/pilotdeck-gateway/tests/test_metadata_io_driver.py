@@ -122,7 +122,7 @@ class EnvironmentControls(unittest.TestCase):
         self.assertNotIn('CARGO_HOME', node)
         self.assertNotIn('RUSTUP_HOME', node)
 
-    def test_source_inventory_is_exactly_the_thirteen_required_files(self):
+    def test_source_inventory_is_exactly_the_fourteen_required_files(self):
         expected = {
             'src/pilotdeck-gateway/src/metadata.rs', 'src/pilotdeck-gateway/src/metadata/tests.rs',
             'src/pilotdeck-gateway/src/pairing/tests.rs', 'src/pilotdeck-gateway/tests/record_metadata_io.mts',
@@ -130,8 +130,9 @@ class EnvironmentControls(unittest.TestCase):
             'src/pilotdeck-gateway/tests/baseline_source_guard.mjs', 'src/pilotdeck-gateway/tests/test_baseline_source_guard.mjs',
             'src/pilotdeck-gateway/tests/fixtures/metadata/describe-io-errors.json',
             '.github/workflows/ci.yml', 'rust-toolchain.toml', 'src/Cargo.toml', 'src/Cargo.lock',
+            'src/pilotdeck-gateway/Cargo.toml',
         }
-        self.assertEqual(len(driver.SOURCE_FILES), 13)
+        self.assertEqual(len(driver.SOURCE_FILES), 14)
         self.assertEqual(set(driver.SOURCE_FILES), expected)
 
     def test_target_output_overlap_file_and_nonempty_target_are_rejected_without_writes(self):
@@ -247,7 +248,7 @@ class FailureRestoreControls(unittest.TestCase):
         import contextlib
         import io
         import json
-        for scenario in ('replay-failure', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'source-head-polluted', 'source-head-short', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'record-output-limit', 'success'):
+        for scenario in ('replay-failure', 'dynamic-snapshot-failure', 'dynamic-zero-tests', 'dynamic-missing-receipt', 'dynamic-oracle-drift', 'noop-restore', 'source-head-failure', 'source-head-timeout', 'source-head-spawn-error', 'source-head-empty', 'source-head-polluted', 'source-head-short', 'permission-target-replaced', 'permission-mode-replaced', 'fixture-deleted', 'record-failure', 'record-timeout', 'record-output-limit', 'success'):
             with self.subTest(scenario=scenario):
                 output = self.root / scenario
                 pf = driver.toolchain_preflight(self.toolchain, self.original, self.root)
@@ -283,6 +284,13 @@ class FailureRestoreControls(unittest.TestCase):
                     if name == 'replay':
                         if scenario == 'replay-failure': code = 9
                         text = 'test result: ok. 3 passed; 0 failed; 2 ignored;\n'
+                    if name == 'dynamic-snapshot':
+                        if scenario == 'dynamic-snapshot-failure': code = 9
+                        text = 'test result: ok. 1 passed; 0 failed; 0 ignored;\n'
+                        text += ''.join('PDRS_NUMERIC_SNAPSHOT_OK '+str(n)+'\n' for n in range(10))
+                        if scenario == 'dynamic-zero-tests': text = text.replace('1 passed', '0 passed')
+                        if scenario == 'dynamic-missing-receipt': text = text.replace('PDRS_NUMERIC_SNAPSHOT_OK 9\n','')
+                        if scenario == 'dynamic-oracle-drift': fixture.write_text('changed oracle')
                     if name == 'native-retained':
                         text = 'test result: ok. 2 passed; 0 failed; 0 ignored;\n'
                         text += ''.join('PDRS_NATIVE_METADATA_OK '+str(n)+'\n' for n in range(10))
@@ -340,8 +348,10 @@ class FailureRestoreControls(unittest.TestCase):
                                 'record-output-limit':'reason=output limit'}[scenario]
                     self.assertIn(expected, result['error'])
                     self.assertTrue(result['oracleGuard']['restored'])
-                if scenario == 'replay-failure':
-                    self.assertEqual(names, ['record', 'replay', 'restore', 'source-head'])
+                if scenario == 'replay-failure' or scenario.startswith('dynamic-'):
+                    expected = ['record', 'replay']
+                    if scenario.startswith('dynamic-'): expected.append('dynamic-snapshot')
+                    self.assertEqual(names, expected+['restore', 'source-head'])
                     for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777, 0o755)
                 elif scenario == 'noop-restore':
                     self.assertIn('permission not restored', result['error'])
@@ -358,7 +368,7 @@ class FailureRestoreControls(unittest.TestCase):
                 if scenario != 'noop-restore':
                     for item in permissions:self.assertEqual(os.stat(item['path']).st_mode & 0o777,0o755)
                 for path in decoys:self.assertEqual(os.stat(path).st_mode & 0o777,0o700)
-                if scenario != 'replay-failure' and not scenario.startswith('record-'):
+                if scenario != 'replay-failure' and not scenario.startswith(('record-', 'dynamic-')):
                     native = next(r for r in result['runs'] if r['name']=='native-retained')
                     replay = next(r for r in result['runs'] if r['name']=='replay')
                     self.assertEqual(native['environment']['PDRS_METADATA_IO_LIVE'],str(output/'metadata-io.json'))
