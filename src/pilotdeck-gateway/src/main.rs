@@ -1,9 +1,5 @@
 //! A4 gateway: verified native metadata plus parsed, byte-preserving passthrough.
-use hyper::{server::conn::http1, service::service_fn};
-use hyper_util::{
-    client::legacy::Client,
-    rt::{TokioExecutor, TokioIo},
-};
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use pilotdeck_gateway::{ProxyError, http_proxy::Proxy};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
@@ -46,11 +42,7 @@ async fn main() -> Result<(), ProxyError> {
                 };
                 let proxy = proxy.clone();
                 tokio::spawn(async move {
-                    let service = service_fn(move |request| {
-                        let proxy = proxy.clone();
-                        async move { proxy.serve(request).await }
-                    });
-                    if let Err(error) = http1::Builder::new().serve_connection(TokioIo::new(socket), service).with_upgrades().await {
+                    if let Err(error) = proxy.serve_connection(socket).await {
                         eprintln!("downstream HTTP: {error}");
                     }
                 });
