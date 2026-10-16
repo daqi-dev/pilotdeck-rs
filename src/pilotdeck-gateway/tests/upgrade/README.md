@@ -19,6 +19,8 @@ node src/pilotdeck-gateway/tests/upgrade/record.mjs \
 - `routingResults` 2 条：两侧 GET `/ws` 带 Upgrade header、缺 Connection Upgrade token，记录完整普通 HTTP wire、状态、body、EOF，比较实际 HTTP 行为。
 - `suffixResults` 2 条：每侧新建独立 baseline 进程、HOME 和数据库；只随 HTTP headers 发送 ping 的前三字节，收到真实 101 后只发送剩余 suffix。保存实际 TS head/data、客户端原始 wire、frames、基线 uncaughtExceptionMonitor 观察及主动清理前 socket/进程状态。observer 只记录异常，不接管基线的异常策略；不能把主动清理后的 close 冒充远端 EOF。
 
+`check_suffix.mjs` 在录制器给出 PASS 前逐项比较清理前的 EOF/destroyed/closed、socket errors、基线 exitCode/signalCode；PID、堆栈不作相等条件。缺字段或单侧提前结束均 FAIL。`node --test src/pilotdeck-gateway/tests/upgrade/check_suffix.test.mjs` 有匹配正控与七个变异负控；checker 本身纳入运行前后输入 SHA。
+
 `inputs.json` 保存 Node 版本/可执行文件、录制器、观察器、watcher、关键 TS/Rust 源码及协议 payload 原件的 SHA/hex。`report.json` 同时绑定各隔离目录中实际生成配置的前后 SHA、二进制与基线的前后 SHA、输入索引/观察记录/每个 child log 的 SHA。配置留在对应 `runtime/**/home/pilotdeck.yaml`，不依赖另一轮 A2 的配置。
 
 **证据分工**：一次 TCP write 不等于一次 read。此 HTTP 入口实测不能独自证明 Rust 初始 read 所有权；后者由同 PR 的 `http_proxy_tests.rs` scripted AsyncRead、无读门阳性对照和生产 gate/pair helper 确定性测试证明。上游失败且初始 head 残留的两格也是候选自身生产路径断言：invalid WS bytes → HTTP 400 终止，完整普通 HTTP head → 既有 HTTP 处理；直连 TS 没有代理上游失败，不伪造 TS 故障对照。
