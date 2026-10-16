@@ -17,3 +17,5 @@ before/after重哈希；原rustup三子树只读type/size/mtime/link摘要用于
 不追认事故历史。restore要消费owner/count并stat实际权限，exit0或no-op不是恢复证明；
 超时/输出上限用自有Python子进程负控，不拿缺安装触发真实下载。旧P0仍由两家独立
 审阅收敛，失败原件和下载现场继续保留。
+
+BND2实际教训：可改fixture里的permissions不能同时充当恢复输入和验收期望；替换path/mode会让restore与checker共同认错对象。原计划须在chmod前通过可信子进程pipe同步提交，原oracle通过同一pipe冻结到驱动内存，跨阶段只比较工作副本，不重新选择期待。异常/timeout发生在最终oracle前时也按已提交计划恢复；kill后保留有界pipe余量。源SHA/receipt/hash本身不能弥补错误的信任起点，不能只让报告FAIL却把原受限目录留给下一轮。

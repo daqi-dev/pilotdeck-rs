@@ -9,7 +9,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {bindSourceTree} from './baseline_source_guard.mjs';
 const COMMIT='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 if(process.argv[2]==='--restore') {
- const file=resolve(process.argv[3]),fixture=JSON.parse(fs.readFileSync(file,'utf8'));
+ const file=resolve(process.argv[3]);
+ if(!process.argv[4])throw Error('driver memory restore snapshot required');
+ const fixture=JSON.parse(process.argv[4]);
  if(fixture.baselineCommit!==COMMIT||fs.readFileSync(join(fixture.scratch,'.metadata-oracle-owner'),'utf8')!==fixture.owner)throw Error('unowned fixture');
  for(const item of fixture.permissions) {
   const root=fs.realpathSync(fixture.scratch),target=fs.realpathSync(item.path);
@@ -34,6 +36,12 @@ const {createProjectId}=await source('pilot/paths.ts');
 const real:any={};for(const [kind,obj,names] of [['sync',fs,['statSync','readdirSync','readFileSync','existsSync']],['async',fsp,['stat','readdir','readFile','open']]] as const)for(const name of names)real[kind+':'+name]=(obj as any)[name];
 const owner=randomUUID();fs.writeFileSync(join(scratch,'.metadata-oracle-owner'),owner,{flag:'wx'});
 const permissions:any[]=[],cases:any[]=[];
+function restrict(path:string,mode:number) {
+ const permission={path,mode:fs.statSync(path).mode&0o777};permissions.push(permission);
+ const checkpoint='PDRS_METADATA_PERMISSION '+JSON.stringify({baselineCommit:COMMIT,owner,scratch,permission})+'\n';
+ if(fs.writeSync(1,checkpoint)!==Buffer.byteLength(checkpoint))throw Error('incomplete permission checkpoint');
+ fs.chmodSync(path,mode);
+}
 const ids=['positive','collision-positive','projects-missing','projects-notdir','projects-denied-legacy','projects-denied-marker','chats-missing','chats-notdir','chats-denied','chats-loop'];
 let observations:any[]=[];
 function value(v:any):any {
@@ -71,9 +79,9 @@ for(const id of ids) {
  const transcript=join(chats,'visible.jsonl');fs.writeFileSync(transcript,JSON.stringify({type:'session_metadata',sessionId:'visible',sequence:1,createdAt:'2026-10-16T00:00:00.000Z',metadata:{title:'recorded visible session'}})+'\n');fs.utimesSync(transcript,new Date('2026-10-16T00:00:01.234Z'),new Date('2026-10-16T00:00:01.234Z'));
  const paths:string[]=[];const collect=(path:string)=>{paths.push(path);if(real['sync:statSync'](path).isDirectory())for(const name of real['sync:readdirSync'](path))collect(join(path,name));};collect(root);
  if(id==='projects-missing'||id==='projects-notdir'){fs.renameSync(projects,projects+'.held');if(id==='projects-notdir')fs.writeFileSync(projects,'not directory');}
- if(id.startsWith('projects-denied')){permissions.push({path:projects,mode:fs.statSync(projects).mode&0o777});fs.chmodSync(projects,0o111);}
+ if(id.startsWith('projects-denied')){restrict(projects,0o111);}
  if(['chats-missing','chats-notdir','chats-loop'].includes(id)){fs.renameSync(chats,chats+'.held');if(id==='chats-notdir')fs.writeFileSync(chats,'not directory');if(id==='chats-loop')fs.symlinkSync(chats,chats);}
- if(id==='chats-denied'){permissions.push({path:chats,mode:fs.statSync(chats).mode&0o777});fs.chmodSync(chats,0o0);}
+ if(id==='chats-denied'){restrict(chats,0o0);}
  const files=snapshot(paths);let receive:any,finish:any;const ws={onMessage(fn:any){receive=fn},onClose(){},sendText(s:string){if(JSON.parse(s).type==='response')finish(s);},close(){throw Error('unexpected close');}};
  new GatewayWsConnection(ws as any,{token:'offline',serverVersion:'offline',gateway:{describeServer:async()=>({}),describeProject:(input:any)=>describeWebProject(input.projectKey,{pilotHome:home})} as any});
  receive(JSON.stringify({type:'hello',protocolVersion:'1.2',clientName:'web',clientVersion:'fixture',token:'offline'}));await new Promise(r=>setImmediate(r));
@@ -87,6 +95,8 @@ for(const id of ids) {
 }
 const sourceBindingAfter=bindSourceTree(baseline,COMMIT,gitExecutable);if(JSON.stringify(sourceBindingBefore)!==JSON.stringify(sourceBindingAfter))throw Error('baseline sources changed during recording');
 const sourceFiles=['src/gateway/server/GatewayWsConnection.ts','src/web/server/listProjects.ts','src/pilot/paths.ts','src/session/storage/SessionList.ts','src/session/storage/SessionLiteReader.ts'];const sources=Object.fromEntries(sourceFiles.map(p=>[p,createHash('sha256').update(fs.readFileSync(join(baseline,p))).digest('hex')]));
-fs.writeFileSync(output,JSON.stringify({baselineCommit:COMMIT,node:process.version,icu:process.versions.icu,platform:process.platform,owner,scratch,permissions,sources,sourceBinding:{before:sourceBindingBefore,after:sourceBindingAfter},callPath:['GatewayWsConnection','describeWebProject','resolveProjectStorageDir','summarizeProject','getPilotProjectChatDir','listProjectSessions'],cases},null,2)+'\n',{flag:'wx'});
+const oracleText=JSON.stringify({baselineCommit:COMMIT,node:process.version,icu:process.versions.icu,platform:process.platform,owner,scratch,permissions,sources,sourceBinding:{before:sourceBindingBefore,after:sourceBindingAfter},callPath:['GatewayWsConnection','describeWebProject','resolveProjectStorageDir','summarizeProject','getPilotProjectChatDir','listProjectSessions'],cases},null,2)+'\n';
+fs.writeFileSync(output,oracleText,{flag:'wx'});
+console.log('PDRS_METADATA_ORACLE '+JSON.stringify(oracleText));
 success=true;if(cases.some(c=>c.status!=='RUN'))process.exitCode=2;
 }finally{reset();if(!success)for(const item of permissions)fs.chmodSync(item.path,item.mode);}
