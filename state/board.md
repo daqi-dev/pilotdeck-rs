@@ -22,7 +22,7 @@
 > 每完成一个可命名的逻辑单元存一次；破坏性操作之前也存一次。这是给你自己留的后路，不是给别人看的历史。
 
 > ## 2026-10-16 · #113原件迁入候选（双家同意scope，最终闸门待齐）
-> R26：三份B2批准原文迁入specs/ui-server-parity/approval，FROZEN只改路径/来源标注；53注册/capture/checker/评分逐字节不变。GLM四视角与DS实际sibling均同意无需fresh26，旧summary与Claude旧P2原样保留；DS另提6979字节driver日志现也逐字节入仓，验证器身份/driver SHA已补；另两实际角色、最终增量与CI待齐才合并。#47整体未完成；不称项目P0/P1/P2为0。
+> R26：三份B2批准原文迁入specs/ui-server-parity/approval，FROZEN只改路径/来源标注；53注册/capture/checker/评分逐字节不变。GLM四视角与DS实际sibling均同意无需fresh26，旧summary与Claude旧P2原样保留；DS另提6979字节driver日志现也逐字节入仓，验证器身份/driver SHA已补；独立CI原文SHA/变异门与日志当前指针已补，三角色已实际完成；新增规则层实现、最终增量与新CI待齐才合并。#47整体未完成；不称项目P0/P1/P2为0。
 > 清账GitHub已将#134标P0，#65/#56/#113标P1且逐项写原因；原31快照外新#139为A4前置metadata三helper真实errno债，仍未完成。root复用干净CLI旧树另建codex/debt-metadata@8745ddd，旧codex/cli-server@1fdb99b/忽略证据保留，root持有、未新增第六树。Linux探测：clawbox-02 SSH有界超时，Docker daemon未运行、既有Colima停止；未为此下载/启动未知镜像，Linux真实证据仍欠。
 
 > ## 2026-10-16 08:24 · 用户启动31单集中清账（基于main8745ddd）

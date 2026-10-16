@@ -25,7 +25,10 @@ jobs:
         run: cargo test --all
       - name: B2 冻结与批准依据（干净检出）
         working-directory: .
-        run: python3 -I scripts/ui-server-parity/check_frozen.py
+        run: |
+          python3 -I scripts/test-approval-provenance.py
+          python3 -I scripts/check-approval-provenance.py
+          python3 -I scripts/ui-server-parity/check_frozen.py
       # A3 · gateway 协议 schema 静态断言：CI 没有基线目录（resources/ 不入库），
       # check_schema.py 自动退回「快照 × method-inventory.md × schema」三方比对；
       # 基线侧一致性由下方 gateway-schema-baseline job 按冻结 commit 克隆基线钉死。
