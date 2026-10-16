@@ -10,6 +10,9 @@ const LOCAL_METHODS: &[&str] = &[
     "project_file_read",
     "model_catalog_list",
     "session_model_get",
+    "native_archive_manifest",
+    "native_archive_entries",
+    "native_archive_artifact",
 ];
 
 pub(crate) enum Route {
@@ -48,6 +51,9 @@ pub(crate) fn needs_files(request: &JsValue) -> bool {
                 | "project_file_read"
                 | "model_catalog_list"
                 | "session_model_get"
+                | "native_archive_manifest"
+                | "native_archive_entries"
+                | "native_archive_artifact"
         )
     ) || (text_field(request, "method").as_deref() == Some("describe_project")
         && request
@@ -69,6 +75,14 @@ pub(crate) fn route_with_metadata<F: Files>(
     };
     if !LOCAL_METHODS.contains(&method.as_str()) {
         return Route::Forward;
+    }
+    if matches!(
+        method.as_str(),
+        "native_archive_manifest" | "native_archive_entries" | "native_archive_artifact"
+    ) {
+        return metadata
+            .and_then(|metadata| crate::native_archive::response(request, metadata))
+            .map_or(Route::Forward, Route::LocalResponse);
     }
     if method == "model_catalog_list" || method == "session_model_get" {
         let env = std::env::vars_os()

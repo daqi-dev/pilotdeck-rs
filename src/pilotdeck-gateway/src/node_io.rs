@@ -1,6 +1,8 @@
 //! Node v22 libuv diagnostics. Unknown errno (including non-OS Rust errors) is
 //! an explicit host boundary, never a Rust Display string on the wire.
 mod generated;
+mod path_error;
+pub(crate) use path_error::nul_message;
 use std::io;
 
 // Method admission is separate from the complete libuv formatting table.
@@ -16,11 +18,23 @@ const SESSION_CONFIG: &[&str] = &[
     "ENAMETOOLONG",
     "ELOOP",
 ];
+// Native archives have their own twelve public RPC observations, including
+// natural stat ELOOP and descriptor read EISDIR. Do not inherit config's gate.
+const ARCHIVE_TRANSCRIPT: &[&str] = &[
+    "ENOENT",
+    "EACCES",
+    "ENOTDIR",
+    "EISDIR",
+    "ENAMETOOLONG",
+    "ELOOP",
+];
 pub(crate) const LOCAL_ERRNOS: &[(&str, &[&str])] = &[
     ("project_files_list", PROJECT_FILES),
     ("project_file_read", PROJECT_FILES),
     ("session_model_get", SESSION_CONFIG),
     ("model_catalog_list", SESSION_CONFIG),
+    ("native_archive_manifest", ARCHIVE_TRANSCRIPT),
+    ("native_archive_entries", ARCHIVE_TRANSCRIPT),
 ];
 pub(crate) fn lookup_for(method: &str, error: &io::Error) -> Option<(&'static str, &'static str)> {
     let found = lookup(error)?;

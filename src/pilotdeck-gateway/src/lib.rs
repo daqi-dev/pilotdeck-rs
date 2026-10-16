@@ -6,6 +6,7 @@ mod frame;
 pub mod http_proxy;
 mod metadata;
 mod model_catalog;
+mod native_archive;
 mod node_io;
 mod pairing;
 mod project_files;

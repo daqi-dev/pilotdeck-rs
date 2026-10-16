@@ -1,0 +1,233 @@
+{
+  "node": "v22.22.0",
+  "baseline": "/Users/da/ws/pilotdeck-rs/resources/PilotDeck",
+  "sources": {
+    "cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead"
+  },
+  "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project",
+  "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot",
+  "files": {
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot": {
+      "directory": true,
+      "size": 192,
+      "entries": [
+        [
+          ".legacy-bundled-skills-migrated-v1",
+          false
+        ],
+        [
+          "pilotdeck.yaml",
+          false
+        ],
+        [
+          "projects",
+          true
+        ],
+        [
+          "router",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/.legacy-bundled-skills-migrated-v1": {
+      "directory": false,
+      "size": 10,
+      "base64": "Y29tcGxldGVkCg=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/pilotdeck.yaml": {
+      "directory": false,
+      "size": 355,
+      "base64": "c2NoZW1hVmVyc2lvbjogMQphZ2VudDoge21vZGVsOiB0ZXN0L21vZGVsLCBtYXhDb250ZXh0VG9rZW5zOiA2NTUzNiwgbWF4T3V0cHV0VG9rZW5zOiA4MTkyfQptb2RlbDoKICBwcm92aWRlcnM6CiAgICB0ZXN0OgogICAgICBwcm90b2NvbDogb3BlbmFpCiAgICAgIHVybDogaHR0cHM6Ly9leGFtcGxlLnRlc3QvdjEKICAgICAgYXBpS2V5OiBmaXh0dXJlLWtleQogICAgICBtb2RlbHM6IHttb2RlbDoge319CmV4dGVuc2lvbjoKICBidWlsdGluUGx1Z2luc0VuYWJsZWQ6IHt3aW5kb3dzLXNraWxsczogZmFsc2UsIGJyb3dzZXItdXNlOiBmYWxzZSwgZnVuYXNyOiBmYWxzZX0KdGVsZW1ldHJ5OiB7ZW5hYmxlZDogZmFsc2V9Cg=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          "registered",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered": {
+      "directory": true,
+      "size": 128,
+      "entries": [
+        [
+          ".cwd",
+          false
+        ],
+        [
+          "chats",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered/.cwd": {
+      "directory": false,
+      "size": 98,
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL2hvc3QtcmVjb3JkaW5nL3Byb2plY3Q="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered/chats": {
+      "directory": true,
+      "size": 224,
+      "entries": [
+        [
+          "invalid-before-host.jsonl",
+          false
+        ],
+        [
+          "paired.jsonl",
+          false
+        ],
+        [
+          "ties-lone.jsonl",
+          false
+        ],
+        [
+          "unique-lone.jsonl",
+          false
+        ],
+        [
+          "zero-tie.jsonl",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered/chats/invalid-before-host.jsonl": {
+      "directory": false,
+      "size": 310,
+      "base64": "eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjAsImNyZWF0ZWRBdCI6Ilx1ZDgwMCIsInBheWxvYWQiOnsidGV4dCI6IuS9oOWlvSIsImFyYml0cmFyeSI6dHJ1ZX19CnsidHlwZSI6Im1lc3NhZ2UiLCJzZXNzaW9uSWQiOiJkaWZmZXJlbnQtc2Vzc2lvbi1pcy1hY2NlcHRlZCIsInR1cm5JZCI6IiIsInNlcXVlbmNlIjowLCJjcmVhdGVkQXQiOiJhIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0Ke2Jyb2tlbg=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered/chats/paired.jsonl": {
+      "directory": false,
+      "size": 300,
+      "base64": "eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjAsImNyZWF0ZWRBdCI6IvCfmIAiLCJwYXlsb2FkIjp7InRleHQiOiLkvaDlpb0iLCJhcmJpdHJhcnkiOnRydWV9fQp7InR5cGUiOiJtZXNzYWdlIiwic2Vzc2lvbklkIjoiZGlmZmVyZW50LXNlc3Npb24taXMtYWNjZXB0ZWQiLCJ0dXJuSWQiOiIiLCJzZXF1ZW5jZSI6MCwiY3JlYXRlZEF0IjoiYSIsInBheWxvYWQiOnsidGV4dCI6IuS9oOWlvSIsImFyYml0cmFyeSI6dHJ1ZX19"
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered/chats/ties-lone.jsonl": {
+      "directory": false,
+      "size": 302,
+      "base64": "eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjAsImNyZWF0ZWRBdCI6Ilx1ZDgwMCIsInBheWxvYWQiOnsidGV4dCI6IuS9oOWlvSIsImFyYml0cmFyeSI6dHJ1ZX19CnsidHlwZSI6Im1lc3NhZ2UiLCJzZXNzaW9uSWQiOiJkaWZmZXJlbnQtc2Vzc2lvbi1pcy1hY2NlcHRlZCIsInR1cm5JZCI6IiIsInNlcXVlbmNlIjowLCJjcmVhdGVkQXQiOiJhIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered/chats/unique-lone.jsonl": {
+      "directory": false,
+      "size": 302,
+      "base64": "eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjAsImNyZWF0ZWRBdCI6Ilx1ZDgwMCIsInBheWxvYWQiOnsidGV4dCI6IuS9oOWlvSIsImFyYml0cmFyeSI6dHJ1ZX19CnsidHlwZSI6Im1lc3NhZ2UiLCJzZXNzaW9uSWQiOiJkaWZmZXJlbnQtc2Vzc2lvbi1pcy1hY2NlcHRlZCIsInR1cm5JZCI6IiIsInNlcXVlbmNlIjoxLCJjcmVhdGVkQXQiOiJhIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/projects/registered/chats/zero-tie.jsonl": {
+      "directory": false,
+      "size": 302,
+      "base64": "eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjAsImNyZWF0ZWRBdCI6Ilx1ZDgwMCIsInBheWxvYWQiOnsidGV4dCI6IuS9oOWlvSIsImFyYml0cmFyeSI6dHJ1ZX19CnsidHlwZSI6Im1lc3NhZ2UiLCJzZXNzaW9uSWQiOiJkaWZmZXJlbnQtc2Vzc2lvbi1pcy1hY2NlcHRlZCIsInR1cm5JZCI6IiIsInNlcXVlbmNlIjowLCJjcmVhdGVkQXQiOiJhIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/pilot/router": {
+      "directory": true,
+      "size": 64,
+      "entries": []
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          ".pilotdeck",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project/.pilotdeck": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          "tool-results",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project/.pilotdeck/tool-results": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          "ties-lone",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project/.pilotdeck/tool-results/ties-lone": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          "body",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project/.pilotdeck/tool-results/ties-lone/body": {
+      "directory": false,
+      "size": 13,
+      "base64": "c2FmZS1hcnRpZmFjdA=="
+    }
+  },
+  "cases": [
+    {
+      "id": "ties-lone-native_archive_manifest",
+      "request": "{\"type\":\"request\",\"id\":\"ties-lone-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"ties-lone\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"ties-lone-native_archive_manifest\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"ties-lone\",\"entryCount\":2,\"firstSequence\":0,\"lastSequence\":0,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "ties-lone-native_archive_entries",
+      "request": "{\"type\":\"request\",\"id\":\"ties-lone-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"ties-lone\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"ties-lone-native_archive_entries\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":0,\"createdAt\":\"a\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}},{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":0,\"createdAt\":\"\\ud800\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "unique-lone-native_archive_manifest",
+      "request": "{\"type\":\"request\",\"id\":\"unique-lone-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"unique-lone\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"unique-lone-native_archive_manifest\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"unique-lone\",\"entryCount\":2,\"firstSequence\":0,\"lastSequence\":1,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "unique-lone-native_archive_entries",
+      "request": "{\"type\":\"request\",\"id\":\"unique-lone-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"unique-lone\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"unique-lone-native_archive_entries\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":0,\"createdAt\":\"\\ud800\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}},{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":1,\"createdAt\":\"a\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "zero-tie-native_archive_manifest",
+      "request": "{\"type\":\"request\",\"id\":\"zero-tie-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"zero-tie\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"zero-tie-native_archive_manifest\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"zero-tie\",\"entryCount\":2,\"firstSequence\":0,\"lastSequence\":0,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "zero-tie-native_archive_entries",
+      "request": "{\"type\":\"request\",\"id\":\"zero-tie-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"zero-tie\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"zero-tie-native_archive_entries\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":0,\"createdAt\":\"a\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}},{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":0,\"createdAt\":\"\\ud800\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "paired-native_archive_manifest",
+      "request": "{\"type\":\"request\",\"id\":\"paired-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"paired\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"paired-native_archive_manifest\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"paired\",\"entryCount\":2,\"firstSequence\":0,\"lastSequence\":0,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "paired-native_archive_entries",
+      "request": "{\"type\":\"request\",\"id\":\"paired-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"paired\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"paired-native_archive_entries\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":0,\"createdAt\":\"😀\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}},{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":0,\"createdAt\":\"a\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "invalid-before-host-native_archive_manifest",
+      "request": "{\"type\":\"request\",\"id\":\"invalid-before-host-native_archive_manifest\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"invalid-before-host\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"invalid-before-host-native_archive_manifest\",\"ok\":false,\"error\":{\"code\":\"SESSION_TRANSCRIPT_INVALID\",\"message\":\"Cannot read a native archive with invalid entries.\"}}"
+    },
+    {
+      "id": "invalid-before-host-native_archive_entries",
+      "request": "{\"type\":\"request\",\"id\":\"invalid-before-host-native_archive_entries\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"invalid-before-host\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"invalid-before-host-native_archive_entries\",\"ok\":false,\"error\":{\"code\":\"SESSION_TRANSCRIPT_INVALID\",\"message\":\"Cannot read a native archive with invalid entries.\"}}"
+    },
+    {
+      "id": "artifact-independent-of-host",
+      "request": "{\"type\":\"request\",\"id\":\"artifact-independent-of-host\",\"method\":\"native_archive_artifact\",\"params\":{\"sessionKey\":\"ties-lone\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/host-recording/project\",\"artifactName\":\"body\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"artifact-independent-of-host\",\"ok\":true,\"result\":{\"artifactName\":\"body\",\"content\":\"c2FmZS1hcnRpZmFjdA==\",\"encoding\":\"base64\",\"bytes\":13,\"truncated\":false}}"
+    }
+  ]
+}

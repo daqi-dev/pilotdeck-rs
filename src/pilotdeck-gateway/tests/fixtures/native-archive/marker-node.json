@@ -1,0 +1,289 @@
+{
+  "node": "v22.22.0",
+  "baseline": "/Users/da/ws/pilotdeck-rs/resources/PilotDeck",
+  "sources": {
+    "cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "gateway/dialog/projectRegistry.ts": "adab87e1783dc39f017e7d6b9bbd9aaa286b60235ad622709752499443e794fb",
+    "web/server/listProjects.ts": "b12e71223d9667950a41dccc1215bfcca6b4cb9999f5ef43439286940131f210",
+    "pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a"
+  },
+  "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project",
+  "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot",
+  "cases": [
+    {
+      "id": "native_archive_manifest-marker-static",
+      "method": "native_archive_manifest",
+      "stage": "static",
+      "trace": [
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_manifest-marker-static\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_manifest-marker-static\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"native_archive_manifest\",\"entryCount\":1,\"firstSequence\":7,\"lastSequence\":7,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "native_archive_manifest-marker-race",
+      "method": "native_archive_manifest",
+      "stage": "race",
+      "trace": [
+        {
+          "event": "marker-replaced-before-real-open",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd"
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_manifest-marker-race\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_manifest-marker-race\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"native_archive_manifest\",\"entryCount\":1,\"firstSequence\":7,\"lastSequence\":7,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "native_archive_manifest-marker-inside",
+      "method": "native_archive_manifest",
+      "stage": "inside",
+      "trace": [
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_manifest-marker-inside\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"native_archive_manifest\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_manifest-marker-inside\",\"ok\":true,\"result\":{\"schemaVersion\":1,\"format\":\"native_transcript_entries\",\"sessionKey\":\"native_archive_manifest\",\"entryCount\":1,\"firstSequence\":7,\"lastSequence\":7,\"subagentCount\":0,\"toolResultReferenceCount\":0}}"
+    },
+    {
+      "id": "native_archive_entries-marker-static",
+      "method": "native_archive_entries",
+      "stage": "static",
+      "trace": [
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_entries-marker-static\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_entries-marker-static\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":7,\"createdAt\":\"2026-10-15T00:00:00Z\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "native_archive_entries-marker-race",
+      "method": "native_archive_entries",
+      "stage": "race",
+      "trace": [
+        {
+          "event": "marker-replaced-before-real-open",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd"
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_entries-marker-race\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_entries-marker-race\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":7,\"createdAt\":\"2026-10-15T00:00:00Z\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "native_archive_entries-marker-inside",
+      "method": "native_archive_entries",
+      "stage": "inside",
+      "trace": [
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_entries-marker-inside\",\"method\":\"native_archive_entries\",\"params\":{\"sessionKey\":\"native_archive_entries\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_entries-marker-inside\",\"ok\":true,\"result\":{\"entries\":[{\"type\":\"message\",\"sessionId\":\"different-session-is-accepted\",\"turnId\":\"\",\"sequence\":7,\"createdAt\":\"2026-10-15T00:00:00Z\",\"payload\":{\"text\":\"你好\",\"arbitrary\":true}}],\"complete\":true}}"
+    },
+    {
+      "id": "native_archive_artifact-marker-static",
+      "method": "native_archive_artifact",
+      "stage": "static",
+      "trace": [
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_artifact-marker-static\",\"method\":\"native_archive_artifact\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\",\"artifactName\":\"probe.bin\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_artifact-marker-static\",\"ok\":true,\"result\":{\"artifactName\":\"probe.bin\",\"content\":\"eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjcsImNyZWF0ZWRBdCI6IjIwMjYtMTAtMTVUMDA6MDA6MDBaIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0K\",\"encoding\":\"base64\",\"bytes\":168,\"truncated\":false}}"
+    },
+    {
+      "id": "native_archive_artifact-marker-race",
+      "method": "native_archive_artifact",
+      "stage": "race",
+      "trace": [
+        {
+          "event": "marker-replaced-before-real-open",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd"
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdAoJ"
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_artifact-marker-race\",\"method\":\"native_archive_artifact\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\",\"artifactName\":\"probe.bin\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_artifact-marker-race\",\"ok\":true,\"result\":{\"artifactName\":\"probe.bin\",\"content\":\"eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjcsImNyZWF0ZWRBdCI6IjIwMjYtMTAtMTVUMDA6MDA6MDBaIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0K\",\"encoding\":\"base64\",\"bytes\":168,\"truncated\":false}}"
+    },
+    {
+      "id": "native_archive_artifact-marker-inside",
+      "method": "native_archive_artifact",
+      "stage": "inside",
+      "trace": [
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/pilot/projects/registered/.cwd",
+          "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL21hcmtlci1yZWNvcmRpbmctcjEvcHJvamVjdA=="
+        }
+      ],
+      "request": "{\"type\":\"request\",\"id\":\"native_archive_artifact-marker-inside\",\"method\":\"native_archive_artifact\",\"params\":{\"sessionKey\":\"fixture\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/marker-recording-r1/project\",\"artifactName\":\"probe.bin\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"native_archive_artifact-marker-inside\",\"ok\":true,\"result\":{\"artifactName\":\"probe.bin\",\"content\":\"eyJ0eXBlIjoibWVzc2FnZSIsInNlc3Npb25JZCI6ImRpZmZlcmVudC1zZXNzaW9uLWlzLWFjY2VwdGVkIiwidHVybklkIjoiIiwic2VxdWVuY2UiOjcsImNyZWF0ZWRBdCI6IjIwMjYtMTAtMTVUMDA6MDA6MDBaIiwicGF5bG9hZCI6eyJ0ZXh0Ijoi5L2g5aW9IiwiYXJiaXRyYXJ5Ijp0cnVlfX0K\",\"encoding\":\"base64\",\"bytes\":168,\"truncated\":false}}"
+    }
+  ]
+}

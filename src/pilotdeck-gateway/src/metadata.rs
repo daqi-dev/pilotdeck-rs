@@ -87,6 +87,13 @@ pub(crate) trait Files {
     fn project_read(&self, _root: &Path, _path: &Path, _limit: usize) -> io::Result<Vec<u8>> {
         Err(io::ErrorKind::Unsupported.into())
     }
+    /// Complete archive bytes; kept separate from prefix reads and transcript policy.
+    fn archive_read(&self, root: &Path, path: &Path) -> io::Result<Vec<u8>> {
+        if self.project_stat(root, path)?.0.size > 2_147_483_647 {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        self.project_read(root, path, usize::MAX)
+    }
     /// libc kill(pid, 0), through rustix's safe libc wrapper. All errors, including
     /// EPERM, mean false, matching Node's unconditional catch.
     fn process_alive(&self, pid: i32) -> bool {
@@ -121,6 +128,24 @@ impl Files for NativeFiles {
         }
         crate::project_files::read_prefix(&mut file, limit)
             .map_err(|e| crate::node_io::descriptor_error(e, "read"))
+    }
+    fn archive_read(&self, root: &Path, path: &Path) -> io::Result<Vec<u8>> {
+        let mut file = crate::project_files::open_beneath(root, path)?;
+        let stat = file
+            .metadata()
+            .map_err(|error| crate::node_io::descriptor_error(error, "fstat"))?;
+        if !stat.is_file() || stat.len() > 2_147_483_647 {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        crate::project_files::read_prefix(&mut file, 2_147_483_648)
+            .map_err(|error| crate::node_io::descriptor_error(error, "read"))
+            .and_then(|bytes| {
+                if bytes.len() > 2_147_483_647 {
+                    Err(io::ErrorKind::InvalidInput.into())
+                } else {
+                    Ok(bytes)
+                }
+            })
     }
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
         let mut entries = fs::read_dir(path)?
@@ -329,6 +354,24 @@ impl<F: Files> Metadata<F> {
             }
         }
         None
+    }
+    /// Registration membership without reading unrelated chat summaries. Archive
+    /// containment must be checked before any transcript content can be opened.
+    pub(crate) fn has_registered_project(&self, requested: &Path) -> bool {
+        let projects = self.home.join("projects");
+        self.files
+            .entries(&projects)
+            .unwrap_or_default()
+            .into_iter()
+            .any(|(id, _)| {
+                self.files
+                    .stat(&projects.join(&id))
+                    .is_ok_and(|stat| stat.directory)
+                    && self.registered_path(&id).is_some_and(|root| {
+                        let root = resolve(&self.cwd, &root);
+                        root != self.home && root == requested
+                    })
+            })
     }
     pub fn list_projects(&self) -> JsValue {
         let projects_dir = self.home.join("projects");

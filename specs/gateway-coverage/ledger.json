@@ -2062,7 +2062,7 @@
 },
 "format_version": 2,
 "input_files": {
-"docs/plan/005_phase-a-session-domain.md": "c7f36e08d682d99080b8c6cd2caee40b5770a108b81cfb9675fe64015626f31a",
+"docs/plan/005_phase-a-session-domain.md": "c64e42949cae9a531f698d5c9ebd306455de487d7feeea56786f1c0511301600",
 "docs/research/005_phase-a-gateway/method-inventory.md": "31c279ee832bbc94c93d75f4ce0f0428ad0c4be86bc7095cf772b2cb0672f316",
 "docs/research/008_phase-a-session-domain/gap.md": "df5ce3ceaffb7fb70571e25aad03741bbc10f374fab8fbce2cd1ad1f3878a37e",
 "schema/gateway-methods.snapshot.json": "b7c2ef5b8ec24da3f17cd00129360f284963580e08e6e0bf3921a3a214c7b49c",
@@ -3315,8 +3315,8 @@
 },
 "blockers": [
 {
-"missing": "native 默认读取已定位；宿主 nativeSessionStorage / archive authorizer 的实际外部实现、资源释放和权限错误覆盖未闭合。",
-"obtain": "A6.2 提供部署 adapter/authorizer 源码和 archive 读取/retention/拒绝夹具；保持 A4 冻结分类。"
+"missing": "A4默认磁盘候选见 src/pilotdeck-gateway/src/native_archive.rs；#134精确安全差异授权/冻结登记与独立终审尚未闭合。自定义 nativeSessionStorage / archive authorizer 与 retention 仍归 A6.2。",
+"obtain": "先完成#134的精确授权、两家独立审阅和真实复算/登记，再进行A4收尾；A6.2另提供自定义adapter/authorizer/retention源码与夹具。保持(a)分类和分母10。"
 }
 ],
 "branches": {
@@ -3383,8 +3383,8 @@
 },
 "blockers": [
 {
-"missing": "native 默认读取已定位；宿主 nativeSessionStorage / archive authorizer 的实际外部实现、资源释放和权限错误覆盖未闭合。",
-"obtain": "A6.2 提供部署 adapter/authorizer 源码和 archive 读取/retention/拒绝夹具；保持 A4 冻结分类。"
+"missing": "A4默认磁盘候选见 src/pilotdeck-gateway/src/native_archive.rs；#134精确安全差异授权/冻结登记与独立终审尚未闭合。自定义 nativeSessionStorage / archive authorizer 与 retention 仍归 A6.2。",
+"obtain": "先完成#134的精确授权、两家独立审阅和真实复算/登记，再进行A4收尾；A6.2另提供自定义adapter/authorizer/retention源码与夹具。保持(a)分类和分母10。"
 }
 ],
 "branches": {
@@ -3453,8 +3453,8 @@
 },
 "blockers": [
 {
-"missing": "native 默认读取已定位；宿主 nativeSessionStorage / archive authorizer 的实际外部实现、资源释放和权限错误覆盖未闭合。",
-"obtain": "A6.2 提供部署 adapter/authorizer 源码和 archive 读取/retention/拒绝夹具；保持 A4 冻结分类。"
+"missing": "A4默认磁盘候选见 src/pilotdeck-gateway/src/native_archive.rs；#134精确安全差异授权/冻结登记与独立终审尚未闭合。自定义 nativeSessionStorage / archive authorizer 与 retention 仍归 A6.2。",
+"obtain": "先完成#134的精确授权、两家独立审阅和真实复算/登记，再进行A4收尾；A6.2另提供自定义adapter/authorizer/retention源码与夹具。保持(a)分类和分母10。"
 }
 ],
 "branches": {

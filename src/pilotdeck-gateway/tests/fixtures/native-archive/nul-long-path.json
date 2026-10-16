@@ -1,0 +1,174 @@
+{
+  "node": "v22.22.0",
+  "v8": "12.4.254.21-node.33",
+  "locale": "en-US",
+  "baseline": "/Users/da/ws/pilotdeck-rs/resources/PilotDeck",
+  "sources": {
+    "cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9",
+    "gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "gateway/dialog/projectRegistry.ts": "adab87e1783dc39f017e7d6b9bbd9aaa286b60235ad622709752499443e794fb",
+    "session/storage/ProjectSessionStorage.ts": "51aae89cf30959264f67e09d21051bb4ff58aa83135480337027599032a52d95",
+    "session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead",
+    "pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a"
+  },
+  "cwd": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/project",
+  "home": "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot",
+  "recordingSha256": "e987b27650773ace0039bf5718fd046e987d723b23d1fed884021aecb353235d",
+  "cases": [
+    {
+      "id": "session-nul-quotes-0",
+      "request": "{\"type\":\"request\",\"id\":\"session-nul-quotes-0\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"a'\\u0000b\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-nul-quotes-0\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_VALUE\",\"message\":\"The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received \\\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects/regi...\"}}"
+    },
+    {
+      "id": "session-nul-quotes-1",
+      "request": "{\"type\":\"request\",\"id\":\"session-nul-quotes-1\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"a\\\"\\u0000b\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-nul-quotes-1\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_VALUE\",\"message\":\"The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects/regi...\"}}"
+    },
+    {
+      "id": "session-nul-quotes-2",
+      "request": "{\"type\":\"request\",\"id\":\"session-nul-quotes-2\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"a'\\\"\\u0000b\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-nul-quotes-2\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_VALUE\",\"message\":\"The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received `/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects/regi...\"}}"
+    },
+    {
+      "id": "session-nul",
+      "request": "{\"type\":\"request\",\"id\":\"session-nul\",\"method\":\"native_archive_manifest\",\"params\":{\"sessionKey\":\"a\\u0000b\",\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"session-nul\",\"ok\":false,\"error\":{\"code\":\"ERR_INVALID_ARG_VALUE\",\"message\":\"The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects/regi...\"}}"
+    }
+  ],
+  "files": {
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot": {
+      "directory": true,
+      "size": 192,
+      "entries": [
+        [
+          ".legacy-bundled-skills-migrated-v1",
+          false
+        ],
+        [
+          "pilotdeck.yaml",
+          false
+        ],
+        [
+          "projects",
+          true
+        ],
+        [
+          "router",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          "registered",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects/registered": {
+      "directory": true,
+      "size": 128,
+      "entries": [
+        [
+          ".cwd",
+          false
+        ],
+        [
+          "chats",
+          true
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects/registered/.cwd": {
+      "directory": false,
+      "size": 115,
+      "base64": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fdG1wLzIwMjYxMDE2LWRlYnQtY2xlYW51cC9hcmNoaXZlLWltcGxlbWVudGF0aW9uL3JlY29yZC1jdXJyZW50LW5hdGl2ZS1pc29sYXRpb24vcHJvamVjdA=="
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/pilot/projects/registered/chats": {
+      "directory": true,
+      "size": 576,
+      "entries": [
+        [
+          "blank.jsonl",
+          false
+        ],
+        [
+          "broken.jsonl",
+          false
+        ],
+        [
+          "cr-only.jsonl",
+          false
+        ],
+        [
+          "directory.jsonl",
+          true
+        ],
+        [
+          "empty.jsonl",
+          false
+        ],
+        [
+          "fixture.jsonl",
+          false
+        ],
+        [
+          "large.jsonl",
+          false
+        ],
+        [
+          "nonutf8.jsonl",
+          false
+        ],
+        [
+          "overflow.jsonl",
+          false
+        ],
+        [
+          "replacement-sort.jsonl",
+          false
+        ],
+        [
+          "shape.jsonl",
+          false
+        ],
+        [
+          "ties.jsonl",
+          false
+        ],
+        [
+          "truncated.jsonl",
+          false
+        ],
+        [
+          "unicode-sort.jsonl",
+          false
+        ],
+        [
+          "weak.jsonl",
+          false
+        ],
+        [
+          "web:a---b.jsonl",
+          false
+        ]
+      ]
+    },
+    "/Users/da/ws/pilotdeck-rs/_tmp/20261016-debt-cleanup/archive-implementation/record-current-native-isolation/project": {
+      "directory": true,
+      "size": 96,
+      "entries": [
+        [
+          ".pilotdeck",
+          true
+        ]
+      ]
+    }
+  }
+}
