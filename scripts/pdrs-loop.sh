@@ -34,6 +34,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$RUNNER" in opencode|claude) ;; *) echo "pdrs-loop: --runner 只许 opencode|claude" >&2; exit 1 ;; esac
+case "$MAX_ITER" in ''|*[!0-9]*) echo "pdrs-loop: --max-iter 须为正整数" >&2; exit 1 ;; esac
+case "$ITER_TIMEOUT" in ''|*[!0-9]*) echo "pdrs-loop: --iter-timeout 须为正整数（秒）" >&2; exit 1 ;; esac
+[ "$ITER_TIMEOUT" -gt 0 ] && [ "$ITER_TIMEOUT" -le 7200 ] || { echo "pdrs-loop: --iter-timeout 须在 (0,7200]（两小时交接点不许放宽）" >&2; exit 1; }
 command -v timeout >/dev/null || { echo "pdrs-loop: 缺 timeout（brew coreutils）" >&2; exit 1; }
 
 # dry-run：锁之前的只读短路（不建锁、不写任务书、不派活）
@@ -76,7 +79,7 @@ while :; do
   [ "$iter" -le "$MAX_ITER" ] || { echo "pdrs-loop: 到 max-iter=$MAX_ITER，停"; exit 0; }
   if [ -e "$STOP_FILE" ]; then echo "pdrs-loop: 见 stop 文件，停"; rm -f "$STOP_FILE"; exit 0; fi
 
-  used_kib="$(du -sk "$ROOT/_build" "$ROOT/_tmp" 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+  used_kib="$({ du -sk "$ROOT/_build" "$ROOT/_tmp" 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')"
   if [ "$used_kib" -gt "$DISK_CAP_KIB" ]; then
     echo "pdrs-loop: _build+_tmp=${used_kib}KiB 超 46GiB 上限，停（CLAUDE.md 资源上限）" >&2; exit 1
   fi

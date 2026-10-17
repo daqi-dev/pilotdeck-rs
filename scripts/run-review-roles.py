@@ -107,7 +107,10 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
                 except ValueError:
                     continue
                 if ev.get("type") == "system" and ev.get("subtype") == "init":
-                    tools = ev.get("tools") or []
+                    tools = ev.get("tools")
+                    # fail-closed：init 缺 tools 字段=无法证明只读，按越权处理（boundary 审 #4）
+                    if not isinstance(tools, list) or not tools:
+                        tools = None
                     extra = sorted(set(tools) - set(ALLOWED_TOOLS))
                     if extra:
                         violation.extend(extra)
@@ -175,6 +178,8 @@ def main() -> int:
         print("run-review-roles: --out 必须在主仓 _tmp/ 下（证据不随 worktree 删除）", file=sys.stderr)
         return 2
     roles = [r.strip() for r in a.roles.split(",") if r.strip()]
+    if not roles:
+        sys.exit("run-review-roles: --roles 为空——零角色的「全部 PASS」是假的，拒绝运行")
     unknown = [r for r in roles if r not in ROLES]
     if unknown:
         print(f"run-review-roles: 未知角色 {unknown}", file=sys.stderr)
