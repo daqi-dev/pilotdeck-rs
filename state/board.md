@@ -1,14 +1,23 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 22:29 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.1-pr2 | impl | ready | replay/cancel（Refs #127）；A6.1-pr1 已合并（#192 → f479f73）。本 PR 须一并清 #191（14 条 P2-跟进，前置于 A6.1-pr2；第 7 条 module 错误字段可延到 A6 model 接线）；wt-a61 可复用（持有人：协调者），开工前 reset 到 main 新分支
+updated: 2026-10-18 00:31 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
+- A6.1-pr2 | gate | ready | 分支 codex/a61-pr2（wt-a61）：cancel + 清 #191 十三条；GLM/Claude 确认轮 0/0，本 PR 开出即合并；转跟进三条在 #191（前置节点已写）
+- A6.2-pr1 | gate | ready | 分支 codex/a62-ledger（wt-a62）：GLM/Claude 两轮 0/0；DeepSeek（关思考）补报 P1×3，codex 按 TS 实测处理中（_tmp/20261017-a62/fix2-task.md）；差异类跟进 #201
+- D0-pr1 | gate | ready | 分支 codex/d0-cli-parity（wt-d0）：真实 TS 自比与五项负控曾 PASS；评审 P0：--disable-warning 吞产品警告、openssl 整树读权、TS/Rust 共用 profile 可 forward-to-TS，codex 修复中（task-r3.md），修完协调者沙箱外重跑定标
+- A6.8-pr1 | impl | blocked | user-dialog store（triage：_tmp/20261017-parallel/triage.md），等 #200 合并放宽 worktree 上限后开
+- A6.8-pr2 | impl | blocked | upload store，同上
+- #200 | review | ready | 守护会话作者；第四轮 codex P0×1/P1×2 已转作者，GLM r4 重跑中；合并后新闸门要求 readonly=tools，在途单开 PR 前用新脚本重跑四角色
+- #202 | review | ready | DeepSeek 默认关思考；codex 0/0，GLM 重跑中
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
 - #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 00:31 · /loop 两小时交接（自 18:15 起连续）
+> 合并：#192（A6.1-pr1）、#185、#193、#194、#196（#187）、#197（loop-fix）、#198（只做产品代码）、#199（P2 清账第一批）。人定「编排提速」后拆出并行单（triage：`_tmp/20261017-parallel/triage.md`），A6.1-pr2 / A6.2-pr1 / D0-pr1 在途，A6.8 两条等 #200。DeepSeek 一度被我误判为大输入不可用并停用，根因是思考吃光输出额度（#202 修，新记忆 20261018-deepseek-thinking）。worktree：主仓 + wt-a61 + wt-a62 + wt-d0 + wt-rrg（守护会话）；磁盘约 39/46 GiB。后台：codex 修 A6.2（fix2）与 D0（r3），GLM 审 #200 r4 与 #202。**下一步**：A6.1-pr2 合并；A6.2 / D0 修完后确认轮；#200 合并后开 A6.8 两条。
 
 > ## 2026-10-17 22:29 · /loop：loop-fix（#197）、#198 合并；p2-sweep 第一批随本 PR；人定「只做产品代码」
 > 用户经守护会话定规则（#198 已合）：只做 intent.md 所定产品范围，对拍装置归产品侧；协作工具不开单、不排 READY。据此关闭工具类 P2-跟进 #174/#175/#178，#179 已由 #197 修复关闭。p2-sweep 第一批（codex 实现）：#55 第一条 P2 修复并补三条确定性测试；#120 子项 1、2 核实已随 #137 核销（补 TS 出处注释，第 3 项仍开）；#195 a5-19 四入口与 exp003 不再写死 baseline。GLM+DeepSeek 两轮无 P0/P1（DeepSeek P1 经实测驳回，`_tmp/20261017-p2-sweep/arbitration.md`）；确认轮新 P2 记回 #55/#195。其余开着的 P2-跟进都绑在后续节点（A5.4/A6.x/A7/A8/阶段 C），不提前清。新记忆：收敛后 P2 只修一批。**下一单**：A6.1-pr2（须同时清 #191）。

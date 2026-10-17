@@ -24,3 +24,4 @@
 - [工作树路径核对](20261016-worktree-paths.md) — 源文件先列真实路径，忽略资源不假定每树都有链接；共享基线按任务卡绝对路径只读。
 - [最终审计前先 rebase](20261017-gate-head-rebase.md) — main 保护要求分支最新、pr-gate 结果块绑 head；开 PR 前先 rebase 再跑最终四角色，免得重跑。
 - [收敛后的 P2 只修一批](20261017-p2-fix-cycle.md) — 两家无 P0/P1 后剩余 P2 一次修完、只做一轮确认；确认轮新 P2 走跟进，不再开下一轮。
+- [DeepSeek 空回复是思考吃光额度](20261018-deepseek-thinking.md) — finish_reason=length 空回复看 reasoning_tokens，评审默认关思考；任务书写明无工具；别把它误判成大输入不可用。
