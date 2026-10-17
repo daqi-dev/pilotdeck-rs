@@ -4,8 +4,9 @@
 # 覆盖：① 推进 → 账本 done、队列空 exit 0；② 再起一次（board 复位）→ 新 run-* 目录、前一跑 iter 原件不被覆盖；
 #       ③ 不推进 → 两行 no-progress、守卫 exit 1、第二迭代带「先处置」；④ 原样重起 → 守卫立即停、runner 不再被调用；
 #       ⑤ v1 账本已有两次未推进 → 首次 v2 启动不派发（⑤b 数字 ref 按字符串比）；⑥ 有 .git 的根拒绝锁/stop 覆盖；
-#       ⑦ board 无 updated 行 → board-unparsed；⑧ 同分钟推进记 done；⑨ runner 失败也计入、重起不派发；
-#       ⑩ 同分钟连续推进不触发守卫（落账与守卫同一判据）；⑪ 迭代超时记 timeout 并带交接提示。
+#       ⑦ 删 updated 行；⑧ 同分钟推进记 done；⑨ runner 失败也计入、重起不派发；
+#       ⑩ 同分钟连续推进不触发守卫（落账与守卫同一判据）；⑪ 迭代超时记 timeout 并带交接提示；
+#       ⑫ 超时但 board 已变不计入守卫。⑦ 删 updated 行即 board 变化，记 done 后由 next-task 格式校验停。
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -39,6 +40,7 @@ case "$1" in
   same-minute) sed -i.bak -e 's/| ready |/| human |/' "$T/root/state/board.md" ;;
   touch-only) echo "> 进展 \$(cat "$T/calls" | wc -l)" >> "$T/root/state/board.md" ;;
   hang) sleep 20 ;;
+  hang-touch) echo "> 交接 \$(cat "$T/calls" | wc -l)" >> "$T/root/state/board.md"; sleep 20 ;;
   fail) exit 1 ;;
 esac
 exit 0
@@ -52,7 +54,7 @@ calls() { [ -f "$T/calls" ] && wc -l < "$T/calls" | tr -d ' ' || echo 0; }
 run_loop() {
   set +e
   PATH="$T/bin:$PATH" PDRS_LOOP_LOCK="$T/lock" PDRS_LOOP_STOP="$T/stop" \
-    bash "$T/root/scripts/pdrs-loop.sh" --runner opencode --max-iter 5 --iter-timeout "${ITO:-30}" > "$T/out.log" 2>&1
+    bash "$T/root/scripts/pdrs-loop.sh" --runner opencode --max-iter "${MI:-5}" --iter-timeout "${ITO:-30}" > "$T/out.log" 2>&1
   rc=$?
   set -e
 }
@@ -101,9 +103,9 @@ check "⑤b ref 1 与历史 001/01 不相等：runner 被调用" '[ "$(calls)" -
 setup progress; mkdir "$T/root/.git"; run_loop
 check "⑥ 有 .git 时拒绝 PDRS_LOOP_LOCK/STOP：exit 1、runner 0 次、不建锁" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ] && [ ! -e "$T/lock" ] && grep -q "只许测试 fixture" "$T/out.log"'
 
-# ⑦ 会话删掉了 updated 行
+# ⑦ 会话删掉了 updated 行（board 也变了）：本迭代记 done，下一迭代 next-task 判格式错误、循环停
 setup wipe; run_loop
-check "⑦ updated 行丢失记 board-unparsed" '[ "$(sed -n 2p "$(ledger)" | cut -f5)" = board-unparsed ]'
+check "⑦ 删 updated 行：记 done、board_changed=1、随后因 READY 格式错停 exit 1" '[ "$(sed -n 2p "$(ledger)" | cut -f5)" = done ] && [ "$(sed -n 2p "$(ledger)" | cut -f9)" = 1 ] && [ "$rc" = 1 ]'
 
 # ⑧ 同一分钟内推进（board 变了、updated 没变）记 done
 setup same-minute; run_loop
@@ -118,11 +120,16 @@ check "⑨ 原样重起：exit 1、runner 仍 2 次、停机消息含恢复方�
 # ⑩ 同一单多迭代、每次只改 board 内容不改 updated：都记 done，守卫不误停，跑满 max-iter
 setup touch-only; run_loop
 check "⑩ 同分钟连续推进：5 行 done、exit 0（max-iter）" '[ "$rc" = 0 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^done$")" = 5 ] && [ "$(calls)" = 5 ]'
+check "⑩ 第 2–5 迭代任务书都不带「先处置」" '! grep -l "先处置" "$T"/root/_tmp/*-pdrs-loop/run-*/iter-00[2-5]/prompt.md >/dev/null 2>&1'
 
 # ⑪ 迭代超时：记 timeout，下一迭代任务书带超时交接提示，两次后守卫停
 setup hang; ITO=2 run_loop
 check "⑪ 超时：两行 timeout、守卫停 exit 1" '[ "$rc" = 1 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^timeout$")" = 2 ]'
 check "⑪ 第二迭代任务书带超时交接提示" 'grep -q "超时终止" "$T"/root/_tmp/*-pdrs-loop/run-*/iter-002/prompt.md'
+
+# ⑫ 超时但 board 已变（会话写了交接）：记 timeout、board_changed=1，不计入守卫，跑满 max-iter
+setup hang-touch; MI=3 ITO=2 run_loop
+check "⑫ 超时但已写交接：3 行 timeout、board_changed 全为 1、exit 0" '[ "$rc" = 0 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^timeout$")" = 3 ] && [ "$(tail -n +2 "$(ledger)" | cut -f9 | sort -u)" = 1 ]'
 
 check "锁已释放" '[ ! -e "$T/lock" ]'
 echo "test-pdrs-loop: $([ "$fails" = 0 ] && echo OK || echo "$fails FAIL")"

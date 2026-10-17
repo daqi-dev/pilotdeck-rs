@@ -76,11 +76,11 @@ mkdir -p "$RUN_DIR"
 mkdir "$LAUNCH_DIR"
 # v2 账本：status 以 board updated 是否变化判推进（exit 0 但 updated 未变 = no-progress），不只看退出码
 LEDGER="$RUN_DIR/ledger-v2.tsv"
-[ -f "$LEDGER" ] || printf 'iter\tstart\tref\tupdated\tstatus\texit\tupdated_after\tlaunch\n' > "$LEDGER"
+[ -f "$LEDGER" ] || printf 'iter\tstart\tref\tupdated\tstatus\texit\tupdated_after\tlaunch\tboard_changed\n' > "$LEDGER"
 
 board_sum() { cksum < "$ROOT/state/board.md" | cut -d' ' -f1; }
 board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$ROOT/state/board.md" | head -1; }
-# 所有历史账本（按日期；同日先 v1 再 v2）末尾连续几行的 (ref, updated) 等于当前、且未被 v2 记为 done = 连续未推进次数。
+# 所有历史账本（按日期；同日先 v1 再 v2）末尾连续几行的 (ref, updated) 等于当前、且该迭代 board 没变 = 连续未推进次数（error/timeout 但 board 已变也不计）。
 # 跨启动、跨日、v1→v2 都持续计数（有意为之：人不改 board 就重起，不会白得新机会）。
 stale_count() {
   local f files=()
@@ -90,7 +90,7 @@ stale_count() {
   done
   [ "${#files[@]}" -gt 0 ] || { echo 0; return; }
   for f in "${files[@]}"; do tail -n +2 "$f"; done | awk -F'\t' -v r="$1" -v u="$2" \
-    '{ if (NF >= 8 && $5 == "done") n = 0          # v2 行已确认推进（updated 或 board 内容变了）：清零，与落账同一判据
+    '{ if ($9 == "1" || (NF >= 8 && $5 == "done")) n = 0   # 已确认推进（board_changed=1，或早期 v2 行 done）：清零，与落账同一判据
        else if (("x" $3) == ("x" r) && ("x" $4) == ("x" u)) n++
        else n = 0 } END { print n + 0 }'
 }
@@ -168,14 +168,17 @@ EOF
   child=""
   set -e
   upd_after="$(board_updated)"
+  # 推进 = updated 变了或 board 内容变了（updated 只精确到分钟）；与退出码无关，守卫按这一列清零
+  changed=0
+  if [ "$upd_after" != "$upd_before" ] || [ "$(board_sum)" != "$sum_before" ]; then changed=1; fi
   case "$ec" in
-    0) if [ -z "$upd_after" ]; then status=board-unparsed
-       # updated 只精确到分钟：同分钟内的推进靠 board 内容是否变化识别
-       elif [ "$upd_after" != "$upd_before" ] || [ "$(board_sum)" != "$sum_before" ]; then status=done; else status=no-progress; fi ;;
+    0) if [ "$changed" = 1 ]; then status=done
+       elif [ -z "$upd_after" ]; then status=board-unparsed
+       else status=no-progress; fi ;;
     124|137) status=timeout ;;
     *) status=error ;;
   esac
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$iter" "$start" "$ref" "$upd_before" "$status" "$ec" "$upd_after" "${LAUNCH_DIR##*/}" >> "$LEDGER"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$iter" "$start" "$ref" "$upd_before" "$status" "$ec" "$upd_after" "${LAUNCH_DIR##*/}" "$changed" >> "$LEDGER"
   if [ "$status" = timeout ]; then
     carry="上一迭代（${ref}）在两小时交接点被超时终止。先核现场与 board 是否已写交接，缺则补写，再继续。"
   fi
