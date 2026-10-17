@@ -10,6 +10,9 @@ updated: 2026-10-17 15:24 · by 协调者(GLM)
 - #150 | coord | human | Draft 处置待人定
 <!-- READY:END -->
 
+> ## 2026-10-17 · 外层循环二跑验收（--max-iter 1）：trust 卡点已解，白名单微补
+> 二跑（15:40，opus 17 轮/$0.52）机制依旧全过（落账 done/exit0）；A6.1-pr1 仍未开工——**workspace trust 未标记**导致 allow 被忽略（opus 正确拒绝改 `~/.claude.json` 自我解锁）。协调者复核：`hasTrustDialogAccepted` 现已为 True（探针实证 settings 被读取、Write 生效），首跑 err.log 的 Ignoring 为旧记录。**磁盘 34.3/46G**（归档压缩 11.7G→2.16G tgz，零丢失校验后删源，board 旧值 43.6G 作废）。白名单补 shell 原语（echo/printf/grep/find/sort 等，复合命令逐段匹配所需）。**三跑待本 PR 合并**。READY：A6.1-pr1 保持 ready。
+
 > ## 2026-10-17 · 外层循环首跑验收（--max-iter 1，runner=claude）
 > **机制四项全过**：拉起协调会话→任务书派发→7200s 时限→ledger 落账 done/exit0→按 max-iter 自然停。**通道被权限卡死**：claude dontAsk 无项目 allow 列表，Edit/codex/cargo/git 全拒，A6.1-pr1 未开工；opus 协调者（14 轮/$0.92）正确拒绝自我扩权并留完整交接（`_tmp/20261017-pdrs-loop/iter-001/out.log`）。修复：`.claude/settings.json` 白名单（与第 14 条授权对齐）+ pdrs-loop.sh bash3.2 多字节变量 9 处花括号化。**磁盘 43.6/46G**：开 wt-a61 前须先清 _tmp（归档后删）。二跑待人确认。
 
