@@ -96,3 +96,10 @@ codex 沙箱拒绝绑定 127.0.0.1:28791，协调者按 RESULT-r2 给出的命�
 
 ### r3：rebase 后重跑并冻结（2026-10-14 上午）
 rebase 到含 A3 的 main 后，协调者在沙箱外重跑 `check_ruler.py --output _tmp/20261014-exp006-r3-live`：self_compare / distinct_ts_rounds / positive_controls / same_bad_rejected / proxy_parity 全 true，proxy_rules=[]，lock_takeovers=[]。第 3 轮双谱系评审（GLM、DeepSeek）均 independent_review=true、无 P0/P1。据此冻结 `specs/gateway-parity/FROZEN.md`（14 条，**AI 代批，待人复核**）。
+
+### r4：白名单 15 件后重采并重登记（2026-10-17，#167）
+#163 把装置白名单扩到 15 件后，r3 六轮原件因 apparatus 哈希失配被拒收，需重采。冻结件一字未改（`check_frozen` PASS）。
+- **首采失败根因**：wt-167 未在 `src/target/debug` 构建 gateway，proxy 轮 ERROR，G0/G1/G3 全是级联（`_tmp/20261017-167/investigation.md`）。
+- **A4 二进制不满足 A2 代理轮**：主仓 HEAD 44163e6 的 gateway 已本地化 10 个只读 method，`check_ruler` 按 `acceptance.md:30,43` 与 `scripts/gateway-parity/README.md:37`（A2 默认十个只读请求全部透传）判 G2.observer FAIL（`_tmp/20261017-167-resample/ruler-r4.log`）。同一份原件用规约已授权的 A4 路径 `compare.py --local-method ×10` 复核为 PASS（`diag-compare-local10.json`）。
+- **正式重采**：装置取 main 44163e6；被测 proxy 用 A1 纯透传源 896b37f（A4 首个本地化 593cbe9 的父提交，`LOCAL_METHODS` 为空）构建，二进制 sha256 `908389a1…3b968`。`check_ruler.py --output _tmp/20261017-167-resample/ruler-r4-a1`：self_compare / distinct_ts_rounds（PID 20205/20280/20340/20410/20473）/ positive_controls / prerequisite_controls / same_bad_rejected / proxy_parity 全 true，proxy_rules=[]，lock_takeovers=[]，exit 2 PENDING_REVIEW；ruler.json sha256 `7eabe9ff…59a25`。
+- 独立审查结论见 PR。A1 源的选取为 **AI 代批，待人复核**；「check_ruler 改用 A4 本地化语义」属冻结判分语义变更，未执行，卡见 `state/decisions-20261017-167-ruler.md`。
