@@ -784,3 +784,28 @@ fn real_ts_reads_rust_and_continues_store() {
     );
     println!("{}", String::from_utf8_lossy(&output.stdout));
 }
+
+#[test]
+fn put_without_string_request_id_appends_like_ts_then_reads_reject() {
+    // TS put（FileGatewayUserDialogStore.ts:93-114）不校验 requestId：写盘成功，之后读端 admission 拒绝整份记录。
+    let fixture = fixture();
+    let scratch = Scratch::new();
+    let clock = clock(&fixture);
+    let store = store(&scratch.0, &clock);
+    let key = key(&fixture);
+    let request =
+        pilotdeck_protocol::parse_json(r#"{"type":"user_dialog_request","dialogKind":"input"}"#)
+            .unwrap();
+    let dialog = StoredDialog {
+        request,
+        created_at: JsString::from("2026-10-18T00:00:00.000Z"),
+    };
+    store
+        .put(&key, &dialog)
+        .expect("TS writes without validating requestId");
+    assert!(store.record_path(&key).unwrap().exists());
+    assert!(
+        store.list(&key).is_err(),
+        "read admission rejects the stored record, as in TS"
+    );
+}
