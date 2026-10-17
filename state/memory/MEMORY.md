@@ -19,7 +19,7 @@
 
 - [资源预算与硬链接](20261016-resource-budget.md) — 清cache按最后硬链接的allocated块估算并完整du复核，保护所有非cache证据。
 
-- [对拍 Rust 二进制路径](20261017-parity-binary-path.md) — 在所跑脚本的 checkout 里构建并核 sha256；A2 校准用 A1 纯透传源、A4 用 HEAD；成片 G1 缺场景先查 run.json error（#167 首采为缺二进制级联）。
+- [对拍 Rust 二进制路径](20261017-parity-binary-path.md) — 二进制取装置树 src/target；A2 校准在 A1 纯透传源树构建、CARGO_TARGET_DIR 指进装置树，A4 用 HEAD 同树；核 sha256；成片 G1 缺场景先查 run.json error（#167 首采为缺二进制级联）。
 
 - [工作树路径核对](20261016-worktree-paths.md) — 源文件先列真实路径，忽略资源不假定每树都有链接；共享基线按任务卡绝对路径只读。
 - [最终审计前先 rebase](20261017-gate-head-rebase.md) — main 保护要求分支最新、pr-gate 结果块绑 head；开 PR 前先 rebase 再跑最终四角色，免得重跑。
