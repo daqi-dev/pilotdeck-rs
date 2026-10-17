@@ -1,8 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 18:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.1-pr1 | impl | ready | 协议 client，codex 在途：_build/wt-a61（分支 codex/a61-host-client），任务 _tmp/20261017-a61/task.md；接手先看 _tmp/20261017-a61/codex-impl.status 与 wt-a61/_tmp/20261017-a61/RESULT.md，未结束不重派；交付后提交→run-review-roles→PR（Refs #127）→两家评审
+updated: 2026-10-17 18:00 · by 协调者(Claude Code 交互·opus-5.5·/loop 收尾)
+- A6.1-pr1 | gate | ready | 代码已在分支 codex/a61-host-client@05abe8b（已推送，未开 PR）；codex 已结束（exit=0），worker 证据 _tmp/20261017-a61/worker/RESULT.md；下一步先 rebase main，再 run-review-roles，然后开 PR（Refs #127），两家非作者评审（作者是 codex）
 - #182-review | review | ready | #182 合并时零评审，补审；有 P0/P1 开修复单
 - #187 | impl | ready | B1 装置脚本硬编码绝对路径（run_round/session_domain/parity round.py，均在冻结白名单，走冻结程序）
 - loop-fix | impl | ready | pdrs-loop.sh 两处：迭代目录按启动时间命名防覆盖（三跑已覆盖前两跑原件）；ledger 以 board updated 是否变化判推进，不只看退出码
@@ -14,6 +14,11 @@ updated: 2026-10-17 18:05 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 「P0 候选」自 10-16 起无进展，待人定降级、关闭或下一步
 - 167-ruler-a4 | coord | human | check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-17 · /loop 收尾交接（本会话 /loop 结束）
+> **wt-a61 现场**：持有人是本协调会话，结束后移交下一个协调者。codex 后台进程已经结束（`_tmp/20261017-a61/codex-impl.status` = exit=0），没有在跑的进程；日志在 `_tmp/20261017-a61/codex-impl.out` 和 `.err`，worker 自证在 `_tmp/20261017-a61/worker/`（RESULT、交叉测试、负控等原始日志）。codex 在旧基线 board 末尾追加了一段，协调者已撤掉，没有提交。产物已提交并推到 `codex/a61-host-client`@05abe8b：新增 `src/pilotdeck-gateway/src/host/`（connection、execution、tests）、`examples/a6_host_probe.rs`、`scripts/a6-host/`。协调者在沙箱外补跑：`cargo test -p pilotdeck-gateway` 188 通过、0 失败、10 忽略；fmt 和 clippy -D warnings 通过；check_frozen PASS 18 项。（worker 在沙箱里报的 2 条失败是 loopback bind 被拒，沙箱外复现不了。）
+> **新会话先核 wt-a61 现场**（`git -C _build/wt-a61 status`，HEAD 应为 05abe8b，工作区干净），再决定续跑还是重派；正常情况下直接续跑：rebase main（旧 naming baseline 会让 wt 内 check-naming 报 `_tmp/rust-r1.err`，rebase 后消失）→ 合并闸门。还没有任何评审。
+> 本会话另合并了 #186（#167 关单）和 #188（chore-cleanup，#183 已关）。worktree：主仓、wt-a61、wt-handover（本 PR 合并后可清）。
 
 > ## 2026-10-17 · /loop 第三轮：chore-cleanup（用户经 pilotdeck-rs-69 会话插单），本会话 /loop 到此结束
 > board 瘦身：10-17 以前的段和 OmO 调研段原样移到 `state/board-archive-202610.md`。#183 的接手段和 READY 项（#182-review、loop-fix）并入本 PR，#183 以「已并入」关闭。新开 #187（B1 硬编码路径）；READY 新增 p2-sweep、#144-triage（human），167-ruler-a4 也列为待人批。分支清理和 _tmp 旧件已由 pilotdeck-rs-69 做完（`_tmp/20261017-noise-audit/`）。
