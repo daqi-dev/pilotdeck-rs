@@ -456,5 +456,28 @@
         }
       }
     }
+  ],
+  "readLimits": [
+    {
+      "sizeBytes": 52428800,
+      "entryCount": 0,
+      "diagnostics": [
+        {
+          "code": "transcript_line_invalid",
+          "severity": "error",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "sizeBytes": 52428801,
+      "entryCount": 0,
+      "diagnostics": [
+        {
+          "code": "transcript_too_large",
+          "severity": "error"
+        }
+      ]
+    }
   ]
 }

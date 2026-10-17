@@ -1,17 +1,19 @@
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
-import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
-const baseline = resolve(process.argv[2]);
-const output = resolve(process.argv[3]);
+assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
+assert.ok(process.argv[2], 'provide the fixture directory or Rust JSONL path');
+const baseline = resolve(process.env.PDRS_BASELINE);
+const output = resolve(process.argv[2]);
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { SessionAgentLoopOperationLedger: Ledger } = await load('src/agent/modules/transport/sessionOperationLedger.ts');
 const { JsonlTranscriptWriter: Writer } = await load('src/session/transcript/JsonlTranscriptWriter.ts');
-const { readTranscript } = await load('src/session/transcript/TranscriptReader.ts');
+const { readTranscript, DEFAULT_MAX_TRANSCRIPT_READ_BYTES } = await load('src/session/transcript/TranscriptReader.ts');
 const { SessionRuntime } = await load('src/session/events/SessionRuntime.ts');
 const { parseAgentLoopSeedStateProjection: parseSeed, serializeAgentLoopSeedStateProjection: serializeSeed } = await load('src/agent/modules/checkpoint/seedStateProjection.ts');
 const identity = { runId: 'run-1', operationId: 'op-1', requestId: 'req-1', sessionId: 'session-1', turnId: 'turn-1', binding: { moduleInstanceId: 'module-1', connectionGeneration: 'generation-1' }, idempotencyKey: 'once' };
@@ -25,7 +27,7 @@ function restore(entries: any[]) {
   const ledger = new Ledger({ sessionId: identity.sessionId, transcript: new Writer({ path: 'unused', eventStore: runtime }), restoredEntries: entries });
   return { runtime, ledger };
 }
-if (process.argv[4] === '--verify-rust') {
+if (process.argv[3] === '--verify-rust') {
   const read = await readTranscript(output);
   assert.equal(read.diagnostics.length, 0);
   const { runtime, ledger } = restore(read.entries);
@@ -99,9 +101,19 @@ try {
   const ledger = new Ledger({ sessionId: identity.sessionId, transcript: writer, restoredEntries: partialRead.entries });
   await ledger.resultUnknown(unknown); await writer.close();
   await writeFile(join(output, 'partial-continued.jsonl'), await readFile(continuationPath));
+  // Sparse files exercise the real reader's exact limit without storing 50 MiB fixtures.
+  assert.equal(DEFAULT_MAX_TRANSCRIPT_READ_BYTES, 50 * 1024 * 1024);
+  const readLimits = [];
+  for (const sizeBytes of [DEFAULT_MAX_TRANSCRIPT_READ_BYTES, DEFAULT_MAX_TRANSCRIPT_READ_BYTES + 1]) {
+    const path = join(scratch, `read-limit-${sizeBytes}.jsonl`);
+    const file = await open(path, 'wx');
+    try { await file.truncate(sizeBytes); } finally { await file.close(); }
+    const read = await readTranscript(path);
+    readLimits.push({ sizeBytes, entryCount: read.entries.length, diagnostics: read.diagnostics.map(({ code, severity, line }: any) => ({ code, severity, line })) });
+  }
   const files = ['src/agent/modules/transport/sessionOperationLedger.ts', 'src/agent/modules/transport/operationLedger.ts', 'src/session/transcript/JsonlTranscriptWriter.ts', 'src/session/transcript/TranscriptReader.ts', 'src/session/events/SessionRuntime.ts', 'src/session/events/SessionEventLogValidation.ts', 'src/session/persistence/JsonlSessionPersistence.ts', 'src/agent/modules/checkpoint/seedStateProjection.ts'];
   const sourceSha256 = Object.fromEntries(await Promise.all(files.map(async path => [path, createHash('sha256').update(await readFile(join(baseline, path))).digest('hex')])));
-  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit: execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), sourceSha256, inputs: { identity, known: { ...known, seedState: serializeSeed(known.seedState) }, unknown }, cases }, null, 2) + '\n');
-  console.log(`PASS: generated ${cases.length} real TS ledger fixtures plus partial continuation`);
+  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit: execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), sourceSha256, inputs: { identity, known: { ...known, seedState: serializeSeed(known.seedState) }, unknown }, cases, readLimits }, null, 2) + '\n');
+  console.log(`PASS: generated ${cases.length} real TS ledger fixtures plus partial continuation and ${readLimits.length} sparse read limits`);
 } finally { await rm(scratch, { recursive: true, force: true }); }
 function identityWithStream() { return { ...identity, streamId: 'stream-1' }; }
