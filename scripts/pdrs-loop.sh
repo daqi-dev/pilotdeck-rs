@@ -78,6 +78,7 @@ mkdir "$LAUNCH_DIR"
 LEDGER="$RUN_DIR/ledger-v2.tsv"
 [ -f "$LEDGER" ] || printf 'iter\tstart\tref\tupdated\tstatus\texit\tupdated_after\tlaunch\n' > "$LEDGER"
 
+board_sum() { cksum < "$ROOT/state/board.md" | cut -d' ' -f1; }
 board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$ROOT/state/board.md" | head -1; }
 # 所有历史账本（按日期；同日先 v1 再 v2）末尾连续几行的 (ref, updated) 等于当前 = 连续未推进次数。
 # 跨启动、跨日、v1→v2 都持续计数（有意为之：人不改 board 就重起，不会白得新机会）。
@@ -116,7 +117,7 @@ while :; do
   kind="$(printf '%s' "$head_line" | cut -f2)"
   summary="$(printf '%s' "$head_line" | cut -f3)"
   route="$(printf '%s' "$head_line" | cut -f4)"
-  upd_before="$(board_updated)"
+  upd_before="$(board_updated)"; sum_before="$(board_sum)"
 
   # 守卫：队首与 updated 都和此前迭代开始时相同 = 没推进。累计一次：本迭代先挂起它；两次：停，不再派发。
   stale="$(stale_count "$ref" "$upd_before")"
@@ -167,7 +168,8 @@ EOF
   upd_after="$(board_updated)"
   case "$ec" in
     0) if [ -z "$upd_after" ]; then status=board-unparsed
-       elif [ "$upd_after" != "$upd_before" ]; then status=done; else status=no-progress; fi ;;
+       # updated 只精确到分钟：同分钟内的推进靠 board 内容是否变化识别
+       elif [ "$upd_after" != "$upd_before" ] || [ "$(board_sum)" != "$sum_before" ]; then status=done; else status=no-progress; fi ;;
     124|137) status=timeout ;;
     *) status=error ;;
   esac

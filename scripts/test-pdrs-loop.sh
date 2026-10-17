@@ -3,7 +3,8 @@
 #   bash scripts/test-pdrs-loop.sh
 # 覆盖：① 推进 → 账本 done、队列空 exit 0；② 再起一次（board 复位）→ 新 run-* 目录、前一跑 iter 原件不被覆盖；
 #       ③ 不推进 → 两行 no-progress、守卫 exit 1、第二迭代带「先处置」；④ 原样重起 → 守卫立即停、runner 不再被调用；
-#       ⑤ v1 账本已有两次未推进 → 首次 v2 启动不派发；⑥ 有 .git 的根拒绝锁/stop 覆盖；⑦ board 无 updated 行 → board-unparsed。
+#       ⑤ v1 账本已有两次未推进 → 首次 v2 启动不派发（⑤b 数字 ref 按字符串比）；⑥ 有 .git 的根拒绝锁/stop 覆盖；
+#       ⑦ board 无 updated 行 → board-unparsed；⑧ 同分钟推进记 done；⑨ runner 失败也计入、重起不派发。
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -34,6 +35,8 @@ echo x >> "$T/calls"
 case "$1" in
   progress) sed -i.bak -e 's/^updated: .*/updated: 2026-10-17 11:00 · by stub/' -e 's/| ready |/| human |/' "$T/root/state/board.md" ;;
   wipe) sed -i.bak -e '/^updated: /d' -e 's/| ready |/| human |/' "$T/root/state/board.md" ;;
+  same-minute) sed -i.bak -e 's/| ready |/| human |/' "$T/root/state/board.md" ;;
+  fail) exit 1 ;;
 esac
 exit 0
 EOF
@@ -98,6 +101,16 @@ check "⑥ 有 .git 时拒绝 PDRS_LOOP_LOCK/STOP：exit 1、runner 0 次、不�
 # ⑦ 会话删掉了 updated 行
 setup wipe; run_loop
 check "⑦ updated 行丢失记 board-unparsed" '[ "$(sed -n 2p "$(ledger)" | cut -f5)" = board-unparsed ]'
+
+# ⑧ 同一分钟内推进（board 变了、updated 没变）记 done
+setup same-minute; run_loop
+check "⑧ 同分钟推进：exit 0 且记 done" '[ "$rc" = 0 ] && [ "$(sed -n 2p "$(ledger)" | cut -f5)" = done ]'
+
+# ⑨ runner 失败（exit 1）也计入未推进：两次 error 后守卫停，原样重起不再派发
+setup fail; run_loop
+check "⑨ 两行 error、守卫停 exit 1、runner 2 次" '[ "$rc" = 1 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^error$")" = 2 ] && [ "$(calls)" = 2 ]'
+run_loop
+check "⑨ 原样重起：exit 1、runner 仍 2 次、停机消息含恢复方法" '[ "$rc" = 1 ] && [ "$(calls)" = 2 ] && grep -q "恢复" "$T/out.log"'
 
 check "锁已释放" '[ ! -e "$T/lock" ]'
 echo "test-pdrs-loop: $([ "$fails" = 0 ] && echo OK || echo "$fails FAIL")"
