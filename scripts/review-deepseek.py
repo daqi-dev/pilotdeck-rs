@@ -154,6 +154,7 @@ def build_body(a: argparse.Namespace) -> bytes:
         "messages": [{"role": "user", "content": "".join(parts)}],
         "stream": False,
         **({"max_tokens": a.max_tokens} if a.max_tokens is not None else {}),
+        "thinking": {"type": a.thinking},
     }, ensure_ascii=False).encode()
 
 
@@ -217,7 +218,10 @@ def extract_text(resp: dict) -> str:
     msg = choice.get("message")
     text = msg.get("content") if isinstance(msg, dict) else None
     if not isinstance(text, str) or not text.strip():
-        raise Fail(1, f"空回复（finish_reason={choice.get('finish_reason')}）")
+        usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
+        details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
+        raise Fail(1, f"空回复（finish_reason={choice.get('finish_reason')}，completion_tokens={usage.get('completion_tokens')}，"
+                      f"其中 reasoning_tokens={details.get('reasoning_tokens')}；思考耗尽输出额度时用 --thinking disabled）")
     if choice.get("finish_reason") not in (None, "stop"):
         raise Fail(1, f"回复未完成（finish_reason={choice.get('finish_reason')}），不当作评审结论")
     return text
@@ -283,6 +287,9 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="允许覆盖已存在的 --out")
     ap.add_argument("--model", default="deepseek-flash")
     ap.add_argument("--max-tokens", type=int, help="输出上限；不给就用 API 默认值（截断时按失败退出）")
+    ap.add_argument("--thinking", choices=["disabled", "enabled"], default="disabled",
+                    help="默认 disabled：2026-10-17 实测 37K token 输入的评审，开思考时 16K/65K 输出额度全被 reasoning 吃光、正文为空"
+                         "（_tmp/20261017-deepseek-diag/），关思考 19 s 给出完整结论")
     ap.add_argument("--timeout", type=int, default=1800, help="整个请求的墙钟总时限（也是单次 socket 超时），秒")
     ap.add_argument("--api", default=API, help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()
