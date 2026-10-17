@@ -16,7 +16,7 @@ import time
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, baseline_path, digest, environment,
+from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, baseline_path, digest, environment,
                     env_summary, fixture, hashes, output_path, parity_lock, save, snapshot)
 from compare import compare
 from policy import sandbox_profile
@@ -131,7 +131,10 @@ def stop_group(proc):
     """进程组清理期间屏蔽 SIGINT/SIGTERM/SIGALRM：清理被打断会让锁在后代存活时被释放（gate-zai concurrency P1）。"""
     held = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM)}
     try:
-        return _stop_group(proc)
+        audit = _stop_group(proc)
+        if audit['allStopped']:
+            LIVE_GROUPS.discard(proc.pid)
+        return audit
     finally:
         for sig, handler in held.items():
             signal.signal(sig, handler)
@@ -172,6 +175,7 @@ def capture(argv, env, cwd, stdin, timeout):
     started = time.monotonic()
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, start_new_session=True, umask=0o077)
+    LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
     record['pid'] = proc.pid
     selector = selectors.DefaultSelector()
     try:
@@ -234,6 +238,7 @@ def preflight(output, runtime, profile, node):
                             cwd=runtime / 'project', env=environment(runtime, SCENARIOS[0]),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True, umask=0o077)
+    LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
     stdout, stderr = b'', b''
     try:
         stdout, stderr = proc.communicate(b'', timeout=10)

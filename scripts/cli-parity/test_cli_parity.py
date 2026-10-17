@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, baseline_path, environment, env_summary, fixture,
+from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, baseline_path, environment, env_summary, fixture,
                     hashes, initial_tree, output_path, parity_lock, save, snapshot)
 from compare import coalesce, compare, comparison_view, PROBE_CHECKS
 from controls import run_controls
@@ -572,23 +572,47 @@ class ContractTests(unittest.TestCase):
         lock = self.root / 'lock'
         with self.assertRaises(CleanupBlocked):
             with parity_lock(lock):
+                LIVE_GROUPS.add(999_999_001)  # 一个未被证实停止的进程组
                 raise CleanupBlocked('synthetic failure')
+        LIVE_GROUPS.discard(999_999_001)
         self.assertTrue((lock / 'owner.json').is_file())
 
-    def test_interrupt_or_unknown_error_retains_owned_lock(self):
-        for error in (KeyboardInterrupt(), SystemExit(3), LookupError('unknown')):
-            lock = self.root / f'lock-{type(error).__name__}'
+    def test_lock_retained_whenever_a_group_is_unverified_regardless_of_exception(self):
+        # 释放与否只看 LIVE_GROUPS，不看异常类型：OSError 发生在清理之前也必须保留
+        for error in (KeyboardInterrupt(), SystemExit(3), LookupError('unknown'), PermissionError('before cleanup'), Blocked('x')):
+            lock = self.root / f'lock-live-{type(error).__name__}'
+            with self.assertRaises(type(error)):
+                with parity_lock(lock):
+                    LIVE_GROUPS.add(999_999_002)
+                    raise error
+            LIVE_GROUPS.discard(999_999_002)
+            self.assertTrue((lock / 'owner.json').is_file(), type(error).__name__)
+
+    def test_lock_released_when_all_groups_verified_even_on_interrupt(self):
+        for error in (KeyboardInterrupt(), Blocked('controlled'), OSError('io')):
+            lock = self.root / f'lock-clean-{type(error).__name__}'
             with self.assertRaises(type(error)):
                 with parity_lock(lock):
                     raise error
-            self.assertTrue((lock / 'owner.json').is_file(), type(error).__name__)
+            self.assertFalse(lock.exists(), type(error).__name__)
 
-    def test_known_failure_releases_lock(self):
-        lock = self.root / 'lock-known'
-        with self.assertRaises(Blocked):
-            with parity_lock(lock):
-                raise Blocked('controlled failure after cleanup')
-        self.assertFalse(lock.exists())
+    def test_stop_group_unregisters_only_when_all_stopped(self):
+        import run_round
+        proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+        LIVE_GROUPS.add(proc.pid)
+        original = run_round._stop_group
+        try:
+            run_round._stop_group = lambda p: {'allStopped': False, 'remaining': [p.pid], 'errors': ['synthetic EPERM']}
+            run_round.stop_group(proc)
+            self.assertIn(proc.pid, LIVE_GROUPS)
+            run_round._stop_group = original
+            self.assertTrue(run_round.stop_group(proc)['allStopped'])
+            self.assertNotIn(proc.pid, LIVE_GROUPS)
+        finally:
+            run_round._stop_group = original
+            LIVE_GROUPS.discard(proc.pid)
+            if proc.poll() is None:
+                proc.kill()
 
     def test_stop_group_ignores_interrupts_while_cleaning(self):
         import run_round
