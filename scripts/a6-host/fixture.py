@@ -6,7 +6,12 @@ import time
 from pathlib import Path
 
 mode = sys.argv[1]
-receipt = Path(sys.argv[2])
+receipt = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+
+
+def write_receipt():
+    if receipt is not None:
+        receipt.write_text('PASS ' + mode + '\n')
 
 
 def read():
@@ -49,6 +54,9 @@ if mode == 'no-ack':
 if mode == 'no-streaming':
     methods[0]['profiles'] = ['unary']
 send(response(capabilities, **binding, payload=dict(capabilitiesVersion='v1', methods=methods)))
+if mode == 'close-hang':
+    # Dedicated kill-path test: ignore stdin EOF and never produce a receipt.
+    time.sleep(60)
 execute = read()
 assert execute['method'] == 'execute'
 ids = {key: execute[key] for key in ('runId', 'operationId', 'requestId')}
@@ -67,7 +75,7 @@ def event(sequence=0, final=False, **changes):
 
 if mode == 'rejected':
     send(dict(response(execute, requestId=execute['requestId']), ok=False, final=True, outcome='failed', code='DEADLINE_EXCEEDED'))
-    receipt.write_text('PASS rejected\n')
+    write_receipt()
     sys.exit(0)
 if mode == 'before-accepted':
     send(event())
@@ -89,11 +97,21 @@ elif mode == 'unknown':
     send(event(final=True, outcome='result_unknown'))
 elif mode == 'bad-terminal':
     send(event(final=True, payload=dict(messages=[], result=dict(type='error', sessionId=execute['sessionId'], turnId=execute['turnId'], stopReason='error', turns=1))))
-elif mode in ('duplicate-conflict', 'duplicate-same', 'callback-progress', 'callback-disconnect', 'callback-timeout', 'wrong-call', 'wrong-call-conflict'):
+elif mode in ('cancelled', 'failed-error', 'failed-max-turns', 'cancelled-success'):
+    outcome, result_type = {
+        'cancelled': ('cancelled', 'aborted'),
+        'failed-error': ('failed', 'error'),
+        'failed-max-turns': ('failed', 'max_turns'),
+        'cancelled-success': ('cancelled', 'success'),
+    }[mode]
+    terminal = event(final=True, outcome=outcome)
+    terminal['payload']['result']['type'] = result_type
+    send(terminal)
+elif mode in ('duplicate-conflict', 'duplicate-same', 'callback-progress', 'callback-disconnect', 'callback-timeout', 'wrong-call', 'wrong-call-replay', 'wrong-call-conflict'):
     call = dict(kind='request', messageId='call-1', method='module_call', module='model',
                 runId=execute['runId'], operationId=execute['operationId'], requestId='callback-request',
                 payload=dict(operation='stream'))
-    if mode in ('wrong-call', 'wrong-call-conflict'):
+    if mode in ('wrong-call', 'wrong-call-replay', 'wrong-call-conflict'):
         call['runId'] = 'foreign'
     send(call)
     if mode == 'duplicate-conflict':
@@ -117,13 +135,21 @@ elif mode in ('duplicate-conflict', 'duplicate-same', 'callback-progress', 'call
                 acked = True
             else:
                 assert reply['inReplyTo'] == 'call-1' and reply['requestId'] == 'callback-request'
-                assert reply['ok'] == (mode not in ('wrong-call', 'wrong-call-conflict'))
+                assert reply['ok'] == (mode not in ('wrong-call', 'wrong-call-replay', 'wrong-call-conflict'))
                 replies -= 1
+        if mode == 'wrong-call-replay':
+            # TS client:1120-1121 revalidates identity before the cache: an
+            # identical wrong-identity replay fails closed, not replayed.
+            assert reply['code'] == 'HOST_MODULE_FAILED'
+            assert 'identity does not match' in reply['error']['message']
+            send(call)
+            sys.stdin.read()
+            sys.exit(0)
         if mode == 'wrong-call-conflict':
             send(dict(call, runId=execute['runId']))
         else:
             send(event(sequence=1 if mode == 'callback-progress' else 0, final=True))
-elif mode in ('positive', 'no-ack', 'cleanup-hang', 'stderr-flood', 'slow-event'):
+elif mode in ('positive', 'no-ack', 'cleanup-hang', 'stderr-flood', 'slow-event', 'ack-failure', 'unknown-response', 'turn-completed'):
     if mode == 'stderr-flood':
         sys.stderr.write('x' * (512 * 1024))
         sys.stderr.flush()
@@ -131,10 +157,23 @@ elif mode in ('positive', 'no-ack', 'cleanup-hang', 'stderr-flood', 'slow-event'
     if mode != 'no-ack':
         ack = read()
         assert ack['method'] == 'ack' and ack['streamId'] == 'stream' and ack['lastAppliedSequence'] == 0
-    send(event(sequence=1, final=True))
+        if mode in ('ack-failure', 'unknown-response'):
+            reply = dict(response(ack), ok=False, code='ACK_REJECTED')
+            if mode == 'unknown-response':
+                reply['inReplyTo'] = 'unrecognized-request'
+            send(reply)
+    final_sequence = 1
+    if mode == 'turn-completed':
+        send(event(sequence=1, payload=dict(type='turn_completed', sessionId=execute['sessionId'], turnId=execute['turnId'])))
+        send(event(sequence=2))
+        ack = read()
+        # An ACK for suppressed sequence 1 must fail before the final is sent.
+        assert ack['method'] == 'ack' and ack['streamId'] == 'stream' and ack['lastAppliedSequence'] == 2
+        final_sequence = 3
+    send(event(sequence=final_sequence, final=True))
 # Test parent requires this receipt; a terminal followed by exit=1 is not PASS.
 for line in sys.stdin:
     raise RuntimeError('unexpected trailing host frame: ' + line)
-receipt.write_text('PASS ' + mode + '\n')
+write_receipt()
 if mode == 'cleanup-hang':
     time.sleep(60)

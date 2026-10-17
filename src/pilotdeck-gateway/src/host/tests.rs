@@ -6,6 +6,7 @@ use tokio::{sync::Notify, time::Instant};
 struct Handler {
     calls: AtomicUsize,
     events: AtomicUsize,
+    turn_completed_events: AtomicUsize,
     release: Arc<Notify>,
     wait_for_event: bool,
     never_complete: bool,
@@ -18,6 +19,7 @@ impl Handler {
             calls: AtomicUsize::new(0),
             active_calls: Arc::new(AtomicUsize::new(0)),
             events: AtomicUsize::new(0),
+            turn_completed_events: AtomicUsize::new(0),
             release: Arc::new(Notify::new()),
             wait_for_event: mode == "callback-progress",
             never_complete: matches!(
@@ -46,8 +48,14 @@ impl HostHandler for Handler {
             Ok(JsObject::new())
         })
     }
-    fn event(&self, _event: JsValue) -> HostFuture<()> {
+    fn event(&self, event: JsValue) -> HostFuture<()> {
         self.events.fetch_add(1, Ordering::SeqCst);
+        if text_is(
+            event.get("payload").and_then(|payload| payload.get("type")),
+            "turn_completed",
+        ) {
+            self.turn_completed_events.fetch_add(1, Ordering::SeqCst);
+        }
         self.release.notify_one();
         let slow = self.slow_event;
         Box::pin(async move {
@@ -69,17 +77,29 @@ fn limits() -> Limits {
     Limits {
         handshake_timeout: Duration::from_secs(2),
         execution_timeout: Duration::from_secs(2),
-        close_timeout: Duration::from_millis(50),
+        close_timeout: Duration::from_secs(1),
         ..Limits::default()
     }
 }
-fn peer(mode: &str) -> (Command, std::path::PathBuf) {
+struct Receipt(std::path::PathBuf);
+impl Receipt {
+    fn assert_pass(&self, mode: &str) {
+        assert_eq!(
+            std::fs::read_to_string(&self.0).unwrap(),
+            format!("PASS {mode}\n"),
+            "peer protocol assertions did not finish"
+        );
+    }
+}
+impl Drop for Receipt {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.0.parent().unwrap());
+    }
+}
+fn peer(mode: &str) -> (Command, Receipt) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../_tmp/20261017-a61/test-receipts");
-    std::fs::create_dir_all(&dir).unwrap();
-    let owned = dir.join(format!(
-        "{}-{}-{}",
+    let owned = std::env::temp_dir().join(format!(
+        "pilotdeck-host-{}-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed),
         std::time::SystemTime::now()
@@ -89,7 +109,12 @@ fn peer(mode: &str) -> (Command, std::path::PathBuf) {
     ));
     // Exclusive directory: PID reuse can never turn an old PASS into evidence.
     std::fs::create_dir(&owned).unwrap();
-    let receipt = owned.join(format!("{mode}.txt"));
+    let receipt = Receipt(owned.join(format!("{mode}.txt")));
+    let mut command = command(mode);
+    command.arg(&receipt.0);
+    (command, receipt)
+}
+fn command(mode: &str) -> Command {
     let mut command = Command::new("python3");
     command
         .arg(concat!(
@@ -97,11 +122,7 @@ fn peer(mode: &str) -> (Command, std::path::PathBuf) {
             "/../../scripts/a6-host/fixture.py"
         ))
         .arg(mode);
-    command.arg(&receipt);
-    (command, receipt)
-}
-fn command(mode: &str) -> Command {
-    peer(mode).0
+    command
 }
 fn request() -> ExecuteRequest {
     ExecuteRequest {
@@ -122,11 +143,7 @@ async fn run(mode: &str) -> Result<ExecuteResult, HostError> {
     let client = HostClient::spawn(&mut command, Some(&"fixture".into()), limits()).await?;
     let result = client.execute(request(), Handler::new(mode)).await;
     if result.is_ok() {
-        assert_eq!(
-            std::fs::read_to_string(receipt).unwrap(),
-            format!("PASS {mode}\n"),
-            "peer protocol assertions did not finish"
-        );
+        receipt.assert_pass(mode);
     }
     result
 }
@@ -153,6 +170,63 @@ async fn handshake_execute_ack_and_terminal() {
         );
         println!("HOST_PASS {mode}");
     }
+}
+#[tokio::test]
+async fn ack_failures_and_unknown_replies_follow_ts_ignore_behavior() {
+    for mode in ["ack-failure", "unknown-response"] {
+        let handler = Handler::new(mode);
+        let (mut command, receipt) = peer(mode);
+        let client = HostClient::spawn(&mut command, None, limits())
+            .await
+            .unwrap();
+        let result = client.execute(request(), handler.clone()).await.unwrap();
+        assert!(matches!(result, ExecuteResult::Terminal(_)), "{mode}");
+        receipt.assert_pass(mode);
+        assert_eq!(handler.events.load(Ordering::SeqCst), 2, "{mode}");
+        println!("HOST_PASS {mode}");
+    }
+}
+#[tokio::test]
+async fn cancelled_and_failed_terminal_results_are_accepted() {
+    for (mode, outcome, result_type) in [
+        ("cancelled", "cancelled", "aborted"),
+        ("failed-error", "failed", "error"),
+        ("failed-max-turns", "failed", "max_turns"),
+    ] {
+        let ExecuteResult::Terminal(event) = run(mode).await.unwrap() else {
+            panic!("expected terminal: {mode}");
+        };
+        assert!(text_is(event.get("outcome"), outcome), "{mode}");
+        assert!(
+            text_is(
+                event
+                    .get("payload")
+                    .unwrap()
+                    .get("result")
+                    .unwrap()
+                    .get("type"),
+                result_type
+            ),
+            "{mode}"
+        );
+        println!("HOST_PASS {mode}");
+    }
+}
+#[tokio::test]
+async fn turn_completed_projection_is_neither_applied_nor_acked() {
+    let mode = "turn-completed";
+    let handler = Handler::new(mode);
+    let (mut command, receipt) = peer(mode);
+    let client = HostClient::spawn(&mut command, None, limits())
+        .await
+        .unwrap();
+    let result = client.execute(request(), handler.clone()).await.unwrap();
+    assert!(matches!(result, ExecuteResult::Terminal(_)));
+    receipt.assert_pass(mode);
+    // Two text_delta events plus the authoritative final; sequence 1 is suppressed.
+    assert_eq!(handler.events.load(Ordering::SeqCst), 3);
+    assert_eq!(handler.turn_completed_events.load(Ordering::SeqCst), 0);
+    println!("HOST_PASS {mode}; applied=3; peer checked ACKs 0,2 only");
 }
 #[tokio::test]
 async fn four_required_negative_controls() {
@@ -191,11 +265,13 @@ async fn invalid_frames_sequences_and_terminal_never_succeed() {
         ("before-accepted", "before acceptance"),
         ("bad-session", "active session"),
         ("wrong-call-conflict", "conflicting immutable identity"),
+        ("wrong-call-replay", "conflicting immutable identity"),
         (
             "event-generation",
             "Connection binding belongs to transport context",
         ),
         ("bad-terminal", "outcome conflicts"),
+        ("cancelled-success", "outcome conflicts"),
         ("unknown", "reconciliation is required"),
         ("no-streaming", "streaming execute"),
         ("malformed", "Malformed NDJSON"),
@@ -217,10 +293,7 @@ async fn callbacks_do_not_block_input_or_run_twice() {
             .execute(request(), handler.clone())
             .await
             .unwrap_or_else(|e| panic!("{mode}: {e}"));
-        assert_eq!(
-            std::fs::read_to_string(receipt).unwrap(),
-            format!("PASS {mode}\n")
-        );
+        receipt.assert_pass(mode);
         assert_eq!(
             handler.calls.load(Ordering::SeqCst),
             usize::from(mode != "wrong-call")
@@ -323,4 +396,19 @@ async fn explicit_close_reaps_child() {
     client.close().await.unwrap();
     assert_reaped(pid).await;
     println!("HOST_PASS close reaped pid={pid}");
+}
+#[tokio::test]
+async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
+    let mut bounded = limits();
+    bounded.close_timeout = Duration::from_millis(50);
+    let client = HostClient::spawn(&mut command("close-hang"), None, bounded)
+        .await
+        .unwrap();
+    let pid = client.child_id().unwrap();
+    timeout(Duration::from_secs(1), client.close())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_reaped(pid).await;
+    println!("HOST_PASS close timeout killed and reaped pid={pid}");
 }
