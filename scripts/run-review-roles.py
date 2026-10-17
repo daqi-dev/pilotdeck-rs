@@ -268,14 +268,15 @@ def main() -> int:
         shutil.copyfile(a.diff_file, diff_path)
         head = "（外部 diff 文件）"
     else:
+        # diff 里可能有故意的非 UTF-8 字节（如测试夹具），按替换字符解码，不让评审在读 diff 时崩溃
         cp = subprocess.run(["git", "-C", str(wt), "diff", f"{a.base}...HEAD", "--", *a.paths],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if cp.returncode != 0:
             print(f"run-review-roles: git diff 失败：{cp.stderr.strip()}", file=sys.stderr)
             return 2
         diff_path.write_text(cp.stdout, encoding="utf-8")
         head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    diff_lines = diff_path.read_text(encoding="utf-8").count("\n")
+    diff_lines = diff_path.read_text(encoding="utf-8", errors="replace").count("\n")
     if diff_lines == 0:
         print("run-review-roles: 空 diff，无可审内容", file=sys.stderr)
         return 2
