@@ -1,0 +1,460 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/modules/transport/sessionOperationLedger.ts": "b6d8339b2de2eb2f36c147c02b226c15b35159dbbe34918cf9ea3fb33778fcc5",
+    "src/agent/modules/transport/operationLedger.ts": "73d40b9ea73e2440b2a98e805d5b68cd68da8d49bbc9575ee43051a70293de68",
+    "src/session/transcript/JsonlTranscriptWriter.ts": "28cd4788ff4465be4594edf7fb59762299362ac867ef9a50c24732ab212a4678",
+    "src/session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead",
+    "src/session/events/SessionRuntime.ts": "b7fa7a9a6e7395dc29464a2c2f539a3c1b17ac13fd71a3b243ba93c78fc316ec",
+    "src/session/events/SessionEventLogValidation.ts": "56712300dae1794cc59814c425cf4291cc88109a7af4590ae41218ef84216ca4",
+    "src/session/persistence/JsonlSessionPersistence.ts": "721c720f36f0fb0f2b6bd77bd2490d181182dfa909c3bd85e80d2ca3df643124",
+    "src/agent/modules/checkpoint/seedStateProjection.ts": "b52bcf6fb2a9a61c4a0e215c379ad12ad8fdcc973d8f79ee26c97459e65cdb45"
+  },
+  "inputs": {
+    "identity": {
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "req-1",
+      "sessionId": "session-1",
+      "turnId": "turn-1",
+      "binding": {
+        "moduleInstanceId": "module-1",
+        "connectionGeneration": "generation-1"
+      },
+      "idempotencyKey": "once"
+    },
+    "known": {
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "req-1",
+      "sessionId": "session-1",
+      "turnId": "turn-1",
+      "binding": {
+        "moduleInstanceId": "module-1",
+        "connectionGeneration": "generation-1"
+      },
+      "idempotencyKey": "once",
+      "streamId": "stream-1",
+      "lastAppliedSequence": 4,
+      "outcome": "completed",
+      "result": {
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "status": "completed",
+        "text": "中文\ud800",
+        "nested": {
+          "z": 0,
+          "a": 1
+        }
+      },
+      "messages": [],
+      "seedState": {
+        "allowedReadFiles": [
+          "a",
+          "a"
+        ],
+        "readFileState": {
+          "a": {
+            "mtimeMs": 1.25,
+            "kind": "text",
+            "offset": 0,
+            "pages": "1"
+          }
+        },
+        "writeSnapshots": {
+          "a": {
+            "absolutePath": "/offline/a",
+            "mtimeMs": 2,
+            "contentHash": "abc",
+            "limit": 10
+          }
+        }
+      },
+      "code": "OK",
+      "error": null
+    },
+    "unknown": {
+      "runId": "run-1",
+      "operationId": "op-1",
+      "requestId": "req-1",
+      "sessionId": "session-1",
+      "turnId": "turn-1",
+      "binding": {
+        "moduleInstanceId": "module-1",
+        "connectionGeneration": "generation-1"
+      },
+      "idempotencyKey": "once",
+      "streamId": "stream-1",
+      "lastAppliedSequence": 2,
+      "code": "DISCONNECTED",
+      "error": {
+        "message": "lost"
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "normal",
+      "file": "normal.jsonl",
+      "diagnostics": [],
+      "state": {
+        "sequence": 3,
+        "lastEntryId": "ts-entry-3"
+      },
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown",
+      "file": "unknown.jsonl",
+      "diagnostics": [],
+      "state": {
+        "sequence": 3,
+        "lastEntryId": "ts-entry-3"
+      },
+      "recovery": {
+        "state": "result_unknown",
+        "unknown": {
+          "runId": "run-1",
+          "operationId": "op-1",
+          "requestId": "req-1",
+          "sessionId": "session-1",
+          "turnId": "turn-1",
+          "binding": {
+            "moduleInstanceId": "module-1",
+            "connectionGeneration": "generation-1"
+          },
+          "idempotencyKey": "once",
+          "streamId": "stream-1",
+          "lastAppliedSequence": 2,
+          "code": "DISCONNECTED",
+          "error": {
+            "message": "lost"
+          }
+        }
+      }
+    },
+    {
+      "name": "incomplete",
+      "file": "incomplete.jsonl",
+      "diagnostics": [],
+      "state": {
+        "sequence": 2,
+        "lastEntryId": "ts-entry-2"
+      },
+      "recovery": {
+        "state": "incomplete"
+      }
+    },
+    {
+      "name": "bad-tail",
+      "file": "bad-tail.jsonl",
+      "diagnostics": [
+        {
+          "code": "transcript_line_invalid",
+          "severity": "error",
+          "line": 4
+        },
+        {
+          "code": "transcript_entry_invalid",
+          "severity": "error",
+          "line": 5
+        }
+      ],
+      "state": {
+        "sequence": 3,
+        "lastEntryId": "ts-entry-3"
+      },
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "partial",
+      "file": "partial.jsonl",
+      "diagnostics": [
+        {
+          "code": "transcript_line_invalid",
+          "severity": "error",
+          "line": 3
+        }
+      ],
+      "state": {
+        "sequence": 2,
+        "lastEntryId": "ts-entry-2"
+      },
+      "recovery": {
+        "state": "incomplete"
+      }
+    },
+    {
+      "name": "legacy",
+      "file": "legacy.jsonl",
+      "diagnostics": [],
+      "state": {
+        "sequence": 9,
+        "lastEntryId": null
+      },
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "bad-middle",
+      "file": "bad-middle.jsonl",
+      "diagnostics": [
+        {
+          "code": "transcript_line_invalid",
+          "severity": "error",
+          "line": 2
+        }
+      ],
+      "state": {
+        "sequence": 3,
+        "lastEntryId": "ts-entry-3"
+      },
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "allowedReadFiles": [
+              "a",
+              "a"
+            ],
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1.25,
+                "kind": "text",
+                "offset": 0,
+                "pages": "1"
+              }
+            },
+            "writeSnapshots": {
+              "a": {
+                "absolutePath": "/offline/a",
+                "mtimeMs": 2,
+                "contentHash": "abc",
+                "limit": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "known-then-unknown",
+      "file": "known-then-unknown.jsonl",
+      "diagnostics": [],
+      "state": {
+        "sequence": 4,
+        "lastEntryId": "ts-entry-4"
+      },
+      "recovery": {
+        "state": "result_unknown",
+        "unknown": {
+          "runId": "run-1",
+          "operationId": "op-1",
+          "requestId": "req-1",
+          "sessionId": "session-1",
+          "turnId": "turn-1",
+          "binding": {
+            "moduleInstanceId": "module-1",
+            "connectionGeneration": "generation-1"
+          },
+          "idempotencyKey": "once",
+          "streamId": "stream-1",
+          "lastAppliedSequence": 2,
+          "code": "DISCONNECTED",
+          "error": {
+            "message": "lost"
+          }
+        }
+      }
+    },
+    {
+      "name": "seed-order",
+      "file": "seed-order.jsonl",
+      "diagnostics": [],
+      "state": {
+        "sequence": 3,
+        "lastEntryId": "ts-entry-3"
+      },
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "unknown-nonfinite",
+      "file": "unknown-nonfinite.jsonl",
+      "diagnostics": [],
+      "state": {
+        "sequence": 3,
+        "lastEntryId": "ts-entry-3"
+      },
+      "recovery": {
+        "state": "result_unknown",
+        "unknown": {
+          "runId": "run-1",
+          "operationId": "op-1",
+          "requestId": "req-1",
+          "sessionId": "session-1",
+          "turnId": "turn-1",
+          "binding": {
+            "moduleInstanceId": "module-1",
+            "connectionGeneration": "generation-1"
+          },
+          "idempotencyKey": "once",
+          "streamId": "stream-1",
+          "lastAppliedSequence": null,
+          "code": "DISCONNECTED",
+          "error": {
+            "message": "lost"
+          }
+        }
+      }
+    }
+  ]
+}
