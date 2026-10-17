@@ -56,3 +56,11 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 
 ## 断言
 每个 human 档的 READY 条目都标明「人定暂缓（10-17）」和对应的阻塞节点；协调者在大步骤收尾自查时核对，涉及的节点不得在未提给人之前标完成。
+
+## 卡 · Claude 作者的 PR 怎么过第 2/3 步（#185，自决 · 待复核，AI 代批）
+- **卡在哪**：`run-review-roles.py` 只有 `claude -p` 执行器，而 #185 作者是 Claude Code；合并闸门要求 simplify 与 pr-ready 由非作者模型做。
+- **谁受影响**：所有 Claude 作者的 PR；不动尺子与意向。**能否撤回**：能。
+- **选项**：A 照跑 run-review-roles 只为 pr-gate 结果块，不计独立；三角色+四视角并进 codex 与 GLM 两家的评审任务书；B 用 waiver 跳过（不对，有代码）；C 先给 run-review-roles 加非 Claude 执行器再审（拖队列）。
+- **建议 / 执行**：A。PR 描述注明结果块是同谱系、不计独立评审。
+- **原则**：同谱系跑出的审计只算「做了」，不算「独立审过」；独立性由两家非作者评审承担，任务书须覆盖被替代的角色。
+- **断言**：Claude 作者 PR 的两家非作者评审任务书里必须出现 sibling/concurrency/boundary 与四视角字样（任务书：`_tmp/20261017-issue-185/review.md`）。
