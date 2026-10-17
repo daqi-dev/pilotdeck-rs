@@ -39,8 +39,10 @@ class Fake(http.server.BaseHTTPRequestHandler):
                         time.sleep(0.2)
                 else:
                     self.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
-                    for _ in range(40):
-                        self.wfile.write(b"1\r\n \r\n")
+                    if Fake.raw_mode == "trailer":  # 正文一次给完，慢滴的是结尾 trailer 行
+                        self.wfile.write(b"2\r\n{}\r\n0\r\n")
+                    for i in range(40):
+                        self.wfile.write(f"X-T{i}: 1\r\n".encode() if Fake.raw_mode == "trailer" else b"1\r\n \r\n")
                         self.wfile.flush()
                         time.sleep(0.2)
             except (BrokenPipeError, ConnectionResetError):
@@ -209,7 +211,7 @@ def main() -> int:
     elapsed_err = time.monotonic() - started
     Fake.drip = 0.0
     times = []
-    for mode in ("headers", "chunked"):
+    for mode in ("headers", "chunked", "trailer"):
         Fake.raw_mode = mode
         started = time.monotonic()
         case(f"慢滴{mode}超总时限", (200, b""), 1, "--timeout", "1", expect_msg="总时限")
@@ -221,6 +223,8 @@ def main() -> int:
     case("--max-tokens 透传", (200, ok_body("x")), 0, "--max-tokens", "8192")
     ok = json.loads(Fake.last_body).get("max_tokens") == 8192
     case("不给 --max-tokens 不发该字段", (200, ok_body("x")), 0)
+    for bad in ("0", "-1"):
+        case(f"--max-tokens {bad} 拒绝", (200, ok_body("x")), 2, "--max-tokens", bad, expect_msg="正整数")
     ok = ok and "max_tokens" not in json.loads(Fake.last_body)
     print(f"{'PASS' if ok else 'FAIL'} max_tokens 请求体")
     fails += not ok
