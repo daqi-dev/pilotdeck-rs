@@ -1,11 +1,26 @@
 #!/usr/bin/env python3
 """Adversarial stdio peer for host unit tests; NOT the real TS cross-test."""
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 mode = sys.argv[1]
+known_modes = {
+    'positive', 'slow-event', 'no-ack', 'stderr-flood', 'rejected', 'cleanup-hang',
+    'ack-failure', 'unknown-response', 'turn-completed', 'terminal-then-exit',
+    'cancelled', 'failed-error', 'failed-max-turns', 'cancelled-success',
+    'identity', 'duplicate-conflict', 'stale-generation', 'disconnect',
+    'sequence', 'before-accepted', 'bad-session', 'wrong-call-conflict',
+    'wrong-call-replay', 'event-generation', 'bad-terminal', 'unknown',
+    'no-streaming', 'malformed', 'duplicate-same', 'callback-progress',
+    'wrong-call', 'callback-disconnect', 'callback-timeout', 'handshake-hang',
+    'oversized', 'close-hang', 'execute-request-mismatch',
+    'hello-rejected', 'capabilities-rejected',
+}
+if mode not in known_modes:
+    sys.exit('unknown fixture mode: ' + mode)
 receipt = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 
 
@@ -42,9 +57,15 @@ if mode == 'oversized':
     time.sleep(60)
 binding = dict(protocolVersion='2.0', moduleId='fixture', moduleInstanceId='instance',
                connectionGeneration='current', capabilitiesVersion='v1')
+if mode == 'hello-rejected':
+    send(dict(response(hello, **binding), ok=False))
+    sys.exit(0)
 send(response(hello, **binding))
 capabilities = read()
 assert capabilities['method'] == 'capabilities'
+if mode == 'capabilities-rejected':
+    send(dict(response(capabilities, **binding), ok=False))
+    sys.exit(0)
 if mode == 'stale-generation':
     binding['connectionGeneration'] = 'old'
 methods = [dict(name='execute', profiles=['streaming'], resumeSupport='streaming'),
@@ -80,7 +101,15 @@ if mode == 'rejected':
 if mode == 'before-accepted':
     send(event())
 else:
-    send(response(execute, requestId=execute['requestId'], streamId='stream'))
+    request_id = 'foreign' if mode == 'execute-request-mismatch' else execute['requestId']
+    send(response(execute, requestId=request_id, streamId='stream'))
+if mode == 'terminal-then-exit':
+    # Close first so an ACK cannot win a race against process exit and mask EPIPE.
+    os.close(sys.stdin.fileno())
+    send(event())
+    send(event(sequence=1, final=True))
+    write_receipt()
+    sys.exit(0)
 if mode == 'disconnect':
     sys.stderr.write('controlled disconnect\n')
     sys.exit(0)

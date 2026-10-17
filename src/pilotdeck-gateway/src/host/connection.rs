@@ -4,7 +4,10 @@ use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use std::{
     collections::VecDeque,
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -16,6 +19,7 @@ use tokio::{
 
 enum WriteCommand {
     Frame(String),
+    Ack(String),
     Flush(oneshot::Sender<()>),
 }
 
@@ -25,6 +29,7 @@ pub(super) struct Connection {
     incoming: mpsc::Receiver<Result<JsValue, HostError>>,
     pumps: Vec<JoinHandle<()>>,
     stderr: Arc<Mutex<VecDeque<u8>>>,
+    pending_required: Arc<AtomicUsize>,
     limits: Limits,
     closed: bool,
 }
@@ -44,10 +49,26 @@ impl Connection {
         let (outgoing, mut writes) = mpsc::channel(limits.queue_capacity);
         let (reads, incoming) = mpsc::channel(limits.queue_capacity);
         let writer_errors = reads.clone();
+        let pending_required = Arc::new(AtomicUsize::new(0));
+        let pending = pending_required.clone();
         let writer = tokio::spawn(async move {
             while let Some(command) = writes.recv().await {
                 let result = match command {
-                    WriteCommand::Frame(line) => stdin.write_all(line.as_bytes()).await,
+                    WriteCommand::Frame(line) => {
+                        let result = stdin.write_all(line.as_bytes()).await;
+                        if result.is_ok() {
+                            pending.fetch_sub(1, Ordering::SeqCst);
+                        }
+                        result
+                    }
+                    WriteCommand::Ack(line) => {
+                        // TS client:961-970: ACK failures never enter the input stream.
+                        if let Err(error) = stdin.write_all(line.as_bytes()).await {
+                            eprintln!("Sidecar ACK write failed (best-effort): {error}");
+                        }
+                        // Keep draining: a later required frame must report its own failure.
+                        continue;
+                    }
                     WriteCommand::Flush(done) => match stdin.flush().await {
                         Ok(()) => {
                             let _ = done.send(());
@@ -130,12 +151,31 @@ impl Connection {
             incoming,
             pumps: vec![reader, writer, stderr_task],
             stderr,
+            pending_required,
             limits,
             closed: false,
         })
     }
 
     pub(super) fn send(&self, value: &JsValue) -> Result<(), HostError> {
+        let line = self.encode(value)?;
+        // Increment before enqueue: the writer may run immediately on another worker.
+        self.pending_required.fetch_add(1, Ordering::SeqCst);
+        let result = self.enqueue(WriteCommand::Frame(line));
+        if result.is_err() {
+            self.pending_required.fetch_sub(1, Ordering::SeqCst);
+        }
+        result
+    }
+    pub(super) fn send_ack(&self, value: &JsValue) {
+        if let Err(error) = self
+            .encode(value)
+            .and_then(|line| self.enqueue(WriteCommand::Ack(line)))
+        {
+            eprintln!("Sidecar ACK enqueue failed (best-effort): {error}");
+        }
+    }
+    fn encode(&self, value: &JsValue) -> Result<String, HostError> {
         let mut line = stringify_json(value)
             .map_err(|e| HostError::protocol(e.to_string()))?
             .ok_or_else(|| HostError::protocol("Cannot send undefined."))?;
@@ -146,7 +186,7 @@ impl Connection {
                 "Outgoing frame exceeds configured byte limit.",
             ));
         }
-        self.enqueue(WriteCommand::Frame(line))
+        Ok(line)
     }
     fn enqueue(&self, command: WriteCommand) -> Result<(), HostError> {
         self.outgoing
@@ -180,6 +220,17 @@ impl Connection {
                     "Sidecar writer stopped before flush.",
                 )
             })
+    }
+    pub(super) async fn finish_terminal(&self) -> Result<(), HostError> {
+        if let Err(error) = self.flush().await {
+            // A pending module response (or other required frame) still fails closed.
+            // Once those writes succeeded, only best-effort ACKs/flush remain.
+            if self.pending_required.load(Ordering::SeqCst) != 0 {
+                return Err(error);
+            }
+            eprintln!("Sidecar terminal ACK flush failed (best-effort): {error}");
+        }
+        Ok(())
     }
     pub(super) fn diagnostic(&self) -> String {
         let tail = self.stderr.lock().unwrap_or_else(|e| e.into_inner());
@@ -242,4 +293,108 @@ async fn deliver(sender: &mpsc::Sender<Result<JsValue, HostError>>, bytes: &[u8]
     };
     let valid = value.is_ok();
     sender.send(value).await.is_ok() && valid
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::HostClient;
+    use std::time::Duration;
+
+    fn peer(mode: &str) -> Command {
+        let mut command = Command::new("python3");
+        command
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../scripts/a6-host/fixture.py"
+            ))
+            .arg(mode);
+        command
+    }
+    fn limits() -> Limits {
+        Limits {
+            io_timeout: Duration::from_millis(20),
+            close_timeout: Duration::from_millis(50),
+            ..Limits::default()
+        }
+    }
+    fn controlled_queue(capacity: usize) -> (Connection, mpsc::Receiver<WriteCommand>) {
+        let mut connection = Connection::spawn(&mut peer("handshake-hang"), limits()).unwrap();
+        let (sender, receiver) = mpsc::channel(capacity);
+        // Freeze only the writer; the private channel makes pressure deterministic.
+        connection.pumps[1].abort();
+        connection.outgoing = Some(sender);
+        (connection, receiver)
+    }
+    #[tokio::test]
+    async fn ack_queue_full_and_closed_are_best_effort_but_required_frames_fail() {
+        let (mut connection, receiver) = controlled_queue(1);
+        let frame = parse_json(r#"{"kind":"request","method":"ack"}"#).unwrap();
+        connection.send_ack(&frame); // Fill the only slot.
+        connection.send_ack(&frame); // Full: must not fail execution.
+        let error = connection.send(&frame).unwrap_err();
+        assert!(error.message.contains("queue full"), "{error}");
+        assert_eq!(connection.pending_required.load(Ordering::SeqCst), 0);
+        connection.finish_terminal().await.unwrap();
+        drop(receiver);
+        connection.send_ack(&frame); // Closed: must not fail execution.
+        let error = connection.send(&frame).unwrap_err();
+        assert!(error.message.contains("channel closed"), "{error}");
+        assert_eq!(connection.pending_required.load(Ordering::SeqCst), 0);
+        connection.finish_terminal().await.unwrap();
+        connection.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn terminal_flush_timeout_is_diagnostic_unless_required_frames_are_pending() {
+        let (mut connection, _receiver) = controlled_queue(4);
+        // The receiver stays alive without consuming the flush command.
+        connection.finish_terminal().await.unwrap();
+        let response = parse_json(r#"{"kind":"response","ok":true}"#).unwrap();
+        connection.send(&response).unwrap();
+        let error = connection.finish_terminal().await.unwrap_err();
+        assert_eq!(error.kind, HostErrorKind::Timeout);
+        assert!(error.message.contains("writer flush timed out"), "{error}");
+        assert_eq!(connection.pending_required.load(Ordering::SeqCst), 1);
+        connection.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn ack_pipe_failure_keeps_writer_alive_to_report_required_write_failure() {
+        let mut client = HostClient::spawn(&mut peer("terminal-then-exit"), None, limits())
+            .await
+            .unwrap();
+        let connection = &mut client.connection;
+        connection.send(&parse_json(r#"{"kind":"request","messageId":"execute","method":"execute","runId":"run","operationId":"operation","requestId":"request","sessionId":"session","turnId":"turn","payload":{}}"#).unwrap()).unwrap();
+        let accepted = connection.receive().await.unwrap();
+        assert_eq!(accepted.get("ok").and_then(JsValue::as_bool), Some(true));
+        // The fixture closes stdin before writing this event, so ACK must hit EPIPE.
+        let event = connection.receive().await.unwrap();
+        assert_eq!(event.get("final").and_then(JsValue::as_bool), Some(false));
+        let ack = parse_json(r#"{"kind":"request","messageId":"ack-0","method":"ack","streamId":"stream","lastAppliedSequence":0}"#).unwrap();
+        connection.send_ack(&ack);
+        connection
+            .flush()
+            .await
+            .expect("writer must continue after ACK EPIPE");
+        let final_event = connection.receive().await.unwrap();
+        assert_eq!(
+            final_event.get("final").and_then(JsValue::as_bool),
+            Some(true)
+        );
+        let eof = connection.receive().await.unwrap_err();
+        assert_eq!(eof.kind, HostErrorKind::Disconnected);
+        assert!(matches!(
+            connection.incoming.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        let response = parse_json(r#"{"kind":"response","inReplyTo":"call","ok":true}"#).unwrap();
+        connection.send(&response).unwrap();
+        let error = timeout(Duration::from_secs(2), connection.receive())
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.kind, HostErrorKind::Io);
+        assert_eq!(connection.pending_required.load(Ordering::SeqCst), 1);
+        assert!(connection.finish_terminal().await.is_err());
+        connection.close().await.unwrap();
+    }
 }
