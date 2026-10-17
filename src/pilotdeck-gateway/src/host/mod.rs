@@ -63,6 +63,20 @@ impl Limits {
         {
             return Err(HostError::protocol("Sidecar limits must be positive."));
         }
+        // Bound allocations and keep channel capacities below Semaphore::MAX_PERMITS.
+        for (name, value, maximum) in [
+            ("queue_capacity", self.queue_capacity, 1 << 20),
+            ("max_module_calls", self.max_module_calls, 1 << 20),
+            ("max_frame_bytes", self.max_frame_bytes, 64 << 20),
+            ("max_stderr_bytes", self.max_stderr_bytes, 64 << 20),
+        ] {
+            if value > maximum {
+                return Err(HostError::new(
+                    HostErrorKind::Limit,
+                    format!("Sidecar {name} exceeds maximum {maximum}."),
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -210,7 +224,10 @@ impl HostClient {
             ))
         });
         let result = match result {
-            Ok(terminal) => self.connection.flush().await.map(|()| terminal),
+            Ok(terminal @ ExecuteResult::Terminal(_)) => {
+                self.connection.finish_terminal().await.map(|()| terminal)
+            }
+            Ok(rejected) => self.connection.flush().await.map(|()| rejected),
             Err(error) => Err(error),
         };
         let cleanup = self.connection.close().await;

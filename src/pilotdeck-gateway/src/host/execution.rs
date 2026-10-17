@@ -93,7 +93,7 @@ pub(super) async fn run(
                                 .as_object().unwrap().clone();
                             ack.insert("streamId".into(), JsValue::String(view.stream_id.clone()));
                             ack.insert("lastAppliedSequence".into(), JsValue::Number(view.sequence.value()));
-                            connection.send(&JsValue::Object(ack))?;
+                            connection.send_ack(&JsValue::Object(ack));
                         }
                     }
                 }

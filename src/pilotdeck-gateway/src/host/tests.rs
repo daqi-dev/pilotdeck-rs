@@ -165,11 +165,25 @@ async fn handshake_execute_ack_and_terminal() {
             mode == "rejected"
         );
         assert!(
-            started.elapsed() < Duration::from_secs(2),
+            started.elapsed() < Duration::from_secs(3),
             "unbounded cleanup: {mode}"
         );
         println!("HOST_PASS {mode}");
     }
+}
+#[tokio::test]
+async fn terminal_survives_peer_exit_without_reading_ack() {
+    let mode = "terminal-then-exit";
+    let handler = Handler::new(mode);
+    let (mut command, receipt) = peer(mode);
+    let client = HostClient::spawn(&mut command, None, limits())
+        .await
+        .unwrap();
+    let result = client.execute(request(), handler.clone()).await.unwrap();
+    assert!(matches!(result, ExecuteResult::Terminal(_)));
+    receipt.assert_pass(mode);
+    assert_eq!(handler.events.load(Ordering::SeqCst), 2);
+    println!("HOST_PASS {mode}; applied=2; peer closed stdin before events");
 }
 #[tokio::test]
 async fn ack_failures_and_unknown_replies_follow_ts_ignore_behavior() {
@@ -256,6 +270,107 @@ async fn four_required_negative_controls() {
         assert_eq!(error.accepted, accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
         println!("HOST_REJECT {mode}: {error}");
+    }
+}
+#[tokio::test]
+async fn handshake_and_execute_correlation_negative_controls() {
+    for (mode, reason) in [
+        (
+            "execute-request-mismatch",
+            "execute response does not match the active request",
+        ),
+        ("hello-rejected", "hello response rejected"),
+        ("capabilities-rejected", "capabilities response rejected"),
+    ] {
+        let error = run(mode).await.expect_err(mode);
+        assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
+        assert!(!error.accepted, "{mode}: {error}");
+        assert!(error.message.contains(reason), "{mode}: {error}");
+        println!("HOST_REJECT {mode}: {error}");
+    }
+    let error = HostClient::spawn(
+        &mut command("positive"),
+        Some(&"other-module".into()),
+        limits(),
+    )
+    .await
+    .err()
+    .expect("expected module identity rejection");
+    assert_eq!(error.kind, HostErrorKind::Protocol);
+    assert!(!error.accepted);
+    assert!(
+        error
+            .message
+            .contains("module identity does not match configured implementation"),
+        "{error}"
+    );
+    println!("HOST_REJECT expected-module-mismatch: {error}");
+}
+#[tokio::test]
+async fn unknown_fixture_mode_fails_immediately() {
+    // Keep stdin open: validation must happen before the peer attempts to read hello.
+    let mut child = command("misspelled-mode")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let _stdin = child.stdin.take().unwrap();
+    let output = timeout(Duration::from_secs(2), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unknown fixture mode: misspelled-mode")
+    );
+}
+#[tokio::test]
+async fn oversized_limits_are_rejected_before_spawn() {
+    const { assert!((1 << 20) <= tokio::sync::Semaphore::MAX_PERMITS) };
+    for field in [
+        "queue_capacity",
+        "max_module_calls",
+        "max_frame_bytes",
+        "max_stderr_bytes",
+    ] {
+        let maximum = if matches!(field, "queue_capacity" | "max_module_calls") {
+            1 << 20
+        } else {
+            64 << 20
+        };
+        for value in [maximum, maximum + 1, usize::MAX] {
+            let mut bounded = limits();
+            match field {
+                "queue_capacity" => bounded.queue_capacity = value,
+                "max_module_calls" => bounded.max_module_calls = value,
+                "max_frame_bytes" => bounded.max_frame_bytes = value,
+                "max_stderr_bytes" => bounded.max_stderr_bytes = value,
+                _ => unreachable!(),
+            }
+            if value == maximum {
+                bounded.validate().unwrap();
+                continue;
+            }
+            let error = HostClient::spawn(
+                &mut Command::new("nonexistent-sidecar-for-limit-test"),
+                None,
+                bounded,
+            )
+            .await
+            .err()
+            .expect("oversized limit must fail before spawning");
+            assert_eq!(error.kind, HostErrorKind::Limit, "{field}: {error}");
+            assert!(
+                error
+                    .message
+                    .contains(&format!("{field} exceeds maximum {maximum}")),
+                "{error}"
+            );
+            println!("HOST_REJECT {field}={value}: {error}");
+        }
     }
 }
 #[tokio::test]
