@@ -67,11 +67,14 @@ def check_restart(before, after, phases):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--coordinator', action='store_true', required=True, help='required explicit external-run acknowledgement')
-    parser.add_argument('--baseline', type=Path, default=Path('/Users/da/ws/pilotdeck-rs/resources/PilotDeck'))
+    parser.add_argument('--baseline', type=Path, help='baseline checkout (default: PDRS_BASELINE or this checkout resources/PilotDeck)')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--suite', choices=('cold', 'ws'), default='cold')
     parser.add_argument('--port', type=int, default=48789, help='WS only: high loopback port, never scan/kill an owner')
     args = parser.parse_args()
+    args.baseline = Path(args.baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
+    if not (args.baseline / 'src/gateway/client/InProcessGateway.ts').is_file():
+        parser.error(f'baseline not found at {args.baseline}; pass --baseline or set PDRS_BASELINE')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     node = shutil.which('node')

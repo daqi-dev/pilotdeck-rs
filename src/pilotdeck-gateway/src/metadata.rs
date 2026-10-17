@@ -392,8 +392,11 @@ impl<F: Files> Metadata<F> {
     pub fn list_projects(&self) -> JsValue {
         let projects_dir = self.home.join("projects");
         let mut projects = Vec::new();
+        // TS cc7c4e6 src/web/server/listProjects.ts:30-34 returns [] on every
+        // readdir error, without filtering errno; preserve that RPC behavior.
         for (id, _) in self.files.entries(&projects_dir).unwrap_or_default() {
             let dir = projects_dir.join(&id);
+            // Same source :39-44 also skips entries on any stat error.
             if !self.files.stat(&dir).is_ok_and(|stat| stat.directory) {
                 continue;
             }

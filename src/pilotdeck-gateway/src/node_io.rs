@@ -9,6 +9,9 @@ use std::io;
 // Each entry requires a source-oracle fixture for that method's fs boundaries.
 // project-files/io-errors-round6.json; session-model/io-errors{,-round5}.json;
 // config/catalog-io-errors.json (catalog RPC itself).
+// TS cc7c4e6: src/gateway/server/GatewayWsConnection.ts:367-368 routes the RPC
+// to src/gateway/dialog/modelCatalog.ts:17-18; its own loadPilotConfig call
+// reaches src/pilot/config/loadPilotConfig.ts:214-239 (exists/read boundary).
 const PROJECT_FILES: &[&str] = &["ENOENT", "EACCES", "ENOTDIR", "ENAMETOOLONG", "ELOOP"];
 const SESSION_CONFIG: &[&str] = &[
     "ENOENT",

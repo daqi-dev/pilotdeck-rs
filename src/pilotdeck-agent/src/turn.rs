@@ -2670,7 +2670,7 @@ fn finish_pre_model_abort(
         Err(PortError::AcceptedUnknown { .. }
             | PortError::Cancelled {
                 cause: CancelCause::Requested(_) | CancelCause::Deadline,
-            }) if deadline
+            }) if deadline && capture_cleanup.cancellation.hard_stop_cause().is_none()
     ) {
         capture?;
     }
@@ -2719,7 +2719,7 @@ fn finish_aborted_after_tools(
         Err(PortError::AcceptedUnknown { .. }
             | PortError::Cancelled {
                 cause: CancelCause::Requested(_) | CancelCause::Deadline,
-            }) if deadline
+            }) if deadline && capture_cleanup.cancellation.hard_stop_cause().is_none()
     ) {
         capture?;
     }
@@ -4283,7 +4283,7 @@ fn finish_aborted_stream(
         Err(PortError::AcceptedUnknown { .. }
             | PortError::Cancelled {
                 cause: CancelCause::Requested(_) | CancelCause::Deadline,
-            }) if deadline
+            }) if deadline && capture_cleanup.cancellation.hard_stop_cause().is_none()
     ) {
         capture?;
     }
@@ -6771,6 +6771,7 @@ mod pre_model_abort_tests {
     struct Host {
         log: Log,
         error: Option<PortError>,
+        hard_stop_after_capture: Option<CancelCause>,
     }
     impl HostPort for Host {
         fn advertised(&self, module: &str, operation: &str) -> bool {
@@ -6788,7 +6789,16 @@ mod pre_model_abort_tests {
             assert!(!capture.errored);
             assert_eq!(capture.messages.len(), 2);
             self.log.lock().unwrap().push("capture_false");
-            self.error.take().map_or(Ok(HostReply::CapturedTurn), Err)
+            let result = self.error.take().map_or(Ok(HostReply::CapturedTurn), Err);
+            if let Some(hard_stop) = self.hard_stop_after_capture.take() {
+                // The local timeout is already the first cause when a hard stop
+                // arrives, before the caller considers publishing Completed.
+                control.cancellation.cancel(CancelCause::Deadline);
+                control.cancellation.cancel(hard_stop.clone());
+                assert_eq!(control.cancellation.cause(), Some(CancelCause::Deadline));
+                assert_eq!(control.cancellation.hard_stop_cause(), Some(hard_stop));
+            }
+            result
         }
     }
     struct Events(Log);
@@ -6873,6 +6883,15 @@ mod pre_model_abort_tests {
         pending: Option<PortError>,
         capture: Option<PortError>,
     ) -> (PortResult<TurnOutput>, Vec<&'static str>) {
+        run_path_with_hard_stop(path, error, pending, capture, None)
+    }
+    fn run_path_with_hard_stop(
+        path: AbortPath,
+        error: PortError,
+        pending: Option<PortError>,
+        capture: Option<PortError>,
+        hard_stop_after_capture: Option<CancelCause>,
+    ) -> (PortResult<TurnOutput>, Vec<&'static str>) {
         let log = Arc::new(Mutex::new(vec![]));
         let state = TurnExecutionState {
             messages: vec![message("prior"), message("unconsumed-prompt")],
@@ -6888,6 +6907,7 @@ mod pre_model_abort_tests {
         let mut host = Host {
             log: log.clone(),
             error: capture,
+            hard_stop_after_capture,
         };
         let mut preparation = Preparation {
             log: log.clone(),
@@ -7006,6 +7026,41 @@ mod pre_model_abort_tests {
     #[test]
     fn stream_capture_local_cancel_completes_only_for_execution_deadline() {
         assert_capture_cancellation_policy(AbortPath::Stream);
+    }
+    fn assert_capture_deadline_then_hard_stop(path: AbortPath) {
+        for hard_stop in [CancelCause::OwnerRetired, CancelCause::TransportClosed] {
+            let (result, log) = run_path_with_hard_stop(
+                path,
+                PortError::Cancelled {
+                    cause: CancelCause::Deadline,
+                },
+                None,
+                Some(PortError::Cancelled {
+                    cause: CancelCause::Deadline,
+                }),
+                Some(hard_stop),
+            );
+            assert!(log.contains(&"capture_false"));
+            assert!(matches!(
+                result,
+                Err(PortError::Cancelled {
+                    cause: CancelCause::Deadline
+                })
+            ));
+            assert!(!log.contains(&"completed"));
+        }
+    }
+    #[test]
+    fn pre_model_capture_deadline_then_hard_stop_suppresses_completed() {
+        assert_capture_deadline_then_hard_stop(AbortPath::PreModel);
+    }
+    #[test]
+    fn after_tools_capture_deadline_then_hard_stop_suppresses_completed() {
+        assert_capture_deadline_then_hard_stop(AbortPath::AfterTools);
+    }
+    #[test]
+    fn stream_capture_deadline_then_hard_stop_suppresses_completed() {
+        assert_capture_deadline_then_hard_stop(AbortPath::Stream);
     }
     #[test]
     fn known_pre_model_cancel_retains_messages_and_creates_result_before_status_capture() {
