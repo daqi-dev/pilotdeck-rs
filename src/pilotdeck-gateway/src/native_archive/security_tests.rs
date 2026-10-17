@@ -6,6 +6,118 @@ use crate::{
 };
 use std::{fs, path::PathBuf};
 
+// Model a regular, small file at the earlier stat; read from the real descriptor.
+struct StaleStatFiles;
+impl Files for StaleStatFiles {
+    fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
+        NativeFiles.entries(path)
+    }
+    fn read(&self, _: &Path) -> io::Result<Vec<u8>> {
+        panic!("archive content must use the checked descriptor")
+    }
+    fn stat(&self, path: &Path) -> io::Result<Stat> {
+        NativeFiles.stat(path)
+    }
+    fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
+        NativeFiles.canonical(path)
+    }
+    fn project_stat(&self, root: &Path, path: &Path) -> io::Result<(Stat, bool)> {
+        let (mut stat, _) = NativeFiles.project_stat(root, path)?;
+        stat.directory = false;
+        stat.size = 0;
+        Ok((stat, true))
+    }
+    fn archive_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+        assert_eq!(limit, (TRANSCRIPT_BYTES + 1) as usize);
+        let bytes = NativeFiles.archive_read(root, path, limit)?;
+        assert!(bytes.len() <= limit);
+        Ok(bytes)
+    }
+}
+fn stale_stat_fixture() -> (Metadata<StaleStatFiles>, PathBuf) {
+    let root = super::tests::scratch();
+    let metadata = Metadata {
+        home: root.clone(),
+        cwd: root,
+        files: StaleStatFiles,
+    };
+    let dir = metadata.chat_dir(metadata.home.to_str().unwrap());
+    fs::create_dir_all(&dir).unwrap();
+    (metadata, dir.join("fixture.jsonl"))
+}
+fn assert_local_read_refusal(metadata: &Metadata<StaleStatFiles>) {
+    for method in ["native_archive_manifest", "native_archive_entries"] {
+        let request = object([
+            ("type", "request".into()),
+            ("id", "read-refusal".into()),
+            ("method", method.into()),
+            ("params", object([("sessionKey", "fixture".into())])),
+        ]);
+        let Route::LocalResponse(raw) = route_with_metadata(&request, Some(metadata)) else {
+            panic!("unsafe archive read must not forward: {method}")
+        };
+        let response = parse(&raw).unwrap();
+        assert_eq!(field(&response, "ok"), &JsValue::Bool(false));
+        assert_eq!(
+            text_field(field(&response, "error"), "code").as_deref(),
+            Some("PATH_NOT_ALLOWED")
+        );
+    }
+}
+#[test]
+fn archive_non_regular_descriptor_is_rejected_locally_after_stale_stat() {
+    let (metadata, target) = stale_stat_fixture();
+    fs::create_dir(&target).unwrap();
+    assert_local_read_refusal(&metadata);
+    fs::remove_dir_all(metadata.home).unwrap();
+}
+#[test]
+fn archive_oversized_descriptor_is_rejected_locally_after_stale_stat() {
+    let (metadata, target) = stale_stat_fixture();
+    fs::File::create(&target)
+        .unwrap()
+        .set_len(2_147_483_648)
+        .unwrap();
+    assert_local_read_refusal(&metadata);
+    fs::remove_dir_all(metadata.home).unwrap();
+}
+#[test]
+fn transcript_growth_is_bounded_and_rejected_above_fifty_mib() {
+    let (metadata, target) = stale_stat_fixture();
+    // Whitespace is valid, so parsing cannot mask a missing size rejection.
+    fs::write(&target, vec![b' '; (TRANSCRIPT_BYTES + 2) as usize]).unwrap();
+    assert_eq!(
+        transcript(
+            &metadata,
+            &metadata.home,
+            &"fixture".into(),
+            "native_archive_entries"
+        )
+        .unwrap_err(),
+        error(
+            "SESSION_TRANSCRIPT_INVALID",
+            "Cannot read a native archive with invalid entries."
+        )
+    );
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&target)
+        .unwrap()
+        .set_len(TRANSCRIPT_BYTES)
+        .unwrap();
+    assert_eq!(
+        transcript(
+            &metadata,
+            &metadata.home,
+            &"fixture".into(),
+            "native_archive_entries"
+        )
+        .unwrap(),
+        Some(vec![])
+    );
+    fs::remove_dir_all(metadata.home).unwrap();
+}
+
 pub(crate) fn oracle() -> serde_json::Value {
     super::tests::assert_fixture_hash(
         include_bytes!("../../tests/fixtures/native-archive/security-node.json"),
@@ -67,13 +179,13 @@ impl Files for ProbeFiles {
     fn session_summary(&self, _: &Path, _: u64) -> std::result::Result<bool, ()> {
         panic!("archive registration must not read unrelated transcript content")
     }
-    fn archive_read(&self, root: &Path, path: &Path) -> io::Result<Vec<u8>> {
+    fn archive_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
         if path == self.target && self.swap.swap(false, std::sync::atomic::Ordering::SeqCst) {
             fs::remove_file(path)?;
             std::os::unix::fs::symlink(&self.outside, path)?;
             self.hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        NativeFiles.archive_read(root, path)
+        NativeFiles.archive_read(root, path, limit)
     }
 }
 

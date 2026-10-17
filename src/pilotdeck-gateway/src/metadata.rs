@@ -63,6 +63,22 @@ pub(crate) struct Stat {
     pub mtime_ms: f64,
 }
 
+// Deliberate archive safety refusals, distinct from unmeasured OS InvalidInput.
+#[derive(Debug)]
+struct ArchiveReadDenied;
+impl std::fmt::Display for ArchiveReadDenied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("archive is not a regular file or exceeds the read limit")
+    }
+}
+impl std::error::Error for ArchiveReadDenied {}
+fn archive_read_denied() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, ArchiveReadDenied)
+}
+pub(crate) fn is_archive_read_denied(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|e| e.is::<ArchiveReadDenied>())
+}
+
 pub(crate) trait Files {
     /// UTF-8 byte order, like Node readdir; Dirent.isDirectory does not follow symlinks.
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>>;
@@ -87,12 +103,12 @@ pub(crate) trait Files {
     fn project_read(&self, _root: &Path, _path: &Path, _limit: usize) -> io::Result<Vec<u8>> {
         Err(io::ErrorKind::Unsupported.into())
     }
-    /// Complete archive bytes; kept separate from prefix reads and transcript policy.
-    fn archive_read(&self, root: &Path, path: &Path) -> io::Result<Vec<u8>> {
+    /// Safe archive bytes, bounded by the caller's transcript/artifact policy.
+    fn archive_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
         if self.project_stat(root, path)?.0.size > 2_147_483_647 {
-            return Err(io::ErrorKind::InvalidInput.into());
+            return Err(archive_read_denied());
         }
-        self.project_read(root, path, usize::MAX)
+        self.project_read(root, path, limit)
     }
     /// libc kill(pid, 0), through rustix's safe libc wrapper. All errors, including
     /// EPERM, mean false, matching Node's unconditional catch.
@@ -129,19 +145,19 @@ impl Files for NativeFiles {
         crate::project_files::read_prefix(&mut file, limit)
             .map_err(|e| crate::node_io::descriptor_error(e, "read"))
     }
-    fn archive_read(&self, root: &Path, path: &Path) -> io::Result<Vec<u8>> {
+    fn archive_read(&self, root: &Path, path: &Path, limit: usize) -> io::Result<Vec<u8>> {
         let mut file = crate::project_files::open_beneath(root, path)?;
         let stat = file
             .metadata()
             .map_err(|error| crate::node_io::descriptor_error(error, "fstat"))?;
         if !stat.is_file() || stat.len() > 2_147_483_647 {
-            return Err(io::ErrorKind::InvalidInput.into());
+            return Err(archive_read_denied());
         }
-        crate::project_files::read_prefix(&mut file, 2_147_483_648)
+        crate::project_files::read_prefix(&mut file, limit.min(2_147_483_648))
             .map_err(|error| crate::node_io::descriptor_error(error, "read"))
             .and_then(|bytes| {
                 if bytes.len() > 2_147_483_647 {
-                    Err(io::ErrorKind::InvalidInput.into())
+                    Err(archive_read_denied())
                 } else {
                     Ok(bytes)
                 }

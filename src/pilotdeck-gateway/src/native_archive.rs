@@ -186,7 +186,7 @@ impl<F: Files> Files for RegistryFiles<'_, F> {
         if !target.starts_with(&root) {
             return Err(io::Error::from_raw_os_error(libc::EACCES));
         }
-        self.inner.archive_read(&root, &target)
+        self.inner.archive_read(&root, &target, usize::MAX)
     }
 }
 fn registry<F: Files>(metadata: &Metadata<F>) -> Metadata<RegistryFiles<'_, F>> {
@@ -259,8 +259,12 @@ fn fs_error(e: io::Error, method: &str, operation: &str, path: &Path) -> Error {
 // A directory opened with NOFOLLOW|DIRECTORY can report ENOTDIR for a
 // replaced symlink on macOS. Canonicalization errors are ordinary diagnostics;
 // after containment, this checked-open failure must never fall back to TS.
+// Tagged non-regular/oversized archive reads also fail locally; other unknown
+// errors, including ordinary InvalidInput, retain the TS_IO_REQUIRED boundary.
 fn secure_fs_error(error_value: io::Error, method: &str, operation: &str, path: &Path) -> Error {
-    if error_value.raw_os_error() == Some(libc::ENOTDIR) {
+    if error_value.raw_os_error() == Some(libc::ENOTDIR)
+        || crate::metadata::is_archive_read_denied(&error_value)
+    {
         error(
             "PATH_NOT_ALLOWED",
             "Archive path resolves outside its storage root.",
@@ -326,8 +330,14 @@ fn transcript<F: Files>(
         }
         let bytes = metadata
             .files
-            .archive_read(&root, &canonical)
+            .archive_read(&root, &canonical, (TRANSCRIPT_BYTES + 1) as usize)
             .map_err(|e| secure_fs_error(e, method, "open", &path))?;
+        if bytes.len() as u64 > TRANSCRIPT_BYTES {
+            return Err(error(
+                "SESSION_TRANSCRIPT_INVALID",
+                "Cannot read a native archive with invalid entries.",
+            ));
+        }
         parse_transcript(&bytes)
     };
     match read() {
@@ -442,7 +452,7 @@ fn callback<F: Files>(
         // collapse to NOT_FOUND. Read the whole file before slicing its content.
         let bytes = canonical(metadata, method, &project, &path)
             .ok()
-            .and_then(|(root, path)| metadata.files.archive_read(&root, &path).ok())
+            .and_then(|(root, path)| metadata.files.archive_read(&root, &path, usize::MAX).ok())
             .ok_or_else(|| {
                 error(
                     "ARCHIVE_ARTIFACT_NOT_FOUND",

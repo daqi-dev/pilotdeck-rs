@@ -6,7 +6,7 @@
 
 `host-boundary.json` 是本轮真实 Node 默认装配的 11 个独立公开 RPC 与文件事实：同 sequence 的孤立 UTF-16 和 +0/-0 同组精确退回4项；唯一 sequence 的孤立 UTF-16、有效代理对、坏行优先报 invalid，以及不读取 transcript 的 artifact 共7项本地。配对测试实际核对4条原样上游请求和7条本地响应。#132 的 A8 宿主边界仍未关闭；#133 Linux 非法字节 dirent 仍未验证。
 
-`io-errors.json` 是两个 transcript method 自己的12条真实 RPC：每个分别 ENOENT/EISDIR/ELOOP/ENOTDIR/EACCES/ENAMETOOLONG。read-only fs observer 保留真实 stat/readFile 的 API、目标、errno/syscall/message，不注入错误。`RUN` 只能由目标实际抛出预期 errno 获得；NOT_RUN 不准入。Rust 以这些固定错误事实重放整个 RPC，并实际 pairing 核对12条本地响应；不是恢复权限后的 Native errno 重现。method 专属 whitelist 与这12条来源集合精确相等，未知 errno/非OS错误仍为显式 host 边界。自然 stat ELOOP 保留 Node 错误；NOFOLLOW 安全失败与 canonical 之后 checked stat/open 的 ENOTDIR 则本地拒绝，不能发回不安全 TS。
+`io-errors.json` 是两个 transcript method 自己的12条真实 RPC：每个分别 ENOENT/EISDIR/ELOOP/ENOTDIR/EACCES/ENAMETOOLONG。read-only fs observer 保留真实 stat/readFile 的 API、目标、errno/syscall/message，不注入错误。`RUN` 只能由目标实际抛出预期 errno 获得；NOT_RUN 不准入。Rust 以这些固定错误事实重放整个 RPC，并实际 pairing 核对12条本地响应；不是恢复权限后的 Native errno 重现。method 专属 whitelist 与这12条来源集合精确相等，未知 errno/非OS错误仍为显式 host 边界，唯 archive 非 regular/超过既有 2GiB 边界的专用拒绝标记由 transcript 本地返回 PATH_NOT_ALLOWED（artifact 仍按既有契约归并 ARCHIVE_ARTIFACT_NOT_FOUND）；transcript 最多读取 50MiB+1，实际超过 50MiB 返回 SESSION_TRANSCRIPT_INVALID。自然 stat ELOOP 保留 Node 错误；NOFOLLOW 安全失败与 canonical 之后 checked stat/open 的 ENOTDIR 则本地拒绝，不能发回不安全 TS。
 
 `security-node.json` 原样保留 `_tmp/20261016-archive-resume/security-probes/result.json` 的9条真实默认 Node RPC：三method各 normal/static根外链接/受控替换。TS均成功读出测试根外 sequence4242/对应artifact内容。Rust用新的隔离真实文件重建9场景，normal与原RPC字节相等；静态/替换场景候选拒绝为 transcript PATH_NOT_ALLOWED / artifact ARCHIVE_ARTIFACT_NOT_FOUND，实际 Native 与实际 pairing 各9条唯一 receipt；每个受控替换必须命中一次。项目注册关系不得调用 session_summary（测试一旦触发即失败）。这避免在归档安全检查前通过无关摘要读取 transcript。
 
