@@ -1553,3 +1553,318 @@ async fn metadata_io_native_retained_pairs_have_no_upstream_request() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn native_archives_match_production_wire_and_do_not_reach_upstream() {
+    let (metadata, fixture) = crate::native_archive::tests::fixture();
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    let mut local = 0;
+    for case in fixture["cases"].as_array().unwrap() {
+        let request = case["request"].as_str().unwrap();
+        let response = case["response"].as_str().unwrap();
+        let wire = client_frame(0x81, 126, request.as_bytes());
+        write(&mut pair.client, &wire).await;
+        local += 1;
+        read(&mut pair.client, &server_frame(1, response.as_bytes())).await;
+    }
+    // Probe the upstream after the entire batch: any leaked archive bytes would
+    // precede this unrelated frame and fail the exact read, even when delayed.
+    let probe = client_frame(
+        0x81,
+        126,
+        br#"{"type":"request","id":"probe","method":"describe_server"}"#,
+    );
+    write(&mut pair.client, &probe).await;
+    read(&mut pair.server, &probe).await;
+    silent(&mut pair.server).await;
+    assert_eq!(local, 138);
+    pair.server.shutdown().await.unwrap();
+    eof(&mut pair.client).await;
+    pair.finish().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn archive_security_nine_real_rpc_pairs_never_reach_upstream() {
+    use crate::native_archive::security_tests::{oracle, prepare};
+    let data = oracle();
+    let mut seen = 0;
+    for case in data["cases"].as_array().unwrap() {
+        let (metadata, raw, expected, root, raced) = prepare(case, &data);
+        let hits = metadata.files.hits.clone();
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        write(&mut pair.client, &client_frame(0x81, 126, raw.as_bytes())).await;
+        read(&mut pair.client, &server_frame(1, expected.as_bytes())).await;
+        let probe = client_frame(
+            0x81,
+            126,
+            br#"{"type":"request","id":"observer","method":"describe_server"}"#,
+        );
+        write(&mut pair.client, &probe).await;
+        read(&mut pair.server, &probe).await;
+        silent(&mut pair.server).await;
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(raced)
+        );
+        println!(
+            "PDRS_ARCHIVE_SECURITY_PAIR_OK {}",
+            case["id"].as_str().unwrap()
+        );
+        seen += 1;
+        pair.server.shutdown().await.unwrap();
+        eof(&mut pair.client).await;
+        pair.finish().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    assert_eq!(seen, 9);
+}
+
+#[tokio::test]
+async fn archive_host_boundary_forwards_exactly_four_lone_surrogate_ties() {
+    let (metadata, data) = crate::native_archive::tests::host_fixture();
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    let mut local = 0;
+    let mut forwarded = 0;
+    for case in data["cases"].as_array().unwrap() {
+        let request = case["request"].as_str().unwrap();
+        let response = case["response"].as_str().unwrap();
+        let wire = client_frame(0x81, 126, request.as_bytes());
+        write(&mut pair.client, &wire).await;
+        if crate::native_archive::tests::host_required(case) {
+            read(&mut pair.server, &wire).await;
+            write(&mut pair.server, &server_frame(1, response.as_bytes())).await;
+            forwarded += 1
+        } else {
+            local += 1
+        }
+        read(&mut pair.client, &server_frame(1, response.as_bytes())).await;
+    }
+    let probe = client_frame(
+        0x81,
+        126,
+        br#"{"type":"request","id":"host-observer","method":"describe_server"}"#,
+    );
+    write(&mut pair.client, &probe).await;
+    read(&mut pair.server, &probe).await;
+    silent(&mut pair.server).await;
+    assert_eq!((local, forwarded), (7, 4));
+    pair.server.shutdown().await.unwrap();
+    eof(&mut pair.client).await;
+    pair.finish().await;
+}
+
+#[tokio::test]
+async fn archive_io_twelve_rpc_pairs_do_not_reach_upstream() {
+    let data = crate::native_archive::io_tests::fixture();
+    let mut seen = 0;
+    for row in data["cases"].as_array().unwrap() {
+        let metadata = crate::native_archive::io_tests::metadata(&data, row);
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        write(
+            &mut pair.client,
+            &client_frame(0x81, 126, row["request"].as_str().unwrap().as_bytes()),
+        )
+        .await;
+        read(
+            &mut pair.client,
+            &server_frame(1, row["response"].as_str().unwrap().as_bytes()),
+        )
+        .await;
+        let probe = client_frame(
+            0x81,
+            126,
+            br#"{"type":"request","id":"io-observer","method":"describe_server"}"#,
+        );
+        write(&mut pair.client, &probe).await;
+        read(&mut pair.server, &probe).await;
+        silent(&mut pair.server).await;
+        println!("PDRS_ARCHIVE_IO_PAIR_OK {}", row["id"].as_str().unwrap());
+        seen += 1;
+        pair.server.shutdown().await.unwrap();
+        eof(&mut pair.client).await;
+        pair.finish().await;
+    }
+    assert_eq!(seen, 12);
+}
+
+#[tokio::test]
+async fn archive_native_materialized_138_pairs_are_local() {
+    let (metadata, data, root) = crate::native_archive::tests::native_fixture();
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    let mut count = 0;
+    for case in data["cases"].as_array().unwrap() {
+        write(
+            &mut pair.client,
+            &client_frame(0x81, 126, case["request"].as_str().unwrap().as_bytes()),
+        )
+        .await;
+        read(
+            &mut pair.client,
+            &server_frame(1, case["response"].as_str().unwrap().as_bytes()),
+        )
+        .await;
+        count += 1;
+    }
+    let probe = client_frame(
+        0x81,
+        126,
+        br#"{"type":"request","id":"native-observer","method":"describe_server"}"#,
+    );
+    write(&mut pair.client, &probe).await;
+    read(&mut pair.server, &probe).await;
+    silent(&mut pair.server).await;
+    assert_eq!(count, 138);
+    pair.server.shutdown().await.unwrap();
+    eof(&mut pair.client).await;
+    pair.finish().await;
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn archive_nul_long_path_four_pairs_match_node_without_upstream() {
+    let (metadata, data) = crate::native_archive::tests::nul_long_fixture();
+    let (client, downstream) = tokio::io::duplex(1024 * 1024);
+    let (upstream, server) = tokio::io::duplex(1024 * 1024);
+    let mut pair = Pair {
+        client,
+        server,
+        task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+    };
+    authenticate(&mut pair).await;
+    for row in data["cases"].as_array().unwrap() {
+        write(
+            &mut pair.client,
+            &client_frame(0x81, 126, row["request"].as_str().unwrap().as_bytes()),
+        )
+        .await;
+        read(
+            &mut pair.client,
+            &server_frame(1, row["response"].as_str().unwrap().as_bytes()),
+        )
+        .await;
+    }
+    let probe = client_frame(
+        0x81,
+        126,
+        br#"{"type":"request","id":"nul-observer","method":"describe_server"}"#,
+    );
+    write(&mut pair.client, &probe).await;
+    read(&mut pair.server, &probe).await;
+    silent(&mut pair.server).await;
+    pair.server.shutdown().await.unwrap();
+    eof(&mut pair.client).await;
+    pair.finish().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn archive_three_in_root_links_match_node_without_upstream() {
+    let (links, data) = crate::native_archive::security_tests::links_fixture();
+    for row in links["cases"].as_array().unwrap() {
+        let (metadata, raw, expected, root, raced) =
+            crate::native_archive::security_tests::prepare(row, &data);
+        assert!(!raced);
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        write(&mut pair.client, &client_frame(0x81, 126, raw.as_bytes())).await;
+        read(&mut pair.client, &server_frame(1, expected.as_bytes())).await;
+        let probe = client_frame(
+            0x81,
+            126,
+            br#"{"type":"request","id":"link-observer","method":"describe_server"}"#,
+        );
+        write(&mut pair.client, &probe).await;
+        read(&mut pair.server, &probe).await;
+        silent(&mut pair.server).await;
+        pair.server.shutdown().await.unwrap();
+        eof(&mut pair.client).await;
+        pair.finish().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn archive_nine_marker_pairs_never_forward_a_safety_refusal() {
+    let data = crate::native_archive::security_tests::marker_fixture();
+    let mut count = 0;
+    for row in data["cases"].as_array().unwrap() {
+        let (metadata, raw, expected, root, raced) =
+            crate::native_archive::security_tests::prepare_marker(row, &data);
+        let hits = metadata.files.hits.clone();
+        let (client, downstream) = tokio::io::duplex(1024 * 1024);
+        let (upstream, server) = tokio::io::duplex(1024 * 1024);
+        let mut pair = Pair {
+            client,
+            server,
+            task: tokio::spawn(run_with_metadata(downstream, upstream, Some(metadata))),
+        };
+        authenticate(&mut pair).await;
+        write(&mut pair.client, &client_frame(0x81, 126, raw.as_bytes())).await;
+        read(&mut pair.client, &server_frame(1, expected.as_bytes())).await;
+        let probe = client_frame(
+            0x81,
+            126,
+            br#"{"type":"request","id":"marker-observer","method":"describe_server"}"#,
+        );
+        write(&mut pair.client, &probe).await;
+        read(&mut pair.server, &probe).await;
+        silent(&mut pair.server).await;
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(raced)
+        );
+        println!(
+            "PDRS_ARCHIVE_MARKER_PAIR_OK {}",
+            row["id"].as_str().unwrap()
+        );
+        count += 1;
+        pair.server.shutdown().await.unwrap();
+        eof(&mut pair.client).await;
+        pair.finish().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    assert_eq!(count, 9);
+}
