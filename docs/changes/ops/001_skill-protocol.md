@@ -47,7 +47,7 @@ related: []
 | 5. 实现+自证 | dev-launch §6.2–3 | worker 任务书含：规则层命令清单（fmt/clippy/test，原始输出贴 RESULT 文件）+ 判据层走查点；三层绿即存档 checkpoint |
 | 6. 开 PR 前 | **pr-ready 全套** | 协调者执行 Step 1–6：三角色子代理写 `notes/pr-ready/<线名>/`（#142 漏的就是这步）；audit 表生成后贴 PR 描述 |
 | 7. 简化 | 四视角（见反思②） | 派一家非作者只出建议不改码 |
-| 8. 双谱系评审 | dev-launch §7 | 按 `.claude/dev-launch.review.md` 配置（A=codex、B=opencode/GLM、C=dsh，降级链 D=Claude 子代理）；提示词文件→stdin 绝不插值；收敛=无 P0/P1（P2 按 AGENTS.md 折中三分） |
+| 8. 双谱系评审 | dev-launch §7 | 按 `.claude/dev-launch.review.md` 配置（A=codex、B=opencode/GLM、C=DeepSeek：首选 `scripts/review-deepseek.py`、dsh 兜底，降级链 D=Claude 子代理）；提示词文件→stdin 绝不插值；收敛=无 P0/P1（P2 按 AGENTS.md 折中三分） |
 | 9. 合并交付 | dev-launch §8 + AGENTS.md 闸门 | 回复说明→rebase 合并→核邮箱→关单，顺序固定；board 每轮追加一段 |
 | 10. 文档 | dev-docs | 重大决策/复盘才写编号文档（本文即按此入库）；board 段落不替代 |
 

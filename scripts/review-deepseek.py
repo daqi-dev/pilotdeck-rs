@@ -112,6 +112,8 @@ def is_secret(p: Path, envs: list[Path]) -> bool:
 def check_paths(a: argparse.Namespace) -> None:
     if a.timeout <= 0:
         raise Fail(2, "--timeout 须为正数")
+    if a.max_tokens is not None and a.max_tokens <= 0:
+        raise Fail(2, "--max-tokens 须为正整数")
     if not a.out.name or a.out.is_dir():
         raise Fail(2, f"--out 须是文件路径：{a.out}")
     envs = env_files()
@@ -151,7 +153,7 @@ def build_body(a: argparse.Namespace) -> bytes:
         "model": a.model,
         "messages": [{"role": "user", "content": "".join(parts)}],
         "stream": False,
-        **({"max_tokens": a.max_tokens} if a.max_tokens else {}),
+        **({"max_tokens": a.max_tokens} if a.max_tokens is not None else {}),
     }, ensure_ascii=False).encode()
 
 
