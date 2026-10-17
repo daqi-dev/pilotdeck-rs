@@ -1,0 +1,9 @@
+# gitleaks 配置：继承默认规则，只按精确值放行已知非密钥。
+# 注意：全局 allowlist 的 paths 会整文件跳过扫描（8.30 实测），因此这里只用值，不用路径。
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "A6.8 upload 夹具的 idempotencyKeyHash = sha256(\"once\")（generate.mts 固定幂等键生成），不是凭据"
+regexTarget = "match"
+regexes = ['''200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e''']
