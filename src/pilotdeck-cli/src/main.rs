@@ -84,7 +84,11 @@ fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
 /// createLocalGateway() up to its first observable effects, then CliChannel.
 fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let pilot_home = paths::pilot_home(env, cwd)?;
-    let exe = std::env::current_exe().ok();
+    // Node's import.meta.url is the realpath of the entry module; match it so a
+    // symlinked launcher still probes beside the real install root.
+    let exe = std::env::current_exe()
+        .ok()
+        .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
     let exe_dir = exe.as_deref().and_then(Path::parent);
     let builtin_root = skills::builtin_skills_root(env, cwd, exe_dir)?;
     for warning in skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root)? {
