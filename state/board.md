@@ -8,15 +8,15 @@ updated: 2026-10-17 18:20 · by 协调者(Claude Code 交互·opus-5.5)
 - loop-fix | impl | ready | pdrs-loop.sh 两处：迭代目录按启动时间命名防覆盖（三跑已覆盖前两跑原件）；ledger 以 board updated 是否变化判推进，不只看退出码
 - p2-sweep | coord | ready | 开着的 P2-跟进 18 张（gh 核于 10-17），超过 10 张，触发「定期清账」：派 1 个 worker 集中清理（仍两家评审）
 - A6.1-pr2 | impl | blocked | replay/cancel，前置 A6.1-pr1 合并
-- #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
-- D4 | coord | human | 人定暂缓（10-17，阻塞节点：A5.4 冻结／A7、A8 标完成）· 评分口径（exp014 六格材料）
-- #150 | coord | human | 人定暂缓（10-17，无依赖）· Draft 处置
-- #144-triage | coord | human | 人定暂缓（10-17，无硬依赖）·「P0 候选」降级、关闭或下一步
-- 167-ruler-a4 | coord | human | 人定暂缓（10-17，无依赖）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
+- #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
+- D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
+- #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
+- #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
+- 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
 
 > ## 2026-10-17 · 人定：五项待批暂缓
-> 人判断不了 #19、D4、#150、#144、check_ruler 升 A4 这五项对重构的影响，定为「不阻塞就先保持现状，信息更充分后再判」。记录与原则见 `state/decisions-20261017.md` 末节；READY 中五条标「人定暂缓」并写明阻塞节点，平时不追问，到节点再提。#19 的决策卡（原来只在本地、未入库）随本 PR 入库，入库不等于批准。
+> 人判断不了 #19、#150、#144、check_ruler 升 A4 这四项对重构的影响（D4 核实已于 10-15 人批，不在其中，READY 改为实施项 blocked），定为「不阻塞就先保持现状，信息更充分后再判」。记录与原则见 `state/decisions-20261017.md` 末节；READY 中四条标「人定暂缓」并写明阻塞节点，平时不追问，到节点或里程碑复查时再提。#19 的决策卡（原来只在本地、未入库）随本 PR 入库，入库不等于批准。
 
 > ## 2026-10-17 · /loop 收尾交接（本会话 /loop 结束）
 > **wt-a61 现场**：持有人是本协调会话，结束后移交下一个协调者。codex 后台进程已经结束（`_tmp/20261017-a61/codex-impl.status` = exit=0），没有在跑的进程；日志在 `_tmp/20261017-a61/codex-impl.out` 和 `.err`，worker 自证在 `_tmp/20261017-a61/worker/`（RESULT、交叉测试、负控等原始日志）。codex 在旧基线 board 末尾追加了一段，协调者已撤掉，没有提交。产物已提交并推到 `codex/a61-host-client`@05abe8b：新增 `src/pilotdeck-gateway/src/host/`（connection、execution、tests）、`examples/a6_host_probe.rs`、`scripts/a6-host/`。协调者在沙箱外补跑：`cargo test -p pilotdeck-gateway` 188 通过、0 失败、10 忽略；fmt 和 clippy -D warnings 通过；check_frozen PASS 18 项。（worker 在沙箱里报的 2 条失败是 loopback bind 被拒，沙箱外复现不了。）
