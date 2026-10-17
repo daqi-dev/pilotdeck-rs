@@ -1,8 +1,8 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 20:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- #187 | impl | ready | B1 装置脚本硬编码绝对路径（run_round/session_domain/parity round.py，均在冻结白名单，走冻结程序）
+updated: 2026-10-17 20:15 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
+- #187 | impl | ready | 分支 fix/187-baseline-path（wt-187，持有人协调者）已提交：默认 baseline 改为参数>PDRS_BASELINE>本 checkout resources，冻结四登，真实数据复算 PASS；待 codex+GLM 评审与四角色后开 PR（Closes #187）；round.py 只是来源注释、不改
 - loop-fix | impl | ready | pdrs-loop.sh 两处：迭代目录按启动时间命名防覆盖（三跑已覆盖前两跑原件）；ledger 以 board updated 是否变化判推进，不只看退出码
 - p2-sweep | coord | ready | 开着的 P2-跟进 18 张（gh 核于 10-17），超过 10 张，触发「定期清账」：派 1 个 worker 集中清理（仍两家评审）
 - A6.1-pr2 | impl | ready | replay/cancel（Refs #127）；A6.1-pr1 已合并（#192 → f479f73）。本 PR 须一并清 #191（14 条 P2-跟进，前置于 A6.1-pr2；第 7 条 module 错误字段可延到 A6 model 接线）；wt-a61 可复用（持有人：协调者），开工前 reset 到 main 新分支
@@ -12,6 +12,9 @@ updated: 2026-10-17 20:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-17 20:15 · 两小时交接（/loop 协调会话，自 18:15 起）
+> 本会话合并 #192（A6.1-pr1）、#185（review-deepseek）、#193（board）、#194（#182 补审）。在途：#187（见 READY，分支已推送，证据在主仓 `_tmp/20261017-issue-187/`）。worktree：主仓 + wt-a61（A6.1-pr2 复用）+ wt-187；磁盘约 36.4/46 GiB。无未结束的后台进程（评审将随 #187 PR 派出）。接续者按 READY 从 #187 继续；交互会话仍可接着跑。
 
 > ## 2026-10-17 · /loop：#182 补审完成
 > #182（外层循环产出、合并时零评审）由 codex+GLM 补审四轮收敛到 0/0/0。实质问题在 `state/memory/20261017-parity-binary-path.md`：原文没区分 A2 校准（A1 纯透传源）与 A4（HEAD），也没分开装置树与被测源树，照做会再选错二进制（两家撞车，P1）。已按 #167 r4-a1 实际做法改写正文、description 与索引；原件 `_tmp/20261017-issue-182-review/`。#182 的 board 历史段两家核过，无事实相反陈述。**下一单**：#187。
