@@ -83,12 +83,13 @@ board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$ROOT/state/b
 # 跨启动、跨日、v1→v2 都持续计数（有意为之：人不改 board 就重起，不会白得新机会）。
 stale_count() {
   local f files=()
-  for d in $(ls -d "$ROOT"/_tmp/*-pdrs-loop 2>/dev/null | sort); do
+  for d in "$ROOT"/_tmp/*-pdrs-loop; do   # glob 按字典序展开（日期前缀即时间序），路径含空格也不拆
+    [ -d "$d" ] || continue
     for f in "$d/ledger.tsv" "$d/ledger-v2.tsv"; do [ -f "$f" ] && files+=("$f"); done
   done
   [ "${#files[@]}" -gt 0 ] || { echo 0; return; }
   for f in "${files[@]}"; do tail -n +2 "$f"; done | awk -F'\t' -v r="$1" -v u="$2" \
-    '{ if ($3 == r && $4 == u) n++; else n = 0 } END { print n + 0 }'
+    '{ if (("x" $3) == ("x" r) && ("x" $4) == ("x" u)) n++; else n = 0 } END { print n + 0 }'
 }
 
 iter=0
@@ -120,7 +121,9 @@ while :; do
   # 守卫：队首与 updated 都和此前迭代开始时相同 = 没推进。累计一次：本迭代先挂起它；两次：停，不再派发。
   stale="$(stale_count "$ref" "$upd_before")"
   if [ "$stale" -ge 2 ]; then
-    echo "pdrs-loop: $ref 连续两迭代未推进且未被挂起，停（交人看 ${RUN_DIR}）" >&2; exit 1
+    echo "pdrs-loop: $ref 在 updated=${upd_before} 下已累计 ${stale} 次未推进（含 error/timeout），停。" >&2
+    echo "  恢复：处置后改 board（READY 改状态或更新 updated 行）再起；账本见 $ROOT/_tmp/*-pdrs-loop/。注意：清理这些账本会让该单重获两次机会。" >&2
+    exit 1
   fi
   if [ "$stale" = 1 ]; then
     carry="${carry:+$carry }上一迭代结束时没有更新 board，队首仍是 ${ref}。先核现场（worktree、在途进程、_tmp 证据），把 $ref 在 READY 块标为 blocked 并在本轮段写明原因（单线挂起），再取下一条 ready 继续。"
