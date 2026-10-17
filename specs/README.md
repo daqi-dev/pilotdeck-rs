@@ -92,4 +92,4 @@ updated: YYYY-MM-DD HH:MM · by <谁>
 | state | `ready` 可取 · `blocked` 有前置（summary 写前置）· `human` 待人拍板（summary 写决策卡路径） |
 
 - 自上而下即优先级；队首 = 第一条 `ready`。summary 内不得出现 ` | `。
-- 每次改块必改 `updated` 行——外层循环 `scripts/pdrs-loop.sh` 靠它判断上一迭代有没有推进。
+- 每次改块必改 `updated` 行——接续者靠它判断上一轮有没有推进。
