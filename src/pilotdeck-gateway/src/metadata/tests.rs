@@ -8,6 +8,10 @@ use std::sync::{Arc, Mutex};
 const SOURCE: &str = include_str!("../../tests/fixtures/metadata/describe-io-errors.json");
 // Original Node recording bytes; provenance is indexed beside the fixture docs.
 const SOURCE_SHA256: &str = "995400bce07ef1bee5e4e0d6d3766343ae0229e21eac496394b6866e68518c7c";
+const FILE_SOURCE: &str =
+    include_str!("../../tests/fixtures/metadata/describe-file-io-errors.json");
+const FILE_SOURCE_SHA256: &str = "8206d63968542d840326ff1e55501077402b62908e1ffe682e690934355c4fae";
+const FILE_IDS: [&str; 3] = ["file-positive", "file-denied", "file-missing"];
 const IDS: [&str; 10] = [
     "positive",
     "collision-positive",
@@ -36,6 +40,7 @@ fn observation_method(api: &str) -> Option<&'static str> {
         "fsp.readdir" | "fs.readdirSync" => Some("entries"),
         "fsp.stat" | "fs.statSync" => Some("stat"),
         "fsp.readFile" | "fs.readFileSync" => Some("read"),
+        "fsp.open" => Some("session_summary"),
         _ => None,
     }
 }
@@ -51,15 +56,18 @@ fn success_observation_api(api: &str) -> bool {
         )
 }
 fn complete(fixture: &Value) -> bool {
+    complete_cases(fixture, &IDS)
+}
+fn complete_cases(fixture: &Value, ids: &[&str]) -> bool {
     let Some(rows) = fixture["cases"].as_array() else {
         return false;
     };
-    if rows.len() != 10
+    if rows.len() != ids.len()
         || rows
             .iter()
             .map(|r| r["id"].as_str().unwrap_or(""))
             .collect::<BTreeSet<_>>()
-            != IDS.into_iter().collect()
+            != ids.iter().copied().collect()
     {
         return false;
     }
@@ -78,9 +86,12 @@ fn complete(fixture: &Value) -> bool {
             return false;
         };
         let expected_code = match id {
-            "projects-missing" | "chats-missing" => Some("ENOENT"),
+            "projects-missing" | "chats-missing" | "file-missing" => Some("ENOENT"),
             "projects-notdir" | "chats-notdir" => Some("ENOTDIR"),
-            "projects-denied-legacy" | "projects-denied-marker" | "chats-denied" => Some("EACCES"),
+            "projects-denied-legacy"
+            | "projects-denied-marker"
+            | "chats-denied"
+            | "file-denied" => Some("EACCES"),
             "chats-loop" => Some("ELOOP"),
             _ => None,
         };
@@ -111,7 +122,11 @@ fn complete(fixture: &Value) -> bool {
         let result = &response["result"];
         let session = matches!(
             id,
-            "positive" | "collision-positive" | "projects-denied-legacy" | "projects-denied-marker"
+            "positive"
+                | "collision-positive"
+                | "projects-denied-legacy"
+                | "projects-denied-marker"
+                | "file-positive"
         );
         let created = !matches!(
             id,
@@ -126,7 +141,10 @@ fn complete(fixture: &Value) -> bool {
         let projects = Path::new(row["home"].as_str().unwrap()).join("projects");
         let projects = projects.to_str().unwrap();
         let chats = row["chats"].as_str().unwrap();
-        let error_target = if id.starts_with("projects-") {
+        let transcript = Path::new(chats).join("visible.jsonl");
+        let error_target = if id.starts_with("file-") {
+            transcript.to_str().unwrap()
+        } else if id.starts_with("projects-") {
             projects
         } else {
             chats
@@ -135,6 +153,9 @@ fn complete(fixture: &Value) -> bool {
             return false;
         }
         match id {
+            "file-positive" | "file-denied" | "file-missing" => {
+                complete_file_case(row, id, chats, error_target)
+            }
             "positive" | "collision-positive" => row["expectedError"].is_null(),
             "projects-missing" => proof(
                 row,
@@ -204,6 +225,79 @@ fn complete(fixture: &Value) -> bool {
         }
     })
 }
+fn complete_file_case(row: &Value, id: &str, chats: &str, transcript: &str) -> bool {
+    let observations = row["observations"].as_array().unwrap();
+    let listed = observations.iter().position(|o| {
+        o["api"] == "fsp.readdir"
+            && o["path"] == chats
+            && o["ok"] == true
+            && o["result"] == serde_json::json!(["visible.jsonl"])
+            && o["caller"]
+                .as_str()
+                .is_some_and(|s| s.contains("listProjectSessions"))
+    });
+    let Some(listed) = listed else { return false };
+    let Some(stat) = observations.iter().position(|o| {
+        o["api"] == "fsp.stat"
+            && o["path"] == transcript
+            && o["caller"]
+                .as_str()
+                .is_some_and(|s| s.contains("readSessionLite"))
+    }) else {
+        return false;
+    };
+    if stat <= listed {
+        return false;
+    }
+    let file = &row["files"][transcript];
+    if file["directory"] != false || !file["size"].as_u64().is_some_and(|size| size > 0) {
+        return false;
+    }
+    if id == "file-missing" {
+        return proof(row, "fsp.stat", transcript, "ENOENT", "readSessionLite")
+            && row["mutations"]
+                == serde_json::json!([{
+                    "operation": "unlink", "path": transcript,
+                    "after": "fsp.readdir", "before": "fsp.stat"
+                }])
+            && file["bytes"].is_string();
+    }
+    if row["mutations"] != serde_json::json!([])
+        || observations[stat]["ok"] != true
+        || observations[stat]["result"]["size"] != file["size"]
+    {
+        return false;
+    }
+    let Some(open) = observations.iter().position(|o| {
+        o["api"] == "fsp.open"
+            && o["path"] == transcript
+            && o["caller"]
+                .as_str()
+                .is_some_and(|s| s.contains("readSessionLite"))
+    }) else {
+        return false;
+    };
+    open > stat
+        && if id == "file-denied" {
+            file["readError"] == "EACCES"
+                && proof(row, "fsp.open", transcript, "EACCES", "readSessionLite")
+        } else {
+            file["bytes"].is_string() && observations[open]["ok"] == true
+        }
+}
+fn file_fixture() -> Value {
+    assert_eq!(
+        format!("{:x}", Sha256::digest(FILE_SOURCE.as_bytes())),
+        FILE_SOURCE_SHA256,
+        "file fixture must match original Node bytes"
+    );
+    let fixture: Value = serde_json::from_str(FILE_SOURCE).unwrap();
+    assert!(
+        complete_cases(&fixture, &FILE_IDS),
+        "three complete file RPC/errno cases required"
+    );
+    fixture
+}
 pub(crate) fn fixture() -> Value {
     recorded_fixture(SOURCE)
 }
@@ -252,12 +346,23 @@ impl Requests {
     }
     pub(crate) fn assert_target(&self, row: &Value) {
         let target = PathBuf::from(row["errorTarget"].as_str().unwrap());
-        let result = row["expectedError"]
-            .as_str()
-            .map_or(Ok(()), |code| Err(errno(code).raw_os_error()));
+        let method = match row["id"].as_str().unwrap() {
+            "file-positive" | "file-denied" => "session_summary",
+            "file-missing" => "stat",
+            _ => "entries",
+        };
+        // Files::session_summary swallows open/read errors as Ok(false).
+        // complete_file_case preserves the raw Node errno at that boundary.
+        let result = if method == "session_summary" {
+            Ok(())
+        } else {
+            row["expectedError"]
+                .as_str()
+                .map_or(Ok(()), |code| Err(errno(code).raw_os_error()))
+        };
         assert!(
             self.0.lock().unwrap().contains(&EntryRequest {
-                method: "entries",
+                method,
                 path: target,
                 result
             }),
@@ -277,12 +382,11 @@ impl Requests {
                         "unsupported success observation API {api}"
                     );
                 }
-                let method = observation_method(api)
-                    .or_else(|| (api == "fsp.open" && ok).then_some("session_summary"))?;
+                let method = observation_method(api)?;
                 Some(EntryRequest {
                     method,
                     path: o["path"].as_str().unwrap().into(),
-                    result: if ok {
+                    result: if ok || method == "session_summary" {
                         Ok(())
                     } else {
                         Err(errno(o["code"].as_str().unwrap()).raw_os_error())
@@ -376,6 +480,18 @@ impl Snapshot {
     }
 }
 impl Files for Snapshot {
+    fn session_summary(&self, path: &Path, _size: u64) -> Result<bool, ()> {
+        if self
+            .errors
+            .contains_key(&("session_summary".into(), path.to_str().unwrap().into()))
+        {
+            return Ok(false);
+        }
+        match self.read(path) {
+            Ok(bytes) => session_has_summary(&bytes),
+            Err(_) => Ok(false),
+        }
+    }
     fn entries(&self, path: &Path) -> io::Result<Vec<(String, bool)>> {
         self.error("entries", path)?;
         let fact = self.fact(path)?;
@@ -470,6 +586,110 @@ fn metadata_io_full_rpc_and_time_fields_match_real_default_node_chain() {
     for row in fixture["cases"].as_array().unwrap() {
         compare(row, &snapshot(row));
     }
+}
+#[test]
+fn metadata_file_io_full_rpc_and_paths_match_real_node_chain() {
+    let fixture = file_fixture();
+    assert!(assert_json_number_bits(FILE_SOURCE) > 0);
+    for row in fixture["cases"].as_array().unwrap() {
+        compare(row, &snapshot(row));
+    }
+}
+#[test]
+fn metadata_file_io_completeness_rejects_missing_cases_and_file_proofs() {
+    let fixture = file_fixture();
+    assert!(
+        !complete(&fixture),
+        "file cases cannot replace the directory suite"
+    );
+    assert!(!complete_cases(&self::fixture(), &FILE_IDS));
+    for replacement in [
+        vec![],
+        fixture["cases"].as_array().unwrap()[..2].to_vec(),
+        vec![fixture["cases"][0].clone(); 3],
+    ] {
+        let mut broken = fixture.clone();
+        broken["cases"] = replacement.into();
+        assert!(!complete_cases(&broken, &FILE_IDS));
+    }
+    for index in 0..FILE_IDS.len() {
+        for axis in [
+            "status", "target", "method", "listing", "proof", "caller", "errno", "expected",
+            "facts", "mutation", "result",
+        ] {
+            let mut broken = fixture.clone();
+            let row = &mut broken["cases"][index];
+            let target = row["errorTarget"].clone();
+            let api = if index == 2 { "fsp.stat" } else { "fsp.open" };
+            match axis {
+                "status" => row["status"] = "NOT_RUN".into(),
+                "target" => row["errorTarget"] = row["chats"].clone(),
+                "method" | "result" => {
+                    let field = if axis == "method" {
+                        "request"
+                    } else {
+                        "response"
+                    };
+                    let mut wire: Value =
+                        serde_json::from_str(row[field].as_str().unwrap()).unwrap();
+                    if axis == "method" {
+                        wire["method"] = "list_projects".into();
+                    } else {
+                        wire["result"]["sessionCount"] = 99.into();
+                    }
+                    row[field] = wire.to_string().into();
+                }
+                "listing" => {
+                    let chats = row["chats"].clone();
+                    let listed = row["observations"]
+                        .as_array_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .find(|o| o["api"] == "fsp.readdir" && o["path"] == chats)
+                        .unwrap();
+                    listed["result"] = serde_json::json!([]);
+                }
+                "proof" => row["observations"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|o| !(o["api"] == api && o["path"] == target)),
+                "caller" | "errno" => {
+                    let proof = row["observations"]
+                        .as_array_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .find(|o| o["api"] == api && o["path"] == target)
+                        .unwrap();
+                    if axis == "caller" {
+                        proof["caller"] = "unrelatedCaller".into();
+                    } else if index == 0 {
+                        proof["ok"] = false.into();
+                        proof["code"] = "EACCES".into();
+                    } else {
+                        proof["code"] = "ELOOP".into();
+                    }
+                }
+                "expected" => row["expectedError"] = "ELOOP".into(),
+                "facts" => row["files"][target.as_str().unwrap()]["size"] = 0.into(),
+                "mutation" => {
+                    row["mutations"] = if index == 2 {
+                        serde_json::json!([])
+                    } else {
+                        serde_json::json!([{}])
+                    }
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                !complete_cases(&broken, &FILE_IDS),
+                "{} {axis}",
+                FILE_IDS[index]
+            );
+        }
+    }
+    let mut wrong_unlink = fixture;
+    wrong_unlink["cases"][2]["mutations"][0]["path"] = "/another-file.jsonl".into();
+    assert!(!complete_cases(&wrong_unlink, &FILE_IDS));
 }
 #[test]
 fn metadata_numeric_recorded_decimal_matches_node_bits() {
