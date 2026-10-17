@@ -1,6 +1,4 @@
-# 存量违规冻结快照（自动生成）——只减不增：清一项删一行，新增即 FAIL
-_build/ 目录名不合规格式: _build/cargo-home
-_build/ 目录名不合规格式: _build/fe-parity
+# 存量违规冻结快照（只减不增：清一项删一行，或本脚本 --write-baseline 收紧）
 _tmp/ 目录名不合规格式: _tmp/20261014-phaseA
 _tmp/ 目录名不合规格式: _tmp/20261014-phaseB
 _tmp/ 目录名不合规格式: _tmp/b2-calibration-2026-10-14-4c1b39c2-dea2-4458-8dcb-bf3b2259082f
@@ -97,7 +95,6 @@ _tmp/ 目录名不合规格式: _tmp/review-yaml-r3
 _tmp/ 目录名不合规格式: _tmp/review-yaml-r4
 _tmp/ 目录名不合规格式: _tmp/review-yaml-r5
 _tmp/ 目录名不合规格式: _tmp/ruler-snap
-_tmp/ 裸文件: _tmp/.DS_Store
 _tmp/ 裸文件: _tmp/a4b2.txt
 _tmp/ 裸文件: _tmp/c5-bin.txt
 _tmp/ 裸文件: _tmp/calib-b2-1.log

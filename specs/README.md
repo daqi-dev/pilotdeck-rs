@@ -48,7 +48,7 @@
 | 一次性构建目录 | `_build/YYYYMMDD-HHMMSS[-<用途>]/` | `_build/20261016-093057/`、`_build/20261016-112000-order/` |
 | 分支 | `<owner>/<issue或阶段码>-<内容>` | `codex/issue-19-terminal`、`codex/a53-session-domain`、`fix/a53-repetition-guard` |
 
-- owner ∈ **codex**（worker 实现）/ **fix**（评审修复轮）/ **docs** / **dev** / **chore**。
+- owner ∈ **codex**（worker 实现）/ **fix**（评审修复轮）/ **docs** / **dev** / **chore**；名字**全小写**，`<issue或阶段码>-` 前缀为推荐项（机器只强制 owner 白名单）。
 - **一个 worktree 恰好一个分支**；PR 描述写三角对应：worktree ↔ 分支 ↔ issue/阶段。
 - 机器检查：`python3 scripts/check-naming.py`（**协调者/worker 开工自查**；忽略区不入库故 CI 查不到本地脏）。存量违规冻结于 `scripts/check-naming.baseline.txt`，**只减不增**——清一项删一行，新增即 FAIL。
 
