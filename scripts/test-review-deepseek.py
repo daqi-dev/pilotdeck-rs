@@ -36,9 +36,9 @@ class Fake(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def ok_body(content, finish="stop"):
-    return json.dumps({"model": "fake", "choices": [{"message": {"content": content}, "finish_reason": finish}],
-                       "usage": None}).encode()
+def ok_body(content, finish="stop", model="fake", usage=None):
+    return json.dumps({"model": model, "choices": [{"message": {"content": content}, "finish_reason": finish}],
+                       "usage": usage}).encode()
 
 
 def run(tmp: Path, api: str, *extra, key=FAKE_KEY, out="out.md", script=SCRIPT):
@@ -56,7 +56,7 @@ def main() -> int:
     api = f"http://127.0.0.1:{srv.server_port}/"
     fails = 0
 
-    def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None):
+    def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None, expect_msg=None):
         nonlocal fails
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
@@ -80,6 +80,8 @@ def main() -> int:
                 bad.append(f"out={got!r}")
             if "Traceback" in r.stderr or (expect_code and not r.stderr.strip().splitlines()[-1].startswith("review-deepseek:")):
                 bad.append("不是受控诊断")
+            if expect_msg and expect_msg not in r.stderr:
+                bad.append(f"诊断缺「{expect_msg}」")
             if expect_code != 0 and got not in (None, "OLD"):
                 bad.append(f"失败却写了 out={got!r}")
             if key and len(key) > 4 and key[:12] in (r.stdout + r.stderr):
@@ -97,12 +99,22 @@ def main() -> int:
     case("200 返回 HTML", (200, b"<html>portal</html>"), 1)
     case("HTTP 402", (402, b'{"error": "Insufficient Balance"}'), 1)
     case("HTTP 错误正文回显密钥", (401, f"bad key {FAKE_KEY}".encode()), 1)
-    case("错误正文里密钥跨 500 截断边界", (401, ("x" * 490 + FAKE_KEY).encode()), 1)
+    # 「HTTP 401 」9 字符 + 479 + 密钥前 12 字符 = 500：若改回先截断后脱敏，恰好漏出 12 字符
+    case("错误正文里密钥跨 500 截断边界", (401, ("x" * 479 + FAKE_KEY).encode()), 1)
     case("成功回复回显密钥", (200, ok_body(f"key={FAKE_KEY}")), 1)
     case("请求期间别人写了 --out", (200, ok_body("NEW")), 1, expect_out="OLD",
          during=lambda t: (t / "out.md").write_text("OLD"))
     case("--out 是目录", (200, ok_body("x")), 2, "--out", ".")
-    case("--out 父路径是普通文件", (200, ok_body("x")), 1, "--out", "task.md/x.md")
+    case("--out 父路径是普通文件", (200, ok_body("x")), 2, "--out", "task.md/x.md")
+    case("model 回显密钥", (200, ok_body("OK", model=FAKE_KEY)), 1)
+    case("usage 回显密钥", (200, ok_body("OK", usage={"prompt_tokens": FAKE_KEY})), 0, expect_out="OK")
+    case("model 含孤立代理", (200, b'{"model": "\\ud800", "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}]}'),
+         0, expect_out="OK")
+    case("响应超 16 MiB", (200, b" " * (16 * 1024 * 1024 + 1)), 1, expect_msg="响应超过")
+    case("--out 指向 .env（--force）", (200, ok_body("x")), 2, "--out", ".env.local", "--force",
+         pre=lambda t: (t / ".env.local").write_text("OLD"))
+    case("--out 是输入的硬链接", (200, ok_body("x")), 2, "--input", "in.txt", "--force",
+         pre=lambda t: ((t / "in.txt").write_text("OLD"), os.link(t / "in.txt", t / "out.md")), expect_out="OLD")
     case("拒绝外发 .env 的软链接", (200, ok_body("x")), 2, "--input", "material.txt",
          pre=lambda t: ((t / ".env.local").write_text("X=1"), (t / "material.txt").symlink_to(t / ".env.local")))
     case("拒绝外发 .env 的硬链接", (200, ok_body("x")), 2, "--input", "material.txt",
@@ -143,6 +155,28 @@ def main() -> int:
         fails += 1
     except rd.Fail:
         print("PASS 引号不配对报错")
+
+    # 发布 × 清理故障注入：发布成功后清理失败不改结果；发布失败时保留原始错误
+    real_unlink, real_link = Path.unlink, os.link
+    def bad_unlink(self, missing_ok=False):
+        raise PermissionError("injected")
+    for name, link_fails in (("发布成功、清理失败", False), ("发布失败、清理失败", True)):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "out.md"
+            Path.unlink = bad_unlink
+            if link_fails:
+                os.link = lambda *_: (_ for _ in ()).throw(PermissionError("link"))
+            try:
+                rd.write_atomic(out, "TEXT", False)
+                err = None
+            except rd.Fail as e:
+                err = e
+            finally:
+                Path.unlink, os.link = real_unlink, real_link
+            ok = (err is None and out.read_text() == "TEXT") if not link_fails else \
+                 (err is not None and err.code == 1 and "PermissionError" in str(err) and not out.exists())
+            print(f"{'PASS' if ok else 'FAIL'} {name} err={err}")
+            fails += not ok
 
     srv.shutdown()
     print(f"test-review-deepseek: {'OK' if not fails else f'{fails} FAIL'}")
