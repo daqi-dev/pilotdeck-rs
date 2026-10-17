@@ -26,4 +26,4 @@ e3529e28181f338a8ff09fa6b7d6c8ce669af86b16806aca32bd0995e86918f6  ../../scripts/
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 2e6dcff6fe86cf0b9978213e879036324f8d1d94daf883e1bc37b58f528c3751  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-6f800621ff887f80b46f13c9b43cb9070c5d1ab80973aff0cea55bbe4a94d434  ../../scripts/gateway-parity/controls/session_domain.py
+44c3040bb3fa7d5ab82a959ddc7df044c00230fc5d9f47af7ffbd64d92c566ea  ../../scripts/gateway-parity/controls/session_domain.py
