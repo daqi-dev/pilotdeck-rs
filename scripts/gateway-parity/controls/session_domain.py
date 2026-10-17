@@ -14,6 +14,9 @@ from session_domain import (CELLS, EvidenceError, audit_native, calibration_cove
                             observation_check, read, require, validate_calibration)
 
 CALIBRATION_CASES = {
+    'calibration-repetition': 'COVERAGE',
+    'calibration-phase': 'COVERAGE',
+    'calibration-variant': 'COVERAGE',
     'calibration-empty-observer': 'EMPTY_OBSERVER',
     'calibration-capability': 'CAPABILITY',
     'calibration-independent-oracle': 'INDEPENDENT_ORACLE',
@@ -116,7 +119,15 @@ def calibration_case(name, output, source):
     else:
         observation = original['observations'][0]
         prefix = ('observations', 0)
-        if name == 'calibration-empty-observer':
+        if name == 'calibration-repetition':
+            variants = [(label, prefix + ('repetition',), value) for label, value in
+                        (('zero', 0), ('wrong-round', 2), ('out-of-range', 6),
+                         ('boolean', True), ('float', 1.0), ('string', '1'), ('null', None))]
+        elif name == 'calibration-phase':
+            variants = [('wrong-phase', prefix + ('phase',), 'tool')]
+        elif name == 'calibration-variant':
+            variants = [('wrong-variant', prefix + ('variant', 'name'), 'unknown-first')]
+        elif name == 'calibration-empty-observer':
             variants = [(field, prefix + (field,), []) for field in ('frames', 'timeline')]
         elif name == 'calibration-capability':
             variants = [('registry-applicable', prefix + ('registry', 'applicable'),
