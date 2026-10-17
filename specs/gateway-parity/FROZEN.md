@@ -1,6 +1,6 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
-> **2026-10-17 四登（#187，只改路径解析、不改判分语义）**：run_round.py / session_domain.py 的默认 baseline 由主仓绝对路径改为「显式参数 > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck」，缺失时两者都 BLOCKED（exit 1 / 2）并提示、不建输出目录；driver.mts 去掉主仓回落，缺 PDRS_BASELINE 即报错（run_round 总会设置）。不再在 worktree 里静默用主仓 baseline。真实数据复算：同树两轮 TS 自比 PASS（`_tmp/20261017-issue-187/r2/compare-ts-a-b.json`，含 driver.mts 改动）；无 baseline 负控两入口均 BLOCKED（`r2/negative.log`：run_round exit 1、session_domain exit 2 且不建输出目录）。两家评审见 PR。**AI 代批，待人复核**。
+> **2026-10-17 四登（#187，只改路径解析、不改判分语义）**：run_round.py / session_domain.py 的默认 baseline 由主仓绝对路径改为「显式参数 > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck」，缺失时两者都 BLOCKED（exit 1 / 2）并提示、不建输出目录（session_domain 按 six_cells.mts 实际导入的 10 个 E1 源码入口核对，不要求 dist）；driver.mts 去掉主仓回落，缺 PDRS_BASELINE 即报错（run_round 总会设置）。不再在 worktree 里静默用主仓 baseline。真实数据复算：同树两轮 TS 自比 PASS（`_tmp/20261017-issue-187/r2/compare-ts-a-b.json`，含 driver.mts 改动）；无 baseline 负控两入口均 BLOCKED（`r2/negative.log`：run_round exit 1、session_domain exit 2 且不建输出目录）；E1 calibrate 正向：status PASS、72 例 360 次测量、frozen exit 0、e1Controls PASS（`r3/calibrate/report.json`）；E1 前检正/负控（`r3/precheck-probe.log`、`r3/negative.log`）。两家评审见 PR。**AI 代批，待人复核**。
 
 > **2026-10-17 重登记（两类，均见 PR）**：① accepted-diffs.md 追加 A4-ARCHIVE-SEC-001/002/003（#142，人批 2026-10-17「批准 #134 的登记范围」，state/decisions-20261017.md）；② A5.3 新增 E1 适配脚本三件（session_domain.py / session_observations.mjs / controls/session_domain.py）入白名单并登记哈希（plan 005：A5 PR 带理由+双评审登记新 hash）。
 
@@ -28,6 +28,6 @@ cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/
 d3e99961f28d4fdbd8521be51b689e6f075bbc78412a41387b5dc2b46202efca  ../../scripts/gateway-parity/run_round.py
 9d8a1825e4a152affbcb6df6c8e3e682edad634281e782ad21c1493e673c1d67  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-eeb58d787b27317a5c5fff7e0be3c721fe8991fba857b55e6c352ab07c6d79b1  ../../scripts/gateway-parity/session_domain.py
+70f248715b6f3c3c20127df963999706e1432765340be411a0c98340089ba0bc  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
 31d0fe7dd11da319bacd60cabff27053cc0d0e28d3c386adea4f931488099d16  ../../scripts/gateway-parity/controls/session_domain.py

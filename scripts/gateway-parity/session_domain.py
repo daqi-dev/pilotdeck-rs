@@ -22,6 +22,12 @@ from observer import Decoder
 # 显式 --baseline > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck（#187：不再写死主仓绝对路径）
 BASELINE = Path(os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck')
 BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
+# scripts/a5-19/six_cells.mts 直接导入的 TS 源码入口（E1 不经 dist）
+E1_SOURCES = ('src/gateway/client/InProcessGateway.ts', 'src/gateway/SessionRouter.ts', 'src/gateway/run/RunRegistry.ts',
+              'src/session/transcript/JsonlTranscriptWriter.ts', 'src/session/events/JsonlSessionEventStore.ts',
+              'src/gateway/util/AsyncQueue.ts', 'src/gateway/client/GatewayTurnCompletionFence.ts',
+              'src/agent/session/AgentSession.ts', 'src/agent/turn/TurnRunner.ts',
+              'src/agent/modules/transport/operationLedger.ts')
 CELLS = ('no-registry-fast', 'no-registry-slow', 'no-registry-failure',
          'registry-fast', 'registry-slow', 'registry-failure')
 MATRIX = tuple((host, sidecar) for host in ('ts', 'rust') for sidecar in ('ts', 'rust'))
@@ -354,11 +360,12 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path, default=BASELINE)
     args = parser.parse_args()
-    if args.suite == 'calibrate' and not (args.baseline / 'dist/src/cli/pilotdeck.js').is_file():
-        # 与 run_round 一致：缺 baseline 是前置条件不满足，BLOCKED 且不建输出目录（#187）
+    missing = [name for name in E1_SOURCES if not (args.baseline / name).is_file()] if args.suite == 'calibrate' else []
+    if missing:
+        # 缺 baseline 是前置条件不满足：BLOCKED 且不建输出目录（#187）。按 E1 实际导入的源码入口核对，不要求 dist
         print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
-                          'error': f'baseline not found at {args.baseline.resolve()}; pass --baseline or set PDRS_BASELINE'},
-                         ensure_ascii=False))
+                          'error': f'baseline at {args.baseline.resolve()} lacks E1 sources {missing[:3]}; '
+                                   'pass --baseline or set PDRS_BASELINE'}, ensure_ascii=False))
         return 2
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
