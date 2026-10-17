@@ -1,19 +1,23 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 18:20 · by 协调者(Claude Code 交互·opus-5.5)
-- A6.1-pr1 | gate | ready | 代码已在分支 codex/a61-host-client@05abe8b（已推送，未开 PR）；codex 已结束（exit=0），worker 证据 _tmp/20261017-a61/worker/RESULT.md；下一步先 rebase main，再 run-review-roles，然后开 PR（Refs #127），两家非作者评审（作者是 codex）
+updated: 2026-10-17 19:50 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
 - #182-review | review | ready | #182 合并时零评审，补审；有 P0/P1 开修复单
 - #187 | impl | ready | B1 装置脚本硬编码绝对路径（run_round/session_domain/parity round.py，均在冻结白名单，走冻结程序）
 - loop-fix | impl | ready | pdrs-loop.sh 两处：迭代目录按启动时间命名防覆盖（三跑已覆盖前两跑原件）；ledger 以 board updated 是否变化判推进，不只看退出码
 - p2-sweep | coord | ready | 开着的 P2-跟进 18 张（gh 核于 10-17），超过 10 张，触发「定期清账」：派 1 个 worker 集中清理（仍两家评审）
-- A6.1-pr2 | impl | blocked | replay/cancel，前置 A6.1-pr1 合并
+- A6.1-pr2 | impl | ready | replay/cancel（Refs #127）；A6.1-pr1 已合并（#192 → f479f73）。本 PR 须一并清 #191（14 条 P2-跟进，前置于 A6.1-pr2；第 7 条 module 错误字段可延到 A6 model 接线）；wt-a61 可复用（持有人：协调者），开工前 reset 到 main 新分支
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
 - #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-17 · /loop（Claude Code 交互）：#192 A6.1-pr1 合并、#185 合并；两小时交接
+> **合并**：#192（A6.1-pr1 宿主 sidecar client，f479f73，Refs #127）——GLM+DeepSeek 三轮收敛到 0/0/0；首轮四角色 boundary#2 经 TS:1120-1121 判误报，DeepSeek「缺 rustix」驳回（Cargo.toml:19）；遗留 14 条 P2 合进 #191，前置于 A6.1-pr2。#185（review-deepseek.py，982b964）——用户插单，codex+GLM 九轮收敛（codex 前后报 P0×12，全修，含实测 urllib 跟 302 外带 Authorization）；四角色同谱系只计「做了」（决策卡 state/decisions-20261017.md 末）。两次合并 committer 仍是真实邮箱（老坑，待人改 GitHub 设置）。
+> **新规则**：最终四角色审计前先 rebase（state/memory/20261017-gate-head-rebase.md），#192 因此多跑一轮。
+> **交接**：worktree 主仓 + wt-a61（持有人协调者，A6.1-pr2 复用，开工前 reset 到 main 新分支）+ wt-185（本 board PR 用，合并后可清）。磁盘 36.4/46 GiB（du -sk 核于 19:48）。无后台进程。**下一单**：READY 队首 #182-review；A6.1-pr2 须同时清 #191。
 
 > ## 2026-10-17 · 人定：五项待批暂缓
 > 人判断不了 #19、#150、#144、check_ruler 升 A4 这四项对重构的影响（D4 核实已于 10-15 人批，不在其中，READY 改为实施项 blocked），定为「不阻塞就先保持现状，信息更充分后再判」。记录与原则见 `state/decisions-20261017.md` 末节；READY 中四条标「人定暂缓」并写明阻塞节点，平时不追问，到节点或里程碑复查时再提。#19 的决策卡（原来只在本地、未入库）随本 PR 入库，入库不等于批准。
