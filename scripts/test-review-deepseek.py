@@ -56,7 +56,8 @@ def main() -> int:
     api = f"http://127.0.0.1:{srv.server_port}/"
     fails = 0
 
-    def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None, expect_msg=None):
+    def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None, expect_msg=None,
+             secret=FAKE_KEY, check=None):
         nonlocal fails
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
@@ -84,7 +85,9 @@ def main() -> int:
                 bad.append(f"诊断缺「{expect_msg}」")
             if expect_code != 0 and got not in (None, "OLD"):
                 bad.append(f"失败却写了 out={got!r}")
-            if key and len(key) > 4 and key[:12] in (r.stdout + r.stderr):
+            if check and not check(tmp):
+                bad.append("受保护文件被改")
+            if secret and secret[:12] in (r.stdout + r.stderr):
                 bad.append("密钥出现在输出里")
             if list(tmp.glob(".out.md.*.tmp")):
                 bad.append("残留临时文件")
@@ -112,7 +115,9 @@ def main() -> int:
          0, expect_out="OK")
     case("响应超 16 MiB", (200, b" " * (16 * 1024 * 1024 + 1)), 1, expect_msg="响应超过")
     case("--out 指向 .env（--force）", (200, ok_body("x")), 2, "--out", ".env.local", "--force",
-         pre=lambda t: (t / ".env.local").write_text("OLD"))
+         pre=lambda t: (t / ".env.local").write_text("OLD"), check=lambda t: (t / ".env.local").read_text() == "OLD")
+    case(".env.local 来源的密钥被回显", (200, ok_body(f"echo {FAKE_KEY}")), 1, key=None, isolated=True,
+         pre=lambda t: (t / ".env.local").write_text(f"DEEPSEEK_API_KEY={FAKE_KEY}\n"))
     case("--out 是输入的硬链接", (200, ok_body("x")), 2, "--input", "in.txt", "--force",
          pre=lambda t: ((t / "in.txt").write_text("OLD"), os.link(t / "in.txt", t / "out.md")), expect_out="OLD")
     case("拒绝外发 .env 的软链接", (200, ok_body("x")), 2, "--input", "material.txt",
@@ -156,25 +161,80 @@ def main() -> int:
     except rd.Fail:
         print("PASS 引号不配对报错")
 
+    # stdout 消费者提前关闭：已发布的结果仍以 0 退出
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "task.md").write_text("审一下", encoding="utf-8")
+        Fake.reply, Fake.during = (200, ok_body("OK")), None
+        env = dict(os.environ, DEEPSEEK_API_KEY=FAKE_KEY)
+        proc = subprocess.Popen([sys.executable, "-I", str(SCRIPT), "--prompt", str(tmp / "task.md"), "--out",
+                                 str(tmp / "out.md"), "--api", api, "--timeout", "5"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=tmp)
+        proc.stdout.close()
+        err = proc.stderr.read().decode()
+        code = proc.wait()
+        ok = code == 0 and (tmp / "out.md").read_text() == "OK" and "Traceback" not in err
+        print(f"{'PASS' if ok else 'FAIL'} stdout 管道关闭 exit={code} {err.strip()[-120:]!r}")
+        fails += not ok
+
+    # 有界读取：每次 read 都带剩余预算 + 1，多文件时预算递减
+    sizes, real_open = [], open
+    class Rec:
+        def __init__(self, f): self.f = f
+        def __enter__(self): return self
+        def __exit__(self, *a): self.f.close()
+        def read(self, n=-1):
+            sizes.append(n)
+            return self.f.read(n)
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "p.md").write_bytes(b"a" * 10)
+        (tmp / "i.txt").write_bytes(b"b" * 20)
+        rd.open = lambda p, mode="r": Rec(real_open(p, mode))
+        try:
+            rd.build_body(type("A", (), {"prompt": tmp / "p.md", "input": [tmp / "i.txt"], "model": "m"})())
+        finally:
+            del rd.open
+    want = [rd.MAX_INPUT_BYTES + 1, rd.MAX_INPUT_BYTES - 10 + 1]
+    ok = sizes == want
+    print(f"{'PASS' if ok else 'FAIL'} 有界读取 read 参数={sizes}")
+    fails += not ok
+
+    # worktree 回退：git 公共目录的上级（主仓根）也在 .env.local 搜索路径里
+    real_run = rd.subprocess.run
+    rd.subprocess.run = lambda *a, **k: type("R", (), {"stdout": "/main/repo/.git\n"})()
+    try:
+        files = rd.env_files()
+    finally:
+        rd.subprocess.run = real_run
+    ok = files[-1] == Path("/main/repo/.env.local") and files[0] == rd.ROOT / ".env.local"
+    print(f"{'PASS' if ok else 'FAIL'} worktree 回退主仓 .env.local {files}")
+    fails += not ok
+
     # 发布 × 清理故障注入：发布成功后清理失败不改结果；发布失败时保留原始错误
     real_unlink, real_link = Path.unlink, os.link
     def bad_unlink(self, missing_ok=False):
-        raise PermissionError("injected")
+        raise IsADirectoryError("injected-cleanup")
+    class BrokenStream:
+        def write(self, *_): raise BrokenPipeError("stderr closed")
+        def flush(self): raise BrokenPipeError("stderr closed")
+        def fileno(self): return os.dup(2)
     for name, link_fails in (("发布成功、清理失败", False), ("发布失败、清理失败", True)):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "out.md"
             Path.unlink = bad_unlink
+            real_stderr, sys.stderr = sys.stderr, BrokenStream()
             if link_fails:
                 os.link = lambda *_: (_ for _ in ()).throw(PermissionError("link"))
             try:
                 rd.write_atomic(out, "TEXT", False)
                 err = None
-            except rd.Fail as e:
+            except Exception as e:  # 非 Fail 异常（例如警告输出失败）也判 FAIL
                 err = e
             finally:
-                Path.unlink, os.link = real_unlink, real_link
+                Path.unlink, os.link, sys.stderr = real_unlink, real_link, real_stderr
             ok = (err is None and out.read_text() == "TEXT") if not link_fails else \
-                 (err is not None and err.code == 1 and "PermissionError" in str(err) and not out.exists())
+                 (isinstance(err, rd.Fail) and err.code == 1 and "PermissionError" in str(err) and not out.exists())
             print(f"{'PASS' if ok else 'FAIL'} {name} err={err}")
             fails += not ok
 
