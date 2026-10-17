@@ -2,6 +2,11 @@
 """run-review-roles.py — pr-ready 三角色 + simplify 四视角的通道无关执行器（替代 Explore 子代理与 /simplify）。
 
 每个角色起一个 `claude -p` 只读进程（工具白名单 Read/Grep/Glob，MCP 全关，不落 session），并行跑；
+默认 `--runner zai`：同一个 Claude Code 外壳接智谱的 Anthropic 兼容接口跑 GLM（密钥取 `.env.local` 的 ZAI_API_KEY，
+只经环境变量传给子进程，不进命令行、不落盘），工具白名单与 init 校验照旧；`--runner anthropic` 用 Claude 模型
+（同样只认 .env.local 的 ANTHROPIC_API_KEY；两通道都不读父环境里的密钥）。子进程环境按白名单从零构造（父 shell 的令牌、网关头、provider 选择器一律不带），
+CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用户/项目/本地 settings 里的 hooks 与插件都不生效
+（真实 CLI 正负对照：项目 SessionStart hook 加隔离不触发、去隔离触发）。
 原始事件流、stderr、最终文本、状态各自落盘。主进程不读角色全文，只汇总 summary.md（含 PR 用结果块）。
 
 执行层只读证明：解析 stream-json 的 init 事件，工具集合不是白名单子集 → 立即杀进程，记 TOOLS_VIOLATION。
@@ -23,6 +28,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -37,6 +43,43 @@ ROLES = {
     "simplify": "review-role-simplify.md",
 }
 ALLOWED_TOOLS = ["Read", "Grep", "Glob"]
+ZAI_BASE_URL = "https://api.z.ai/api/anthropic"
+DEFAULT_MODEL = {"zai": "glm-5.3", "anthropic": "claude-sonnet-5-5"}  # 通道正本见 state/memory/20261015-model-runners.md
+
+
+def env_candidates() -> list[Path]:
+    """.env.local 候选：本检出根；worktree 里没有（忽略文件不随检出）时回落到主仓根（git common dir 的上一级）。"""
+    common = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    return [ROOT / ".env.local"] + ([Path(common).parent / ".env.local"] if common else [])
+
+
+def load_env_key(name: str, env_file: Path | None = None) -> str:
+    """只从 .env.local 取钥（不读父环境：父 shell 残留的网关键不得被带到官方端点）。"""
+    key = ""
+    env = env_file if env_file is not None else next((c for c in env_candidates() if c.is_file()), None)
+    if env and env.is_file():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export "):]
+            k, sep, v = line.partition("=")
+            if sep and k.strip() == name:
+                v = v.strip()
+                key = v[1:-1] if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"" else v.split(" #", 1)[0].strip()
+    return key
+
+
+ENV_KEEP = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
+KEY_NAME = {"zai": "ZAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+
+
+def runner_env(runner: str, key: str) -> dict[str, str]:
+    """子进程的全部模型相关环境（白名单之外的父环境一概不带）。"""
+    env = {"ANTHROPIC_API_KEY": key}
+    if runner == "zai":
+        env["ANTHROPIC_BASE_URL"] = ZAI_BASE_URL
+    return env
 LARGE_DIFF_LINES = 500  # 超过即提示按 --paths 分批（state/memory/20261016-review-bounds.md）
 
 
@@ -58,6 +101,7 @@ def build_cmd(claude_bin: str, model: str, budget: float) -> list[str]:
         "--allowedTools", tools,
         "--permission-mode", "dontAsk",
         "--strict-mcp-config",
+        "--setting-sources", "user",  # user 源指向一次性空 CLAUDE_CONFIG_DIR：不加载任何 settings/hooks/插件
         "--no-session-persistence",
         "--output-format", "stream-json", "--verbose",
         "--max-budget-usd", f"{budget:g}",
@@ -84,13 +128,16 @@ def validate_final(text: str) -> tuple[str, dict[str, int] | None, str]:
     return "PASS", counts, ""
 
 
-def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int) -> dict:
+def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int,
+             extra_env: dict[str, str] | None = None, model: str = "") -> dict:
     raw = out_dir / f"{role}.jsonl"
     err = out_dir / f"{role}.err"
     started = time.time()
     rec: dict = {"role": role, "status": "ERROR", "detail": "", "counts": None, "cost_usd": None,
                  "started": dt.datetime.now().isoformat(timespec="seconds")}
-    env = dict(os.environ, PWD=str(cwd))  # 绑定 cwd 与 PWD（state/memory/20261016-review-permissions.md）
+    cfg = Path(tempfile.mkdtemp(prefix=f"pdrs-review-cfg-{role}-"))
+    env = {k: os.environ[k] for k in ENV_KEEP if k in os.environ}
+    env.update(extra_env or {}, PWD=str(cwd), CLAUDE_CONFIG_DIR=str(cfg))  # 绑定 cwd 与 PWD（review-permissions）
     with prompt_path.open("rb") as fin, raw.open("w") as fraw, err.open("wb") as ferr:
         proc = subprocess.Popen(cmd, stdin=fin, stdout=subprocess.PIPE, stderr=ferr, cwd=cwd, env=env,
                                 text=True, start_new_session=True)
@@ -123,6 +170,10 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
                             os.killpg(proc.pid, signal.SIGKILL)
                             return
                         result["init_seen"] = True
+                        result["init_model"] = ev.get("model")
+                    if ev.get("type") == "assistant":
+                        msg = ev.get("message")
+                        result.setdefault("resp_models", set()).add(msg.get("model") if isinstance(msg, dict) else None)
                     if ev.get("type") == "result":
                         result.update(ev)
                 except Exception as e:  # noqa: BLE001 —— pump 必须先杀进程再死，绝不留下未验证的进程
@@ -144,6 +195,7 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
             rec["detail"] = f"超时 {timeout}s，已杀进程组"
         t.join(timeout=10)
 
+    shutil.rmtree(cfg, ignore_errors=True)
     rec["seconds"] = round(time.time() - started, 1)
     rec["exit"] = proc.returncode
     if violation:
@@ -153,6 +205,12 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
         return rec
     if not result.get("init_seen"):
         rec["detail"] = "未见 init 事件，无法证明工具白名单生效"
+        return rec
+    # 防静默换模型：init 只是本地选择值，还要核后端每条响应的 model 与 modelUsage（审的不是声明的那家，结论不计）
+    resp = result.get("resp_models") or set()
+    usage = set((result.get("modelUsage") or {}).keys()) if isinstance(result.get("modelUsage"), dict) else set()
+    if model and (result.get("init_model") != model or resp != {model} or not usage or usage != {model}):
+        rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
         return rec
     rec["cost_usd"] = result.get("total_cost_usd")
     text = result.get("result") if isinstance(result.get("result"), str) else ""
@@ -173,10 +231,13 @@ def main() -> int:
     src.add_argument("--diff-file", help="现成 diff 文件")
     ap.add_argument("--paths", nargs="*", default=[], help="只审这些路径（大 diff 分批用）")
     ap.add_argument("--roles", default=",".join(ROLES), help="逗号分隔，默认四个全跑")
-    ap.add_argument("--model", default="claude-sonnet-5-5")
+    ap.add_argument("--runner", choices=["zai", "anthropic"], default="zai",
+                    help="zai=GLM（默认，经智谱 Anthropic 兼容接口）；anthropic=Claude 模型")
+    ap.add_argument("--model", default=None, help="默认 zai→glm-5.3，anthropic→claude-sonnet-5-5")
     ap.add_argument("--timeout", type=int, default=600, help="每角色秒数；实测 sonnet ~3min、opus ~6min")
-    ap.add_argument("--budget-usd", type=float, default=3.0, help="每角色 --max-budget-usd")
+    ap.add_argument("--budget-usd", type=float, default=3.0, help="每角色 --max-budget-usd（按 Anthropic 价目估算，zai 通道仅作上限）")
     ap.add_argument("--claude-bin", default="claude", help="测试时可换成假 CLI")
+    ap.add_argument("--env-file", type=Path, default=None, help="取钥文件；默认本检出或主仓根的 .env.local（测试用隔离 fixture）")
     ap.add_argument("--dry-run", action="store_true", help="只渲染任务书与命令，不起进程")
     a = ap.parse_args()
 
@@ -222,7 +283,17 @@ def main() -> int:
         print(f"run-review-roles: 提示 diff {diff_lines} 行 > {LARGE_DIFF_LINES}，建议用 --paths 分批", file=sys.stderr)
 
     common = (TEMPLATE_DIR / COMMON).read_text(encoding="utf-8")
-    cmd = build_cmd(a.claude_bin, a.model, a.budget_usd)
+    model = a.model or DEFAULT_MODEL[a.runner]
+    if a.env_file is not None and not a.env_file.is_file():
+        print(f"run-review-roles: --env-file {a.env_file} 不存在或不是文件（与「文件里没有该键」不同）", file=sys.stderr)
+        return 2
+    key = load_env_key(KEY_NAME[a.runner], a.env_file)
+    if not key and not a.dry_run:
+        print(f"run-review-roles: {a.runner} 通道缺 {KEY_NAME[a.runner]}（只认 .env.local / --env-file）；不回退到父环境、其它模型或登录态",
+              file=sys.stderr)
+        return 2
+    extra_env = runner_env(a.runner, key)
+    cmd = build_cmd(a.claude_bin, model, a.budget_usd)
     jobs = []
     for role in roles:
         values = {"ROLE": role, "WORKTREE": str(wt), "DIFF_FILE": str(diff_path), "HEAD": head or "未知",
@@ -238,8 +309,13 @@ def main() -> int:
         return 0
 
     results: dict[str, dict] = {}
-    threads = [threading.Thread(target=lambda r=r, p=p: results.__setitem__(r, run_role(r, p, out, cmd, wt, a.timeout)))
-               for r, p in jobs]
+    def guarded(r: str, p: Path) -> None:
+        try:
+            results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model)
+        except Exception as e:  # noqa: BLE001 —— 线程异常不得让 results 缺键、summary 丢失
+            results[r] = {"role": r, "status": "ERROR", "detail": f"运行器异常 {type(e).__name__}", "counts": None}
+
+    threads = [threading.Thread(target=guarded, args=(r, p)) for r, p in jobs]
     for t in threads:
         t.start()
     for t in threads:
@@ -254,7 +330,7 @@ def main() -> int:
     paths_kv = f" paths={','.join(a.paths)}" if a.paths else ""
     lines = [
         "## pr-ready 角色审计（scripts/run-review-roles.py）", "",
-        f"<!-- pr-gate:v1 head={head} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv} -->", "",
+        f"<!-- pr-gate:v1 head={head} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv} runner={a.runner} model={model} readonly=tools -->", "",
         "| 角色 | 状态 | P0 | P1 | P2 | P3 | 秒 | 说明 |", "|---|---|---|---|---|---|---|---|",
     ]
     for r in roles:

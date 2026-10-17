@@ -67,9 +67,9 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 
 *由 `aias-meta-init` 生成于 2026-10-13。*
 
-### 资源上限（2026-10-14 人定；来自旧迁移 127 GB、会话反复中断的教训，见 `docs/research/003_prior-attempt/`）
-- 同时最多 **5 个 worktree**；**全量对拍（53 场景）同一时刻只跑 1 个**——机器负载会制造假差异（`docs/experiments/exp001-baseline-parity-run/`）。
-- `_build/` + `_tmp/` 合计 ≤ **46 GB（沿用 `du` 的 1024 口径，即 46 GiB = 49,392,123,904 B）**；完整核算用单次 `du -sk _build _tmp` 的 KiB 总和除以 1,048,576。数值权源见 `state/decisions-20261014.md`「人的回复（2026-10-15，规则三项 + P2 折中方案）」；单位消歧是 AI 代批、待人复核，依据见 R52。开新 worktree 前先 `du -sh _build _tmp` 看一眼。
+### 资源上限（2026-10-14 人定，2026-10-17 人定放宽；来自旧迁移 127 GB、会话反复中断的教训，见 `docs/research/003_prior-attempt/`）
+- 同时最多 **8 个 worktree**（并行派活的上限，不是目标；READY 里有互相独立的产品单时才并行）；**全量对拍（53 场景）同一时刻只跑 1 个**——机器负载会制造假差异（`docs/experiments/exp001-baseline-parity-run/`）。
+- `_build/` + `_tmp/` 合计 ≤ **80 GiB**（`du` 的 1024 口径；单次 `du -sk _build _tmp` 的 KiB 总和除以 1,048,576）。原 46 GiB 的权源与单位消歧见 `state/decisions-20261014.md` 与 R52；放宽依据：本机 10 核 / 32 GB、整盘余 138 GiB（2026-10-17 实测）。开新 worktree 前先 `du -sh _build _tmp` 看一眼。
 - 单个调度会话 ≤ **2 小时**；到点先将现场、证据、持有人、资源与下一就绪任务写入 `state/board.md`，再交给后续调度者自动接续。**两小时是交接点，不是停工或等待用户重新发车**（2026-10-16 人定）；没写交接或未落实接续不算完成交接。
 
 ### 坑：合并时把 worktree 连同 `_tmp/` 一起删了（2026-10-14 夜）
@@ -158,7 +158,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 | dev-launch §7.0 / `.claude/dev-launch.review.md`「只剩一家时停下等人」 | READY 条目改 `blocked`（写缺哪家通道），取下一条；不降级为单评审 | `scripts/next-task.sh` |
 | dev-req Phase0「复述确认 / AskUserQuestion」 | 复述写进 triage 文件，按决策分级自决，不等确认；「深度思考 MCP」不可用时跳过 | 人的用法 |
 | pr-ready Step0 `templates/<project>.md` | 不建；invariant 以 `state/memory/MEMORY.md` 为触发表 | — |
-| pr-ready Step3 三个 Explore 子代理 + 「等 ≤2 分钟超时退出」、Step4 `/simplify` | `python3 scripts/run-review-roles.py`：四角色 `claude -p` 只读并行，每角色 600 s；任务书 `.claude/workflows/review-*.md` | 脚本 + pr-gate CI |
+| pr-ready Step3 三个 Explore 子代理 + 「等 ≤2 分钟超时退出」、Step4 `/simplify` | `python3 scripts/run-review-roles.py`：四角色 `claude -p` 只读并行（工具白名单在执行层），每角色 600 s；默认 `--runner zai` 跑 GLM，`--runner anthropic` 跑 Claude；任务书 `.claude/workflows/review-*.md` | 脚本 + pr-gate CI |
 | pr-ready Step6「让用户决定修 P1 还是开 PR」 | P0/P1 先修再重跑相关角色；P2 三分；然后开 PR，把 `summary.md` 贴进描述 | pr-gate CI |
 | aias-meta-* 「拍板归人」收尾 | 不进连续推进队列；只在人主动发起时用 | 人的用法 |
 | `.claude/workflows/pdrs-review.js` | 仅 Claude Code 通道可用；其它通道用 run-review-roles.py | — |

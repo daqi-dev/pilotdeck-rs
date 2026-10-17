@@ -64,3 +64,9 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **建议 / 执行**：A。PR 描述注明结果块是同谱系、不计独立评审。
 - **原则**：同谱系跑出的审计只算「做了」，不算「独立审过」；独立性由两家非作者评审承担，任务书须覆盖被替代的角色。
 - **断言**：Claude 作者 PR 的两家非作者评审任务书里必须出现 sibling/concurrency/boundary 与四视角字样（任务书：`_tmp/20261017-issue-185/review.md`）。
+
+## 人定：编排提速四项（2026-10-17 晚，用户在 pilotdeck-rs-69 会话：「1、2、3、4 都做吧」）
+- **卡在哪**：今晚 4 小时只合并 1 个产品 PR；用户感觉慢。实测主因是工具单占约一半时间（#198 已堵），其次是评审轮数，并发少排第三。
+- **四项**：① #198 只做产品代码（已合并）；② 协调者从 #127/#128/D0–D3 拆出互相独立的产品单进 READY，并行派活；③ 资源上限放宽：worktree 5→8、`_build+_tmp` 46→80 GiB（对拍串行不变）；④ `run-review-roles.py` 默认 GLM：四角色各起一个 GLM 并发审，GLM 经 Claude Code 外壳接智谱 Anthropic 兼容接口（#200 r2 起；r1 的 opencode+sandbox 方案因评审连续 P0 弃用）。
+- **原则**：并行只对**互相独立的产品单**有意义；加并发前先保证 READY 里有可并行的单。资源上限按机器实测放宽，对拍串行这条因假差异实证保留。
+- **断言**：CLAUDE.md「资源上限」写 8 / 80 GiB；`scripts/test-review-roles.py`（CI 跑）覆盖：zai/anthropic 两通道 PASS 过闸；密钥只走环境变量不进命令行不落盘；越权工具→TOOLS_VIOLATION、init 模型不符→ERROR、缺 VERDICT→PARTIAL、超时→TIMEOUT 均被闸门拒收；readonly 非 tools 拒收。

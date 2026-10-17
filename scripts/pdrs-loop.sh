@@ -8,7 +8,7 @@
 #   scripts/pdrs-loop.sh [--runner opencode|claude] [--max-iter N] [--iter-timeout SEC] [--dry-run]
 # 停：touch /tmp/pdrs-loop.stop（本迭代结束后停）；Ctrl-C（立即，杀本迭代进程组）。
 # 停机条件＝CLAUDE.md「连续推进模式」的机器化：队列无 ready（④）· 同一单两迭代未推进（②挂起后仍不动）·
-#           磁盘超 46 GiB · stop 文件 · max-iter。「暂不执行」档由协调会话把条目标 human（①）。
+#           磁盘超 80 GiB · stop 文件 · max-iter。「暂不执行」档由协调会话把条目标 human（①）。
 # 退出码：0 正常停 · 1 前置/守卫失败 · 2 锁被占 · 130 中断
 
 set -euo pipefail
@@ -25,7 +25,7 @@ RUNNER=opencode
 MAX_ITER=50
 ITER_TIMEOUT=7200
 DRY=0
-DISK_CAP_KIB=48234496   # 46 GiB，口径见 CLAUDE.md「资源上限」
+DISK_CAP_KIB=83886080   # 80 GiB，正本见 CLAUDE.md「资源上限」
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -104,7 +104,7 @@ while :; do
 
   used_kib="$({ du -sk "$ROOT/_build" "$ROOT/_tmp" 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')"
   if [ "$used_kib" -gt "$DISK_CAP_KIB" ]; then
-    echo "pdrs-loop: _build+_tmp=${used_kib}KiB 超 46GiB 上限，停（CLAUDE.md 资源上限）" >&2; exit 1
+    echo "pdrs-loop: _build+_tmp=${used_kib}KiB 超 80GiB 上限，停（CLAUDE.md 资源上限）" >&2; exit 1
   fi
 
   set +e

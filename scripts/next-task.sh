@@ -23,7 +23,7 @@ route_for() {
   case "$1" in
     impl)       echo "codex exec（astra-ultra）在 _build/wt-<码>/ 实现；协调者提交/推送" ;;
     gate)       echo "python3 scripts/run-review-roles.py（三角色+四视角，claude -p 只读）→ 结果块贴 PR → pr-gate CI" ;;
-    review)     echo "双谱系非作者评审：opencode GLM（--agent plan）+ claude -p sonnet；命令模板见 .claude/dev-launch.review.md" ;;
+    review)     echo "双谱系非作者评审：GLM（claude -p 接智谱，见 state/memory/20261015-model-runners.md）优先，另一家取 codex / DeepSeek / Claude 中非作者者" ;;
     research)   echo "codex exec 或 claude -p opus 调研，产物写 _tmp/<YYYYMMDD>-<名>/" ;;
     docs|coord) echo "协调者本会话直接做" ;;
     *) return 1 ;;
