@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "review-deepseek.py"
@@ -21,16 +22,45 @@ FAKE_KEY = "sk-FAKE0123456789"
 class Fake(http.server.BaseHTTPRequestHandler):
     reply: tuple[int, bytes] = (200, b"")
     during = None  # 请求处理中执行的回调（模拟并发写入者）
+    location = None  # 设了就回 302 跳到这里
+    drip = 0.0  # >0 时逐字节慢滴
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if Fake.during:
             Fake.during()
         code, body = Fake.reply
-        self.send_response(code)
+        self.send_response(302 if Fake.location else code)
+        if Fake.location:
+            self.send_header("Location", Fake.location)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if Fake.drip:
+            try:
+                for b in body:
+                    self.wfile.write(bytes([b]))
+                    self.wfile.flush()
+                    time.sleep(Fake.drip)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # 客户端按总时限先断开
+        else:
+            self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass
+
+
+class Sink(http.server.BaseHTTPRequestHandler):
+    """重定向目标：只记录收到的 Authorization。"""
+    auth: list = []
+
+    def do_GET(self):
+        Sink.auth.append(self.headers.get("Authorization"))
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
+    do_POST = do_GET
 
     def log_message(self, *_):
         pass
@@ -51,13 +81,14 @@ def run(tmp: Path, api: str, *extra, key=FAKE_KEY, out="out.md", script=SCRIPT):
 
 
 def main() -> int:
-    srv = http.server.HTTPServer(("127.0.0.1", 0), Fake)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)  # 慢滴流用例不堵后续请求
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     api = f"http://127.0.0.1:{srv.server_port}/"
     fails = 0
 
     def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None, expect_msg=None,
-             secret=FAKE_KEY, check=None):
+             secret=None, check=None):
+        secret = secret or (key.strip() if isinstance(key, str) and len(key.strip()) > 4 else FAKE_KEY)
         nonlocal fails
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
@@ -140,6 +171,23 @@ def main() -> int:
     case("输入超限", (200, ok_body("x")), 2, "--input", "big.txt",
          pre=lambda t: (t / "big.txt").write_bytes(b"a" * (2 * 1024 * 1024 + 1)))
     case("超时非正", (200, ok_body("x")), 2, "--timeout", "0")
+    sink = http.server.HTTPServer(("127.0.0.1", 0), Sink)
+    threading.Thread(target=sink.serve_forever, daemon=True).start()
+    Fake.location = f"http://localhost:{sink.server_port}/steal"
+    case("302 重定向不跟随、不外带密钥", (200, ok_body("x")), 1, expect_msg="HTTP 302")
+    Fake.location = None
+    ok = Sink.auth == []
+    print(f"{'PASS' if ok else 'FAIL'} 重定向目标未收到请求 {Sink.auth}")
+    fails += not ok
+    sink.shutdown()
+    Fake.drip = 0.2
+    started = time.monotonic()
+    case("慢滴流超总时限", (200, ok_body("x" * 40)), 1, "--timeout", "1", expect_msg="总时限")
+    elapsed = time.monotonic() - started
+    Fake.drip = 0.0
+    ok = elapsed < 5  # 整包滴完要 20 s 以上；总时限 1 s 应在几秒内返回
+    print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 elapsed={elapsed:.1f}s")
+    fails += not ok
     case("连不上", (200, b""), 1, "--api", "http://127.0.0.1:9/")
 
     # .env.local 解析子集：直接调函数，用假值
@@ -210,6 +258,28 @@ def main() -> int:
     ok = files[-1] == Path("/main/repo/.env.local") and files[0] == rd.ROOT / ".env.local"
     print(f"{'PASS' if ok else 'FAIL'} worktree 回退主仓 .env.local {files}")
     fails += not ok
+
+    # 不支持硬链接的文件系统：退到排他创建，仍不覆盖
+    import errno
+    for name, pre_exists in (("无硬链接时排他创建发布", False), ("无硬链接且目标已存在", True)):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "out.md"
+            if pre_exists:
+                out.write_text("OLD")
+            real_link = os.link
+            os.link = lambda *_: (_ for _ in ()).throw(OSError(errno.ENOTSUP, "no hardlinks"))
+            try:
+                rd.write_atomic(out, "TEXT", False)
+                err = None
+            except Exception as e:
+                err = e
+            finally:
+                os.link = real_link
+            leftovers = list(Path(d).glob(".out.md.*"))
+            ok = (not leftovers) and ((isinstance(err, rd.Fail) and out.read_text() == "OLD") if pre_exists
+                                      else (err is None and out.read_text() == "TEXT"))
+            print(f"{'PASS' if ok else 'FAIL'} {name} err={err} leftovers={leftovers}")
+            fails += not ok
 
     # 发布 × 清理故障注入：发布成功后清理失败不改结果；发布失败时保留原始错误
     real_unlink, real_link = Path.unlink, os.link

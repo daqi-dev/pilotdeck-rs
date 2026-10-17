@@ -13,12 +13,14 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -151,12 +153,33 @@ def build_body(a: argparse.Namespace) -> bytes:
     }, ensure_ascii=False).encode()
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib 跟随 302/303 时会把 Authorization 原样带到新主机；一律不跟，3xx 按 HTTP 错误处理。"""
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 def call_api(a: argparse.Namespace, key: str, body: bytes) -> dict:
     req = urllib.request.Request(a.api, data=body, headers={
         "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    deadline = time.monotonic() + a.timeout
     try:
-        with urllib.request.urlopen(req, timeout=a.timeout) as r:
-            raw = r.read(MAX_RESPONSE_BYTES + 1)
+        with OPENER.open(req, timeout=a.timeout) as r:
+            chunks, size = [], 0
+            while size <= MAX_RESPONSE_BYTES:  # 分块读并查总时限：慢滴流也不能无限拖住
+                if time.monotonic() > deadline:
+                    raise Fail(1, f"读取响应超过总时限 {a.timeout} 秒")
+                chunk = r.read1(min(64 * 1024, MAX_RESPONSE_BYTES + 1 - size))  # read1 有多少给多少，否则会一直等满一块
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+            raw = b"".join(chunks)
+    except Fail:
+        raise
     except urllib.error.HTTPError as e:
         try:
             detail = e.read(64 * 1024).decode(errors="replace")  # 先整段脱敏再截断显示，见 redact()
@@ -205,7 +228,14 @@ def write_atomic(out: Path, text: str, force: bool) -> None:
             tmp = None
             return
         try:
-            os.link(tmp, out)
+            try:
+                os.link(tmp, out)
+            except OSError as e:
+                if isinstance(e, FileExistsError) or e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
+                    raise
+                # 文件系统不支持硬链接：退到排他创建，仍不覆盖已存在的目标
+                with os.fdopen(os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w", encoding="utf-8") as f:
+                    f.write(text)
         except FileExistsError:
             raise Fail(1, f"{out} 在请求期间被别人创建，未覆盖；本次回复丢弃") from None
     except (OSError, UnicodeError) as e:
@@ -243,7 +273,7 @@ def main() -> int:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--force", action="store_true", help="允许覆盖已存在的 --out")
     ap.add_argument("--model", default="deepseek-flash")
-    ap.add_argument("--timeout", type=int, default=1800, help="单次 socket 操作秒数")
+    ap.add_argument("--timeout", type=int, default=1800, help="单次 socket 操作与读取响应的总时限，秒")
     ap.add_argument("--api", default=API, help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()
 
