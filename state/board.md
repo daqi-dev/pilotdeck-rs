@@ -2,6 +2,8 @@
 
 <!-- READY:BEGIN -->
 updated: 2026-10-17 17:05 · by 协调者(Claude Code 交互·opus-5.5)
+- #183-review | review | ready | board 接手交接 PR 走两家非作者评审后合并（作者=Claude Code 交互会话）
+- #182-review | review | ready | #182 合并时零评审，补审；有 P0/P1 开修复单
 - #167-resample | impl | ready | A2 六轮重采：wt 内先 CARGO_TARGET_DIR=<wt>/src/target cargo build -p pilotdeck-gateway，持锁串行跑 ts1-5+proxy+controls，按 #163 程序重登记；根因见 _tmp/20261017-167/investigation.md
 - A6.1-pr1 | impl | ready | 协议 client（任务书 _tmp/20261017-a61/brief-next.md）；三跑挂起因 loop 的 dontAsk 权限，非任务本身；Claude Code 交互主持下 codex-cli 0.160.0 可用，恢复 ready
 - loop-fix | impl | ready | pdrs-loop.sh 两处：迭代目录按启动时间命名防覆盖（三跑已覆盖前两跑原件）；ledger 以 board updated 是否变化判推进，不只看退出码
@@ -15,7 +17,7 @@ updated: 2026-10-17 17:05 · by 协调者(Claude Code 交互·opus-5.5)
 > **核验 opencode 三跑汇报**（原件对 git/GitHub/ledger/out.log）：属实——#182 合并 44163e6、#167 根因（`proxy/run.json` ERROR + `run_round.py:160` 硬编码路径）、三处留痕、$2.77；不实——「12 分钟单迭代」实测三跑 257 s，「tmux 保尸会话」不存在（且 iter-001 被覆盖、前两跑原件已失），「四天从零」实为当日约 2.5 h；**漏报**——#182 零评审过闸（违合并闸门），近三提交 committer 为主邮箱（§五老坑仍在，待人勾 GitHub 隐私设置）。
 > **通道判断（AI 代批，待人复核）**：claude 通道下 dontAsk 白名单逐命令匹配，协调者 shell 开放集合补不完（三跑仍被 `cd &&`/`ps`/`sed` 拒），改为 **Claude Code 交互会话 + `/loop` 驱动 READY**；`pdrs-loop.sh` 留给 opencode 通道，修复项入 READY `loop-fix`。A6.1-pr1 挂起原因是通道权限，已恢复 ready。
 > **资源**：board 旧记 43.6G 已陈旧；实测 34.30 GiB，按 decisions-20261016-resource 先例只删 10 个 `debug|release/incremental` 缓存（清单 `_tmp/20261017-takeover-dryrun/incremental-list.txt`），现 **33.68/46 GiB**；worktree 仅主仓，三把锁均无。
-> **下一单**：#167-resample → A6.1-pr1 → loop-fix。
+> **下一单**：#183/#182 评审欠账 → #167-resample → A6.1-pr1 → loop-fix。
 
 > ## 2026-10-17 · 外层循环三跑：A6.1-pr1 挂起，#167 调查结案
 > **A6.1-pr1 → blocked**（任务书指令：上一迭代未推进即挂起；现场仅主仓 worktree、无 wt-a61、无在途证据）。**#167 根因**：「controls 自比门」失败不是装置失配——proxy 轮 `run.json` 为 ERROR，`run_round.py:160` 硬编码的 `src/target/debug/pilotdeck-gateway` 在 wt-167 不存在，G0/G1/G3 全是级联；TS 五轮自比全 PASS。处置不动冻结件：wt 内按该路径构建后重采（`_tmp/20261017-167/investigation.md`，已评论 issue）。**权限观察**：dontAsk 下 `cd … &&` 复合命令与 `ps` 被拒，单段命令可用。**下一单**：#167-resample。
