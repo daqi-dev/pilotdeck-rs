@@ -184,8 +184,11 @@ def main():
     parser.add_argument('--baseline', type=Path, help='baseline checkout (default: PDRS_BASELINE or this checkout resources/PilotDeck)')
     args = parser.parse_args()
     baseline = Path(args.baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
-    if not (baseline / 'dist/src/cli/pilotdeck.js').is_file():
-        parser.error(f'baseline not found at {baseline}; pass --baseline or set PDRS_BASELINE')
+    # 按实际启动的产物准入：gateway 用 dist CLI，ui/server 经 tsx loader 加载（:207、:222）
+    missing = [name for name in ('dist/src/cli/pilotdeck.js', 'node_modules/tsx/dist/loader.mjs', 'ui/server/index.js')
+               if not (baseline / name).is_file()]
+    if missing:
+        parser.error(f'baseline at {baseline} lacks {missing}; pass --baseline or set PDRS_BASELINE')
     OUT.mkdir(parents=True, exist_ok=True)
     # Refuse to overwrite a previous run or use occupied ports. No port-based killing.
     if (OUT / 'processes.json').exists():
