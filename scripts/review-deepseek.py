@@ -109,6 +109,11 @@ def check_paths(a: argparse.Namespace) -> None:
             raise Fail(2, f"--out 与输入 {p} 是同一文件")
     if is_secret(a.out, envs):
         raise Fail(2, "--out 不能指向 .env 文件")
+    parent = a.out.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    if not parent.is_dir():
+        raise Fail(2, f"--out 的上级路径 {parent} 不是目录")
     if a.out.exists() and not a.force:
         raise Fail(2, f"{a.out} 已存在（保护上一轮证据；确需覆盖加 --force）")
 
@@ -174,7 +179,8 @@ def extract_text(resp: dict) -> str:
 
 
 def write_atomic(out: Path, text: str, force: bool) -> None:
-    """完整写进同目录随机临时文件再发布；不带 --force 时用 link 发布，目标已存在即失败（不覆盖并发写入者）。"""
+    """完整写进同目录随机临时文件再发布；不带 --force 时用 link 发布，目标已存在即失败（不覆盖并发写入者）。
+    发布成功后临时文件清理失败只警告，不改退出码；发布失败时保留原始错误。"""
     tmp = None
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -185,15 +191,33 @@ def write_atomic(out: Path, text: str, force: bool) -> None:
         if force:
             os.replace(tmp, out)
             tmp = None
-        else:
+            return
+        try:
             os.link(tmp, out)
-    except FileExistsError:
-        raise Fail(1, f"{out} 在请求期间被别人创建，未覆盖；本次回复丢弃") from None
+        except FileExistsError:
+            raise Fail(1, f"{out} 在请求期间被别人创建，未覆盖；本次回复丢弃") from None
     except (OSError, UnicodeError) as e:
         raise Fail(1, f"写 {out} 失败：{type(e).__name__}") from None
     finally:
         if tmp is not None:
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError as e:
+                print(f"review-deepseek: 警告：临时文件 {tmp} 未能删除（{type(e).__name__}）", file=sys.stderr)
+
+
+def success_line(resp: dict, out: Path, key: str) -> str:
+    """发布前构造成功日志：token 数只认整数，model 只认可编码字符串，整行不得含密钥。"""
+    usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
+    counts = {k: v if isinstance(v, int) and not isinstance(v, bool) else None
+              for k, v in ((k, usage.get(k)) for k in ("prompt_tokens", "completion_tokens"))}
+    model = resp.get("model")
+    model = model.encode("utf-8", "backslashreplace").decode("ascii", "backslashreplace") if isinstance(model, str) else None
+    line = (f"review-deepseek: model={model} prompt_tokens={counts['prompt_tokens']} "
+            f"completion_tokens={counts['completion_tokens']} → {out}")
+    if key in line:
+        raise Fail(1, "响应元数据回显了密钥，拒绝落盘")
+    return line
 
 
 def redact(msg: str, key: str) -> str:
@@ -219,8 +243,9 @@ def main() -> int:
         stage = 1
         resp = call_api(a, key, body)
         text = extract_text(resp)
-        if key in text or key in json.dumps(resp.get("model")):
+        if key in text:
             raise Fail(1, "回复中回显了密钥，拒绝落盘")
+        line = success_line(resp, a.out, key)
         write_atomic(a.out, text, a.force)
     except Fail as e:
         print(f"review-deepseek: {redact(str(e), key)}", file=sys.stderr)
@@ -228,9 +253,10 @@ def main() -> int:
     except Exception as e:  # 兜底：任何意外都给受控诊断，不出 traceback
         print(f"review-deepseek: 意外错误 {type(e).__name__}: {redact(str(e), key)}", file=sys.stderr)
         return stage
-    usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
-    print(f"review-deepseek: model={resp.get('model')} prompt_tokens={usage.get('prompt_tokens')} "
-          f"completion_tokens={usage.get('completion_tokens')} → {a.out}")
+    try:  # 已发布：日志失败（编码、管道关闭）不改变结果
+        print(line)
+    except Exception:
+        pass
     return 0
 
 
