@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline CLI calibration: two TS rounds, optionally one --rust-bin round."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -127,17 +128,35 @@ def process_table():
     return rows
 
 
-def stop_group(proc):
-    """进程组清理期间屏蔽 SIGINT/SIGTERM/SIGALRM：清理被打断会让锁在后代存活时被释放（gate-zai concurrency P1）。"""
-    held = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM)}
+DEFERRED = {signal.SIGINT, signal.SIGTERM, signal.SIGALRM}
+
+
+@contextmanager
+def deferred_signals():
+    """挂起（非忽略）SIGINT/SIGTERM/SIGALRM：期间到达的信号排队，解除后立即投递——
+    租约闹钟不会因此丢失，中断也不会落在「进程组已建未登记」或「清理一半」的窗口里。"""
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, DEFERRED)
     try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+def spawn(*args, **kwargs):
+    """启动进程组并登记，两步之间不可被信号打断（gate-final concurrency P1：登记窗口）。"""
+    with deferred_signals():
+        proc = subprocess.Popen(*args, **kwargs)
+        LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
+    return proc
+
+
+def stop_group(proc):
+    """清理期间挂起信号（清理有界：TERM→1s→KILL→1s→2s）；只有证实全部停止才从登记移除。"""
+    with deferred_signals():
         audit = _stop_group(proc)
         if audit['allStopped']:
             LIVE_GROUPS.discard(proc.pid)
         return audit
-    finally:
-        for sig, handler in held.items():
-            signal.signal(sig, handler)
 
 
 def _stop_group(proc):
@@ -173,9 +192,8 @@ def capture(argv, env, cwd, stdin, timeout):
     record = {'status': 'ERROR', 'timedOut': False, 'processTree': []}
     events, data = [], {'stdout': bytearray(), 'stderr': bytearray()}
     started = time.monotonic()
-    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    proc = spawn(argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, start_new_session=True, umask=0o077)
-    LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
     record['pid'] = proc.pid
     selector = selectors.DefaultSelector()
     try:
@@ -233,12 +251,11 @@ def preflight(output, runtime, profile, node):
         evidence['driverProcess'] = next(row for row in process_table() if row['pid'] == os.getpid())
     except (Blocked, OSError) as error:
         evidence['errors'].append(str(error))
-    proc = subprocess.Popen(['/usr/bin/sandbox-exec', '-f', str(profile), str(node),
+    proc = spawn(['/usr/bin/sandbox-exec', '-f', str(profile), str(node),
                              str(SCRIPT / 'isolation_probe.mjs'), str(sentinel)],
                             cwd=runtime / 'project', env=environment(runtime, SCENARIOS[0]),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True, umask=0o077)
-    LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
     stdout, stderr = b'', b''
     try:
         stdout, stderr = proc.communicate(b'', timeout=10)

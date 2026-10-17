@@ -90,6 +90,7 @@ def load_round(path):
         require(run['side'] in ('ts', 'rust'), 'round.side')
         require(run['apparatus'] == hashes(), 'round.apparatus')
         ids = [s['id'] for s in SCENARIOS]
+        require(ids, 'round.empty-registry')  # 空场景表不能产生 PASS（gate-final boundary P1）
         require(run['scenarios'] == ids, 'round.coverage')
         require(sorted(p.name for p in (path / 'cases').iterdir()) == sorted(ids), 'round.case-files')
         isolation = run['isolation']

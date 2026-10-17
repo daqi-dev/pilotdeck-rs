@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -127,6 +128,14 @@ class ContractTests(unittest.TestCase):
         source = self.root / 'source'
         synthetic_round(source, self.root / 'fixed-runtime')
         return source
+
+    def test_empty_scenario_registry_cannot_pass(self):
+        import compare as compare_module
+        source = self.root / 'empty-reg'
+        with patch.object(compare_module, 'SCENARIOS', []):
+            synthetic_round(source, self.root / 'empty-runtime')
+            errors = compare_module.load_round(source)[2]
+        self.assertIn('round.empty-registry', errors)
 
     def test_all_five_mutations_detected_on_synthetic_fixture(self):
         result = run_controls(self.source(), self.root / 'mutants')
@@ -614,30 +623,71 @@ class ContractTests(unittest.TestCase):
             if proc.poll() is None:
                 proc.kill()
 
-    def test_stop_group_ignores_interrupts_while_cleaning(self):
+    def test_stop_group_defers_interrupts_and_delivers_after_cleanup(self):
         import run_round
         proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
         seen = []
         def handler(signum, frame):
-            seen.append(signum)
+            seen.append((signum, proc.poll() is not None))  # 投递时清理是否已完成
         previous = signal.signal(signal.SIGINT, handler)
+        original = run_round._stop_group
         try:
-            original = run_round._stop_group
             def interrupted(p):
                 os.kill(os.getpid(), signal.SIGINT)  # 清理进行中收到中断
+                self.assertEqual(seen, [])  # 清理期间不投递
                 return original(p)
             run_round._stop_group = interrupted
-            try:
-                audit = run_round.stop_group(proc)
-            finally:
-                run_round._stop_group = original
+            audit = run_round.stop_group(proc)
             self.assertTrue(audit['allStopped'])
-            self.assertEqual(seen, [])  # 清理期间被屏蔽
-            self.assertIs(signal.getsignal(signal.SIGINT), handler)  # 清理后恢复
+            self.assertEqual(seen, [(signal.SIGINT, True)])  # 不丢：清理完成后投递一次
         finally:
+            run_round._stop_group = original
             signal.signal(signal.SIGINT, previous)
             if proc.poll() is None:
                 proc.kill()
+
+    def test_lease_alarm_during_cleanup_is_not_lost(self):
+        import run_round
+        proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+        fired = []
+        previous = signal.signal(signal.SIGALRM, lambda *_: fired.append(True))
+        try:
+            original = run_round._stop_group
+            def slow(p):
+                signal.setitimer(signal.ITIMER_REAL, 0.05)  # 租约闹钟在清理窗口内到期
+                time.sleep(0.2)
+                self.assertEqual(fired, [])  # 窗口内挂起，不投递
+                return original(p)
+            run_round._stop_group = slow
+            try:
+                run_round.stop_group(proc)
+            finally:
+                run_round._stop_group = original
+            self.assertEqual(fired, [True])  # 解除后投递，不丢
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+            if proc.poll() is None:
+                proc.kill()
+
+    def test_spawn_registers_group_atomically_with_respect_to_interrupts(self):
+        import run_round
+        seen = []
+        previous = signal.signal(signal.SIGINT, lambda *_: seen.append(set(LIVE_GROUPS)))
+        real_popen = subprocess.Popen
+        def popen_then_interrupt(*a, **k):
+            p = real_popen(*a, **k)
+            os.kill(os.getpid(), signal.SIGINT)  # Popen 刚返回、登记之前收到中断
+            return p
+        try:
+            with patch.object(run_round.subprocess, 'Popen', popen_then_interrupt):
+                proc = run_round.spawn([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+            self.assertEqual(len(seen), 1)
+            self.assertIn(proc.pid, seen[0])  # 中断投递时进程组已登记
+        finally:
+            signal.signal(signal.SIGINT, previous)
+            run_round.stop_group(proc)
+            self.assertNotIn(proc.pid, LIVE_GROUPS)
 
     def test_lock_guard_and_directory_symlinks_do_not_redirect_writes(self):
         lock = self.root / 'lock'
