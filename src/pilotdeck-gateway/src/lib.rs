@@ -3,6 +3,7 @@ mod acceptor;
 mod config;
 mod dispatch;
 mod frame;
+pub mod host;
 pub mod http_proxy;
 mod metadata;
 mod model_catalog;
