@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 第七轮（连续推进）：#19 调研收尾（#161 合并）、A5.3 开工
+> **#19（阶段 C 冲 53/53）**：codex 深挖修正旧现场——`sidecar_budget_limit` 与 `deadline_during_tool` **历史已修、各 5/5 PASS**（budget wire 语义链已查实：toAgentStatusEvent 省略 text→client 按 event 回退→原因码）；`deadline` **4/5**，两侧 sidecar wire 逐帧一致，r3 残差为 TS 宿主对账竞态（原版缺陷）。PR #161（deadline 部分文本边界回归，72+ 行纯测试）双家评审合并，冻结哈希核对过。**决策卡 `state/decisions-20261017-deadline-diff.md` 待人批**（推荐 A：登记已接受差异→复算→关 #19）；issue OPEN 不冒充。
+> **A5.3 开工**（codex 在 wt-19，分支 codex/a53-session-domain）：session_domain.py E1 入口（calibrate 编排 + deadline 四格结构 + 原生拓扑审计 + 九类负控 + 白名单同 PR 变更）。分阶段收。
+> **队列**：A5.3 → A5.4（定标冻结）→ #127（A6–A8）→ #128（B3–B6）→ #129（F3–F6）→ 阶段 D。D4 第二步评分口径待人（exp014 六格 TS 侧已稳定，呈人材料在 readme/results.json）。
+> **待人（出现时提醒，不停机）**：① #19 deadline 差异登记批卡；② D4 差异与评分口径；③ #150 Draft 处置（A5 装置线是否复用）。
+
 > ## 2026-10-17 · 人定：持续自主推进授权（用户指示，另一协调会话转述）+ 技能协议入库
 > **授权基调**：按 board 就绪队列**连续自主推进**，不每单停等发车、不把阶段汇报当批准请求（CLAUDE.md 既有规则从现在用足）；两小时到点写交接后**继续下一单**，不等用户重新启动。依据：Claude Code 时代已验证此模式（10-13~14 单会话 40.9h + 84 子代理连续自主产出，`~/.claude/projects/-Users-da-ws-Auto/`）；opencode 机制同构（长会话 + 子代理），缺的只是授权颗粒与协议执行度。**边界不变**：放权边界 / 红线 / 决策分级照旧，第 14 条未授权动作（对外发布、不可逆删除等）照停；两小时交接与合并闸门不因此省略。
 > **流程参考**：`docs/changes/ops/001_skill-protocol.md`（42plugin 技能 × 重构环节映射；pr-ready 三角色 #46 起必跑、simplify 二选一落定、交付收尾固定 checklist）。**下一单：#46（A4 gateway 透传 + 10 method 本地化，P0 主线）立即开工**，按 ops/001 环节表走，先评估是否拆 sub-issue。
@@ -421,4 +427,4 @@
 
 ## OmO 大规模重构案例调研（2026-10-17）
 做了什么：web 调研 OmO（oh-my-openagent）大规模重构成功案例，笔记落在 `_tmp/20261017-omo-refactor-cases/research_notes/AI agent 大规模重构案例对比/omo-success.md`。核心结论：可溯一手案例仅 PingCAP 联创 Ed Huang 的 tipg SQL 层重写复盘（一下午/百万级 token/跑通 dvdrental+TPC-C 自述），但产物仓库已 404；README 三条评价仅 Arthur Guiot 带 X 原链，Kilset/匿名 B 未溯到原始出处；工作流共性 = 类别路由多模型 + 专职评审多轮 + 不间断循环 + 权限白名单 + 测试前置。
-下一步：等报告撰写人汇总各研究员笔记。
+本轮已完结：4 路笔记 + 汇总报告在 `_tmp/20261017-omo-refactor-cases/reports/AI agent 大规模重构案例对比.md`。核心：OmO /refactor 公开实证近乎空白（唯一强一手 tipg 仓库 404），跑飞证据集中在 issue 跟踪器；成败分界 = 客观裁判前置且裁判先被验证 + 权限层硬闸 + 生成/验证分离；Prime Agent TS→Rust 定性为"人造验证轨道上的集群自治"，可迁移点 = parity 机判化 + 无目标爬山。报告列出本仓三处便宜可补的小口（对拍全绿≠零回归写进合并后动作、指令-状态语义一致性自检、正向测试防废抽查）。
