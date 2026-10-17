@@ -14,6 +14,12 @@ def sandbox_profile(runtime, baseline, binary, side):
     read_dirs = [runtime, Path('/System'), Path('/usr/lib'), Path('/Library/Apple')]
     # dyld 启动任何 Mach-O 都要读根目录对象（literal，非子树）；TS/Rust 两侧都需要（真实宿主实测：缺它即 SIGABRT）
     read_files = [binary, Path('/'), Path('/dev/null'), Path('/dev/urandom'), Path('/dev/random')]
+    if side == 'rust':
+        # Staged release layout <stage>/bin/pilotdeck + <stage>/skills (run_round.stage_rust);
+        # the binary resolves bundled skills from <exe_dir>/../skills, never the baseline.
+        if binary.parent.name != 'bin':
+            raise ValueError('Rust binary must be the staged <stage>/bin copy')
+        read_dirs.append(binary.parent.parent / 'skills')
     if side == 'ts':
         read_dirs += [baseline / name for name in ('dist', 'node_modules', 'packages', 'skills')]
         read_dirs += [Path('/opt/homebrew/Cellar'), Path('/opt/homebrew/opt')]

@@ -20,13 +20,14 @@ from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, 
                     hashes, initial_tree, output_path, parity_lock, save, snapshot)
 from compare import coalesce, compare, comparison_view, PROBE_CHECKS
 from controls import run_controls
-from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile
+from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile, stage_rust
 
 
 def bind_policy(run):
     p = run['provenance']
     iso = run['isolation']
-    iso['profileText'] = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']), p['executable']['path'], run['side'])
+    executed = p['stagedExecutable'] if run['side'] == 'rust' else p['executable']
+    iso['profileText'] = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']), executed['path'], run['side'])
     iso['profileSha256'] = hashlib.sha256(iso['profileText'].encode()).hexdigest()
     iso['profilePath'] = '/synthetic/' + run['side'] + '.sb'
     iso['probeProfileSha256'] = hashlib.sha256(sandbox_profile(
@@ -39,6 +40,8 @@ def as_rust(path):
                 'sourceHead': 'a' * 40, 'sourcePath': '/synthetic/rust-source'}
     run['side'] = 'rust'
     run['provenance'].update(expected)
+    staged = str(Path(run['runtime']).parent / 'rust-stage/bin/pilotdeck')
+    run['provenance']['stagedExecutable'] = {'path': staged, 'sha256': expected['executable']['sha256']}
     run['isolation']['nodeExec'] = {'denied': True, 'status': 'DONE', 'timedOut': False, 'exitCode': 71, 'stdoutHex': '',
         'stderrHex': b'sandbox-exec: execvp(): Operation not permitted'.hex(),
         'audit': {'allStopped': True, 'remaining': [], 'errors': []}}
@@ -47,7 +50,7 @@ def as_rust(path):
     for scenario in SCENARIOS:
         p = path / 'cases' / scenario['id'] / 'record.json'
         row = json.loads(p.read_text())
-        row['executedArgv'] = [expected['executable']['path']] + scenario['argv']
+        row['executedArgv'] = [staged] + scenario['argv']
         row['sandboxArgv'] = ['/usr/bin/sandbox-exec', '-f', run['isolation']['profilePath'], *row['executedArgv']]
         row['profileSha256'] = run['isolation']['profileSha256']
         save(p, row)
@@ -284,8 +287,14 @@ class ContractTests(unittest.TestCase):
         self.assertEqual((runtime / 'openssl.cnf').read_bytes(), b'')
         self.assertEqual(environment(runtime, SCENARIOS[0])['OPENSSL_CONF'], str(runtime / 'openssl.cnf'))
         ts = sandbox_profile(runtime, baseline, '/opt/homebrew/bin/node', 'ts')
-        rust = sandbox_profile(runtime, baseline, '/candidate/pilotdeck', 'rust')
-        self.assertIn('(allow process-exec (literal "/candidate/pilotdeck"))', rust)
+        rust = sandbox_profile(runtime, baseline, '/candidate/rust-stage/bin/pilotdeck', 'rust')
+        self.assertIn('(allow process-exec (literal "/candidate/rust-stage/bin/pilotdeck"))', rust)
+        self.assertEqual(rust.count('(allow process-exec'), 1)
+        self.assertIn('(subpath "/candidate/rust-stage/skills")', rust)
+        self.assertNotIn('(subpath "/candidate/rust-stage")', rust)
+        self.assertNotIn('(subpath "/candidate/rust-stage/bin")', rust)
+        with self.assertRaises(ValueError):
+            sandbox_profile(runtime, baseline, '/candidate/pilotdeck', 'rust')
         for policy in (ts, rust):
             self.assertNotIn('/opt/homebrew/etc/openssl@3', policy)
             self.assertNotIn('(allow file-read-metadata)', policy)
@@ -294,6 +303,53 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn(str(baseline), rust)
         self.assertNotIn('homebrew', rust)
         self.assertNotIn('/opt/homebrew/bin/node', rust)
+
+    def test_rust_stage_copies_binary_and_skills_and_keeps_baseline_unreadable(self):
+        baseline, output = self.root / 'baseline', self.root / 'out'
+        (baseline / 'skills/docx').mkdir(parents=True)
+        (baseline / 'skills/docx/SKILL.md').write_text('skill')
+        output.mkdir()
+        original = self.root / 'pilotdeck-built'
+        original.write_bytes(b'synthetic binary')
+        original.chmod(0o755)
+        expected = {'executable': {'path': str(original), 'sha256': hashlib.sha256(b'synthetic binary').hexdigest()}}
+        staged = stage_rust(output, expected, baseline)
+        self.assertEqual(staged, {'path': str(output / 'rust-stage/bin/pilotdeck'),
+                                  'sha256': expected['executable']['sha256']})
+        self.assertEqual((output / 'rust-stage/skills/docx/SKILL.md').read_text(), 'skill')
+        policy = sandbox_profile(output / 'runtime', baseline, staged['path'], 'rust')
+        self.assertIn(f'(subpath "{output / "rust-stage/skills"}")', policy)
+        self.assertIn(f'(allow process-exec (literal "{staged["path"]}"))', policy)
+        self.assertNotIn(str(original), policy)
+        self.assertNotIn(str(baseline), policy)
+        # A copy that does not hash like --rust-bin is never run.
+        tampered = {'executable': {**expected['executable'], 'sha256': '1' * 64}}
+        (self.root / 'out2').mkdir()
+        with self.assertRaises(Blocked):
+            stage_rust(self.root / 'out2', tampered, baseline)
+        (baseline / 'skills/link').symlink_to('docx', target_is_directory=True)
+        (self.root / 'out3').mkdir()
+        with self.assertRaises(Blocked):
+            stage_rust(self.root / 'out3', expected, baseline)
+
+    def test_rust_round_must_run_the_registered_stage_copy(self):
+        source = self.source()
+        target = self.root / 'rust'
+        shutil.copytree(source, target)
+        expected = as_rust(target)
+        self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+        path = target / 'round.json'
+        run = json.loads(path.read_text())
+        for staged in ({**run['provenance']['stagedExecutable'], 'sha256': '2' * 64},
+                       {**run['provenance']['stagedExecutable'], 'path': '/synthetic/rust-stage/bin/pilotdeck'}):
+            with self.subTest(staged=staged):
+                mutated = json.loads(json.dumps(run))
+                mutated['provenance']['stagedExecutable'] = staged
+                save(path, mutated)
+                self.assertIn('round.rust-stage', [r['rule'] for r in compare(source, target, expected)['failures']])
+        del run['provenance']['stagedExecutable']
+        save(path, run)
+        self.assertEqual(compare(source, target, expected)['status'], 'FAIL')
 
     def test_probe_private_read_and_metadata_denials_required(self):
         source = self.source()
