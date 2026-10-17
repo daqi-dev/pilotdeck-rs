@@ -42,8 +42,13 @@ def main():
     parser.add_argument('--sidecar', action='store_true', help='only stdio sidecar G cross-check; no listen')
     args = parser.parse_args()
     args.baseline = Path(args.baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
-    if not (args.baseline / 'src/gateway/client/InProcessGateway.ts').is_file():
-        parser.error(f'baseline not found at {args.baseline}; pass --baseline or set PDRS_BASELINE')
+    # 按本入口实际用到的产物准入：fixtures 读 TS 源码，--sidecar 起已构建的 sidecar（sidecar-b.mts:57）
+    required = ['src/gateway/client/InProcessGateway.ts']
+    if args.sidecar:
+        required.append('dist/src/cli/pilotdeck-agent-loop-sidecar.js')
+    missing = [name for name in required if not (args.baseline / name).is_file()]
+    if missing:
+        parser.error(f'baseline at {args.baseline} lacks {missing}; pass --baseline or set PDRS_BASELINE')
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     node = shutil.which('node')
