@@ -24,9 +24,29 @@ class Fake(http.server.BaseHTTPRequestHandler):
     during = None  # 请求处理中执行的回调（模拟并发写入者）
     location = None  # 设了就回 302 跳到这里
     drip = 0.0  # >0 时逐字节慢滴
+    raw_mode = None  # "headers"：慢滴响应头；"chunked"：慢滴 chunked 正文（都按每段 <1 s 间隔）
+    last_body = b""
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        Fake.last_body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if Fake.raw_mode:
+            try:
+                if Fake.raw_mode == "headers":
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                    for i in range(40):
+                        self.wfile.write(f"X-Slow-{i}: 1\r\n".encode())
+                        self.wfile.flush()
+                        time.sleep(0.2)
+                else:
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    for _ in range(40):
+                        self.wfile.write(b"1\r\n \r\n")
+                        self.wfile.flush()
+                        time.sleep(0.2)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            self.close_connection = True
+            return
         if Fake.during:
             Fake.during()
         code, body = Fake.reply
@@ -188,6 +208,22 @@ def main() -> int:
     case("错误正文慢滴超总时限", (401, b"x" * 40), 1, "--timeout", "1", expect_msg="总时限")
     elapsed_err = time.monotonic() - started
     Fake.drip = 0.0
+    times = []
+    for mode in ("headers", "chunked"):
+        Fake.raw_mode = mode
+        started = time.monotonic()
+        case(f"慢滴{mode}超总时限", (200, b""), 1, "--timeout", "1", expect_msg="总时限")
+        times.append(time.monotonic() - started)
+    Fake.raw_mode = None
+    ok = all(t < 5 for t in times)
+    print(f"{'PASS' if ok else 'FAIL'} 响应头/chunked 慢滴按总时限返回 {[round(t, 1) for t in times]}")
+    fails += not ok
+    case("--max-tokens 透传", (200, ok_body("x")), 0, "--max-tokens", "8192")
+    ok = json.loads(Fake.last_body).get("max_tokens") == 8192
+    case("不给 --max-tokens 不发该字段", (200, ok_body("x")), 0)
+    ok = ok and "max_tokens" not in json.loads(Fake.last_body)
+    print(f"{'PASS' if ok else 'FAIL'} max_tokens 请求体")
+    fails += not ok
     ok = elapsed < 5 and elapsed_err < 5  # 整包滴完要 8 s 以上；总时限 1 s 应在几秒内返回
     print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 正文={elapsed:.1f}s 错误正文={elapsed_err:.1f}s")
     fails += not ok
@@ -243,7 +279,7 @@ def main() -> int:
         (tmp / "i.txt").write_bytes(b"b" * 20)
         rd.open = lambda p, mode="r": Rec(real_open(p, mode))
         try:
-            rd.build_body(type("A", (), {"prompt": tmp / "p.md", "input": [tmp / "i.txt"], "model": "m"})())
+            rd.build_body(type("A", (), {"prompt": tmp / "p.md", "input": [tmp / "i.txt"], "model": "m", "max_tokens": None})())
         finally:
             del rd.open
     want = [rd.MAX_INPUT_BYTES + 1, rd.MAX_INPUT_BYTES - 10 + 1]
@@ -262,41 +298,27 @@ def main() -> int:
     print(f"{'PASS' if ok else 'FAIL'} worktree 回退主仓 .env.local {files}")
     fails += not ok
 
-    # 不支持硬链接的文件系统：退到排他创建，仍不覆盖
+    # 不支持硬链接的文件系统：不原地写 --out，回复保留在临时文件，已有目标不动
     import errno
-    for name, pre_exists in (("无硬链接时排他创建发布", False), ("无硬链接且目标已存在", True), ("无硬链接且写入失败", None)):
+    for name, pre_exists in (("无硬链接时不发布、回复保留", False), ("无硬链接且目标已存在", True)):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "out.md"
             if pre_exists:
                 out.write_text("OLD")
             real_link = os.link
             os.link = lambda *_: (_ for _ in ()).throw(OSError(errno.ENOTSUP, "no hardlinks"))
-            real_fdopen = os.fdopen
-            if pre_exists is None:
-                calls = []
-                def fdopen(fd, *a, **k):  # 第一次是临时文件（正常），第二次是退路目标（写到一半失败）
-                    calls.append(fd)
-                    f = real_fdopen(fd, *a, **k)
-                    if len(calls) == 2:
-                        f.write("HALF")
-                        f.flush()
-                        f.write = lambda *_: (_ for _ in ()).throw(OSError(28, "No space left"))
-                    return f
-                os.fdopen = fdopen
             try:
                 rd.write_atomic(out, "TEXT", False)
                 err = None
             except Exception as e:
                 err = e
             finally:
-                os.link, os.fdopen = real_link, real_fdopen
-            leftovers = list(Path(d).glob(".out.md.*"))
-            if pre_exists is None:
-                ok = not leftovers and isinstance(err, rd.Fail) and not out.exists()
-            else:
-                ok = (not leftovers) and ((isinstance(err, rd.Fail) and out.read_text() == "OLD") if pre_exists
-                                          else (err is None and out.read_text() == "TEXT"))
-            print(f"{'PASS' if ok else 'FAIL'} {name} err={err} leftovers={leftovers}")
+                os.link = real_link
+            kept = list(Path(d).glob(".out.md.*"))
+            ok = (isinstance(err, rd.Fail) and "不支持硬链接" in str(err) and len(kept) == 1
+                  and kept[0].read_text() == "TEXT" and str(kept[0]) in str(err)
+                  and (out.read_text() == "OLD" if pre_exists else not out.exists()))
+            print(f"{'PASS' if ok else 'FAIL'} {name} err={err} kept={kept}")
             fails += not ok
 
     # 发布 × 清理故障注入：发布成功后清理失败不改结果；发布失败时保留原始错误
