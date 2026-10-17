@@ -1,0 +1,2489 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/user-dialog/FileGatewayUserDialogStore.ts": "55e79c14be9b14822f62b7b40ead013dca55f74ca55f239558ca42f2f3ea894f",
+    "src/gateway/user-dialog/GatewayUserDialogBus.ts": "4617a637f917e8f5799b31c3f15f5b7330abd311b7126fc6bfa848e6b08afc94",
+    "src/gateway/user-dialog/GatewayUserDialogStore.ts": "9fbf286e318623afad310257a2691485a98e617c163b74e19586aa65249f77dd",
+    "src/gateway/user-dialog/GatewayUserDialogChannel.ts": "8d236677fb569bdd3ffb1d1358165f2f23dfc30ebbd59eb23ef34cccd714374e",
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9"
+  },
+  "command": "PDRS_BASELINE=/absolute/path/to/PilotDeck node --import \"$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs\" src/pilotdeck-gateway/tests/fixtures/user-dialog/generate.mts src/pilotdeck-gateway/tests/fixtures/user-dialog",
+  "key": {
+    "projectRoot": "/fixture/项目/longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong",
+    "pilotHome": "/fixture/home",
+    "sessionId": "session/../中文\ud800"
+  },
+  "request": {
+    "type": "user_dialog_request",
+    "requestId": "dialog-1",
+    "dialogKind": "input",
+    "toolCallId": "tool-1",
+    "toolName": "request_user_input",
+    "prompt": "继续？\ud800",
+    "extra": {
+      "2": "two",
+      "10": "ten",
+      "z": 1e-7,
+      "a": 0
+    }
+  },
+  "createdAt": "2026-10-18T00:00:00.000Z",
+  "initialMs": 1792281600000,
+  "relativePath": "WyIvZml4dHVyZS_pobnnm64vbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25n/bG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmdsb25nbG9uZ2xvbmciLCIvZml4dHVyZS9ob21lIiwic2Vz/c2lvbi8uLi_kuK3mlodcdWQ4MDAiXQ/dialogs.json",
+  "steps": [
+    {
+      "action": {
+        "op": "list"
+      },
+      "result": [],
+      "disk": null
+    },
+    {
+      "action": {
+        "op": "claim",
+        "id": "missing",
+        "ttl": -1
+      },
+      "result": {
+        "claimed": false,
+        "reason": "not_pending"
+      },
+      "disk": null
+    },
+    {
+      "action": {
+        "op": "put"
+      },
+      "result": null,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\"}]}"
+    },
+    {
+      "action": {
+        "op": "listLive"
+      },
+      "result": [],
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\"}]}"
+    },
+    {
+      "action": {
+        "op": "owner",
+        "owner": "owner-A",
+        "ttl": 1000
+      },
+      "result": {
+        "owned": true,
+        "ownerId": "owner-A",
+        "expiresAt": "2026-10-18T00:00:01.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "owner",
+        "owner": "owner-B",
+        "ttl": -1
+      },
+      "result": {
+        "owned": false,
+        "reason": "owned",
+        "expiresAt": "2026-10-18T00:00:01.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 3000
+      },
+      "result": {
+        "claimed": true,
+        "leaseId": "fixed-id",
+        "expiresAt": "2026-10-18T00:00:03.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": -1
+      },
+      "result": {
+        "claimed": false,
+        "reason": "claimed",
+        "expiresAt": "2026-10-18T00:00:03.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "submit",
+        "lease": "wrong",
+        "result": {
+          "behavior": "answered",
+          "value": "rejected lease"
+        }
+      },
+      "result": false,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "submit",
+        "lease": "fixed-id",
+        "result": {
+          "behavior": "answered",
+          "value": {
+            "z": "中文\ud800",
+            "a": 1e-7
+          }
+        }
+      },
+      "result": true,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "put",
+        "request": {
+          "type": "user_dialog_request",
+          "requestId": "dialog-1",
+          "dialogKind": "input",
+          "toolCallId": "tool-1",
+          "toolName": "request_user_input",
+          "prompt": "replacement",
+          "extra": {
+            "2": "two",
+            "10": "ten",
+            "z": 1e-7,
+            "a": 0
+          }
+        },
+        "createdAt": "not-a-date"
+      },
+      "result": null,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "reopen"
+      },
+      "result": null,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "list"
+      },
+      "result": [
+        {
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "replacement",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          },
+          "createdAt": "not-a-date"
+        }
+      ],
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "listLive"
+      },
+      "result": [
+        {
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "replacement",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          },
+          "createdAt": "not-a-date"
+        }
+      ],
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "take"
+      },
+      "result": {
+        "requestId": "dialog-1",
+        "result": {
+          "behavior": "answered",
+          "value": {
+            "z": "中文\ud800",
+            "a": 1e-7
+          }
+        },
+        "submittedAt": "2026-10-18T00:00:00.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "take"
+      },
+      "result": null,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "release",
+        "lease": "wrong"
+      },
+      "result": false,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "releaseOwner",
+        "owner": "wrong"
+      },
+      "result": false,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "renewOwner",
+        "owner": "owner-A",
+        "ttl": 1000
+      },
+      "result": true,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "advance",
+        "ms": 1000
+      },
+      "result": 1792281601000,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "listLive"
+      },
+      "result": [],
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 1000
+      },
+      "result": {
+        "claimed": false,
+        "reason": "claimed",
+        "expiresAt": "2026-10-18T00:00:03.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "renewOwner",
+        "owner": "owner-A",
+        "ttl": 1000
+      },
+      "result": false,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "release",
+        "lease": "fixed-id"
+      },
+      "result": true,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\"}]}"
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 0
+      },
+      "result": {
+        "error": "ttlMs must be a positive safe integer."
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\"}]}"
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 2000
+      },
+      "result": {
+        "claimed": true,
+        "leaseId": "fixed-id",
+        "expiresAt": "2026-10-18T00:00:03.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "claim",
+        "lease": "fixed-id",
+        "ttl": 4000
+      },
+      "result": {
+        "claimed": true,
+        "leaseId": "fixed-id",
+        "expiresAt": "2026-10-18T00:00:05.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:05.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "owner",
+        "owner": "owner-B",
+        "ttl": 10000
+      },
+      "result": {
+        "owned": true,
+        "ownerId": "owner-B",
+        "expiresAt": "2026-10-18T00:00:11.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:05.000Z\"},\"owner\":{\"ownerId\":\"owner-B\",\"expiresAt\":\"2026-10-18T00:00:11.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "advance",
+        "ms": 4000
+      },
+      "result": 1792281605000,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:05.000Z\"},\"owner\":{\"ownerId\":\"owner-B\",\"expiresAt\":\"2026-10-18T00:00:11.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "release",
+        "lease": "fixed-id"
+      },
+      "result": false,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"owner\":{\"ownerId\":\"owner-B\",\"expiresAt\":\"2026-10-18T00:00:11.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "listLive"
+      },
+      "result": [
+        {
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "replacement",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          },
+          "createdAt": "not-a-date"
+        }
+      ],
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"owner\":{\"ownerId\":\"owner-B\",\"expiresAt\":\"2026-10-18T00:00:11.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "submit",
+        "result": {
+          "behavior": "cancelled",
+          "reason": "first"
+        }
+      },
+      "result": true,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"owner\":{\"ownerId\":\"owner-B\",\"expiresAt\":\"2026-10-18T00:00:11.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"cancelled\",\"reason\":\"first\"},\"submittedAt\":\"2026-10-18T00:00:05.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "submit",
+        "result": {
+          "behavior": "cancelled",
+          "reason": ""
+        }
+      },
+      "result": true,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"owner\":{\"ownerId\":\"owner-B\",\"expiresAt\":\"2026-10-18T00:00:11.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"cancelled\"},\"submittedAt\":\"2026-10-18T00:00:05.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "take"
+      },
+      "result": {
+        "requestId": "dialog-1",
+        "result": {
+          "behavior": "cancelled"
+        },
+        "submittedAt": "2026-10-18T00:00:05.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"owner\":{\"ownerId\":\"owner-B\",\"expiresAt\":\"2026-10-18T00:00:11.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "releaseOwner",
+        "owner": "owner-B"
+      },
+      "result": true,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\"}]}"
+    },
+    {
+      "action": {
+        "op": "submit",
+        "result": {
+          "behavior": "answered",
+          "value": 42
+        }
+      },
+      "result": true,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\",\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":42},\"submittedAt\":\"2026-10-18T00:00:05.000Z\"}}]}"
+    },
+    {
+      "action": {
+        "op": "take"
+      },
+      "result": {
+        "requestId": "dialog-1",
+        "result": {
+          "behavior": "answered",
+          "value": 42
+        },
+        "submittedAt": "2026-10-18T00:00:05.000Z"
+      },
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\"}]}"
+    },
+    {
+      "action": {
+        "op": "put",
+        "request": {
+          "type": "user_dialog_request",
+          "requestId": "dialog-2",
+          "dialogKind": "input",
+          "toolCallId": "tool-1",
+          "toolName": "request_user_input",
+          "prompt": "继续？\ud800",
+          "extra": {
+            "2": "two",
+            "10": "ten",
+            "z": 1e-7,
+            "a": 0
+          }
+        }
+      },
+      "result": null,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\"},{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-2\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\"}]}"
+    },
+    {
+      "action": {
+        "op": "remove",
+        "id": "absent"
+      },
+      "result": null,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"replacement\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"not-a-date\"},{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-2\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\"}]}"
+    },
+    {
+      "action": {
+        "op": "remove"
+      },
+      "result": null,
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-2\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\"}]}"
+    },
+    {
+      "action": {
+        "op": "remove",
+        "id": "dialog-2"
+      },
+      "result": null,
+      "disk": null
+    },
+    {
+      "action": {
+        "op": "release",
+        "lease": "absent"
+      },
+      "result": false,
+      "disk": null
+    },
+    {
+      "action": {
+        "op": "renewOwner",
+        "owner": "owner-A",
+        "ttl": 0
+      },
+      "result": false,
+      "disk": null
+    },
+    {
+      "action": {
+        "op": "clear"
+      },
+      "result": null,
+      "disk": null
+    }
+  ],
+  "busSteps": [
+    {
+      "action": {
+        "op": "register"
+      },
+      "result": null,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 1000
+      },
+      "result": {
+        "claimed": true,
+        "lease": {
+          "leaseId": "bus-lease",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        }
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "list"
+      },
+      "result": [
+        {
+          "type": "user_dialog_request",
+          "requestId": "dialog-1",
+          "dialogKind": "input",
+          "toolCallId": "tool-1",
+          "toolName": "request_user_input",
+          "prompt": "继续？\ud800",
+          "extra": {
+            "2": "two",
+            "10": "ten",
+            "z": 1e-7,
+            "a": 0
+          },
+          "lease": {
+            "expiresAt": "2026-10-18T00:00:01.000Z"
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 1000
+      },
+      "result": {
+        "claimed": false,
+        "reason": "claimed",
+        "expiresAt": "2026-10-18T00:00:01.000Z"
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "consume",
+        "lease": "wrong"
+      },
+      "result": {
+        "reason": "lease_required"
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "release",
+        "lease": "wrong"
+      },
+      "result": false,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 2000,
+        "lease": "bus-lease"
+      },
+      "result": {
+        "claimed": true,
+        "lease": {
+          "leaseId": "bus-lease",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        }
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "advance",
+        "ms": 2000
+      },
+      "result": 1792281602000,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "list"
+      },
+      "result": [
+        {
+          "type": "user_dialog_request",
+          "requestId": "dialog-1",
+          "dialogKind": "input",
+          "toolCallId": "tool-1",
+          "toolName": "request_user_input",
+          "prompt": "继续？\ud800",
+          "extra": {
+            "2": "two",
+            "10": "ten",
+            "z": 1e-7,
+            "a": 0
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "release",
+        "lease": "bus-lease"
+      },
+      "result": false,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 1000
+      },
+      "result": {
+        "claimed": true,
+        "lease": {
+          "leaseId": "bus-lease",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "release",
+        "lease": "bus-lease"
+      },
+      "result": true,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 1000
+      },
+      "result": {
+        "claimed": true,
+        "lease": {
+          "leaseId": "bus-lease",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "settleFails",
+        "value": true
+      },
+      "result": null,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "consume",
+        "lease": "bus-lease"
+      },
+      "result": {
+        "error": "settle failed"
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "list"
+      },
+      "result": [
+        {
+          "type": "user_dialog_request",
+          "requestId": "dialog-1",
+          "dialogKind": "input",
+          "toolCallId": "tool-1",
+          "toolName": "request_user_input",
+          "prompt": "继续？\ud800",
+          "extra": {
+            "2": "two",
+            "10": "ten",
+            "z": 1e-7,
+            "a": 0
+          },
+          "lease": {
+            "expiresAt": "2026-10-18T00:00:03.000Z"
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "settleFails",
+        "value": false
+      },
+      "result": null,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 0,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "consume",
+        "lease": "bus-lease"
+      },
+      "result": {
+        "entry": {
+          "type": "user_dialog_request",
+          "requestId": "dialog-1",
+          "dialogKind": "input",
+          "toolCallId": "tool-1",
+          "toolName": "request_user_input",
+          "prompt": "继续？\ud800",
+          "extra": {
+            "2": "two",
+            "10": "ten",
+            "z": 1e-7,
+            "a": 0
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "answered"
+        }
+      ],
+      "count": 0,
+      "settled": 1,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "consume"
+      },
+      "result": {
+        "reason": "not_pending"
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "answered"
+        }
+      ],
+      "count": 0,
+      "settled": 1,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "register"
+      },
+      "result": null,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "answered"
+        },
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        }
+      ],
+      "count": 1,
+      "settled": 1,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "claim",
+        "ttl": 1000
+      },
+      "result": {
+        "claimed": true,
+        "lease": {
+          "leaseId": "bus-lease",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      },
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "answered"
+        },
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 1,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "settleFails",
+        "value": true
+      },
+      "result": null,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "answered"
+        },
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        }
+      ],
+      "count": 1,
+      "settled": 1,
+      "rejected": []
+    },
+    {
+      "action": {
+        "op": "reject"
+      },
+      "result": null,
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "answered"
+        },
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "closed"
+        }
+      ],
+      "count": 0,
+      "settled": 1,
+      "rejected": [
+        "closed"
+      ]
+    },
+    {
+      "action": {
+        "op": "list"
+      },
+      "result": [],
+      "events": [
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:01.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:02.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "expired"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "released"
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "answered"
+        },
+        {
+          "type": "requested",
+          "sessionKey": "session",
+          "request": {
+            "type": "user_dialog_request",
+            "requestId": "dialog-1",
+            "dialogKind": "input",
+            "toolCallId": "tool-1",
+            "toolName": "request_user_input",
+            "prompt": "继续？\ud800",
+            "extra": {
+              "2": "two",
+              "10": "ten",
+              "z": 1e-7,
+              "a": 0
+            }
+          }
+        },
+        {
+          "type": "lease_changed",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "action": "claimed",
+          "expiresAt": "2026-10-18T00:00:03.000Z"
+        },
+        {
+          "type": "settled",
+          "sessionKey": "session",
+          "requestId": "dialog-1",
+          "reason": "closed"
+        }
+      ],
+      "count": 0,
+      "settled": 1,
+      "rejected": [
+        "closed"
+      ]
+    }
+  ],
+  "responses": [
+    {
+      "value": 42,
+      "error": {
+        "code": "INVALID_USER_DIALOG_RESPONSE",
+        "message": "answered input dialog result does not match the pending dialog contract."
+      },
+      "pending": 1
+    },
+    {
+      "value": "",
+      "result": {
+        "delivered": true
+      },
+      "pending": 0
+    }
+  ],
+  "resolved": [
+    {
+      "type": "answered",
+      "value": ""
+    }
+  ],
+  "hostedProjection": {
+    "dialogs": [
+      {
+        "type": "user_dialog_request",
+        "requestId": "dialog-1",
+        "dialogKind": "input",
+        "toolCallId": "tool-1",
+        "toolName": "request_user_input",
+        "prompt": "继续？\ud800",
+        "extra": {
+          "2": "two",
+          "10": "ten",
+          "z": 1e-7,
+          "a": 0
+        }
+      }
+    ]
+  },
+  "liveProjection": {
+    "dialogs": [
+      {
+        "type": "user_dialog_request",
+        "requestId": "dialog-1",
+        "dialogKind": "input",
+        "toolCallId": "tool-1",
+        "toolName": "request_user_input",
+        "prompt": "继续？\ud800",
+        "extra": {
+          "2": "two",
+          "10": "ten",
+          "z": 1e-7,
+          "a": 0
+        }
+      }
+    ]
+  },
+  "recoveredProjection": {
+    "dialogs": [
+      {
+        "type": "user_dialog_terminated",
+        "request": {
+          "type": "user_dialog_request",
+          "requestId": "dialog-1",
+          "dialogKind": "input",
+          "toolCallId": "tool-1",
+          "toolName": "request_user_input",
+          "prompt": "继续？\ud800",
+          "extra": {
+            "2": "two",
+            "10": "ten",
+            "z": 1e-7,
+            "a": 0
+          }
+        },
+        "reason": "gateway_restarted",
+        "terminatedAt": "2026-10-18T00:00:00.000Z",
+        "recovery": "next_turn_context"
+      }
+    ]
+  },
+  "readCases": [
+    {
+      "name": "extras",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\",\"extra\":true},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"},\"extra\":true}],\"extra\":true}",
+      "result": {
+        "list": [
+          {
+            "request": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "input",
+              "toolCallId": "tool-1",
+              "toolName": "request_user_input",
+              "prompt": "继续？\ud800",
+              "extra": {
+                "2": "two",
+                "10": "ten",
+                "z": 1e-7,
+                "a": 0
+              }
+            },
+            "createdAt": "2026-10-18T00:00:00.000Z"
+          }
+        ],
+        "live": [],
+        "answer": {
+          "requestId": "dialog-1",
+          "result": {
+            "behavior": "answered",
+            "value": {
+              "z": "中文\ud800",
+              "a": 1e-7
+            }
+          },
+          "submittedAt": "2026-10-18T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "minimal-request",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"custom\"},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "list": [
+          {
+            "request": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "custom"
+            },
+            "createdAt": "2026-10-18T00:00:00.000Z"
+          }
+        ],
+        "live": [],
+        "answer": {
+          "requestId": "dialog-1",
+          "result": {
+            "behavior": "answered",
+            "value": {
+              "z": "中文\ud800",
+              "a": 1e-7
+            }
+          },
+          "submittedAt": "2026-10-18T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "date-parse",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"18 Oct 2026 00:01:00 GMT\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "list": [
+          {
+            "request": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "input",
+              "toolCallId": "tool-1",
+              "toolName": "request_user_input",
+              "prompt": "继续？\ud800",
+              "extra": {
+                "2": "two",
+                "10": "ten",
+                "z": 1e-7,
+                "a": 0
+              }
+            },
+            "createdAt": "2026-10-18T00:00:00.000Z"
+          }
+        ],
+        "live": [
+          {
+            "request": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "input",
+              "toolCallId": "tool-1",
+              "toolName": "request_user_input",
+              "prompt": "继续？\ud800",
+              "extra": {
+                "2": "two",
+                "10": "ten",
+                "z": 1e-7,
+                "a": 0
+              }
+            },
+            "createdAt": "2026-10-18T00:00:00.000Z"
+          }
+        ],
+        "answer": {
+          "requestId": "dialog-1",
+          "result": {
+            "behavior": "answered",
+            "value": {
+              "z": "中文\ud800",
+              "a": 1e-7
+            }
+          },
+          "submittedAt": "2026-10-18T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "empty-reason",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"cancelled\",\"reason\":\"\"},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "list": [
+          {
+            "request": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "input",
+              "toolCallId": "tool-1",
+              "toolName": "request_user_input",
+              "prompt": "继续？\ud800",
+              "extra": {
+                "2": "two",
+                "10": "ten",
+                "z": 1e-7,
+                "a": 0
+              }
+            },
+            "createdAt": "2026-10-18T00:00:00.000Z"
+          }
+        ],
+        "live": [],
+        "answer": {
+          "requestId": "dialog-1",
+          "result": {
+            "behavior": "cancelled"
+          },
+          "submittedAt": "2026-10-18T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "undefined-answer",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\"},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "list": [
+          {
+            "request": {
+              "type": "user_dialog_request",
+              "requestId": "dialog-1",
+              "dialogKind": "input",
+              "toolCallId": "tool-1",
+              "toolName": "request_user_input",
+              "prompt": "继续？\ud800",
+              "extra": {
+                "2": "two",
+                "10": "ten",
+                "z": 1e-7,
+                "a": 0
+              }
+            },
+            "createdAt": "2026-10-18T00:00:00.000Z"
+          }
+        ],
+        "live": [],
+        "answer": {
+          "requestId": "dialog-1",
+          "result": {
+            "behavior": "answered"
+          },
+          "submittedAt": "2026-10-18T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "duplicate",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}},{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "invalid": true
+      }
+    },
+    {
+      "name": "version",
+      "disk": "{\"version\":2,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "invalid": true
+      }
+    },
+    {
+      "name": "bad-expiry",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"invalid\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "invalid": true
+      }
+    },
+    {
+      "name": "null-owner",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":null,\"answer\":{\"requestId\":\"dialog-1\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "invalid": true
+      }
+    },
+    {
+      "name": "answer-id",
+      "disk": "{\"version\":1,\"dialogs\":[{\"request\":{\"type\":\"user_dialog_request\",\"requestId\":\"dialog-1\",\"dialogKind\":\"input\",\"toolCallId\":\"tool-1\",\"toolName\":\"request_user_input\",\"prompt\":\"继续？\\ud800\",\"extra\":{\"2\":\"two\",\"10\":\"ten\",\"z\":1e-7,\"a\":0}},\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"lease\":{\"leaseId\":\"fixed-id\",\"expiresAt\":\"2026-10-18T00:00:03.000Z\"},\"owner\":{\"ownerId\":\"owner-A\",\"expiresAt\":\"2026-10-18T00:00:01.000Z\"},\"answer\":{\"requestId\":\"other\",\"result\":{\"behavior\":\"answered\",\"value\":{\"z\":\"中文\\ud800\",\"a\":1e-7}},\"submittedAt\":\"2026-10-18T00:00:00.000Z\"}}]}",
+      "result": {
+        "invalid": true
+      }
+    }
+  ]
+}
