@@ -1,6 +1,13 @@
 //! Filesystem upload provider, ported against PilotDeck cc7c4e6 UploadStore.ts.
 //! This module is not wired into Gateway dispatch. Records retain JS property
 //! order and unknown fields so TS and Rust can continue each other's uploads.
+//!
+//! Concurrency scope matches TS: mutations of one uploadId are serialized only
+//! within one store instance (TS `updates: Map<string, Promise>`). Two processes
+//! (or two instances) mutating the same upload concurrently can lose an update,
+//! exactly as in TS; the shared contract is the disk format, not a cross-process
+//! lock. Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE); the
+//! non-ignored `upload_golden_bytes_match_ts_fixtures` guards the format in CI.
 mod error;
 #[cfg(test)]
 mod tests;
@@ -507,6 +514,7 @@ impl UploadStore {
         })
     }
 
+    /// Serialized per uploadId within this instance only (see module docs).
     fn mutate(
         &self,
         record: &UploadRecord,
