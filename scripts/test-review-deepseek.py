@@ -20,9 +20,12 @@ FAKE_KEY = "sk-FAKE0123456789"
 
 class Fake(http.server.BaseHTTPRequestHandler):
     reply: tuple[int, bytes] = (200, b"")
+    during = None  # 请求处理中执行的回调（模拟并发写入者）
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if Fake.during:
+            Fake.during()
         code, body = Fake.reply
         self.send_response(code)
         self.send_header("Content-Length", str(len(body)))
@@ -53,7 +56,7 @@ def main() -> int:
     api = f"http://127.0.0.1:{srv.server_port}/"
     fails = 0
 
-    def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False):
+    def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None):
         nonlocal fails
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
@@ -61,6 +64,7 @@ def main() -> int:
             if pre:
                 pre(tmp)
             Fake.reply = reply
+            Fake.during = (lambda: during(tmp)) if during else None
             script = SCRIPT
             if isolated:  # 脚本放到非 git 目录，确保读不到真实 .env.local
                 (tmp / "scripts").mkdir()
@@ -74,9 +78,11 @@ def main() -> int:
                 bad.append(f"exit={r.returncode}≠{expect_code}")
             if expect_out is not None and got != expect_out:
                 bad.append(f"out={got!r}")
+            if "Traceback" in r.stderr or (expect_code and not r.stderr.strip().splitlines()[-1].startswith("review-deepseek:")):
+                bad.append("不是受控诊断")
             if expect_code != 0 and got not in (None, "OLD"):
                 bad.append(f"失败却写了 out={got!r}")
-            if key and len(key) > 4 and key in (r.stdout + r.stderr):
+            if key and len(key) > 4 and key[:12] in (r.stdout + r.stderr):
                 bad.append("密钥出现在输出里")
             if list(tmp.glob(".out.md.*.tmp")):
                 bad.append("残留临时文件")
@@ -91,6 +97,16 @@ def main() -> int:
     case("200 返回 HTML", (200, b"<html>portal</html>"), 1)
     case("HTTP 402", (402, b'{"error": "Insufficient Balance"}'), 1)
     case("HTTP 错误正文回显密钥", (401, f"bad key {FAKE_KEY}".encode()), 1)
+    case("错误正文里密钥跨 500 截断边界", (401, ("x" * 490 + FAKE_KEY).encode()), 1)
+    case("成功回复回显密钥", (200, ok_body(f"key={FAKE_KEY}")), 1)
+    case("请求期间别人写了 --out", (200, ok_body("NEW")), 1, expect_out="OLD",
+         during=lambda t: (t / "out.md").write_text("OLD"))
+    case("--out 是目录", (200, ok_body("x")), 2, "--out", ".")
+    case("--out 父路径是普通文件", (200, ok_body("x")), 1, "--out", "task.md/x.md")
+    case("拒绝外发 .env 的软链接", (200, ok_body("x")), 2, "--input", "material.txt",
+         pre=lambda t: ((t / ".env.local").write_text("X=1"), (t / "material.txt").symlink_to(t / ".env.local")))
+    case("拒绝外发 .env 的硬链接", (200, ok_body("x")), 2, "--input", "material.txt",
+         pre=lambda t: ((t / ".env.local").write_text("X=1"), os.link(t / ".env.local", t / "material.txt")), isolated=True)
     case("密钥首尾换行被去掉", (200, ok_body("x")), 0, key="sk-FAKE\n")
     case("密钥含内部空白", (200, ok_body("x")), 2, key="sk-FA KE")
     case("无密钥", (200, ok_body("x")), 2, key=None, isolated=True)

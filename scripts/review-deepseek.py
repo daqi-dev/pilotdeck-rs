@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -64,7 +65,11 @@ def load_key() -> str:
         for env in env_files():
             if not env.is_file():
                 continue
-            for line in env.read_text(encoding="utf-8").splitlines():
+            try:
+                lines = env.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeError) as e:
+                raise Fail(2, f"读取 {env} 失败：{type(e).__name__}") from None
+            for line in lines:
                 name, sep, value = line.strip().partition("=")
                 name = name.removeprefix("export ").strip()
                 if sep and name == "DEEPSEEK_API_KEY":
@@ -85,32 +90,42 @@ def same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def is_secret(p: Path, envs: list[Path]) -> bool:
+    return p.name.startswith(".env") or p.resolve().name.startswith(".env") or any(same_file(p, e) for e in envs)
+
+
 def check_paths(a: argparse.Namespace) -> None:
     if a.timeout <= 0:
         raise Fail(2, "--timeout 须为正数")
+    if not a.out.name or a.out.is_dir():
+        raise Fail(2, f"--out 须是文件路径：{a.out}")
+    envs = env_files()
     for p in [a.prompt, *a.input]:
-        if p.name.startswith(".env"):
+        if is_secret(p, envs):
             raise Fail(2, f"拒绝外发疑似密钥文件 {p}")
         if not p.is_file():
             raise Fail(2, f"找不到 {p}")
         if same_file(p, a.out) or p.resolve() == a.out.resolve():
             raise Fail(2, f"--out 与输入 {p} 是同一文件")
-    if any(same_file(a.out, e) for e in env_files()) or a.out.name.startswith(".env"):
+    if is_secret(a.out, envs):
         raise Fail(2, "--out 不能指向 .env 文件")
     if a.out.exists() and not a.force:
         raise Fail(2, f"{a.out} 已存在（保护上一轮证据；确需覆盖加 --force）")
 
 
 def build_body(a: argparse.Namespace) -> bytes:
-    total = sum(p.stat().st_size for p in [a.prompt, *a.input])
-    if total > MAX_INPUT_BYTES:
-        raise Fail(2, f"输入合计 {total} 字节，超过上限 {MAX_INPUT_BYTES}；请缩小材料或分批")
+    total, texts = 0, []
     try:
-        parts = [a.prompt.read_text(encoding="utf-8")]
-        for p in a.input:
-            parts.append(f"\n\n===== {p} =====\n{p.read_text(encoding='utf-8')}")
-    except (OSError, UnicodeDecodeError) as e:
+        for p in [a.prompt, *a.input]:
+            with open(p, "rb") as f:  # 按剩余预算有界读取，读取期间文件增长也会被拦下
+                data = f.read(MAX_INPUT_BYTES - total + 1)
+            total += len(data)
+            if total > MAX_INPUT_BYTES:
+                raise Fail(2, f"输入合计超过上限 {MAX_INPUT_BYTES} 字节；请缩小材料或分批")
+            texts.append(data.decode("utf-8"))
+    except (OSError, UnicodeError) as e:
         raise Fail(2, f"读取输入失败：{type(e).__name__}") from None
+    parts = [texts[0], *(f"\n\n===== {p} =====\n{t}" for p, t in zip(a.input, texts[1:]))]
     print(f"review-deepseek: 输入 {total} 字节（{1 + len(a.input)} 个文件）", file=sys.stderr)
     return json.dumps({
         "model": a.model,
@@ -127,7 +142,7 @@ def call_api(a: argparse.Namespace, key: str, body: bytes) -> dict:
             raw = r.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as e:
         try:
-            detail = e.read(500).decode(errors="replace")
+            detail = e.read(64 * 1024).decode(errors="replace")  # 先整段脱敏再截断显示，见 redact()
         except Exception:  # 错误正文读不出来不影响退出码
             detail = ""
         raise Fail(1, f"HTTP {e.code} {detail}") from None
@@ -138,7 +153,7 @@ def call_api(a: argparse.Namespace, key: str, body: bytes) -> dict:
     try:
         resp = json.loads(raw)
     except ValueError:
-        raise Fail(1, f"响应不是 JSON：{raw[:200].decode(errors='replace')}") from None
+        raise Fail(1, f"响应不是 JSON：{raw[:65536].decode(errors='replace')}") from None
     if not isinstance(resp, dict):
         raise Fail(1, "响应结构异常：顶层不是对象")
     return resp
@@ -147,7 +162,7 @@ def call_api(a: argparse.Namespace, key: str, body: bytes) -> dict:
 def extract_text(resp: dict) -> str:
     choices = resp.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        raise Fail(1, f"响应无 choices：{json.dumps(resp, ensure_ascii=False)[:300]}")
+        raise Fail(1, f"响应无 choices：{json.dumps(resp, ensure_ascii=False)[:65536]}")
     choice = choices[0]
     msg = choice.get("message")
     text = msg.get("content") if isinstance(msg, dict) else None
@@ -158,17 +173,31 @@ def extract_text(resp: dict) -> str:
     return text
 
 
-def write_atomic(out: Path, text: str) -> None:
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(f".{out.name}.{os.getpid()}.tmp")
+def write_atomic(out: Path, text: str, force: bool) -> None:
+    """完整写进同目录随机临时文件再发布；不带 --force 时用 link 发布，目标已存在即失败（不覆盖并发写入者）。"""
+    tmp = None
     try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix=f".{out.name}.", suffix=".tmp", dir=out.parent)
+        tmp = Path(name)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.replace(tmp, out)
-    except OSError as e:
-        tmp.unlink(missing_ok=True)
-        raise Fail(1, f"写 {out} 失败：{e}") from None
+        if force:
+            os.replace(tmp, out)
+            tmp = None
+        else:
+            os.link(tmp, out)
+    except FileExistsError:
+        raise Fail(1, f"{out} 在请求期间被别人创建，未覆盖；本次回复丢弃") from None
+    except (OSError, UnicodeError) as e:
+        raise Fail(1, f"写 {out} 失败：{type(e).__name__}") from None
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+
+
+def redact(msg: str, key: str) -> str:
+    return (msg.replace(key, "***") if key else msg)[:500]
 
 
 def main() -> int:
@@ -182,17 +211,23 @@ def main() -> int:
     ap.add_argument("--api", default=API, help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()
 
-    key = ""
+    key, stage = "", 2
     try:
         key = load_key()
         check_paths(a)
-        resp = call_api(a, key, build_body(a))
+        body = build_body(a)
+        stage = 1
+        resp = call_api(a, key, body)
         text = extract_text(resp)
-        write_atomic(a.out, text)
+        if key in text or key in json.dumps(resp.get("model")):
+            raise Fail(1, "回复中回显了密钥，拒绝落盘")
+        write_atomic(a.out, text, a.force)
     except Fail as e:
-        msg = str(e).replace(key, "***") if key else str(e)
-        print(f"review-deepseek: {msg}", file=sys.stderr)
+        print(f"review-deepseek: {redact(str(e), key)}", file=sys.stderr)
         return e.code
+    except Exception as e:  # 兜底：任何意外都给受控诊断，不出 traceback
+        print(f"review-deepseek: 意外错误 {type(e).__name__}: {redact(str(e), key)}", file=sys.stderr)
+        return stage
     usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
     print(f"review-deepseek: model={resp.get('model')} prompt_tokens={usage.get('prompt_tokens')} "
           f"completion_tokens={usage.get('completion_tokens')} → {a.out}")
