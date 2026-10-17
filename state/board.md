@@ -1,5 +1,9 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 人定：持续自主推进授权（用户指示，另一协调会话转述）+ 技能协议入库
+> **授权基调**：按 board 就绪队列**连续自主推进**，不每单停等发车、不把阶段汇报当批准请求（CLAUDE.md 既有规则从现在用足）；两小时到点写交接后**继续下一单**，不等用户重新启动。依据：Claude Code 时代已验证此模式（10-13~14 单会话 40.9h + 84 子代理连续自主产出，`~/.claude/projects/-Users-da-ws-Auto/`）；opencode 机制同构（长会话 + 子代理），缺的只是授权颗粒与协议执行度。**边界不变**：放权边界 / 红线 / 决策分级照旧，第 14 条未授权动作（对外发布、不可逆删除等）照停；两小时交接与合并闸门不因此省略。
+> **流程参考**：`docs/changes/ops/001_skill-protocol.md`（42plugin 技能 × 重构环节映射；pr-ready 三角色 #46 起必跑、simplify 二选一落定、交付收尾固定 checklist）。**下一单：#46（A4 gateway 透传 + 10 method 本地化，P0 主线）立即开工**，按 ops/001 环节表走，先评估是否拆 sub-issue。
+
 > ## 2026-10-17 · 第六轮（收尾）：#157 合并，#154/#139 清账
 > PR #157（文件级 EACCES/ENOENT 原件+回放）双家评审无 P0/P1、CI 三绿、rebase 合并 main@fcbc953；#154、#139（P0）关闭——A4 全部前置债清零。wt-142 归档（`_tmp/archive/worktrees-20261017/wt-142-154/`）后删除，worktree 仅剩主仓。磁盘 _build 17G + _tmp 23G。
 > **当前开着的债**：Draft #150（Ready 装置，A5 需要时评估）；P2-跟进 9 张（#55/#91/#98/#115/#117/#119/#120/#132/#133/#145/#147/#148/#152 中仍开者）；P1 验收债 #61/#65/#94/#117/#133。
@@ -414,3 +418,7 @@
 > `aias-meta-init` 生成六组骨架：① `README.md` `CLAUDE.md` `.42cog/` `specs/` ② `vault/` `notes/` `resources/` ③ `skills/` `scripts/` `plugin.json` ④ `src/` ⑤ `state/` `docs/` ⑥ `_build/` `_tmp/` `_archive/`（忽略）。
 > **收敛方向**（草稿，待人确认）：见 `.42cog/intent.md`——**那句话只有一份，别抄到这里来**。
 > **下一步**：确认收敛方向 → `pdrs-research` 找依据、排真相源权重 → 回来改这一句。方向第一版粗是正常的，四步是循环。
+
+## OmO 大规模重构案例调研（2026-10-17）
+做了什么：web 调研 OmO（oh-my-openagent）大规模重构成功案例，笔记落在 `_tmp/20261017-omo-refactor-cases/research_notes/AI agent 大规模重构案例对比/omo-success.md`。核心结论：可溯一手案例仅 PingCAP 联创 Ed Huang 的 tipg SQL 层重写复盘（一下午/百万级 token/跑通 dvdrental+TPC-C 自述），但产物仓库已 404；README 三条评价仅 Arthur Guiot 带 X 原链，Kilset/匿名 B 未溯到原始出处；工作流共性 = 类别路由多模型 + 专职评审多轮 + 不间断循环 + 权限白名单 + 测试前置。
+下一步：等报告撰写人汇总各研究员笔记。
