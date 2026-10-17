@@ -16,3 +16,20 @@ A1 的 RSV/continuation/unmasked codec 差异由 A2 原始 WS 探针实际判 FA
 - **范围**：仅 `project_file_read`（以及后续沿用同一读取路径的本地 method，须各自另登记）在「检查后、读取前路径被替换」的竞态下的结果。不竞态的正常路径（含根内绝对路径与 `..`）与 TS 逐字节一致（60/60 原件）。
 - **机器判据**：`src/pilotdeck-gateway/src/project_files/tests.rs` 的 `checked_path_replacements_cannot_read_outside_or_fall_back_to_ts`——同一组 Node 实测竞态探针中，TS 读到 `OUTSIDE_SECRET`，Rust 必须本地应答（报错或 result:null）、不含根外内容且不转发；A2 透明代理与本地应答场景无竞态，仍须 100% 一致。
 - **批准记录**：人定 2026-10-15（issue #68 选 A），见 `state/decisions-20261014.md`「人的回复」。
+
+## A4-ARCHIVE-SEC-001 · native_archive_manifest 根外读取安全拒绝（原版缺陷 · 安全）
+
+- **类别**：bug 修复（意向书「bug 默认修」第③项：有安全问题）。
+- **基线依据**（cc7c4e6 `src/`）：transcript 读取链（`cli/createLocalGateway.ts:1183-1196`）realpath 后默认跟随符号链接，静态根外链接与检查后替换均读出根外内容（真实 Node RPC 9 场景原件：TS 读出根外 sequence 4242）。
+- **Rust 行为**：canonical 双侧 containment + 从 `/` 起逐层 `O_SEARCH|DIRECTORY|NOFOLLOW` checked-open + fd fstat；根外链接/替换/非 regular file/超限 → `PATH_NOT_ALLOWED` 本地拒绝，**从不返回根外内容，也不回退 TS**。
+- **范围与披露**：合法外部存储布局（transcript 根软链到别处）同被拒绝——行为回归属登记语义家族（人批 2026-10-17）。不防硬链接/bind mount；注册目录枚举与 stat 元数据仍跟随链接（不读内容）。
+- **机器判据**：`native_archive/security_tests.rs` 9 场景（normal/静态外链/受控替换 × 三 method）：normal 与 TS 逐字节相等；拒绝场景本地应答且 pairing receipt 唯一、上游零转发。
+- **批准记录**：人批 2026-10-17「批准 #134 的登记范围」，见 `state/decisions-20261017.md`。
+
+## A4-ARCHIVE-SEC-002 · native_archive_entries 根外读取安全拒绝（原版缺陷 · 安全）
+
+同 A4-ARCHIVE-SEC-001（共享读取路径与原语；分页语义普通路径与 TS 逐字节一致，138 RPC fixture 原件）。按规约逐 method 登记。批准记录同上。
+
+## A4-ARCHIVE-SEC-003 · native_archive_artifact 根外读取安全拒绝（原版缺陷 · 安全）
+
+同 A4-ARCHIVE-SEC-001，差异两点：拒绝错误码为 `ARCHIVE_ARTIFACT_NOT_FOUND`（与该 method 既有 NOT_FOUND 语义一致，按 method 分别登记口径）；artifact 根为项目目录，读 tool-results。10MiB limit 契约与 TS 一致。批准记录同上。
