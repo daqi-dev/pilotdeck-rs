@@ -85,7 +85,8 @@ def _run(gate, rrr, out_base: Path) -> int:
         subprocess.run([*g, "init", "-q"], check=True)
         subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
         (wt / "a.txt").write_text("hello\n")
-        subprocess.run([*g, "add", "a.txt"], check=True)
+        (wt / "bad-utf8.bin").write_bytes(b"ok\n\xff\xfe not utf-8\n")  # 夹具里的非 UTF-8 字节不得让运行器崩溃
+        subprocess.run([*g, "add", "a.txt", "bad-utf8.bin"], check=True)
         subprocess.run([*g, "commit", "-q", "-m", "change"], check=True)
         head = subprocess.run([*g, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
         fake = tmp / "claude"
