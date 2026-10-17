@@ -17,6 +17,7 @@ pub mod storage;
 mod test_process;
 pub mod upload;
 mod upstream;
+pub mod user_dialog;
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
