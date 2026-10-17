@@ -37,3 +37,24 @@ python3 scripts/gateway-parity/controls/run_all.py --source _tmp/20261014-gatewa
 `driver.mts --url --token --scenario --out` 从基线公开 `src/gateway/index.js` 导入官方客户端/RemoteGateway/协议常量，tsx 将其解析到同目录 index.ts。完整应用帧在 driver，Rust 不能伪造比较证据。observer 独立记录原始上游 payload 与方向，A4 可用 `compare.py --local-method supported_agents` 要求成功响应一致、请求未转发；A2 默认断言十个只读请求**全部**透传，避免空 observer 被误认作本地化。
 
 规约见 `specs/gateway-parity/`；没有已接受差异。自动 UI 恢复、桌面、生产 DOM、全部 101 method、config/扩展热加载与真正 TS 退役均不在 A2 完成声明中。
+
+## A5.3 / E1 草稿入口
+
+`session_domain.py --suite calibrate --output <新目录>` 持有既有串行锁，原样调用
+`scripts/a5-19/run.py`。独立清单 `fixtures/session-calibration.json` 固定 72 项场景，
+每项 5 次，复用原观察规则和负控，保留六格原件。这是 TS 进程内受控校准；
+没有启动 sidecar 或 HTTP gateway，不声称覆盖原八组在线回归。
+
+`--suite deadline` 输出四格 `NOT_RUN`，结构自检 exit 0。实际原生执行、exec/egress
+采集器接入和产品比较仍需 A7。`audit_native` 提供缺证据即拒绝的审计契约；
+合成拓扑夹具仅证明规则能拒绝变异，不能证明原生宿主已运行。旧 A2 代理驱动不改称原生驱动。
+
+`python3 scripts/gateway-parity/controls/session_domain.py --case all --output <新目录>`
+执行 10 类必需负控及 7 项补充回归。加 `--source <校准输出>/six-cells` 可变异真实 TS
+观察；不加时使用明确标记的合成观察。每条负控须 exit 1 且首因正确，批次仅在健康前例与
+所有预期拒绝均满足时 exit 0。逐条命令和输出落在 `controls/results.json` 及各子目录。
+
+报告区分实测成功与验收状态：冻结哈希不符时，即使测量成功，校准总判也为
+`BLOCKED` / exit 2。进程树读取受阻明确记录，不能写成“空树且全部清理完成”。
+A5.3 的白名单变更须由协调者完成双评审、哈希登记后再合并；本任务不改任何 FROZEN
+或 accepted-diffs 文件。
