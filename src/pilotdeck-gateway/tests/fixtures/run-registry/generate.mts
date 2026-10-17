@@ -1,0 +1,339 @@
+// Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
+import { access, copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import assert from 'node:assert/strict';
+
+assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
+assert.ok(process.argv[2], 'provide the fixture directory or Rust registry path');
+const baseline = resolve(process.env.PDRS_BASELINE);
+const output = resolve(process.argv[2]);
+const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+const source = 'src/gateway/run/RunRegistry.ts';
+const { FileRunRegistry } = await import(pathToFileURL(join(baseline, source)).href);
+
+// i32::MAX is a valid pid number that no process holds (ESRCH); i32::MAX + 1
+// makes Node's process.kill throw ERR_INVALID_ARG_TYPE, which TS treats as alive.
+const DEAD = 2147483647;
+const HUGE = 2147483648;
+const ref = (runId: string, projectKey: string | undefined = 'project', sessionKey = 'session') =>
+  projectKey === undefined ? { sessionKey, runId } : { sessionKey, projectKey, runId };
+const accept = (r: any, requestMaterial: string) => ({ op: 'accept', input: { ...r, requestMaterial } });
+const append = (r: any, event: unknown) => ({ op: 'append', input: r, event });
+const completed = (runId: string, finishReason = 'completed') => ({ type: 'turn_completed', runId, usage: {}, finishReason });
+const exists = (path: string) => access(path).then(() => true, () => false);
+// Mask only values this run wrote: its own pid and timestamps absent from the initial file.
+// Initial files never carry this process's pid (realSnapshot rewrites it), so every
+// ownerPid equal to process.pid is "<self>"; any other pid is kept verbatim.
+const initialValues = (text: string) => {
+  const pids = new Set([...text.matchAll(/"ownerPid":([0-9]+)/g)].map(m => m[1]));
+  assert.ok(!pids.has(String(process.pid)), 'initial file must not contain the generator pid');
+  return { times: new Set([...text.matchAll(/"(?:acceptedAt|updatedAt)":"([^"\\]*)"/g)].map(m => m[1])) };
+};
+// Error messages name the scratch path; fixtures carry "<dir>" instead.
+const portable = (message: string) => message.split(scratch).join('<dir>');
+function mask(record: any, { times }: ReturnType<typeof initialValues>) {
+  if (!record || typeof record !== 'object') return record ?? null;
+  const masked = structuredClone(record);
+  if (masked.ownerPid === process.pid) masked.ownerPid = '<self>';
+  for (const key of ['acceptedAt', 'updatedAt']) if (typeof masked[key] === 'string' && !times.has(masked[key])) masked[key] = '<new>';
+  return masked;
+}
+async function runStep(registry: any, step: any, times: ReturnType<typeof initialValues>) {
+  try {
+    switch (step.op) {
+      case 'accept': { const r = await registry.accept(step.input); return { duplicate: r.duplicate, record: mask(r.record, times) }; }
+      case 'append': await registry.append({ ...step.input, event: step.event }); return { ok: true };
+      case 'get': return { record: mask(await registry.get(step.input), times) };
+      case 'events': return { events: await registry.events({ ...step.input, ...(step.afterSeq === undefined ? {} : { afterSeq: step.afterSeq }), ...(step.limit === undefined ? {} : { limit: step.limit }) }) };
+      case 'mark': await registry.markOrphansInterrupted(); return { ok: true };
+      default: throw new Error(`unknown step ${step.op}`);
+    }
+  } catch (error: any) {
+    return { error: { name: error.name, code: error.code ?? null, message: portable(error.message) } };
+  }
+}
+
+if (process.argv[3] === '--verify-rust') {
+  // Rust holds a fresh `<path>.lock` while this process starts: TS must wait on
+  // the shared exclusive-create protocol instead of reading or writing through it.
+  const lockPath = `${output}.lock`;
+  assert.ok(await exists(lockPath), 'Rust must hold the registry lock before TS starts');
+  console.log('WAITING');
+  const startedAt = Date.now();
+  const registry = new FileRunRegistry(output);
+  const run1 = await registry.accept({ ...ref('run-1'), requestMaterial: 'request-1' });
+  const waitedMs = Date.now() - startedAt;
+  assert.ok(waitedMs >= 200, `TS did not wait for the Rust lock (${waitedMs} ms)`);
+  assert.equal(run1.duplicate, true);
+  assert.equal(run1.record.state, 'completed');
+  assert.deepEqual((await registry.events(ref('run-1'))).map((e: any) => [e.seq, e.event.type]), [[1, 'input_accepted'], [2, 'assistant_text_delta'], [3, 'turn_completed']]);
+  assert.equal((await registry.events(ref('run-1')))[1].event.text, '中文\ud800');
+  await assert.rejects(registry.accept({ ...ref('run-1'), requestMaterial: 'other' }), (e: any) => e.code === 'conflict');
+  // The Rust test process is alive: its accepted run is not fenced. A dead owner is.
+  assert.equal((await registry.get(ref('rust-live'))).state, 'accepted');
+  assert.equal((await registry.get(ref('rust-dead'))).state, 'interrupted');
+  assert.equal((await registry.get(ref('rust-dead'))).revision, 3);
+  await registry.append({ ...ref('rust-live'), event: completed('rust-live') });
+  await registry.accept({ ...ref('ts-run'), requestMaterial: 'ts' });
+  await registry.append({ ...ref('ts-run'), event: { type: 'input_accepted', runId: 'ts-run' } });
+  assert.equal(await exists(lockPath), false);
+  console.log(`PASS: real TS waited ${waitedMs} ms on the Rust lock, read Rust records/events, fenced only the dead owner and continued the snapshot`);
+  process.exit(0);
+}
+
+await mkdir(output, { recursive: true });
+const scratch = await mkdtemp(join(output, '.generate-'));
+const scenarios: any[] = [];
+async function scenario(name: string, options: { initial?: string | Buffer; lock?: { contents: string; ageMs: number }; steps?: any[] }) {
+  const path = join(scratch, `${name}.json`);
+  const lockPath = `${path}.lock`;
+  const initialFile = options.initial === undefined ? null : `${name}.json`;
+  if (initialFile) {
+    await writeFile(path, options.initial!);
+    await copyFile(path, join(output, initialFile));
+  }
+  if (options.lock) {
+    await writeFile(lockPath, options.lock.contents);
+    const old = new Date(Date.now() - options.lock.ageMs);
+    await utimes(lockPath, old, old);
+  }
+  const initialText = initialFile ? await readFile(path, 'utf8') : '';
+  const times = initialValues(initialText);
+  const registry = new FileRunRegistry(path);
+  let openError = null;
+  // Readiness is the TS open boundary: constructor recovery, awaited by every call.
+  try { await registry.ready; } catch (error: any) { openError = { name: error.name, message: portable(error.message) }; }
+  const steps = [];
+  if (!openError) for (const step of options.steps ?? []) steps.push({ ...step, outcome: await runStep(registry, step, times) });
+  let after = null;
+  if (await exists(path)) {
+    after = `${name}.after.json`;
+    await copyFile(path, join(output, after));
+  }
+  const lockLeft = await exists(lockPath);
+  const leftovers = (await readdir(scratch)).filter(f => f.startsWith(`${name}.json.`) && f.endsWith('.tmp'));
+  assert.deepEqual(leftovers, []);
+  scenarios.push({ name, initial: initialFile, lock: options.lock ?? null, openError, steps, after, lockLeft });
+  console.log(`${name}: open=${openError ? `${openError.name}: ${openError.message}` : 'OK'} steps=${steps.length} after=${after ?? '-'} lockLeft=${lockLeft}`);
+}
+// A small valid snapshot written by the real registry, for lock and paging cases.
+// Seed owners still equal to this process's pid become DEAD, so no initial file
+// carries a machine-specific pid (seeds left untouched are all terminal, which
+// recovery never fences).
+async function realSnapshot(build: (registry: any) => Promise<void>, edit?: (snapshot: any) => void) {
+  const path = join(scratch, `.seed-${scenarios.length}-${Math.random().toString(16).slice(2)}.json`);
+  await build(new FileRunRegistry(path));
+  let bytes = await readFile(path, 'utf8');
+  if (edit) {
+    const snapshot = JSON.parse(bytes);
+    edit(snapshot);
+    bytes = JSON.stringify(snapshot);
+  }
+  return bytes.replace(new RegExp(`"ownerPid":${process.pid}(?![0-9.eE])`, 'g'), `"ownerPid":${DEAD}`);
+}
+
+try {
+  // Fresh registry: duplicate, conflict, every state transition and RunRegistryError branch.
+  const p = (runId: string) => ref(runId);
+  const noProject = ref('run-2', undefined);
+  await scenario('normal', {
+    steps: [
+      accept(p('run-1'), 'request-1'),
+      accept(p('run-1'), 'request-1'),
+      accept(p('run-1'), 'other'),
+      append(p('run-1'), { type: 'input_accepted', runId: 'run-1' }),
+      { op: 'get', input: p('run-1') },
+      append(p('run-1'), { type: 'assistant_text_delta', runId: 'run-1', text: '中文\ud800', nested: { z: 0, a: 1, 1: 'index-first' } }),
+      append(p('run-1'), completed('run-1')),
+      append(p('run-1'), { type: 'assistant_text_delta', runId: 'run-1', text: 'late' }),
+      accept(noProject, 'request-2'),
+      append(noProject, { type: 'error', runId: 'run-2', code: 'admission_rejected', message: 'busy', recoverable: true }),
+      { op: 'get', input: noProject },
+      append(noProject, completed('run-2', 'task_budget')),
+      accept(ref('run-2', ''), 'request-2'),
+      accept(p('run-3'), 'request-3'),
+      append(p('run-3'), completed('run-3', 'aborted_streaming')),
+      append(p('run-3'), completed('run-3')),
+      accept(p('run-4'), 'request-4'),
+      append(p('run-4'), { type: 'error', runId: 'run-4', code: 'result_unknown', message: 'lost', recoverable: false }),
+      append(p('run-4'), { type: 'input_accepted', runId: 'run-4' }),
+      append(p('missing'), { type: 'input_accepted', runId: 'missing' }),
+      append(ref('run-1', 'other-project'), { type: 'input_accepted', runId: 'run-1' }),
+      accept(p('run-5'), 'request-5'),
+      { op: 'get', input: p('run-5') },
+      accept(p('run-6'), 'request-6'),
+      append(p('run-6'), 'raw-event'),
+      { op: 'get', input: p('run-6') },
+      { op: 'get', input: p('missing') },
+      { op: 'events', input: p('run-1') },
+      { op: 'mark' },
+    ],
+  });
+
+  // Restart: real TS records whose owners are rewritten, then reopened.
+  const owners: [string, unknown, unknown[]][] = [
+    ['dead-accepted', DEAD, []],
+    ['dead-running', DEAD, [{ type: 'input_accepted', runId: 'orphan-dead-running' }]],
+    ['absent', undefined, []],
+    ['zero', 0, [{ type: 'input_accepted', runId: 'orphan-zero' }]],
+    ['negative', -5, []],
+    ['fraction', 1.5, []],
+    ['string', '1', []],
+    ['init', 1, [{ type: 'input_accepted', runId: 'orphan-init' }]],
+    ['huge', HUGE, []],
+    ['dead-completed', DEAD, [completed('orphan-dead-completed')]],
+    ['dead-failed', DEAD, [{ type: 'error', runId: 'orphan-dead-failed', code: 'boom', message: 'x', recoverable: false }]],
+  ];
+  const orphanInitial = await realSnapshot(async registry => {
+    for (const [name, , events] of owners) {
+      await registry.accept({ ...ref(`orphan-${name}`), requestMaterial: name });
+      for (const event of events) await registry.append({ ...ref(`orphan-${name}`), event });
+    }
+  }, snapshot => {
+    for (const record of snapshot.records) {
+      const owner = owners.find(([name]) => `orphan-${name}` === record.runId)![1];
+      if (owner === undefined) delete record.ownerPid; else record.ownerPid = owner;
+    }
+  });
+  await scenario('orphans', {
+    initial: orphanInitial,
+    steps: [
+      ...owners.map(([name]) => ({ op: 'get', input: ref(`orphan-${name}`) })),
+      // A crashed run stays fenced: resubmission is a duplicate, never a new execution.
+      accept(ref('orphan-dead-running'), 'dead-running'),
+      { op: 'events', input: ref('orphan-dead-running') },
+      append(ref('orphan-dead-running'), completed('orphan-dead-running')),
+      accept(ref('orphan-dead-completed'), 'dead-completed'),
+      { op: 'mark' },
+    ],
+  });
+
+  // Paging and event-entry coercion of the TS filter/slice.
+  const pagingInitial = await realSnapshot(async registry => {
+    await registry.accept({ ...ref('run-page'), requestMaterial: 'page' });
+    await registry.append({ ...ref('run-page'), event: { type: 'input_accepted', runId: 'run-page' } });
+    await registry.append({ ...ref('run-page'), event: { type: 'assistant_text_delta', runId: 'run-page', text: 'partial' } });
+    await registry.append({ ...ref('run-page'), event: completed('run-page') });
+  }, snapshot => {
+    snapshot.records.push({ sessionKey: 'session', projectKey: 'project', runId: 'run-weird', requestMaterial: 'weird', state: 'completed', revision: 1, lastSeq: 9 });
+    snapshot.events['project\0session\0run-weird'] = [{ seq: '2', event: 'string-seq' }, { seq: null, event: 'null-seq' }, { seq: true, event: 'bool-seq' }, { event: 'missing-seq' }, 5, { seq: ' 0x3 ', event: 'hex-seq' }, { seq: [4], event: 'array-seq' }, { seq: '1e0', event: 'exp-seq' }, { seq: 'x', event: 'nan-seq' }];
+    snapshot.events['project\0session\0ghost'] = [{ seq: 1, event: { type: 'input_accepted' } }];
+  });
+  const page = (extra: any) => ({ op: 'events', input: ref('run-page'), ...extra });
+  await scenario('paging', {
+    initial: pagingInitial,
+    steps: [
+      page({}), page({ afterSeq: 1 }), page({ limit: 2 }), page({ afterSeq: 0, limit: 0 }), page({ limit: -1 }), page({ limit: -10 }),
+      page({ limit: 1.5 }), page({ limit: -0.5 }), page({ afterSeq: 1.5 }), page({ afterSeq: -1, limit: 500 }), page({ afterSeq: 3 }),
+      { op: 'events', input: ref('run-weird') }, { op: 'events', input: ref('run-weird'), afterSeq: 1 },
+      { op: 'events', input: ref('ghost') }, { op: 'get', input: ref('ghost') },
+    ],
+  });
+
+  // Snapshot shapes the TS loader accepts, then rewrites on the next mutation.
+  await scenario('quirk-duplicates', {
+    initial: JSON.stringify({ schemaVersion: 1, extra: true, records: [
+      { sessionKey: 's', runId: 'dup', requestMaterial: 'first', custom: 1 },
+      { sessionKey: 's', runId: 'other', requestMaterial: 'other' },
+      { sessionKey: 's', runId: 'dup', requestMaterial: 'second', custom: 2 },
+    ], events: {} }),
+    steps: [accept(ref('dup', undefined, 's'), 'second'), accept(ref('dup', undefined, 's'), 'first'), accept(ref('q', undefined, 's'), 'q')],
+  });
+  await scenario('quirk-empty-project', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [
+      { sessionKey: 's', runId: 'r', requestMaterial: 'm', state: 'completed' },
+      { projectKey: '', sessionKey: 's', runId: 'r', requestMaterial: 'n', state: 'completed' },
+    ], events: {} }),
+    steps: [{ op: 'get', input: ref('r', undefined, 's') }, accept(ref('r', '', 's'), 'n'), accept(ref('r', undefined, 's'), 'm'), accept(ref('q', undefined, 's'), 'q')],
+  });
+  await scenario('quirk-coerce', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [
+      0,
+      { sessionKey: 7, runId: 'r', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: '1', lastSeq: null },
+      { projectKey: null, sessionKey: 's', runId: ['a', null, 'b'], requestMaterial: 'm', state: 'accepted', ownerPid: DEAD, revision: true },
+      { sessionKey: 's', runId: 'obj', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: {}, lastSeq: [2] },
+    ], events: {} }),
+    steps: [
+      { op: 'get', input: ref('r', undefined, '7') },
+      append(ref('r', undefined, '7'), { type: 'input_accepted' }),
+      { op: 'get', input: ref('r', undefined, '7') },
+      { op: 'get', input: ref('a,,b', '', 's') },
+      append(ref('a,,b', undefined, 's'), { type: 'input_accepted' }),
+      append(ref('obj', undefined, 's'), { type: 'input_accepted' }),
+      { op: 'get', input: ref('obj', undefined, 's') },
+      { op: 'get', input: ref('undefined', undefined, 'undefined') },
+      accept(ref('undefined', undefined, 'undefined'), 'replaces-falsy'),
+    ],
+  });
+  await scenario('quirk-events-array', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [
+      { sessionKey: 's', runId: 'r', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 1 },
+    ], events: [[{ seq: 1, event: { type: 'kept-under-index-key' } }]] }),
+    steps: [append(ref('r', undefined, 's'), { type: 'input_accepted' }), { op: 'events', input: ref('r', undefined, 's') }],
+  });
+  await scenario('quirk-events-string', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [], events: 'ab' }),
+    steps: [accept(ref('q', undefined, 's'), 'q')],
+  });
+  await scenario('quirk-lists', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [
+      { sessionKey: 's', runId: 'str', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 0 },
+      { sessionKey: 's', runId: 'nul', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 1 },
+      { sessionKey: 's', runId: 'ok', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 0 },
+    ], events: { '\0s\0str': 'oops', '\0s\0nul': [null] } }),
+    steps: [
+      append(ref('str', undefined, 's'), { type: 'input_accepted' }),
+      { op: 'events', input: ref('str', undefined, 's') },
+      { op: 'events', input: ref('nul', undefined, 's') },
+      append(ref('ok', undefined, 's'), null),
+      { op: 'get', input: ref('ok', undefined, 's') },
+    ],
+  });
+  // Node readFile('utf8') replaces the invalid byte; the next write re-encodes U+FFFD.
+  const utf8 = JSON.stringify({ schemaVersion: 1, records: [{ sessionKey: 's', runId: 'r', requestMaterial: 'invalid-byte-marker', state: 'completed' }], events: {} }).split('invalid-byte-marker');
+  await scenario('quirk-invalid-utf8', {
+    initial: Buffer.concat([Buffer.from(utf8[0]), Buffer.from([0xff]), Buffer.from(utf8[1])]),
+    steps: [accept(ref('r', undefined, 's'), '\ufffd'), accept(ref('q', undefined, 's'), 'q')],
+  });
+
+  // Bad tail and invalid shapes: readiness rejects, bytes untouched, lock released.
+  // normal.after.json carries this run's pid; seed bad-tail with it fenced to DEAD.
+  const normalBytes = Buffer.from((await readFile(join(output, 'normal.after.json'), 'utf8')).replace(new RegExp(`"ownerPid":${process.pid}(?![0-9.eE])`, 'g'), `"ownerPid":${DEAD}`));
+  for (const [name, initial] of Object.entries({
+    'bad-tail': normalBytes.subarray(0, normalBytes.length - 9),
+    'bad-empty': '',
+    'bad-schema': JSON.stringify({ schemaVersion: 2, records: [], events: {} }),
+    'bad-records': JSON.stringify({ schemaVersion: 1, records: {}, events: {} }),
+    'bad-events-null': JSON.stringify({ schemaVersion: 1, records: [], events: null }),
+    'bad-events-missing': JSON.stringify({ schemaVersion: 1, records: [] }),
+    'bad-events-zero': JSON.stringify({ schemaVersion: 1, records: [], events: 0 }),
+    'bad-null': 'null',
+    'bad-null-record': JSON.stringify({ schemaVersion: 1, records: [null], events: {} }),
+  })) {
+    await scenario(name, { initial, steps: [{ op: 'get', input: p('run-1') }] });
+    const last = scenarios.at(-1);
+    assert.ok(last.openError, `${name} must reject`);
+    assert.deepEqual(await readFile(join(output, last.after)), Buffer.from(initial));
+  }
+
+  // Lock protocol (RunRegistry.ts:110-146): only a stale (>60 s) lock of a dead
+  // or unparsable owner is stolen; a stale live owner times out after 30 s.
+  const lockSnapshot = await realSnapshot(async registry => {
+    await registry.accept({ ...ref('locked'), requestMaterial: 'locked' });
+    await registry.append({ ...ref('locked'), event: completed('locked') });
+  });
+  await scenario('lock-stale-dead', { initial: lockSnapshot, lock: { contents: JSON.stringify({ pid: DEAD, acquiredAt: '2026-10-18T00:00:00.000Z' }), ageMs: 120_000 }, steps: [accept(ref('after-lock'), 'x')] });
+  await scenario('lock-stale-garbage', { initial: lockSnapshot, lock: { contents: 'not json', ageMs: 120_000 }, steps: [accept(ref('after-lock'), 'x')] });
+  await scenario('lock-stale-live', { initial: lockSnapshot, lock: { contents: '{ "pid" :\u00a01 }', ageMs: 120_000 }, steps: [] });
+
+  const sourceSha256 = { [source]: createHash('sha256').update(await readFile(join(baseline, source))).digest('hex') };
+  const oracle = JSON.stringify({ sourceCommit, sourceSha256, generatorPid: process.pid, dead: DEAD, huge: HUGE, scenarios }, null, 2) + '\n';
+  // Fixtures are machine-independent: no generation path survives in the oracle.
+  for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
+  await writeFile(join(output, 'oracle.json'), oracle);
+  console.log(`PASS: generated ${scenarios.length} real TS FileRunRegistry scenarios`);
+} finally { await rm(scratch, { recursive: true, force: true }); }

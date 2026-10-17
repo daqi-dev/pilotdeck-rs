@@ -197,11 +197,7 @@ impl JsonlLedgerStore {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let mut dirs = fs::DirBuilder::new();
-        dirs.recursive(true);
-        #[cfg(unix)]
-        dirs.mode(0o700);
-        dirs.create(parent)?;
+        private_dirs(parent)?;
         let path = if supplied.exists() {
             supplied.canonicalize()?
         } else {
@@ -416,13 +412,20 @@ fn valid_id(value: &JsValue) -> Result<&JsString> {
         .filter(|v| !js_trim(&String::from_utf16_lossy(v.units())).is_empty())
         .ok_or_else(|| invalid("Session event entryId must be a non-empty string."))
 }
-fn private_open() -> OpenOptions {
+pub(super) fn private_open() -> OpenOptions {
     let mut options = OpenOptions::new();
     #[cfg(unix)]
     options.mode(0o600);
     options
 }
-struct Temporary(PathBuf);
+pub(super) fn private_dirs(dir: &Path) -> io::Result<()> {
+    let mut dirs = fs::DirBuilder::new();
+    dirs.recursive(true);
+    #[cfg(unix)]
+    dirs.mode(0o700);
+    dirs.create(dir)
+}
+pub(super) struct Temporary(pub(super) PathBuf);
 impl Drop for Temporary {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
@@ -437,7 +440,7 @@ impl Drop for LedgerLock {
         let _ = self.0.unlock();
     }
 }
-fn uuid() -> io::Result<String> {
+pub(super) fn uuid() -> io::Result<String> {
     let mut bytes = [0u8; 16];
     File::open("/dev/urandom")?.read_exact(&mut bytes)?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
@@ -452,7 +455,7 @@ fn uuid() -> io::Result<String> {
         &hex[20..]
     ))
 }
-fn timestamp() -> Result<String> {
+pub(super) fn timestamp() -> Result<String> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| invalid(e.to_string()))?;
