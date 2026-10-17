@@ -222,9 +222,14 @@ def extract_text(resp: dict, thinking: str = "disabled") -> str:
         details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
         head = f"空回复（finish_reason={choice.get('finish_reason')}，completion_tokens={usage.get('completion_tokens')}，" \
                f"其中 reasoning_tokens={details.get('reasoning_tokens')}）"
-        if thinking == "disabled" and (details.get("reasoning_tokens") or 0) > 0:
+        reasoning = details.get("reasoning_tokens") if isinstance(details.get("reasoning_tokens"), int) else 0
+        if thinking == "disabled" and reasoning > 0:
             raise Fail(1, head + "：已请求关思考仍有推理 token，thinking 字段可能被该模型忽略；换已实测支持该字段的 deepseek-flash，或调大 --max-tokens")
-        raise Fail(1, head + ("：思考耗尽输出额度，用 --thinking disabled" if thinking == "enabled" else ""))
+        # 只有「撞上限 + 推理占满输出」这组证据成立时才下「思考耗尽」的判断，其余给中性诊断
+        if thinking == "enabled" and choice.get("finish_reason") == "length" and reasoning > 0 \
+                and reasoning == usage.get("completion_tokens"):
+            raise Fail(1, head + "：思考耗尽输出额度，用 --thinking disabled")
+        raise Fail(1, head)
     if choice.get("finish_reason") not in (None, "stop"):
         raise Fail(1, f"回复未完成（finish_reason={choice.get('finish_reason')}），不当作评审结论")
     return text

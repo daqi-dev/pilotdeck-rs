@@ -109,7 +109,7 @@ def main() -> int:
     fails = 0
 
     def case(name, reply, expect_code, *extra, key=FAKE_KEY, expect_out=None, pre=None, isolated=False, during=None, expect_msg=None,
-             secret=None, check=None):
+             secret=None, check=None, not_msg=()):
         secret = secret or (key.strip() if isinstance(key, str) and len(key.strip()) > 4 else FAKE_KEY)
         nonlocal fails
         with tempfile.TemporaryDirectory() as d:
@@ -136,6 +136,7 @@ def main() -> int:
                 bad.append("不是受控诊断")
             if expect_msg and expect_msg not in r.stderr:
                 bad.append(f"诊断缺「{expect_msg}」")
+            bad += [f"诊断不该含「{m}」" for m in not_msg if m in r.stderr]
             if expect_code != 0 and got not in (None, "OLD"):
                 bad.append(f"失败却写了 out={got!r}")
             if check and not check(tmp):
@@ -239,6 +240,11 @@ def main() -> int:
          expect_msg="可能被该模型忽略")
     case("开思考耗尽 → 提示关思考", (200, ok_body("", finish="length", usage=burnt)), 1, "--thinking", "enabled",
          expect_msg="用 --thinking disabled")
+    zero = {"completion_tokens": 0, "completion_tokens_details": {"reasoning_tokens": 0}}
+    for name, body in [("开思考、stop、零推理", ok_body("", finish="stop", usage=zero)),
+                       ("开思考、缺 usage", ok_body("", finish="length", usage=None))]:
+        case(f"{name} → 中性空回复诊断", (200, body), 1, "--thinking", "enabled", expect_msg="空回复",
+             not_msg=("思考耗尽", "可能被该模型忽略"))
     ok = elapsed < 5 and elapsed_err < 5  # 整包滴完要 8 s 以上；总时限 1 s 应在几秒内返回
     print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 正文={elapsed:.1f}s 错误正文={elapsed_err:.1f}s")
     fails += not ok
