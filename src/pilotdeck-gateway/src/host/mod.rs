@@ -1,10 +1,29 @@
 //! Host side of Module 2.0 over an owned stdio child (the inverse of transport/).
 //!
 //! One client owns one turn. `execute` consumes it and always closes the child;
-//! there is deliberately no reconnect, replay, cancel or session persistence here.
+//! there is deliberately no reconnect, replay or session persistence here.
 //! Callbacks must be cooperative async work, and may complete concurrently with
 //! incoming frames. Dropping their futures must stop host work they own. Transport
 //! failure after acceptance is uncertainty, never permission to retry an effect.
+//!
+//! Resource policy (#191): pipe input uses bounded-channel backpressure; the
+//! event application queue fails closed with `Limit` when full so a stalled
+//! consumer cannot indefinitely hide cancellation or input errors. TS's async
+//! generator instead pulls events serially (client:659-684). No event is dropped.
+//! `max_buffered_bytes` counts retained NDJSON bytes, including partial input,
+//! queued/in-flight event copies, callback requests, completed responses/cache
+//! and required output. Allocator overhead, temporary JSON encoding/parsing and
+//! handler-owned allocations are not an RSS guarantee. ACK and cancel each have
+//! an independent bounded latest slot plus one in-flight frame, at most twice
+//! `max_frame_bytes` each; they cannot spend required-write capacity or budget.
+//!
+//! `execution_timeout` is a configurable local watchdog (default 300 seconds),
+//! not operationDeadline or a TS cancel timeout. Session hosts must configure it
+//! for their longest legitimate turn. After final application it is replaced by
+//! `terminal_drain_timeout`; unfinished cooperative callbacks are then dropped.
+//! Unix close/Drop kills the owned process group, including grandchildren that
+//! retain pipes. A subprocess that deliberately leaves that group is not owned.
+mod budget;
 mod connection;
 mod execution;
 
@@ -18,32 +37,50 @@ use pilotdeck_protocol::{
     module::ModuleMethod,
     wire::{EnvelopeRef, MessageRef},
 };
-use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
-use tokio::{process::Command, time::timeout};
+use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+use tokio::{process::Command, sync::watch, time::timeout};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub handshake_timeout: Duration,
     /// Overall local resource bound, not an operationDeadline or cancel request.
     pub execution_timeout: Duration,
+    /// After a validated terminal is applied, allow callbacks this long to finish.
+    pub terminal_drain_timeout: Duration,
     pub io_timeout: Duration,
     pub close_timeout: Duration,
     pub queue_capacity: usize,
     pub max_frame_bytes: usize,
     pub max_stderr_bytes: usize,
     pub max_module_calls: usize,
+    /// Combined retained NDJSON bytes in required writes, input, events and cache.
+    /// ACK/cancel each have a separate latest slot and in-flight allowance,
+    /// each bounded by max_frame_bytes (see module resource policy).
+    /// Handler-owned allocations and allocator overhead are outside this budget.
+    pub max_buffered_bytes: usize,
 }
 impl Default for Limits {
     fn default() -> Self {
         Self {
             handshake_timeout: Duration::from_secs(10),
             execution_timeout: Duration::from_secs(300),
+            terminal_drain_timeout: Duration::from_millis(100),
             io_timeout: Duration::from_secs(5),
             close_timeout: Duration::from_secs(1),
             queue_capacity: 256,
             max_frame_bytes: 16 * 1024 * 1024,
             max_stderr_bytes: 64 * 1024,
             max_module_calls: 4096,
+            max_buffered_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -53,6 +90,7 @@ impl Limits {
             self.handshake_timeout,
             self.execution_timeout,
             self.io_timeout,
+            self.terminal_drain_timeout,
             self.close_timeout,
         ]
         .contains(&Duration::ZERO)
@@ -60,6 +98,7 @@ impl Limits {
             || self.max_frame_bytes == 0
             || self.max_stderr_bytes == 0
             || self.max_module_calls == 0
+            || self.max_buffered_bytes == 0
         {
             return Err(HostError::protocol("Sidecar limits must be positive."));
         }
@@ -69,6 +108,7 @@ impl Limits {
             ("max_module_calls", self.max_module_calls, 1 << 20),
             ("max_frame_bytes", self.max_frame_bytes, 64 << 20),
             ("max_stderr_bytes", self.max_stderr_bytes, 64 << 20),
+            ("max_buffered_bytes", self.max_buffered_bytes, 1 << 30),
         ] {
             if value > maximum {
                 return Err(HostError::new(
@@ -97,6 +137,9 @@ pub struct HostError {
     pub message: String,
     /// Set for every failure after a stream was accepted, even a protocol error.
     pub accepted: bool,
+    pub stream_id: Option<JsString>,
+    /// Last successfully applied event; -1 means no event has been applied.
+    pub last_applied_sequence: Option<f64>,
 }
 impl HostError {
     pub fn new(kind: HostErrorKind, message: impl Into<String>) -> Self {
@@ -104,6 +147,8 @@ impl HostError {
             kind,
             message: message.into(),
             accepted: false,
+            stream_id: None,
+            last_applied_sequence: None,
         }
     }
     fn protocol(message: impl Into<String>) -> Self {
@@ -117,8 +162,8 @@ impl fmt::Display for HostError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{:?} (accepted={}): {}",
-            self.kind, self.accepted, self.message
+            "{:?} (accepted={}, stream_id={:?}, last_applied_sequence={:?}): {}",
+            self.kind, self.accepted, self.stream_id, self.last_applied_sequence, self.message
         )
     }
 }
@@ -146,14 +191,56 @@ pub struct ExecuteRequest {
 #[derive(Debug)]
 pub enum ExecuteResult {
     Terminal(JsValue),
+    /// TS abortedResult (client:330,593,1338-1350,1434-1448). The session layer
+    /// projects type=aborted, stopReason=aborted_streaming, turns=0 and retains
+    /// its original input messages. None means execute was never sent; Some
+    /// retains the incomplete cancelled final from the compaction fallback.
+    Aborted {
+        terminal: Option<JsValue>,
+    },
     /// TS client:785-789 accepts a final failed execute response before a stream.
     Rejected(JsValue),
+}
+
+/// One-shot cancellation, like AbortSignal. The first reason wins; empty/absent
+/// reasons are transmitted as host_abort (TS client:931-958).
+#[derive(Clone)]
+pub struct Cancellation(watch::Sender<Option<JsString>>);
+impl Default for Cancellation {
+    fn default() -> Self {
+        Self(watch::channel(None).0)
+    }
+}
+impl Cancellation {
+    pub fn cancel(&self, reason: Option<JsString>) {
+        self.0.send_if_modified(|current| {
+            if current.is_some() {
+                return false;
+            }
+            *current = Some(reason.unwrap_or_else(|| "host_abort".into()));
+            true
+        });
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+    pub(super) fn reason(&self) -> Option<JsString> {
+        self.0.borrow().clone()
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Progress {
+    stream_id: Option<JsString>,
+    last_applied_sequence: Arc<AtomicU64>,
+    terminal_lease: Option<budget::Lease>,
 }
 
 pub struct HostClient {
     connection: Connection,
     binding: SidecarBinding,
     ack_enabled: bool,
+    cancel_enabled: bool,
     limits: Limits,
 }
 impl HostClient {
@@ -177,10 +264,11 @@ impl HostClient {
             ))
         });
         match handshake {
-            Ok((binding, ack_enabled)) => Ok(Self {
+            Ok((binding, ack_enabled, cancel_enabled)) => Ok(Self {
                 connection,
                 binding,
                 ack_enabled,
+                cancel_enabled,
                 limits,
             }),
             Err(mut error) => {
@@ -197,34 +285,43 @@ impl HostClient {
         self.connection.pid()
     }
     pub async fn close(mut self) -> Result<(), HostError> {
-        self.connection.close().await
+        self.connection.close().await.map_err(|mut error| {
+            append_diagnostic(&mut error, &self.connection);
+            error
+        })
     }
     pub async fn execute(
-        mut self,
+        self,
         request: ExecuteRequest,
         handler: Arc<dyn HostHandler>,
     ) -> Result<ExecuteResult, HostError> {
-        let mut accepted = false;
-        let result = timeout(
-            self.limits.execution_timeout,
-            execution::run(
-                &mut self.connection,
-                request,
-                handler,
-                self.ack_enabled,
-                self.limits,
-                &mut accepted,
-            ),
+        self.execute_cancellable(request, handler, Cancellation::default())
+            .await
+    }
+    /// Cancellation is best-effort and never overrides a valid final. There is
+    /// no separate cancel timer in TS; execution_timeout bounds the entire wait.
+    pub async fn execute_cancellable(
+        mut self,
+        request: ExecuteRequest,
+        handler: Arc<dyn HostHandler>,
+        cancellation: Cancellation,
+    ) -> Result<ExecuteResult, HostError> {
+        let mut progress = Progress {
+            last_applied_sequence: Arc::new(AtomicU64::new((-1.0_f64).to_bits())),
+            ..Progress::default()
+        };
+        let result = execution::run(
+            &mut self.connection,
+            request,
+            handler,
+            (self.ack_enabled, self.cancel_enabled),
+            self.limits,
+            &mut progress,
+            cancellation,
         )
-        .await
-        .unwrap_or_else(|_| {
-            Err(HostError::new(
-                HostErrorKind::Timeout,
-                "Sidecar execute timed out.",
-            ))
-        });
+        .await;
         let result = match result {
-            Ok(terminal @ ExecuteResult::Terminal(_)) => {
+            Ok(terminal @ (ExecuteResult::Terminal(_) | ExecuteResult::Aborted { .. })) => {
                 self.connection.finish_terminal().await.map(|()| terminal)
             }
             Ok(rejected) => self.connection.flush().await.map(|()| rejected),
@@ -233,7 +330,11 @@ impl HostClient {
         let cleanup = self.connection.close().await;
         let result = result.and_then(|terminal| cleanup.map(|()| terminal));
         result.map_err(|mut error| {
-            error.accepted = accepted;
+            error.accepted = progress.stream_id.is_some();
+            error.stream_id = progress.stream_id;
+            error.last_applied_sequence = error
+                .accepted
+                .then(|| f64::from_bits(progress.last_applied_sequence.load(Ordering::SeqCst)));
             append_diagnostic(&mut error, &self.connection);
             error
         })
@@ -249,7 +350,7 @@ fn append_diagnostic(error: &mut HostError, connection: &Connection) {
 async fn handshake(
     connection: &mut Connection,
     expected_module_id: Option<&JsString>,
-) -> Result<(SidecarBinding, bool), HostError> {
+) -> Result<(SidecarBinding, bool, bool), HostError> {
     let mut initial = None;
     // TS client:724-738, 801-840. Generation is opaque connection context,
     // not an event field and not an ordinal (protocol.ts:340-341).
@@ -305,7 +406,9 @@ async fn handshake(
         let ack = text_is(execute.fields.get("resumeSupport"), "streaming")
             && enabled(ModuleMethod::Resume)
             && enabled(ModuleMethod::Ack);
-        return Ok((binding, ack));
+        let cancel = enabled(ModuleMethod::Cancel)
+            || execute.fields.get("cancel").and_then(JsValue::as_bool) == Some(true);
+        return Ok((binding, ack, cancel));
     }
     unreachable!("handshake has two phases")
 }
