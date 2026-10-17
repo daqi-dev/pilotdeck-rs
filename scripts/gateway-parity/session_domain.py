@@ -193,7 +193,14 @@ def validate_calibration(folder, output, baseline):
         rows = data['observations']
         require(bool(rows) and data['cell'] == cell['name'] and data['baselineCommit'] == BASELINE_COMMIT
                 and [o['id'] for o in rows] == expected_ids, 'COVERAGE', cell['name'] + ': missing/duplicate measurements')
-        for observation in rows:
+        for observation, expected_id in zip(rows, expected_ids):
+            _, variant, phase, repetition = expected_id.split('/')
+            require(type(observation.get('repetition')) is int and observation['repetition'] == int(repetition),
+                    'COVERAGE', expected_id + ': repetition does not match preregistered ID')
+            require(observation.get('phase') == phase,
+                    'COVERAGE', expected_id + ': phase does not match preregistered ID')
+            require(isinstance(observation.get('variant'), dict) and observation['variant'].get('name') == variant,
+                    'COVERAGE', expected_id + ': variant does not match preregistered ID')
             require(bool(observation['frames']) and bool(observation['timeline']),
                     'EMPTY_OBSERVER', observation['id'])
             require(observation['registry']['applicable'] is cell['registry'],
@@ -204,6 +211,11 @@ def validate_calibration(folder, output, baseline):
         groups.append({'id': cell['name'], 'status': 'OBSERVED', 'measurements': len(rows),
                        'path': str(raw / (cell['name'] + '.json'))})
     require(manifest['totalMeasurements'] == len(observations), 'COVERAGE', 'total measurement mismatch')
+    rounds = [{'repetition': i, 'status': 'OBSERVED',
+               'observations': [o['id'] for o in observations if o['repetition'] == i]}
+              for i in range(1, REPEATS + 1)]
+    require(not observations or all(round_['observations'] for round_ in rounds),
+            'COVERAGE', 'nonempty observations require nonempty repetition ledgers')
     oracle = observation_check({'observations': observations, 'controls': True}, output)
     controls = manifest['checks']['observerControls']
     require(len(controls) == 9 and len({c['name'] for c in controls}) == 9
@@ -215,9 +227,7 @@ def validate_calibration(folder, output, baseline):
             'CLEANUP', 'A5.2a did not finish/reap its child')
     return {'groups': groups, 'expectedCases': expected, 'executedCases': manifest['executedCases'],
             'repeats': REPEATS, 'measurements': len(observations), 'oracle': oracle,
-            'rounds': [{'repetition': i, 'status': 'OBSERVED',
-                        'observations': [o['id'] for o in observations if o['repetition'] == i]}
-                       for i in range(1, REPEATS + 1)],
+            'rounds': rounds,
             'controls': controls, 'unstableGroups': manifest['unstableGroups'],
             'sidecar': {'status': 'NOT_APPLICABLE', 'reason': 'controlled in-process TS loop; no sidecar binary'},
             'connections': {'count': 0, 'reason': 'A5.2a prohibits listen; in-process queue observation'},
