@@ -1,0 +1,712 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "platform": "darwin",
+  "owner": "56548455-86ab-48d3-ba0a-262d563d260e",
+  "scratch": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r",
+  "permissions": [
+    {
+      "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats/visible.jsonl",
+      "mode": 420
+    }
+  ],
+  "sources": {
+    "src/gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "src/web/server/listProjects.ts": "b12e71223d9667950a41dccc1215bfcca6b4cb9999f5ef43439286940131f210",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/session/storage/SessionList.ts": "f0649c933de46d312fd5f519734999ae191fddf82956369c6c67a203140a8d9d",
+    "src/session/storage/SessionLiteReader.ts": "23fd1df4ffa04a12d8ae12bfa815b2856283c5dfdec4d8e28786da0777fcabad"
+  },
+  "sourceBinding": {
+    "before": {
+      "ref": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "git": {
+        "path": "/Library/Developer/CommandLineTools/usr/bin/git",
+        "sha256": "3121e7e4d16059539731c58d94888709c12904abe922acde8e37caef4607c1d1"
+      },
+      "count": 1000,
+      "sha256": "79a648cceae29e0958d64a14008ee38ab7fb74d977ca4eca6a06eff511164181"
+    },
+    "after": {
+      "ref": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+      "git": {
+        "path": "/Library/Developer/CommandLineTools/usr/bin/git",
+        "sha256": "3121e7e4d16059539731c58d94888709c12904abe922acde8e37caef4607c1d1"
+      },
+      "count": 1000,
+      "sha256": "79a648cceae29e0958d64a14008ee38ab7fb74d977ca4eca6a06eff511164181"
+    }
+  },
+  "callPath": [
+    "GatewayWsConnection",
+    "describeWebProject",
+    "resolveProjectStorageDir",
+    "summarizeProject",
+    "getPilotProjectChatDir",
+    "listProjectSessions"
+  ],
+  "cases": [
+    {
+      "id": "file-positive",
+      "status": "RUN",
+      "expectedError": null,
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats/visible.jsonl",
+      "home": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive",
+      "project": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"file-positive\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"file-positive\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project\",\"sessionCount\":1,\"lastActivity\":1792108801234,\"createdAt\":1792197280974.1873}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792197280973.9138,
+          "ctime_ms": 1792197280974.001,
+          "mtime_ms": 1792197280974.001,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280973.9998,
+          "ctime_ms": 1792197280974.139,
+          "mtime_ms": 1792197280974.139,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280974.137,
+          "ctime_ms": 1792197280974.1887,
+          "mtime_ms": 1792197280974.1887,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792197280974.1873,
+          "ctime_ms": 1792197280974.2922,
+          "mtime_ms": 1792197280974.2922,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/.cwd": {
+          "directory": false,
+          "size": 118,
+          "birth_ms": 1792197280974.2908,
+          "ctime_ms": 1792197280974.3257,
+          "mtime_ms": 1792197280974.3257,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtMTQyL190bXAvMjAyNjEwMTctbWV0YWRhdGEtZmlsZS1lcnJuby9yZWNvcmQtdndlNDA4MXIvY2FzZXMvZmlsZS1wb3NpdGl2ZS9wcm9qZWN0Cg=="
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280974.234,
+          "ctime_ms": 1792197280974.384,
+          "mtime_ms": 1792197280974.384,
+          "entries": [
+            [
+              "visible.jsonl",
+              false
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats/visible.jsonl": {
+          "directory": false,
+          "size": 150,
+          "birth_ms": 1792108801234,
+          "ctime_ms": 1792197280974.4773,
+          "mtime_ms": 1792108801234,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792197280973.9595,
+          "ctime_ms": 1792197280973.9595,
+          "mtime_ms": 1792197280973.9595,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:93:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:114:170)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792197280974.1873,
+            "ctime_ms": 1792197280974.2922,
+            "mtime_ms": 1792197280974.2922
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792197280974.1873,
+            "ctime_ms": 1792197280974.2922,
+            "mtime_ms": 1792197280974.2922
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792197280973.9595,
+            "ctime_ms": 1792197280973.9595,
+            "mtime_ms": 1792197280973.9595
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            "visible.jsonl"
+          ]
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:15:28)\n    at readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:22)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:24)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": false,
+            "size": 150,
+            "birth_ms": 1792108801234,
+            "ctime_ms": 1792197280974.4773,
+            "mtime_ms": 1792108801234
+          }
+        },
+        {
+          "api": "fsp.open",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:20:26)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "fd": 16
+          }
+        },
+        {
+          "api": "FileHandle.read",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-positive/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-positive-project/chats/visible.jsonl",
+          "caller": "Error\n    at FileHandle.v.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:67:136)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:23:39)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "bytesRead": 150,
+            "base64": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "id": "file-denied",
+      "status": "RUN",
+      "expectedError": "EACCES",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats/visible.jsonl",
+      "home": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied",
+      "project": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"file-denied\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"file-denied\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project\",\"sessionCount\":0,\"createdAt\":1792197280980.9985}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792197280980.8064,
+          "ctime_ms": 1792197280980.9016,
+          "mtime_ms": 1792197280980.9016,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280980.9004,
+          "ctime_ms": 1792197280980.9534,
+          "mtime_ms": 1792197280980.9534,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280980.9517,
+          "ctime_ms": 1792197280981.001,
+          "mtime_ms": 1792197280981.001,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792197280980.9985,
+          "ctime_ms": 1792197280981.0935,
+          "mtime_ms": 1792197280981.0935,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/.cwd": {
+          "directory": false,
+          "size": 116,
+          "birth_ms": 1792197280981.0918,
+          "ctime_ms": 1792197280981.1228,
+          "mtime_ms": 1792197280981.1228,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtMTQyL190bXAvMjAyNjEwMTctbWV0YWRhdGEtZmlsZS1lcnJuby9yZWNvcmQtdndlNDA4MXIvY2FzZXMvZmlsZS1kZW5pZWQvcHJvamVjdAo="
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280981.041,
+          "ctime_ms": 1792197280981.174,
+          "mtime_ms": 1792197280981.174,
+          "entries": [
+            [
+              "visible.jsonl",
+              false
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats/visible.jsonl": {
+          "directory": false,
+          "size": 150,
+          "birth_ms": 1792108801234,
+          "ctime_ms": 1792197280981.5645,
+          "mtime_ms": 1792108801234,
+          "readError": "EACCES"
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792197280980.861,
+          "ctime_ms": 1792197280980.861,
+          "mtime_ms": 1792197280980.861,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:93:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:114:170)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792197280980.9985,
+            "ctime_ms": 1792197280981.0935,
+            "mtime_ms": 1792197280981.0935
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792197280980.9985,
+            "ctime_ms": 1792197280981.0935,
+            "mtime_ms": 1792197280981.0935
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792197280980.861,
+            "ctime_ms": 1792197280980.861,
+            "mtime_ms": 1792197280980.861
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            "visible.jsonl"
+          ]
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:15:28)\n    at readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:22)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:24)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": false,
+            "size": 150,
+            "birth_ms": 1792108801234,
+            "ctime_ms": 1792197280981.5645,
+            "mtime_ms": 1792108801234
+          }
+        },
+        {
+          "api": "fsp.open",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:20:26)\n    at async readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:16)\n    at async listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:18)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "EACCES",
+          "syscall": "open",
+          "message": "EACCES: permission denied, open '/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-denied/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-denied-project/chats/visible.jsonl'"
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "id": "file-missing",
+      "status": "RUN",
+      "expectedError": "ENOENT",
+      "errorTarget": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats/visible.jsonl",
+      "home": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home",
+      "cwd": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing",
+      "project": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project",
+      "storage": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project",
+      "legacy": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project",
+      "chats": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats",
+      "request": "{\"type\":\"request\",\"id\":\"file-missing\",\"method\":\"describe_project\",\"params\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project\"}}",
+      "response": "{\"type\":\"response\",\"id\":\"file-missing\",\"ok\":true,\"result\":{\"projectKey\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project\",\"name\":\"project\",\"fullPath\":\"/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project\",\"sessionCount\":0,\"createdAt\":1792197280983.421}}",
+      "files": {
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792197280983.198,
+          "ctime_ms": 1792197280983.3242,
+          "mtime_ms": 1792197280983.3242,
+          "entries": [
+            [
+              "home",
+              true
+            ],
+            [
+              "project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280983.3232,
+          "ctime_ms": 1792197280983.3792,
+          "mtime_ms": 1792197280983.3792,
+          "entries": [
+            [
+              "projects",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280983.3777,
+          "ctime_ms": 1792197280983.4226,
+          "mtime_ms": 1792197280983.4226,
+          "entries": [
+            [
+              "Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project": {
+          "directory": true,
+          "size": 128,
+          "birth_ms": 1792197280983.421,
+          "ctime_ms": 1792197280983.5117,
+          "mtime_ms": 1792197280983.5117,
+          "entries": [
+            [
+              ".cwd",
+              false
+            ],
+            [
+              "chats",
+              true
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/.cwd": {
+          "directory": false,
+          "size": 117,
+          "birth_ms": 1792197280983.5103,
+          "ctime_ms": 1792197280983.5427,
+          "mtime_ms": 1792197280983.5427,
+          "bytes": "L1VzZXJzL2RhL3dzL3BpbG90ZGVjay1ycy9fYnVpbGQvd3QtMTQyL190bXAvMjAyNjEwMTctbWV0YWRhdGEtZmlsZS1lcnJuby9yZWNvcmQtdndlNDA4MXIvY2FzZXMvZmlsZS1taXNzaW5nL3Byb2plY3QK"
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats": {
+          "directory": true,
+          "size": 96,
+          "birth_ms": 1792197280983.461,
+          "ctime_ms": 1792197280983.597,
+          "mtime_ms": 1792197280983.597,
+          "entries": [
+            [
+              "visible.jsonl",
+              false
+            ]
+          ]
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats/visible.jsonl": {
+          "directory": false,
+          "size": 150,
+          "birth_ms": 1792108801234,
+          "ctime_ms": 1792197280983.6536,
+          "mtime_ms": 1792108801234,
+          "bytes": "eyJ0eXBlIjoic2Vzc2lvbl9tZXRhZGF0YSIsInNlc3Npb25JZCI6InZpc2libGUiLCJzZXF1ZW5jZSI6MSwiY3JlYXRlZEF0IjoiMjAyNi0xMC0xNlQwMDowMDowMC4wMDBaIiwibWV0YWRhdGEiOnsidGl0bGUiOiJyZWNvcmRlZCB2aXNpYmxlIHNlc3Npb24ifX0K"
+        },
+        "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project": {
+          "directory": true,
+          "size": 64,
+          "birth_ms": 1792197280983.2424,
+          "ctime_ms": 1792197280983.2424,
+          "mtime_ms": 1792197280983.2424,
+          "entries": []
+        }
+      },
+      "observations": [
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:128:16)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:35)\n    at Object.describeProject (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:93:144)\n    at GatewayWsConnection.dispatchRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:522:37)\n    at GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:33)\n    at GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:16)\n    at <anonymous> (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:44:41)\n    at response (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:114:170)\n    at new Promise (<anonymous>)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792197280983.421,
+            "ctime_ms": 1792197280983.5117,
+            "mtime_ms": 1792197280983.5117
+          }
+        },
+        {
+          "api": "fsp.readFile",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/.cwd",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at resolveProjectStorageDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:130:31)\n    at async describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:116:29)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project\n"
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:174:34)\n    at describeWebProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:117:10)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 128,
+            "birth_ms": 1792197280983.421,
+            "ctime_ms": 1792197280983.5117,
+            "mtime_ms": 1792197280983.5117
+          }
+        },
+        {
+          "api": "fs.existsSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:120:8)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": true
+        },
+        {
+          "api": "fs.readdirSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:125:25)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            [
+              "Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project",
+              true
+            ]
+          ]
+        },
+        {
+          "api": "fs.readFileSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/.cwd",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:132:18)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project\n"
+        },
+        {
+          "api": "fs.statSync",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/project",
+          "caller": "Error\n    at fs.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:65:139)\n    at findStoredProjectId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:140:13)\n    at resolveProjectStorageId (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:86:10)\n    at getPilotProjectChatDir (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/pilot/paths.ts:37:21)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:23:38)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": {
+            "directory": true,
+            "size": 64,
+            "birth_ms": 1792197280983.2424,
+            "ctime_ms": 1792197280983.2424,
+            "mtime_ms": 1792197280983.2424
+          }
+        },
+        {
+          "api": "fsp.readdir",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at fsp.readdir (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:104:24)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:26:19)\n    at summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:15)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": true,
+          "result": [
+            "visible.jsonl"
+          ]
+        },
+        {
+          "api": "fsp.stat",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats/visible.jsonl",
+          "caller": "Error\n    at fsp.<computed> (/Users/da/ws/pilotdeck-rs/_build/wt-142/src/pilotdeck-gateway/tests/record_metadata_io.mts:66:128)\n    at readSessionLite (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionLiteReader.ts:15:28)\n    at readSessionInfo (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:57:22)\n    at listProjectSessions (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/session/storage/SessionList.ts:40:24)\n    at async summarizeProject (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/web/server/listProjects.ts:183:9)\n    at async GatewayWsConnection.handleRequest (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:175:22)\n    at async GatewayWsConnection.handleMessage (/Users/da/ws/pilotdeck-rs/resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts:92:5)",
+          "ok": false,
+          "code": "ENOENT",
+          "syscall": "stat",
+          "message": "ENOENT: no such file or directory, stat '/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats/visible.jsonl'"
+        }
+      ],
+      "mutations": [
+        {
+          "operation": "unlink",
+          "path": "/Users/da/ws/pilotdeck-rs/_build/wt-142/_tmp/20261017-metadata-file-errno/record-vwe4081r/cases/file-missing/home/projects/Users-da-ws-pilotdeck-rs-_build-wt-142-_tmp-20261017-metadata-file-errno-record-vwe4081r-cases-file-missing-project/chats/visible.jsonl",
+          "after": "fsp.readdir",
+          "before": "fsp.stat"
+        }
+      ]
+    }
+  ]
+}

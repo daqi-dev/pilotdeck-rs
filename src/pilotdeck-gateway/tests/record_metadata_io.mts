@@ -1,5 +1,6 @@
 // #139 default describe_project chain. No listener, fake FS errors or user home.
-// <fixed baseline> <new output.json> <new isolated scratch>; --restore <output.json>
+// <fixed baseline> <new output.json> <new isolated scratch> [--file-errors]
+// --restore <output.json> <original in-memory permission plan JSON>
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
@@ -42,7 +43,9 @@ function restrict(path:string,mode:number) {
  if(fs.writeSync(1,checkpoint)!==Buffer.byteLength(checkpoint))throw Error('incomplete permission checkpoint');
  fs.chmodSync(path,mode);
 }
-const ids=['positive','collision-positive','projects-missing','projects-notdir','projects-denied-legacy','projects-denied-marker','chats-missing','chats-notdir','chats-denied','chats-loop'];
+if(process.argv[5]&&process.argv[5]!=='--file-errors')throw Error('unknown recording mode');
+const fileErrors=process.argv[5]==='--file-errors';
+const ids=fileErrors?['file-positive','file-denied','file-missing']:['positive','collision-positive','projects-missing','projects-notdir','projects-denied-legacy','projects-denied-marker','chats-missing','chats-notdir','chats-denied','chats-loop'];
 let observations:any[]=[];
 let generation=0;
 function value(v:any):any {
@@ -85,15 +88,35 @@ for(const id of ids) {
  if(id.startsWith('projects-denied')){restrict(projects,0o111);}
  if(['chats-missing','chats-notdir','chats-loop'].includes(id)){fs.renameSync(chats,chats+'.held');if(id==='chats-notdir')fs.writeFileSync(chats,'not directory');if(id==='chats-loop')fs.symlinkSync(chats,chats);}
  if(id==='chats-denied'){restrict(chats,0o0);}
+ if(id==='file-denied'){restrict(transcript,0o0);}
  const files=snapshot(paths);let receive:any,finish:any;const ws={onMessage(fn:any){receive=fn},onClose(){},sendText(s:string){if(JSON.parse(s).type==='response')finish(s);},close(){throw Error('unexpected close');}};
  new GatewayWsConnection(ws as any,{token:'offline',serverVersion:'offline',gateway:{describeServer:async()=>({}),describeProject:(input:any)=>describeWebProject(input.projectKey,{pilotHome:home})} as any});
  receive(JSON.stringify({type:'hello',protocolVersion:'1.2',clientName:'web',clientVersion:'fixture',token:'offline'}));await new Promise(r=>setImmediate(r));
  observations=[];const request=JSON.stringify({type:'request',id,method:'describe_project',params:{projectKey:project}});let response:string;
- try {install();response=await new Promise<string>((done,reject)=>{const timer=setTimeout(()=>reject(Error('No response '+id)),5000);finish=(s:string)=>{clearTimeout(timer);done(s);};receive(request);});} finally {reset();}
- const target=id.startsWith('projects-')?projects:chats;const code=id.endsWith('missing')?'ENOENT':id.endsWith('notdir')?'ENOTDIR':id.includes('denied')?'EACCES':id.endsWith('loop')?'ELOOP':null;
- const intended=observations.filter(o=>!o.ok&&o.path===target&&(o.api==='fsp.readdir'||o.api==='fs.readdirSync'));
+ const mutations:any[]=[];
+ try {
+  install();
+  if(id==='file-missing') {
+   // Fixture lifecycle only: delete after the real enumeration, before the
+   // caller can stat its result. The observer and returned names are unchanged.
+   const observedReaddir=fsp.readdir;
+   (fsp as any).readdir=async(path:any,...args:any[])=>{
+    const names=await (observedReaddir as any)(path,...args);
+    if(String(path)===chats&&mutations.length===0) {
+     if(!names.includes('visible.jsonl'))throw Error('missing file was not enumerated');
+     fs.unlinkSync(transcript);
+     mutations.push({operation:'unlink',path:transcript,after:'fsp.readdir',before:'fsp.stat'});
+    }
+    return names;
+   };
+   syncBuiltinESMExports();
+  }
+  response=await new Promise<string>((done,reject)=>{const timer=setTimeout(()=>reject(Error('No response '+id)),5000);finish=(s:string)=>{clearTimeout(timer);done(s);};receive(request);});
+ } finally {reset();}
+ const target=fileErrors?transcript:id.startsWith('projects-')?projects:chats;const code=id.endsWith('missing')?'ENOENT':id.endsWith('notdir')?'ENOTDIR':id.includes('denied')?'EACCES':id.endsWith('loop')?'ELOOP':null;
+ const intended=observations.filter(o=>!o.ok&&o.path===target&&(fileErrors?o.api===(id==='file-denied'?'fsp.open':'fsp.stat'):(o.api==='fsp.readdir'||o.api==='fs.readdirSync')));
  const status=code&&!intended.some(o=>o.code===code)?'NOT_RUN':'RUN';
- const row={id,status,expectedError:code,errorTarget:target,home,cwd:root,project,storage,legacy,chats,request,response,files,observations};
+ const row={id,status,expectedError:code,errorTarget:target,home,cwd:root,project,storage,legacy,chats,request,response,files,observations,...(fileErrors?{mutations}: {})};
  fs.writeFileSync(join(root,'raw-rpc.json'),JSON.stringify({request,response,observations},null,2)+'\n');cases.push(row);console.log(id,status,code??'positive');
 }
 const sourceBindingAfter=bindSourceTree(baseline,COMMIT,gitExecutable);if(JSON.stringify(sourceBindingBefore)!==JSON.stringify(sourceBindingAfter))throw Error('baseline sources changed during recording');
