@@ -617,6 +617,32 @@ fn lock_file_records_owner_and_is_released_after_errors() {
     assert!(!lock_path(&path).exists());
 }
 
+/// TS creates the lock, temporary (renamed snapshot) and parent directory with
+/// default modes, so a handoff peer can read the lock owner; Rust matches.
+#[cfg(unix)]
+#[test]
+fn files_and_dirs_use_default_modes_like_ts() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    let path = scratch.0.join("home/registry.json");
+    let registry = FileRunRegistry::open(&path).unwrap();
+    registry
+        .accept(&accept_input(&project_run("run-1"), "m"))
+        .unwrap();
+    let lock = registry.acquire_file_lock().unwrap();
+    // Same process umask, default creation modes.
+    fs::write(scratch.0.join("plain"), "").unwrap();
+    fs::create_dir(scratch.0.join("plain-dir")).unwrap();
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), mode(&scratch.0.join("plain")));
+    assert_eq!(mode(&lock_path(&path)), mode(&scratch.0.join("plain")));
+    assert_eq!(
+        mode(&scratch.0.join("home")),
+        mode(&scratch.0.join("plain-dir"))
+    );
+    drop(lock);
+}
+
 #[test]
 fn concurrent_registries_never_lose_mutations() {
     let scratch = Scratch::new();

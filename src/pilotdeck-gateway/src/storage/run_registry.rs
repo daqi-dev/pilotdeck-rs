@@ -7,7 +7,7 @@
 //! processes sharing one registry during a handoff exclude each other.
 use super::{
     ledger::{field, truthy},
-    transcript::{Temporary, private_dirs, private_open, timestamp, uuid},
+    transcript::{Temporary, timestamp, uuid},
 };
 use crate::metadata::{js_trim, object};
 use pilotdeck_protocol::{CodecError, JsObject, JsString, JsValue, parse_json, stringify_json};
@@ -296,19 +296,27 @@ impl FileRunRegistry {
                     String::from_utf16_lossy(state.units())
                 )));
             }
-            // TS strict-mode TypeErrors: property writes on a primitive record,
-            // `.push` on a non-array list, and `.type` of a null/undefined event.
-            let JsValue::Object(record) = record else {
-                return Err(invalid("Run registry record is not an object."));
-            };
-            let mut record = record.clone();
+            // TS strict-mode TypeErrors, in TS order: `.push` on a non-array
+            // list, property writes on a primitive record, `.type` of a
+            // null/undefined event. None of them reaches persist.
+            let seq = js_plus_one(field(record, "lastSeq"));
             let mut events = event_list(snapshot.events.get_key(&key))?.to_vec();
+            events.push(object([("seq", seq.clone()), ("event", event.clone())]));
+            // An array record is a JS object, so the record writes succeed in
+            // memory, but JSON.stringify drops non-index array properties: only
+            // the event list changes on disk and the record bytes stay as read.
+            let record = match record {
+                JsValue::Object(record) => Some(record.clone()),
+                JsValue::Array(_) => None,
+                _ => return Err(invalid("Run registry record is not an object.")),
+            };
             if matches!(event, JsValue::Null | JsValue::Undefined) {
                 return Err(invalid("Run registry event must be an object."));
             }
-            let seq = js_plus_one(record_field(&record, "lastSeq"));
-            events.push(object([("seq", seq.clone()), ("event", event.clone())]));
             snapshot.events.insert(key.clone(), JsValue::Array(events));
+            let Some(mut record) = record else {
+                return Ok(((), true));
+            };
             record.insert("lastSeq".into(), seq);
             let revision = js_plus_one(record_field(&record, "revision"));
             record.insert("revision".into(), revision);
@@ -447,7 +455,9 @@ impl FileRunRegistry {
         create_parent(&self.path)?;
         let deadline = Instant::now() + self.lock_timeout;
         loop {
-            match private_open()
+            // `open(lockPath, "wx")`: default mode under the umask, like TS, so a
+            // handoff peer can always read the owner pid.
+            match fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&self.lock_path)
@@ -512,7 +522,7 @@ impl FileRunRegistry {
             uuid()?.replace('-', "")
         ));
         let temporary = Temporary(temporary.into());
-        let mut file = private_open()
+        let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary.0)?;
@@ -779,9 +789,10 @@ fn record_field<'a>(record: &'a JsObject, key: &str) -> &'a JsValue {
     static UNDEFINED: JsValue = JsValue::Undefined;
     record.get(key).unwrap_or(&UNDEFINED)
 }
+/// `mkdir(dirname(path), { recursive: true })` with the default mode.
 fn create_parent(path: &Path) -> io::Result<()> {
     match path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        Some(parent) => private_dirs(parent),
+        Some(parent) => fs::create_dir_all(parent),
         None => Ok(()),
     }
 }
