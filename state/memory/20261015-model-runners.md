@@ -1,10 +1,12 @@
 ---
 name: model-runners
-description: 本机已核验的 OpenCode 与 DeepSeek Harness 通道；适用于接续评审，不是永久工具选型。
+description: 本机已核验的 OpenCode 与 DeepSeek 通道（2026-10-17 起 DeepSeek 首选直连 API 脚本，dsh 仅兜底）；适用于接续评审，不是永久工具选型。
 type: feedback
 ---
 
 # 本机评审入口：2026-10-15 经验
+
+**2026-10-17 更新（用户指示，优先于下文 dsh 用法）**：DeepSeek 谱系**首选** `python3 -I scripts/review-deepseek.py --prompt <任务书> --input <diff/源码>... --out <out.md>`（默认 `deepseek-flash`，可选 `--model deepseek-v4-pro`）。它直连 API、密钥取自仓库根 `.env.local` 的 `DEEPSEEK_API_KEY`（已在 .gitignore），模型无工具、天然只读；需要的上下文必须用 `--input` 显式附上（它读不到仓库）。冒烟原件 `_tmp/20261017-deepseek-smoke/`（exit 0、SMOKE-OK）。脚本报 HTTP/余额错误时才回退 dsh。不要读取、打印或复制 `.env.local`。
 
 **为什么**：用户指定的是 Z.AI Coding Plan 的 GLM5.3，不是 OpenCode 当时默认的 LLMcenter。DeepSeek Harness 默认 headless 的 `deepseek-official` 曾返回 402，但桌面使用的 `deepseek-account` 可正常响应；单个通道失败不能推断整个 Harness 不可用。实际调用与代码评审原件在主仓本机 `_tmp/20261015-multi-model/`，这是本机经验索引，不是 CI 的证据依赖。
 
