@@ -830,3 +830,48 @@ fn put_with_non_object_request_writes_like_ts() {
         assert!(store.record_path(&key).unwrap().exists(), "{raw}");
     }
 }
+
+#[test]
+fn put_null_request_into_nonempty_record_fails_without_writing_like_ts() {
+    // 真实 TS 探针（_tmp/20261018-a68-dialog/ts-probe-nonempty.log）：已有 dialog 时 request=null 抛 TypeError、不写盘；
+    // 字符串/数字/数组/缺 requestId 的对象照常追加。
+    let fixture = fixture();
+    let clock = clock(&fixture);
+    let first = pilotdeck_protocol::parse_json(
+        r#"{"type":"user_dialog_request","requestId":"dialog-1","dialogKind":"input"}"#,
+    )
+    .unwrap();
+    for (raw, ok) in [
+        ("null", false),
+        ("\"x\"", true),
+        ("1", true),
+        ("[]", true),
+        (r#"{"type":"user_dialog_request"}"#, true),
+    ] {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0, &clock);
+        let key = key(&fixture);
+        store
+            .put(
+                &key,
+                &StoredDialog {
+                    request: first.clone(),
+                    created_at: JsString::from("x"),
+                },
+            )
+            .unwrap();
+        let before = fs::read(store.record_path(&key).unwrap()).unwrap();
+        let dialog = StoredDialog {
+            request: pilotdeck_protocol::parse_json(raw).unwrap(),
+            created_at: JsString::from("x"),
+        };
+        assert_eq!(store.put(&key, &dialog).is_ok(), ok, "{raw}");
+        if !ok {
+            assert_eq!(
+                fs::read(store.record_path(&key).unwrap()).unwrap(),
+                before,
+                "{raw}: must not write"
+            );
+        }
+    }
+}

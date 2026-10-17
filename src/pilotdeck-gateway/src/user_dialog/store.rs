@@ -99,6 +99,14 @@ impl FileGatewayUserDialogStore {
         self.with_record(key, |path, record| {
             // TS FileGatewayUserDialogStore.ts:98 用 === 找下标、put 本身不校验：入参 requestId
             // 缺失或非字符串时永不匹配，直接追加（之后读端 admission 才拒，与 TS 相同）。
+            // TS :98 findIndex 的谓词读 next.request.requestId：仅当记录非空且 request 为
+            // null/undefined 时抛 TypeError、不写盘（真实 TS 探针 ts-probe-nonempty.log）；
+            // 空记录或其它非对象 request 照常追加。
+            if !record.is_empty() && matches!(dialog.request, JsValue::Null | JsValue::Undefined) {
+                return Err(DialogError::Invalid(
+                    "Cannot read properties of null (reading 'requestId')".into(),
+                ));
+            }
             let id = string(&dialog.request, "requestId").ok();
             let mut next = dialog.to_value();
             if let Some(index) = id.and_then(|id| find(record, id)) {
