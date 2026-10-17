@@ -26,6 +26,10 @@ class Blocked(RuntimeError):
     pass
 
 
+# 已启动、尚未被 stop_group 证实全部停止的进程组（pgid）。锁是否可释放只看它是否为空，不看异常类型。
+LIVE_GROUPS: set[int] = set()
+
+
 class CleanupBlocked(Blocked):
     """An owned process may remain: do not hand the shared lock to another run."""
 
@@ -170,16 +174,11 @@ def parity_lock(lock=LOCK):
         except BaseException:
             os.close(directory)
             raise
-    release = False
     try:
         yield mine
-        release = True
-    except (Blocked, OSError, ValueError, RuntimeError):
-        # 已知的受控失败：清理在本层之内已完成（capture/preflight 的 finally 已 stop_group），可释放
-        release = not isinstance(sys.exc_info()[1], CleanupBlocked)
-        raise
-    # 其余（含 KeyboardInterrupt、CleanupBlocked、未知异常）一律保留锁，交人核对进程组
     finally:
+        # 不论正常还是任何异常（含 KeyboardInterrupt）：只有本次启动的进程组全部被 stop_group 证实停止，才释放锁
+        release = not LIVE_GROUPS
         try:
             with lock_guard(lock):
                 current = lock.lstat()
