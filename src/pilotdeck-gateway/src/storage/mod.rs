@@ -1,0 +1,52 @@
+//! Session-owned operation persistence. No gateway route or host is wired here.
+//! The wire format remains the TS transcript JSONL format (no extra revision field).
+mod ledger;
+mod projection;
+mod transcript;
+
+pub use ledger::{
+    KnownTerminal, OperationIdentity, OperationRecovery, OperationResolution,
+    SessionOperationLedger, TranscriptSink, UnknownTerminal,
+};
+pub use transcript::{Diagnostic, JsonlLedgerStore, TranscriptRead, WriterState, read_transcript};
+
+use std::{fmt, io};
+
+#[derive(Debug)]
+pub enum LedgerError {
+    Io(io::Error),
+    Invalid(String),
+}
+impl fmt::Display for LedgerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(e) => e.fmt(f),
+            Self::Invalid(s) => f.write_str(s),
+        }
+    }
+}
+impl std::error::Error for LedgerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Invalid(_) => None,
+        }
+    }
+}
+impl From<io::Error> for LedgerError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<pilotdeck_protocol::CodecError> for LedgerError {
+    fn from(e: pilotdeck_protocol::CodecError) -> Self {
+        Self::Invalid(e.to_string())
+    }
+}
+pub type Result<T> = std::result::Result<T, LedgerError>;
+fn invalid(message: impl Into<String>) -> LedgerError {
+    LedgerError::Invalid(message.into())
+}
+
+#[cfg(test)]
+mod tests;
