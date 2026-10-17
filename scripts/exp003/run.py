@@ -181,9 +181,11 @@ def scenario(name, callback):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--baseline', type=Path, default=Path('/Users/da/ws/pilotdeck-rs/resources/PilotDeck'))
+    parser.add_argument('--baseline', type=Path, help='baseline checkout (default: PDRS_BASELINE or this checkout resources/PilotDeck)')
     args = parser.parse_args()
-    baseline = args.baseline.resolve()
+    baseline = Path(args.baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
+    if not (baseline / 'dist/src/cli/pilotdeck.js').is_file():
+        parser.error(f'baseline not found at {baseline}; pass --baseline or set PDRS_BASELINE')
     OUT.mkdir(parents=True, exist_ok=True)
     # Refuse to overwrite a previous run or use occupied ports. No port-based killing.
     if (OUT / 'processes.json').exists():
