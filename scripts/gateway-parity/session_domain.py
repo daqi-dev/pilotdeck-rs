@@ -19,7 +19,8 @@ from common import ROOT, SCRIPT, apparatus_hashes, digest, install_shutdown, par
 from compare import wire_frame
 from observer import Decoder
 
-BASELINE = Path('/Users/da/ws/pilotdeck-rs/resources/PilotDeck')
+# 显式 --baseline > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck（#187：不再写死主仓绝对路径）
+BASELINE = Path(os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck')
 BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 CELLS = ('no-registry-fast', 'no-registry-slow', 'no-registry-failure',
          'registry-fast', 'registry-slow', 'registry-failure')

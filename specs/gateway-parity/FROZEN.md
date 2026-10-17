@@ -1,5 +1,7 @@
 # gateway 对拍尺子冻结记录（阶段 A · exp006）
 
+> **2026-10-17 四登（#187，只改路径解析、不改判分语义）**：run_round.py / session_domain.py 的默认 baseline 由主仓绝对路径改为「显式参数 > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck」，缺失时 BLOCKED 并提示，不再在 worktree 里静默用主仓 baseline。真实数据复算：同树两轮 TS 自比 PASS（`_tmp/20261017-issue-187/compare-ts187-ts187b.json`）；无 baseline 负控 BLOCKED（`negative.log`）。两家评审见 PR。**AI 代批，待人复核**。
+
 > **2026-10-17 重登记（两类，均见 PR）**：① accepted-diffs.md 追加 A4-ARCHIVE-SEC-001/002/003（#142，人批 2026-10-17「批准 #134 的登记范围」，state/decisions-20261017.md）；② A5.3 新增 E1 适配脚本三件（session_domain.py / session_observations.mjs / controls/session_domain.py）入白名单并登记哈希（plan 005：A5 PR 带理由+双评审登记新 hash）。
 
 > **2026-10-17 三登（#167，P1 缺口修复）**：validate_calibration 新增 repetition/phase/variant 与预注册 ID 一致性核对及空账本拒绝（audit 原件见 PR）；负控 24 条含新两条。计划 005 程序：理由+双评审+实证复算。
@@ -23,9 +25,9 @@ cdea9efadae918a7894f54d3fba7bb535e4da2cda961cfd54997e956cc4994b0  ../../scripts/
 2cb39a091ba02f745a1d1ade35b77562ed96d6ba61a9979cf0ac6cffa61deb17  ../../scripts/gateway-parity/driver.mts
 95fe265a7b7512f1969f19b7ee2d14133ce56916fb25c0953a84b5ec05568f74  ../../scripts/gateway-parity/mock.mjs
 3a758aa57cbb5d8129c2e9b73c0baa04028a87aa7bae5dba6d8519f713869692  ../../scripts/gateway-parity/observer.py
-e3529e28181f338a8ff09fa6b7d6c8ce669af86b16806aca32bd0995e86918f6  ../../scripts/gateway-parity/run_round.py
+d3e99961f28d4fdbd8521be51b689e6f075bbc78412a41387b5dc2b46202efca  ../../scripts/gateway-parity/run_round.py
 9d8a1825e4a152affbcb6df6c8e3e682edad634281e782ad21c1493e673c1d67  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
-491751f0bc843423fa6b51a33114761c7bbda2b6154803216dd6f5520b663c90  ../../scripts/gateway-parity/session_domain.py
+c206ba6c8efd705561fff1031193638db85a648207d7bca123d08e427d8a9075  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
 31d0fe7dd11da319bacd60cabff27053cc0d0e28d3c386adea4f931488099d16  ../../scripts/gateway-parity/controls/session_domain.py
