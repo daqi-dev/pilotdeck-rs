@@ -73,3 +73,23 @@ Co-authored-by: 姓名 <邮箱>
 ### 产出格式
 
 （本系统产出的格式约定：篇幅、结构、必备字段。踩到一次不一致再补一条。）
+
+### board READY 队列块（2026-10-17 登记）
+
+`state/board.md` 里**唯一可原地改写的区域**，放在标题之后、第一个历史段（行首 `> ## `）之前；历史段照旧只追加不改。READY 块是「现在排什么」的唯一正本，各轮段不再写「下一棒」散文，只写「READY：移出 X / 加入 Y」一句留痕。读取与校验：`scripts/next-task.sh`（`--check` 校验，默认输出队首；kind→通道路由表也只在该脚本里）。
+
+```
+<!-- READY:BEGIN -->
+updated: YYYY-MM-DD HH:MM · by <谁>
+- <ref> | <kind> | <state> | <一句话，可带任务书路径>
+<!-- READY:END -->
+```
+
+| 字段 | 取值 |
+|---|---|
+| ref | issue 号（`#167`）或阶段码（`A6.1-pr1`）；无空格 |
+| kind | `impl` 实现 · `gate` 开 PR 前角色审计 · `review` 双谱系评审 · `research` 调研 · `docs` · `coord` 协调 |
+| state | `ready` 可取 · `blocked` 有前置（summary 写前置）· `human` 待人拍板（summary 写决策卡路径） |
+
+- 自上而下即优先级；队首 = 第一条 `ready`。summary 内不得出现 ` | `。
+- 每次改块必改 `updated` 行——外层循环 `scripts/pdrs-loop.sh` 靠它判断上一迭代有没有推进。

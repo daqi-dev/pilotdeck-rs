@@ -1,0 +1,18 @@
+name: pr-gate
+
+# 合并闸门第 2、3 步的机器检查（scripts/check-pr-gate.py）。单独成文件：
+# ci.yml 的 pull_request 默认不含 edited，改 PR 描述不会重跑；这里显式加上。
+# 设为分支保护必需检查属仓库设置，由协调者在本文件合入后另做（CLAUDE.md 第 14 条范围内）。
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  pr-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 角色审计结果块与 issue 关联
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 -I scripts/check-pr-gate.py

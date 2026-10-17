@@ -141,3 +141,25 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 
 **实效层与定标**：实际人用结论、待验步骤与适用范围写入 board；未验收不得标阶段完成，独立开发继续推进。
 
+
+### 技能停点覆盖表（2026-10-17 登记；42plugin 技能按「人在场、一次一单」设计，本项目连续推进时逐条以本表为准）
+
+技能目录是 symlink 到厂商缓存（`.claude/skills/* → ~/.42plugin/cache/`），不在里面写项目模版；冲突一律以本表和本文件既有条款为准。表外的技能停点按「决策分级」归档处理。
+
+| 技能 · 停点 | 本项目替代动作 | 执行器 |
+|---|---|---|
+| dev-launch §2.5 产物写 `_tmp/issue-<N>/` | 写 `_tmp/<YYYYMMDD>-issue-<N>/triage.md` | `scripts/check-naming.py` |
+| dev-launch §3/§4 高不确定性「停等拍板」、§3「值不值得」 | 按「决策分级」写卡：自决/待复核 → 继续；暂不执行 → READY 条目改 `human`，取下一条 | `scripts/next-task.sh` 跳过 human |
+| dev-launch §3 估算 >3 天「拒绝无人值守」 | 一 issue 拆多个小 PR，READY 里逐 PR 列条目（`<码>-pr1`…），不停 | 同上 |
+| dev-launch §6.6 / workflows README「无 P0/P1/P2 才收敛」 | 按本文件「问题分级 · P2 折中方案」 | 评审人 |
+| dev-launch §8「人工合并，绝不自动 merge」 | 第 14 条：协调者 `gh pr merge --rebase`（不加 `--delete-branch`），合并后核邮箱 | 人的用法 |
+| dev-launch §8 关 issue 顺序 | PR 描述写 `Closes #N`（合并即关）或 `Refs #N`（一单多 PR）；关单前仍先回复说明 | `.github/workflows/pr-gate.yml` |
+| dev-launch §7.0 / `.claude/dev-launch.review.md`「只剩一家时停下等人」 | READY 条目改 `blocked`（写缺哪家通道），取下一条；不降级为单评审 | `scripts/next-task.sh` |
+| dev-req Phase0「复述确认 / AskUserQuestion」 | 复述写进 triage 文件，按决策分级自决，不等确认；「深度思考 MCP」不可用时跳过 | 人的用法 |
+| pr-ready Step0 `templates/<project>.md` | 不建；invariant 以 `state/memory/MEMORY.md` 为触发表 | — |
+| pr-ready Step3 三个 Explore 子代理 + 「等 ≤2 分钟超时退出」、Step4 `/simplify` | `python3 scripts/run-review-roles.py`：四角色 `claude -p` 只读并行，每角色 600 s；任务书 `.claude/workflows/review-*.md` | 脚本 + pr-gate CI |
+| pr-ready Step6「让用户决定修 P1 还是开 PR」 | P0/P1 先修再重跑相关角色；P2 三分；然后开 PR，把 `summary.md` 贴进描述 | pr-gate CI |
+| aias-meta-* 「拍板归人」收尾 | 不进连续推进队列；只在人主动发起时用 | 人的用法 |
+| `.claude/workflows/pdrs-review.js` | 仅 Claude Code 通道可用；其它通道用 run-review-roles.py | — |
+
+**外层循环（人的用法）**：opencode 通道无后台完成回调，连续性由 `scripts/pdrs-loop.sh` 提供——人在 tmux 前台起，每迭代一个全新协调会话只做 READY 队首一单（迭代时限 = 两小时交接点）。循环在跑时（`/tmp/pdrs-loop.lock` 存在，`next-task.sh` 会提示）交互会话不做协调写入；要接手先 `touch /tmp/pdrs-loop.stop` 等本迭代结束。在 Claude Code 里主持时可改用 `/loop` 驱动同一队列。
