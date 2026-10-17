@@ -19,4 +19,6 @@
 
 - [资源预算与硬链接](20261016-resource-budget.md) — 清cache按最后硬链接的allocated块估算并完整du复核，保护所有非cache证据。
 
+- [对拍 Rust 二进制路径](20261017-parity-binary-path.md) — proxy 轮取 src/target/debug 固定路径；成片 G1 缺场景先查 run.json error，不是装置失配。
+
 - [工作树路径核对](20261016-worktree-paths.md) — 源文件先列真实路径，忽略资源不假定每树都有链接；共享基线按任务卡绝对路径只读。
