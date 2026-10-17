@@ -70,3 +70,9 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **四项**：① #198 只做产品代码（已合并）；② 协调者从 #127/#128/D0–D3 拆出互相独立的产品单进 READY，并行派活；③ 资源上限放宽：worktree 5→8、`_build+_tmp` 46→80 GiB（对拍串行不变）；④ `run-review-roles.py` 默认 GLM：四角色各起一个 GLM 并发审，GLM 经 Claude Code 外壳接智谱 Anthropic 兼容接口（#200 r2 起；r1 的 opencode+sandbox 方案因评审连续 P0 弃用）。
 - **原则**：并行只对**互相独立的产品单**有意义；加并发前先保证 READY 里有可并行的单。资源上限按机器实测放宽，对拍串行这条因假差异实证保留。
 - **断言**：CLAUDE.md「资源上限」写 8 / 80 GiB；`scripts/test-review-roles.py`（CI 跑）覆盖：zai/anthropic 两通道 PASS 过闸；密钥只走环境变量不进命令行不落盘；越权工具→TOOLS_VIOLATION、init 模型不符→ERROR、缺 VERDICT→PARTIAL、超时→TIMEOUT 均被闸门拒收；readonly 非 tools 拒收。
+## 卡 · codex 额度用尽后的实现与评审通道（2026-10-18，自决 · 待复核，AI 代批）
+- **卡在哪**：codex CLI 报「usage limit，Oct 22nd 2:43 PM 后再试」（_tmp/20261018-a68-*/codex.err），A6.8 两条 worker 中途停止；codex 同时是 GLM/DeepSeek 之外的第三家评审。
+- **谁受影响**：所有 impl 单与以 codex 为评审一家的单，至 10-22。**能否撤回**：能（额度恢复即回切）。
+- **选项**：A 实现改 `claude -p --model claude-opus-5-5`（worktree 内、dontAsk + 显式工具白名单），评审由 GLM + DeepSeek 两家非作者承担；B 实现改 opencode GLM build agent（GLM 就不能再当评审，只剩 DeepSeek 一家）；C 停 impl 到 10-22。
+- **建议 / 执行**：A。Claude 作为作者时不审自己；评审 = GLM（opencode plan）+ DeepSeek（review-deepseek.py，默认关思考）；四角色 run-review-roles --runner zai 照常。
+- **原则**：实现通道换人时，同步重排评审，保证两家非作者；通道不可用不降级为单评审。
