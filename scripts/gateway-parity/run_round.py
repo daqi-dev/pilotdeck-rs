@@ -22,7 +22,10 @@ TOKEN = 'gateway-parity-isolated-token'
 
 
 def run_round(side, label, output=DEFAULT_OUT, baseline=None, ports=(28791, 28792, 28793, 28794), timeout=180):
-    baseline = Path(baseline or os.environ.get('PDRS_BASELINE', '/Users/da/ws/pilotdeck-rs/resources/PilotDeck')).resolve()
+    # 显式参数 > PDRS_BASELINE > 本 checkout 的 resources/PilotDeck；不再回落到主仓绝对路径（#187）
+    baseline = Path(baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
+    if not (baseline / 'dist/src/cli/pilotdeck.js').is_file():
+        raise ValueError(f'baseline not found at {baseline}; pass --baseline or set PDRS_BASELINE')
     output = Path(output).resolve()
     if not output.is_relative_to(ROOT / '_tmp'):
         raise ValueError('runtime/evidence output must be inside this workspace _tmp')
