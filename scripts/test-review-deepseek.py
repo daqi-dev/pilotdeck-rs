@@ -234,6 +234,11 @@ def main() -> int:
     ok = ok and json.loads(Fake.last_body).get("thinking") == {"type": "enabled"}
     print(f"{'PASS' if ok else 'FAIL'} thinking 请求体")
     fails += not ok
+    burnt = {"completion_tokens": 16, "completion_tokens_details": {"reasoning_tokens": 16}}
+    case("关思考仍有推理 token → 提示字段可能被忽略", (200, ok_body("", finish="length", usage=burnt)), 1,
+         expect_msg="可能被该模型忽略")
+    case("开思考耗尽 → 提示关思考", (200, ok_body("", finish="length", usage=burnt)), 1, "--thinking", "enabled",
+         expect_msg="用 --thinking disabled")
     ok = elapsed < 5 and elapsed_err < 5  # 整包滴完要 8 s 以上；总时限 1 s 应在几秒内返回
     print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 正文={elapsed:.1f}s 错误正文={elapsed_err:.1f}s")
     fails += not ok

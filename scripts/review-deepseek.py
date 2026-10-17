@@ -210,7 +210,7 @@ def call_api(a: argparse.Namespace, key: str, body: bytes) -> dict:
     return resp
 
 
-def extract_text(resp: dict) -> str:
+def extract_text(resp: dict, thinking: str = "disabled") -> str:
     choices = resp.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         raise Fail(1, f"响应无 choices：{json.dumps(resp, ensure_ascii=False)[:65536]}")
@@ -220,8 +220,11 @@ def extract_text(resp: dict) -> str:
     if not isinstance(text, str) or not text.strip():
         usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
         details = usage.get("completion_tokens_details") if isinstance(usage.get("completion_tokens_details"), dict) else {}
-        raise Fail(1, f"空回复（finish_reason={choice.get('finish_reason')}，completion_tokens={usage.get('completion_tokens')}，"
-                      f"其中 reasoning_tokens={details.get('reasoning_tokens')}；思考耗尽输出额度时用 --thinking disabled）")
+        head = f"空回复（finish_reason={choice.get('finish_reason')}，completion_tokens={usage.get('completion_tokens')}，" \
+               f"其中 reasoning_tokens={details.get('reasoning_tokens')}）"
+        if thinking == "disabled" and (details.get("reasoning_tokens") or 0) > 0:
+            raise Fail(1, head + "：已请求关思考仍有推理 token，thinking 字段可能被该模型忽略；换已实测支持该字段的 deepseek-flash，或调大 --max-tokens")
+        raise Fail(1, head + ("：思考耗尽输出额度，用 --thinking disabled" if thinking == "enabled" else ""))
     if choice.get("finish_reason") not in (None, "stop"):
         raise Fail(1, f"回复未完成（finish_reason={choice.get('finish_reason')}），不当作评审结论")
     return text
@@ -289,7 +292,8 @@ def main() -> int:
     ap.add_argument("--max-tokens", type=int, help="输出上限；不给就用 API 默认值（截断时按失败退出）")
     ap.add_argument("--thinking", choices=["disabled", "enabled"], default="disabled",
                     help="默认 disabled：2026-10-17 实测 37K token 输入的评审，开思考时 16K/65K 输出额度全被 reasoning 吃光、正文为空"
-                         "（_tmp/20261017-deepseek-diag/），关思考 19 s 给出完整结论")
+                         "（_tmp/20261017-deepseek-diag/），关思考 19 s 给出完整结论。已实测适用 deepseek-flash；"
+                         "其它模型若不认该字段，空回复报错会提示「可能被忽略」")
     ap.add_argument("--timeout", type=int, default=1800, help="整个请求的墙钟总时限（也是单次 socket 超时），秒")
     ap.add_argument("--api", default=API, help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()
@@ -301,7 +305,7 @@ def main() -> int:
         body = build_body(a)
         stage = 1
         resp = call_api(a, key, body)
-        text = extract_text(resp)
+        text = extract_text(resp, a.thinking)
         if key in text:
             raise Fail(1, "回复中回显了密钥，拒绝落盘")
         line = success_line(resp, a.out, key)
