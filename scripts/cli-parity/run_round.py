@@ -128,6 +128,16 @@ def process_table():
 
 
 def stop_group(proc):
+    """进程组清理期间屏蔽 SIGINT/SIGTERM/SIGALRM：清理被打断会让锁在后代存活时被释放（gate-zai concurrency P1）。"""
+    held = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM)}
+    try:
+        return _stop_group(proc)
+    finally:
+        for sig, handler in held.items():
+            signal.signal(sig, handler)
+
+
+def _stop_group(proc):
     errors = []
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:

@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -572,6 +574,46 @@ class ContractTests(unittest.TestCase):
             with parity_lock(lock):
                 raise CleanupBlocked('synthetic failure')
         self.assertTrue((lock / 'owner.json').is_file())
+
+    def test_interrupt_or_unknown_error_retains_owned_lock(self):
+        for error in (KeyboardInterrupt(), SystemExit(3), LookupError('unknown')):
+            lock = self.root / f'lock-{type(error).__name__}'
+            with self.assertRaises(type(error)):
+                with parity_lock(lock):
+                    raise error
+            self.assertTrue((lock / 'owner.json').is_file(), type(error).__name__)
+
+    def test_known_failure_releases_lock(self):
+        lock = self.root / 'lock-known'
+        with self.assertRaises(Blocked):
+            with parity_lock(lock):
+                raise Blocked('controlled failure after cleanup')
+        self.assertFalse(lock.exists())
+
+    def test_stop_group_ignores_interrupts_while_cleaning(self):
+        import run_round
+        proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+        seen = []
+        def handler(signum, frame):
+            seen.append(signum)
+        previous = signal.signal(signal.SIGINT, handler)
+        try:
+            original = run_round._stop_group
+            def interrupted(p):
+                os.kill(os.getpid(), signal.SIGINT)  # 清理进行中收到中断
+                return original(p)
+            run_round._stop_group = interrupted
+            try:
+                audit = run_round.stop_group(proc)
+            finally:
+                run_round._stop_group = original
+            self.assertTrue(audit['allStopped'])
+            self.assertEqual(seen, [])  # 清理期间被屏蔽
+            self.assertIs(signal.getsignal(signal.SIGINT), handler)  # 清理后恢复
+        finally:
+            signal.signal(signal.SIGINT, previous)
+            if proc.poll() is None:
+                proc.kill()
 
     def test_lock_guard_and_directory_symlinks_do_not_redirect_writes(self):
         lock = self.root / 'lock'

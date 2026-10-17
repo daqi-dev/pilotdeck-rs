@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import sys
 import time
 import uuid
 
@@ -169,12 +170,15 @@ def parity_lock(lock=LOCK):
         except BaseException:
             os.close(directory)
             raise
-    release = True
+    release = False
     try:
         yield mine
-    except CleanupBlocked:
-        release = False
+        release = True
+    except (Blocked, OSError, ValueError, RuntimeError):
+        # 已知的受控失败：清理在本层之内已完成（capture/preflight 的 finally 已 stop_group），可释放
+        release = not isinstance(sys.exc_info()[1], CleanupBlocked)
         raise
+    # 其余（含 KeyboardInterrupt、CleanupBlocked、未知异常）一律保留锁，交人核对进程组
     finally:
         try:
             with lock_guard(lock):
