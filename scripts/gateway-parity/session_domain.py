@@ -354,6 +354,12 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--baseline', type=Path, default=BASELINE)
     args = parser.parse_args()
+    if args.suite == 'calibrate' and not (args.baseline / 'dist/src/cli/pilotdeck.js').is_file():
+        # 与 run_round 一致：缺 baseline 是前置条件不满足，BLOCKED 且不建输出目录（#187）
+        print(json.dumps({'suite': args.suite, 'status': 'BLOCKED',
+                          'error': f'baseline not found at {args.baseline.resolve()}; pass --baseline or set PDRS_BASELINE'},
+                         ensure_ascii=False))
+        return 2
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     install_shutdown()

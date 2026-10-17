@@ -13,7 +13,7 @@
 | `scripts/parity/controls/review_r1.py` | `cfb45493dfbe84a1…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/controls/run_all.py` | `2f27c71cd9b88005…` | 2026-10-14 #35 重登记（**AI 代批，待人复核**；人批方案 B） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/g03_compare.py` | `17e13a845aa5d8ef…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/round.py` | `16746b22a573a1f0…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
+| `scripts/parity/round.py` | `5ec7705088dd3e3c…` | 2026-10-17 #187 重登记：仅 docstring 去掉红线目录路径（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `scripts/parity/self_compare.py` | `9489d43055c43f5e…` | 2026-10-14（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 | `multimodal.md` | `e8a7b4c4025a2a3c…` | 2026-10-14 #35 新增（**AI 代批，待人复核**） | 原版多态场景登记（cancel_during_tool：TS 20 遍 17/3 两类）与每日重采流程 |
 | `scripts/parity/score.py` | `4f7083ee901108c1…` | 2026-10-14 #35 新增（**AI 代批，待人复核**） | 计分：普通第 i 对第 i；多态整类匹配；日期 / 同源 / 不重叠前提 |
