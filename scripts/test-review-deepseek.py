@@ -158,7 +158,7 @@ def main() -> int:
     case("密钥首尾换行被去掉", (200, ok_body("x")), 0, key="sk-FAKE\n")
     case("密钥含内部空白", (200, ok_body("x")), 2, key="sk-FA KE")
     case("无密钥", (200, ok_body("x")), 2, key=None, isolated=True)
-    case(".env.local 带 export 与注释", (200, ok_body("x")), 0, key=None, isolated=True,
+    case(".env.local 带 export 与注释", (200, ok_body("x")), 0, key=None, isolated=True, secret="sk-FAKE",
          pre=lambda t: (t / ".env.local").write_text('# c\nexport DEEPSEEK_API_KEY="sk-FAKE" # local\n'))
     case("--out 已存在不覆盖", (200, ok_body("NEW")), 2,
          pre=lambda t: (t / "out.md").write_text("OLD"), expect_out="OLD")
@@ -184,9 +184,12 @@ def main() -> int:
     started = time.monotonic()
     case("慢滴流超总时限", (200, ok_body("x" * 40)), 1, "--timeout", "1", expect_msg="总时限")
     elapsed = time.monotonic() - started
+    started = time.monotonic()
+    case("错误正文慢滴超总时限", (401, b"x" * 40), 1, "--timeout", "1", expect_msg="总时限")
+    elapsed_err = time.monotonic() - started
     Fake.drip = 0.0
-    ok = elapsed < 5  # 整包滴完要 20 s 以上；总时限 1 s 应在几秒内返回
-    print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 elapsed={elapsed:.1f}s")
+    ok = elapsed < 5 and elapsed_err < 5  # 整包滴完要 8 s 以上；总时限 1 s 应在几秒内返回
+    print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 正文={elapsed:.1f}s 错误正文={elapsed_err:.1f}s")
     fails += not ok
     case("连不上", (200, b""), 1, "--api", "http://127.0.0.1:9/")
 
@@ -261,23 +264,38 @@ def main() -> int:
 
     # 不支持硬链接的文件系统：退到排他创建，仍不覆盖
     import errno
-    for name, pre_exists in (("无硬链接时排他创建发布", False), ("无硬链接且目标已存在", True)):
+    for name, pre_exists in (("无硬链接时排他创建发布", False), ("无硬链接且目标已存在", True), ("无硬链接且写入失败", None)):
         with tempfile.TemporaryDirectory() as d:
             out = Path(d) / "out.md"
             if pre_exists:
                 out.write_text("OLD")
             real_link = os.link
             os.link = lambda *_: (_ for _ in ()).throw(OSError(errno.ENOTSUP, "no hardlinks"))
+            real_fdopen = os.fdopen
+            if pre_exists is None:
+                calls = []
+                def fdopen(fd, *a, **k):  # 第一次是临时文件（正常），第二次是退路目标（写到一半失败）
+                    calls.append(fd)
+                    f = real_fdopen(fd, *a, **k)
+                    if len(calls) == 2:
+                        f.write("HALF")
+                        f.flush()
+                        f.write = lambda *_: (_ for _ in ()).throw(OSError(28, "No space left"))
+                    return f
+                os.fdopen = fdopen
             try:
                 rd.write_atomic(out, "TEXT", False)
                 err = None
             except Exception as e:
                 err = e
             finally:
-                os.link = real_link
+                os.link, os.fdopen = real_link, real_fdopen
             leftovers = list(Path(d).glob(".out.md.*"))
-            ok = (not leftovers) and ((isinstance(err, rd.Fail) and out.read_text() == "OLD") if pre_exists
-                                      else (err is None and out.read_text() == "TEXT"))
+            if pre_exists is None:
+                ok = not leftovers and isinstance(err, rd.Fail) and not out.exists()
+            else:
+                ok = (not leftovers) and ((isinstance(err, rd.Fail) and out.read_text() == "OLD") if pre_exists
+                                          else (err is None and out.read_text() == "TEXT"))
             print(f"{'PASS' if ok else 'FAIL'} {name} err={err} leftovers={leftovers}")
             fails += not ok
 
