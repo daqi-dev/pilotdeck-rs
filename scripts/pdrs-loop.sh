@@ -14,8 +14,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-LOCK_DIR="${PDRS_LOOP_LOCK:-/tmp/pdrs-loop.lock}"   # 环境变量覆盖只给测试用
-STOP_FILE="${PDRS_LOOP_STOP:-/tmp/pdrs-loop.stop}"
+LOCK_DIR=/tmp/pdrs-loop.lock
+STOP_FILE=/tmp/pdrs-loop.stop
+# 测试注入：只在没有 .git 的隔离 fixture 根里允许改锁/stop 路径；真实仓库与 worktree 一律拒绝（防误删、防绕开单实例锁）
+if [ -n "${PDRS_LOOP_LOCK:-}${PDRS_LOOP_STOP:-}" ]; then
+  if [ -e "$ROOT/.git" ]; then echo "pdrs-loop: PDRS_LOOP_LOCK/STOP 只许测试 fixture 使用，真实仓库拒绝" >&2; exit 1; fi
+  LOCK_DIR="${PDRS_LOOP_LOCK:-$LOCK_DIR}"; STOP_FILE="${PDRS_LOOP_STOP:-$STOP_FILE}"
+fi
 RUNNER=opencode
 MAX_ITER=50
 ITER_TIMEOUT=7200
@@ -74,9 +79,19 @@ LEDGER="$RUN_DIR/ledger-v2.tsv"
 [ -f "$LEDGER" ] || printf 'iter\tstart\tref\tupdated\tstatus\texit\tupdated_after\tlaunch\n' > "$LEDGER"
 
 board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$ROOT/state/board.md" | head -1; }
+# 所有历史账本（按日期；同日先 v1 再 v2）末尾连续几行的 (ref, updated) 等于当前 = 连续未推进次数。
+# 跨启动、跨日、v1→v2 都持续计数（有意为之：人不改 board 就重起，不会白得新机会）。
+stale_count() {
+  local f files=()
+  for d in $(ls -d "$ROOT"/_tmp/*-pdrs-loop 2>/dev/null | sort); do
+    for f in "$d/ledger.tsv" "$d/ledger-v2.tsv"; do [ -f "$f" ] && files+=("$f"); done
+  done
+  [ "${#files[@]}" -gt 0 ] || { echo 0; return; }
+  for f in "${files[@]}"; do tail -n +2 "$f"; done | awk -F'\t' -v r="$1" -v u="$2" \
+    '{ if ($3 == r && $4 == u) n++; else n = 0 } END { print n + 0 }'
+}
 
 iter=0
-stale=0
 carry=""   # 留给下一迭代任务书的「先处置」指令
 while :; do
   iter=$((iter + 1))
@@ -102,13 +117,8 @@ while :; do
   route="$(printf '%s' "$head_line" | cut -f4)"
   upd_before="$(board_updated)"
 
-  # 守卫：队首与 updated 都和上一迭代开始时相同 = 上一迭代没推进。第一次：本迭代先挂起它；第二次：停。
-  last="$(tail -n 1 "$LEDGER")"
-  if [ "$(printf '%s' "$last" | cut -f3)" = "$ref" ] && [ "$(printf '%s' "$last" | cut -f4)" = "$upd_before" ]; then
-    stale=$((stale + 1))
-  else
-    stale=0
-  fi
+  # 守卫：队首与 updated 都和此前迭代开始时相同 = 没推进。累计一次：本迭代先挂起它；两次：停，不再派发。
+  stale="$(stale_count "$ref" "$upd_before")"
   if [ "$stale" -ge 2 ]; then
     echo "pdrs-loop: $ref 连续两迭代未推进且未被挂起，停（交人看 ${RUN_DIR}）" >&2; exit 1
   fi
@@ -153,7 +163,8 @@ EOF
   set -e
   upd_after="$(board_updated)"
   case "$ec" in
-    0) if [ "$upd_after" != "$upd_before" ]; then status=done; else status=no-progress; fi ;;
+    0) if [ -z "$upd_after" ]; then status=board-unparsed
+       elif [ "$upd_after" != "$upd_before" ]; then status=done; else status=no-progress; fi ;;
     124|137) status=timeout ;;
     *) status=error ;;
   esac
