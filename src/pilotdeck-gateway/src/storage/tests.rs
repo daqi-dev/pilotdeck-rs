@@ -229,6 +229,150 @@ fn real_ts_fixtures_restore_records_diagnostics_and_sequence() {
         }
     }
 }
+
+// Extract only the generated envelope values; never reserialize the whole line,
+// which would hide whitespace, escaping or key-order changes in the writer.
+fn mask_generated_envelopes(bytes: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    bytes
+        .split_inclusive('\n')
+        .enumerate()
+        .map(|(index, line)| {
+            let entry = parse_json(line).unwrap();
+            let id = field(&entry, "entryId");
+            assert!(!string(id).is_empty());
+            assert!(!ids.contains(id), "duplicate entryId at line {}", index + 1);
+            let parent = field(&entry, "parentEntryId");
+            assert_eq!(parent, ids.last().unwrap_or(&JsValue::Null));
+            let mut masked = line.to_owned();
+            for (key, replacement) in [
+                ("createdAt", "<createdAt>".to_owned()),
+                ("entryId", format!("<entry-{}>", index + 1)),
+                ("parentEntryId", format!("<entry-{index}>")),
+            ] {
+                if key == "parentEntryId" && index == 0 {
+                    continue;
+                }
+                let value = field(&entry, key);
+                assert!(value.as_string().is_some());
+                let token = format!("\"{key}\":{}", stringify_json(value).unwrap().unwrap());
+                assert_eq!(
+                    masked.matches(&token).count(),
+                    1,
+                    "{key} at line {}",
+                    index + 1
+                );
+                masked = masked.replacen(&token, &format!("\"{key}\":\"{replacement}\""), 1);
+            }
+            ids.push(id.clone());
+            masked
+        })
+        .collect()
+}
+
+#[test]
+fn rust_written_lines_match_real_ts_golden_bytes() {
+    for name in ["normal", "unknown"] {
+        let scratch = Scratch::new();
+        {
+            let mut ledger = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+            ledger.start(&id()).unwrap();
+            ledger.accept(&id(), &"stream-1".into()).unwrap();
+            if name == "normal" {
+                ledger.terminal(&known()).unwrap();
+            } else {
+                ledger.result_unknown(&unknown()).unwrap();
+            }
+        }
+        let actual = mask_generated_envelopes(&fs::read_to_string(scratch.path()).unwrap());
+        let expected = mask_generated_envelopes(
+            &fs::read_to_string(format!("{FIXTURES}/{name}.jsonl")).unwrap(),
+        );
+        assert_eq!(expected.len(), 3, "{name}");
+        assert_eq!(actual.len(), expected.len(), "{name}");
+        for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                actual.as_bytes(),
+                expected.as_bytes(),
+                "{name} line {}",
+                index + 1
+            );
+        }
+    }
+}
+
+#[test]
+fn sparse_transcript_read_limit_diagnostics_match_real_ts() {
+    let fixtures = oracle();
+    let JsValue::Array(cases) = field(&fixtures, "readLimits") else {
+        panic!("missing TS reader limits")
+    };
+    assert_eq!(cases.len(), 2);
+    for (case, size) in cases.iter().zip([50 * 1024 * 1024, 50 * 1024 * 1024 + 1]) {
+        assert_eq!(field(case, "sizeBytes").as_number(), Some(size as f64));
+        let scratch = Scratch::new();
+        fs::File::create(scratch.path())
+            .unwrap()
+            .set_len(size)
+            .unwrap();
+        let read = read_transcript(scratch.path()).unwrap();
+        assert_eq!(
+            Some(read.entries.len() as f64),
+            field(case, "entryCount").as_number()
+        );
+        let JsValue::Array(expected) = field(case, "diagnostics") else {
+            panic!("missing TS diagnostics")
+        };
+        assert_eq!(read.diagnostics.len(), expected.len(), "{size} bytes");
+        for (actual, expected) in read.diagnostics.iter().zip(expected) {
+            assert_eq!(actual.code, string(field(expected, "code")), "{size} bytes");
+            assert_eq!(
+                actual.severity,
+                string(field(expected, "severity")),
+                "{size} bytes"
+            );
+            assert_eq!(
+                actual.line.map(|line| line as f64),
+                field(expected, "line").as_number()
+            );
+        }
+    }
+}
+
+#[test]
+fn oversized_transcript_cannot_open_as_a_new_session() {
+    use std::io::Read;
+
+    let scratch = Scratch::new();
+    scratch.fixture("normal");
+    let original = fs::read(scratch.path()).unwrap();
+    let size = 50 * 1024 * 1024 + 1;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(scratch.path())
+        .unwrap()
+        .set_len(size)
+        .unwrap();
+    let read = read_transcript(scratch.path().canonicalize().unwrap()).unwrap();
+    assert!(read.entries.is_empty());
+    assert_eq!(read.diagnostics.len(), 1);
+    assert_eq!(read.diagnostics[0].code, "transcript_too_large");
+    // A second failed open must reach the same guard, rather than retain a lock.
+    for _ in 0..2 {
+        assert!(matches!(
+            JsonlLedgerStore::open(scratch.path(), "session-1"),
+            Err(LedgerError::Invalid(message)) if message == read.diagnostics[0].message
+        ));
+        assert_eq!(fs::metadata(scratch.path()).unwrap().len(), size);
+        let mut prefix = vec![0; original.len()];
+        fs::File::open(scratch.path())
+            .unwrap()
+            .read_exact(&mut prefix)
+            .unwrap();
+        assert_eq!(prefix, original);
+    }
+}
+
 #[test]
 fn duplicate_operations_and_attempt_fences_match_ts() {
     let mut l = memory();
@@ -666,9 +810,9 @@ fn empty_idempotency_key_is_distinct_online_but_omitted_on_disk() {
     );
 }
 #[test]
-#[ignore = "requires fixed TS baseline and Node/tsx; run with PDRS_LEDGER_BASELINE"]
+#[ignore = "requires fixed TS baseline and Node/tsx; run with PDRS_BASELINE"]
 fn real_ts_reads_rust_and_continues_its_transcript() {
-    let baseline = std::env::var("PDRS_LEDGER_BASELINE").expect("set fixed baseline path");
+    let baseline = std::env::var("PDRS_BASELINE").expect("set fixed baseline path");
     let scratch = Scratch::new();
     {
         let mut l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
@@ -681,7 +825,6 @@ fn real_ts_reads_rust_and_continues_its_transcript() {
         .arg("--import")
         .arg(format!("{baseline}/node_modules/tsx/dist/loader.mjs"))
         .arg(format!("{FIXTURES}/generate.mts"))
-        .arg(&baseline)
         .arg(scratch.path())
         .arg("--verify-rust")
         .output()

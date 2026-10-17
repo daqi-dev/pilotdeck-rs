@@ -1,5 +1,7 @@
 //! Session-owned operation persistence. No gateway route or host is wired here.
 //! The wire format remains the TS transcript JSONL format (no extra revision field).
+//! 恢复校验仅覆盖事件日志层（validateSessionEventLog）；SessionRuntime.ts:109
+//! 的 validateSessionDomainLog 领域校验留给接入 host/runtime 的后续 PR。
 mod ledger;
 mod projection;
 mod transcript;
