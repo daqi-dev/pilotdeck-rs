@@ -809,3 +809,24 @@ fn put_without_string_request_id_appends_like_ts_then_reads_reject() {
         "read admission rejects the stored record, as in TS"
     );
 }
+
+#[test]
+fn put_with_non_object_request_writes_like_ts() {
+    // 真实 TS 探针（协调者实测）：request 为 null / 数组 / 字符串时 TS put 均写盘成功（不抛 TypeError），Rust 同。
+    let fixture = fixture();
+    let clock = clock(&fixture);
+    for raw in ["null", "[]", "\"x\""] {
+        let scratch = Scratch::new();
+        let store = store(&scratch.0, &clock);
+        let key = key(&fixture);
+        let request = pilotdeck_protocol::parse_json(raw).unwrap();
+        let dialog = StoredDialog {
+            request,
+            created_at: JsString::from("x"),
+        };
+        store
+            .put(&key, &dialog)
+            .unwrap_or_else(|e| panic!("{raw}: {e}"));
+        assert!(store.record_path(&key).unwrap().exists(), "{raw}");
+    }
+}
