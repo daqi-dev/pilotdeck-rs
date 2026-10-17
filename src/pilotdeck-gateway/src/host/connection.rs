@@ -64,7 +64,9 @@ impl Connection {
                     WriteCommand::Ack(line) => {
                         // TS client:961-970: ACK failures never enter the input stream.
                         if let Err(error) = stdin.write_all(line.as_bytes()).await {
-                            eprintln!("Sidecar ACK write failed (best-effort): {error}");
+                            best_effort_log(format_args!(
+                                "Sidecar ACK write failed (best-effort): {error}"
+                            ));
                         }
                         // Keep draining: a later required frame must report its own failure.
                         continue;
@@ -172,7 +174,9 @@ impl Connection {
             .encode(value)
             .and_then(|line| self.enqueue(WriteCommand::Ack(line)))
         {
-            eprintln!("Sidecar ACK enqueue failed (best-effort): {error}");
+            best_effort_log(format_args!(
+                "Sidecar ACK enqueue failed (best-effort): {error}"
+            ));
         }
     }
     fn encode(&self, value: &JsValue) -> Result<String, HostError> {
@@ -228,7 +232,15 @@ impl Connection {
             if self.pending_required.load(Ordering::SeqCst) != 0 {
                 return Err(error);
             }
-            eprintln!("Sidecar terminal ACK flush failed (best-effort): {error}");
+            best_effort_log(format_args!(
+                "Sidecar terminal ACK flush failed (best-effort): {error}"
+            ));
+        } else if self.pending_required.load(Ordering::SeqCst) != 0 {
+            // Callers are serial today; this guards a required frame enqueued behind the Flush.
+            return Err(HostError::new(
+                HostErrorKind::Disconnected,
+                "Sidecar required frame was not written before terminal flush.",
+            ));
         }
         Ok(())
     }
@@ -295,6 +307,13 @@ async fn deliver(sender: &mpsc::Sender<Result<JsValue, HostError>>, bytes: &[u8]
     sender.send(value).await.is_ok() && valid
 }
 
+/// Diagnostics on best-effort paths must never fail the turn: `eprintln!` panics
+/// when the host's stderr is closed, so write errors are ignored here.
+fn best_effort_log(message: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{message}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +375,29 @@ mod tests {
         assert!(error.message.contains("writer flush timed out"), "{error}");
         assert_eq!(connection.pending_required.load(Ordering::SeqCst), 1);
         connection.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn terminal_flush_success_still_fails_when_required_frame_is_pending() {
+        let (mut connection, mut receiver) = controlled_queue(4);
+        let drain = tokio::spawn(async move {
+            while let Some(command) = receiver.recv().await {
+                if let WriteCommand::Flush(done) = command {
+                    let _ = done.send(());
+                }
+            }
+        });
+        connection.finish_terminal().await.unwrap();
+        // A required frame counted but not yet written when the Flush completes.
+        connection.pending_required.fetch_add(1, Ordering::SeqCst);
+        let error = connection.finish_terminal().await.unwrap_err();
+        assert_eq!(error.kind, HostErrorKind::Disconnected);
+        assert!(
+            error.message.contains("required frame was not written"),
+            "{error}"
+        );
+        connection.pending_required.fetch_sub(1, Ordering::SeqCst);
+        connection.close().await.unwrap();
+        drain.abort();
     }
     #[tokio::test]
     async fn ack_pipe_failure_keeps_writer_alive_to_report_required_write_failure() {
