@@ -142,10 +142,15 @@ def deferred_signals():
         signal.pthread_sigmask(signal.SIG_SETMASK, old)
 
 
+def _unblock_in_child():
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, DEFERRED)
+
+
 def spawn(*args, **kwargs):
     """启动进程组并登记，两步之间不可被信号打断（gate-final concurrency P1：登记窗口）。"""
     with deferred_signals():
-        proc = subprocess.Popen(*args, **kwargs)
+        # 子进程会继承信号掩码；exec 前解除挂起，被测进程按正常信号语义运行（TERM 清理也才有效）
+        proc = subprocess.Popen(*args, preexec_fn=_unblock_in_child, **kwargs)
         LIVE_GROUPS.add(proc.pid)  # start_new_session：pid 即 pgid
     return proc
 

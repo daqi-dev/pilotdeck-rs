@@ -646,6 +646,15 @@ class ContractTests(unittest.TestCase):
             if proc.poll() is None:
                 proc.kill()
 
+    def test_spawned_child_runs_with_normal_signal_mask(self):
+        import run_round
+        proc = run_round.spawn([sys.executable, '-c', 'import signal;print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, set())))'],
+                               stdout=subprocess.PIPE, text=True, start_new_session=True)
+        out = proc.communicate(timeout=10)[0].strip()
+        run_round.stop_group(proc)
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM):
+            self.assertNotIn(str(int(sig)), out.strip('[]').replace(' ', '').split(','), out)
+
     def test_lease_alarm_during_cleanup_is_not_lost(self):
         import run_round
         proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
