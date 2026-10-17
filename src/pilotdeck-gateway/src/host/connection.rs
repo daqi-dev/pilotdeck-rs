@@ -46,6 +46,13 @@ pub(super) struct Connection {
 
 impl Connection {
     pub(super) fn spawn(command: &mut Command, limits: Limits) -> Result<Self, HostError> {
+        Self::spawn_with_budget(command, limits, Budget::new(limits.max_buffered_bytes))
+    }
+    pub(super) fn spawn_with_budget(
+        command: &mut Command,
+        limits: Limits,
+        budget: Arc<Budget>,
+    ) -> Result<Self, HostError> {
         // #191: Unix descendants belong to this client, including on Drop.
         #[cfg(unix)]
         command.process_group(0);
@@ -113,7 +120,6 @@ impl Connection {
                 }
             }
         });
-        let budget = Budget::new(limits.max_buffered_bytes);
         let input_budget = budget.clone();
         let reader = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
@@ -247,7 +253,10 @@ impl Connection {
             .try_send(command)
             .map_err(|error| {
                 HostError::new(
-                    HostErrorKind::Limit,
+                    match error {
+                        mpsc::error::TrySendError::Full(_) => HostErrorKind::Limit,
+                        mpsc::error::TrySendError::Closed(_) => HostErrorKind::Disconnected,
+                    },
                     format!("Sidecar writer unavailable or queue full: {error}"),
                 )
             })
@@ -411,6 +420,10 @@ impl Connection {
             }
         })
         .await;
+        // Recovery retains application/cache leases, but unread transport bytes
+        // belong to this dead connection and must release the shared budget.
+        self.incoming.close();
+        while self.incoming.try_recv().is_ok() {}
         result
     }
 }
@@ -718,5 +731,94 @@ mod tests {
         // No retained required bytes remain after queue destruction.
         let _lease = connection.budget.reserve(size).unwrap();
         connection.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn required_write_failure_after_terminal_never_reconnects() {
+        use crate::host::{ExecuteRequest, HostFuture, HostHandler, ReconnectObservation};
+        use pilotdeck_protocol::{JsObject, admission::ExecutionIdentity};
+        use tokio::sync::Notify;
+        struct Handler {
+            terminal: Notify,
+            release: Arc<Notify>,
+            observations: AtomicUsize,
+        }
+        impl HostHandler for Handler {
+            fn module_call(&self, _call: JsValue) -> HostFuture<JsObject> {
+                let release = self.release.clone();
+                Box::pin(async move {
+                    release.notified().await;
+                    Ok(JsObject::new())
+                })
+            }
+            fn event(&self, _event: JsValue) -> HostFuture<()> {
+                self.terminal.notify_one();
+                Box::pin(async { Ok(()) })
+            }
+            fn observe_transport(&self, _observation: ReconnectObservation) {
+                self.observations.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let handler = Arc::new(Handler {
+            terminal: Notify::new(),
+            release: Arc::new(Notify::new()),
+            observations: AtomicUsize::new(0),
+        });
+        let client = HostClient::spawn_resumable(
+            peer("terminal-pending-callback"),
+            None,
+            Limits {
+                terminal_drain_timeout: Duration::from_secs(2),
+                ..limits()
+            },
+        )
+        .await
+        .unwrap();
+        let writer = client.connection.pumps[1].abort_handle();
+        let task_handler = handler.clone();
+        let execution = tokio::spawn(async move {
+            client
+                .execute(
+                    ExecuteRequest {
+                        identity: ExecutionIdentity {
+                            run_id: "run".into(),
+                            operation_id: "operation".into(),
+                            request_id: "request".into(),
+                            session_id: "session".into(),
+                            turn_id: "turn".into(),
+                        },
+                        payload: JsObject::new(),
+                        idempotency_key: None,
+                        operation_deadline: None,
+                    },
+                    task_handler,
+                )
+                .await
+        });
+        timeout(Duration::from_secs(2), handler.terminal.notified())
+            .await
+            .unwrap();
+        writer.abort();
+        timeout(Duration::from_secs(2), async {
+            while !writer.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // Force a required enqueue failure only after the authoritative final
+        // is applied. It must not open a handshake or extend terminal drain.
+        handler.release.notify_one();
+        let error = timeout(Duration::from_secs(2), execution)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.kind, HostErrorKind::Disconnected);
+        assert_eq!(error.last_applied_sequence, Some(0.0));
+        assert_eq!(handler.observations.load(Ordering::SeqCst), 0);
+        println!(
+            "TERMINAL_RECONNECT_PASS required enqueue failure after final remains fail-closed; no reconnect observation"
+        );
     }
 }

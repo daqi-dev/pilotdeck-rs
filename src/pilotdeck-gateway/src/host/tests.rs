@@ -3,6 +3,8 @@ use pilotdeck_protocol::parse_json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::Instant};
 
+mod resume;
+
 struct Handler {
     calls: AtomicUsize,
     events: AtomicUsize,

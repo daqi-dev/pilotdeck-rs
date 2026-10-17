@@ -1,7 +1,9 @@
 //! Host side of Module 2.0 over an owned stdio child (the inverse of transport/).
 //!
 //! One client owns one turn. `execute` consumes it and always closes the child;
-//! there is deliberately no reconnect, replay or session persistence here.
+//! `spawn_resumable` can replace the stdio transport once, without re-executing
+//! the turn. The replacement must reach the same logical sidecar instance;
+//! ordinary TS stdio processes have no process-external replay store.
 //! Callbacks must be cooperative async work, and may complete concurrently with
 //! incoming frames. Dropping their futures must stop host work they own. Transport
 //! failure after acceptance is uncertainty, never permission to retry an effect.
@@ -27,6 +29,7 @@
 mod budget;
 mod connection;
 mod execution;
+mod recovery;
 
 use connection::Connection;
 use pilotdeck_protocol::{
@@ -186,6 +189,24 @@ pub trait HostHandler: Send + Sync + 'static {
     fn event(&self, _event: JsValue) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
+    /// Passive, synchronous telemetry. Must not block; panics are isolated from
+    /// execution, like TS client:1135-1140's best-effort transport observer.
+    fn observe_transport(&self, _observation: ReconnectObservation) {}
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ReconnectObservation {
+    Started {
+        attempt: u32,
+        last_applied_sequence: f64,
+    },
+    Succeeded {
+        attempt: u32,
+    },
+    Failed {
+        attempt: u32,
+    },
+    SidecarInstanceRestarted,
 }
 
 #[derive(Debug, Clone)]
@@ -252,6 +273,9 @@ pub struct HostClient {
     ack_enabled: bool,
     cancel_enabled: bool,
     limits: Limits,
+    reconnect_command: Option<Command>,
+    reconnect_attempted: bool,
+    reconnect_succeeded: bool,
 }
 impl HostClient {
     /// Command is explicit so the caller controls args, cwd and isolated env.
@@ -264,7 +288,7 @@ impl HostClient {
         let mut connection = Connection::spawn(command, limits)?;
         let handshake = timeout(
             limits.handshake_timeout,
-            handshake(&mut connection, expected_module_id),
+            handshake(&mut connection, expected_module_id, None),
         )
         .await
         .unwrap_or_else(|_| {
@@ -280,6 +304,9 @@ impl HostClient {
                 ack_enabled,
                 cancel_enabled,
                 limits,
+                reconnect_command: None,
+                reconnect_attempted: false,
+                reconnect_succeeded: false,
             }),
             Err(mut error) => {
                 let _ = connection.close().await;
@@ -287,6 +314,20 @@ impl HostClient {
                 Err(error)
             }
         }
+    }
+    /// Opt in only when this command reconnects to a retained stream owner.
+    /// Own the original builder so cwd, env_clear, env removals and platform
+    /// options survive replacement exactly. No second execute is ever sent.
+    /// TS client:895-928 permits one attempt with no backoff; plain TS stdio
+    /// intentionally uses `spawn`, because restarting its process loses replay.
+    pub async fn spawn_resumable(
+        mut command: Command,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        let mut client = Self::spawn(&mut command, expected_module_id, limits).await?;
+        client.reconnect_command = Some(command);
+        Ok(client)
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.binding
@@ -321,15 +362,18 @@ impl HostClient {
             ..Progress::default()
         };
         let result = execution::run(
-            &mut self.connection,
+            &mut self,
             request,
-            handler,
-            (self.ack_enabled, self.cancel_enabled),
-            self.limits,
+            handler.clone(),
             &mut progress,
             cancellation,
         )
         .await;
+        // TS client:1143-1146: only a started but not successful reconnect
+        // emits failure. Later replay/terminal errors cannot reverse success.
+        if result.is_err() && self.reconnect_attempted && !self.reconnect_succeeded {
+            recovery::observe(&handler, ReconnectObservation::Failed { attempt: 1 });
+        }
         let result = match result {
             Ok(terminal @ (ExecuteResult::Terminal(_) | ExecuteResult::Aborted { .. })) => {
                 self.connection.finish_terminal().await.map(|()| terminal)
@@ -360,6 +404,7 @@ fn append_diagnostic(error: &mut HostError, connection: &Connection) {
 async fn handshake(
     connection: &mut Connection,
     expected_module_id: Option<&JsString>,
+    previous: Option<(&SidecarBinding, &Arc<dyn HostHandler>)>,
 ) -> Result<(SidecarBinding, bool, bool), HostError> {
     let mut initial = None;
     // TS client:724-738, 801-840. Generation is opaque connection context,
@@ -385,6 +430,20 @@ async fn handshake(
                 return Err(HostError::protocol(
                     "Sidecar module identity does not match configured implementation.",
                 ));
+            }
+            // TS client:814-820: generation may change, the stream owner may not.
+            if let Some((previous, handler)) = previous {
+                if previous.module_id != binding.module_id {
+                    return Err(HostError::protocol(
+                        "Sidecar changed its module identity while resuming a stream.",
+                    ));
+                }
+                if previous.module_instance_id != binding.module_instance_id {
+                    recovery::observe(handler, ReconnectObservation::SidecarInstanceRestarted);
+                    return Err(HostError::protocol(
+                        "Sidecar instance restarted while resuming a stream.",
+                    ));
+                }
             }
             initial = Some(binding);
             continue;
