@@ -1,7 +1,7 @@
 //! Real TS production-sidecar cross-check. The model port alone is deterministic.
 use pilotdeck_gateway::host::{
     Cancellation, ExecuteRequest, ExecuteResult, HostClient, HostError, HostErrorKind, HostFuture,
-    HostHandler, Limits,
+    HostHandler, Limits, ReconnectObservation,
 };
 use pilotdeck_protocol::{
     JsObject, JsValue, admission::ExecutionIdentity, parse_json, stringify_json,
@@ -9,7 +9,7 @@ use pilotdeck_protocol::{
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -18,11 +18,14 @@ use tokio::process::Command;
 struct Model {
     calls: AtomicUsize,
     cancel: Option<Cancellation>,
+    interrupt_pid: Mutex<Option<u32>>,
+    observations: Mutex<Vec<ReconnectObservation>>,
 }
 impl HostHandler for Model {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let cancellation = self.cancel.clone();
+        let interrupt_pid = self.interrupt_pid.lock().unwrap().take();
         println!("CALLBACK {}", stringify_json(&call).unwrap().unwrap());
         Box::pin(async move {
             let module = call.get("module").and_then(JsValue::as_string);
@@ -44,6 +47,23 @@ impl HostHandler for Model {
                 cancel.cancel(Some("host_probe_cancel".into()));
                 std::future::pending::<()>().await;
             }
+            if let Some(pid) = interrupt_pid {
+                // Kill only this probe's owned child after acceptance and a
+                // pending real module_call. Production defaults advertise
+                // resumeSupport=none (server:768), so no replacement is legal.
+                #[cfg(unix)]
+                rustix::process::kill_process(
+                    rustix::process::Pid::from_raw(pid as i32).expect("child pid"),
+                    rustix::process::Signal::KILL,
+                )
+                .map_err(|error| HostError::new(HostErrorKind::Io, error.to_string()))?;
+                #[cfg(not(unix))]
+                return Err(HostError::new(
+                    HostErrorKind::Io,
+                    format!("resume probe requires Unix, pid={pid}"),
+                ));
+                std::future::pending::<()>().await;
+            }
             Ok(parse_json(r#"{"events":[{"type":"message_start","role":"assistant"},{"type":"text_delta","text":"cross-ok"},{"type":"message_end","finishReason":"stop"}]}"#).unwrap().as_object().unwrap().clone())
         })
     }
@@ -51,13 +71,18 @@ impl HostHandler for Model {
         println!("EVENT {}", stringify_json(&event).unwrap().unwrap());
         Box::pin(async { Ok(()) })
     }
+    fn observe_transport(&self, observation: ReconnectObservation) {
+        println!("OBSERVATION {observation:?}");
+        self.observations.lock().unwrap().push(observation);
+    }
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if !(args.len() == 4 || (args.len() == 5 && args[4] == "cancel")) {
+    if !(args.len() == 4 || (args.len() == 5 && (args[4] == "cancel" || args[4] == "resume"))) {
         return Err(
-            "usage: a6_host_probe NODE BASELINE_DIR ISOLATED_DIR NO_LISTEN_PRELOAD [cancel]".into(),
+            "usage: a6_host_probe NODE BASELINE_DIR ISOLATED_DIR NO_LISTEN_PRELOAD [cancel|resume]"
+                .into(),
         );
     }
     let baseline = PathBuf::from(&args[1]);
@@ -78,18 +103,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .env("PILOT_HOME", &isolated)
         .env("TMPDIR", &isolated);
     let cancellation = Cancellation::default();
-    let cancel_mode = args.len() == 5;
+    let cancel_mode = args.get(4).is_some_and(|mode| mode == "cancel");
+    let resume_mode = args.get(4).is_some_and(|mode| mode == "resume");
+    println!("SPAWN node={:?} entry={entry:?}", args[0]);
+    let client = if resume_mode {
+        HostClient::spawn_resumable(
+            command,
+            Some(&"pilotdeck-agent-loop".into()),
+            Limits::default(),
+        )
+        .await?
+    } else {
+        HostClient::spawn(
+            &mut command,
+            Some(&"pilotdeck-agent-loop".into()),
+            Limits::default(),
+        )
+        .await?
+    };
     let model = Arc::new(Model {
         calls: AtomicUsize::new(0),
         cancel: cancel_mode.then(|| cancellation.clone()),
+        interrupt_pid: Mutex::new(if resume_mode { client.child_id() } else { None }),
+        observations: Mutex::new(Vec::new()),
     });
-    println!("SPAWN node={:?} entry={entry:?}", args[0]);
-    let client = HostClient::spawn(
-        &mut command,
-        Some(&"pilotdeck-agent-loop".into()),
-        Limits::default(),
-    )
-    .await?;
     println!(
         "HANDSHAKE pid={:?} binding={:?}",
         client.child_id(),
@@ -98,8 +135,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = client.execute_cancellable(ExecuteRequest { identity: ExecutionIdentity { run_id: "cross-run".into(), operation_id: "cross-op".into(),
         request_id: "cross-request".into(), session_id: "cross-session".into(), turn_id: "cross-turn".into() },
         payload: parse_json(r#"{"provider":"host-fixture","model":"controlled","task":{"prompt":"hello"},"tools":[]}"#)?.as_object().unwrap().clone(),
-        idempotency_key: None, operation_deadline: None }, model.clone(), cancellation).await?;
-    let (terminal, expected) = match result {
+        idempotency_key: None, operation_deadline: None }, model.clone(), cancellation).await;
+    if resume_mode {
+        let error = result.expect_err("production TS stdio does not support resuming this stream");
+        if error.kind != HostErrorKind::Disconnected
+            || !error.accepted
+            || error.stream_id.is_none()
+            || error.last_applied_sequence.is_none()
+            || model.calls.load(Ordering::SeqCst) != 1
+        {
+            return Err(format!("unexpected TS resume result: {error}").into());
+        }
+        let observations = model.observations.lock().unwrap();
+        if !observations.is_empty() {
+            return Err(format!("unexpected TS resume observations: {observations:?}").into());
+        }
+        println!(
+            "CROSS_RESUME_BOUNDARY_PASS real TS stdio; interrupted during module_call; callbacks=1; original stream progress retained; resumeSupport=none prevents replacement; positive resume covered by fixture: {error}"
+        );
+        return Ok(());
+    }
+    let (terminal, expected) = match result? {
         ExecuteResult::Terminal(terminal) => (
             terminal,
             if cancel_mode {

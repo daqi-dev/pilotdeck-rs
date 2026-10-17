@@ -9,6 +9,10 @@ import select
 from pathlib import Path
 
 mode = sys.argv[1]
+if mode.startswith('reconnect-'):
+    import runpy
+    runpy.run_path(str(Path(__file__).with_name('resume_fixture.py')), run_name='__main__')
+    sys.exit(0)
 known_modes = {
     'positive', 'slow-event', 'no-ack', 'stderr-flood', 'rejected', 'cleanup-hang',
     'ack-failure', 'unknown-response', 'turn-completed', 'terminal-then-exit',

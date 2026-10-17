@@ -22,11 +22,9 @@ enum Completed {
 }
 
 pub(super) async fn run(
-    connection: &mut Connection,
+    client: &mut HostClient,
     request: ExecuteRequest,
     handler: Arc<dyn HostHandler>,
-    capabilities: (bool, bool),
-    limits: Limits,
     progress: &mut Progress,
     cancellation: Cancellation,
 ) -> Result<ExecuteResult, HostError> {
@@ -34,7 +32,7 @@ pub(super) async fn run(
     if cancellation.is_cancelled() {
         return Ok(ExecuteResult::Aborted { terminal: None });
     }
-    let (ack_enabled, cancel_enabled) = capabilities;
+    let limits = client.limits;
     let execution_deadline = Instant::now().checked_add(limits.execution_timeout);
     let mut cancel_changes = cancellation.0.subscribe();
     let mut cancel_sent = false;
@@ -61,7 +59,7 @@ pub(super) async fn run(
     }
     let outgoing = JsValue::Object(outgoing);
     decode(&outgoing)?;
-    connection.send(&outgoing)?;
+    client.connection.send(&outgoing)?;
     drop(outgoing);
     let mut next_sequence = 0.0;
     let mut calls: HashMap<JsString, Call> = HashMap::new();
@@ -71,13 +69,34 @@ pub(super) async fn run(
     let mut terminal_applied = None;
     let mut drain_deadline = None;
     let mut callbacks = JoinSet::new();
+    let mut interruption = None;
+    let mut replay = super::recovery::ReplayOrder::default();
     loop {
+        if let Some(error) = interruption.take() {
+            // A known final never opens another connection. Preserve pr2's
+            // required-write failure semantics and bounded terminal drain.
+            if terminal_received {
+                return Err(error);
+            }
+            // Old response deliveries belong to the lost connection. Keep the
+            // cached response/future, and wait for the peer's immutable replay.
+            for call in calls.values_mut() {
+                call.deliveries = 0;
+            }
+            tokio::select! {
+                result = client.reconnect(progress, &handler, error) => result?,
+                _ = wait_for_deadline(execution_deadline) => {
+                    return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out during reconnect."));
+                }
+            }
+            replay.begin();
+        }
         if callbacks.is_empty()
             && let Some(terminal) = terminal_applied.take()
         {
             return Ok(terminal);
         }
-        if cancel_enabled
+        if client.cancel_enabled
             && !cancel_sent
             && progress.stream_id.is_some()
             && let Some(reason) = cancellation.reason()
@@ -108,7 +127,7 @@ pub(super) async fn run(
                     reason
                 }),
             );
-            connection.send_cancel(&JsValue::Object(cancel));
+            client.connection.send_cancel(&JsValue::Object(cancel));
         }
         if !event_running && let Some((event, aborted)) = events.pop_front() {
             let handler = handler.clone();
@@ -158,7 +177,12 @@ pub(super) async fn run(
                         let call = calls.get_mut(&id).expect("registered callback");
                         // TS client:1129-1133: cache before write; no second effect.
                         call.response = Some(response?);
-                        for _ in 0..call.deliveries { connection.send(call.response.as_ref().unwrap())?; }
+                        for _ in 0..call.deliveries {
+                            if let Err(error) = client.connection.send(call.response.as_ref().unwrap()) {
+                                interruption = Some(error);
+                                break;
+                            }
+                        }
                     }
                     Completed::Event(event, aborted, result) => {
                         result?;
@@ -172,18 +196,21 @@ pub(super) async fn run(
                             continue;
                         }
                         // TS client:680-684, 961-970: ACK after application, never final.
-                        if ack_enabled {
+                        if client.ack_enabled {
                             let mut ack = request_frame("ack", &format!("ack-{}", view.sequence.value()).into(), JsObject::new())
                                 .as_object().unwrap().clone();
                             ack.insert("streamId".into(), JsValue::String(view.stream_id.clone()));
                             ack.insert("lastAppliedSequence".into(), JsValue::Number(view.sequence.value()));
-                            connection.send_ack(&JsValue::Object(ack));
+                            client.connection.send_ack(&JsValue::Object(ack));
                         }
                     }
                 }
             }
-            input = connection.receive(), if !terminal_received => {
-                let raw = input?;
+            input = client.connection.receive(), if !terminal_received => {
+                let raw = match input {
+                    Ok(raw) => raw,
+                    Err(error) => { interruption = Some(error); continue; }
+                };
                 match decode(&raw)? {
                     MessageRef::Response(response) => {
                         // TS client:780-781 ignores non-execute replies, including
@@ -212,16 +239,13 @@ pub(super) async fn run(
                             .filter(|id| !id.is_empty()).ok_or_else(|| HostError::protocol("Sidecar execute response did not provide streamId."))?.clone());
                     }
                     MessageRef::Event(event) => {
-                        // TS client:879-893: all four IDs, strictly 0,1,...; any duplicate fails.
+                        // TS client:879-893: all four IDs, strictly 0,1,... outside replay.
                         if progress.stream_id.as_ref() != Some(event.stream_id) || event.identity.run_id != &identity.run_id
                             || event.identity.operation_id != &identity.operation_id || event.identity.request_id != &identity.request_id {
                             return Err(HostError::protocol("Sidecar event identity does not match the active execution (or event before acceptance)."));
                         }
-                        if event.sequence.value() != next_sequence {
-                            return Err(HostError::protocol(format!("Sidecar event sequence mismatch: expected {next_sequence}, got {}.", event.sequence.value())));
-                        }
-                        next_sequence += 1.0;
                         let aborted = validate_event(event, &identity, &cancellation)?;
+                        if !replay.accept(event.sequence.value(), &mut next_sequence)? { continue; }
                         // TS:680 suppresses the non-authoritative turn_completed projection.
                         if !event.final_event && text_is(event.payload.get("type"), "turn_completed") { continue; }
                         terminal_received = event.final_event;
@@ -248,9 +272,10 @@ pub(super) async fn run(
                             let response = module_response(&raw, Err(HostError::protocol("Sidecar module call identity does not match the active execution.")));
                             // TS:1119-1133 caches failure replies as well. A later
                             // corrected identity must not recycle this messageId.
-                            connection.send(&response)?;
-                            let response = connection.budget.retain(response)?;
+                            let delivery = client.connection.send(&response);
+                            let response = client.connection.budget.retain(response)?;
                             calls.insert(id, Call { request: raw, response: Some(response), deliveries: 1 });
+                            if let Err(error) = delivery { interruption = Some(error); }
                             continue;
                         }
                         if let Some(previous) = calls.get_mut(&id) {
@@ -259,7 +284,9 @@ pub(super) async fn run(
                             if !same_call(&previous.request, &raw)? {
                                 return Err(HostError::protocol("Sidecar replayed a module_call with a conflicting immutable identity."));
                             }
-                            if let Some(response) = &previous.response { connection.send(response)?; }
+                            if let Some(response) = &previous.response {
+                                if let Err(error) = client.connection.send(response) { interruption = Some(error); }
+                            }
                             else {
                                 previous.deliveries += 1;
                                 if previous.deliveries > limits.queue_capacity {
@@ -279,10 +306,10 @@ pub(super) async fn run(
                         for key in ["messageId", "requestId"] {
                             correlation.insert(key.into(), raw.get(key).unwrap().clone());
                         }
-                        let correlation = connection.budget.retain(JsValue::Object(correlation))?;
+                        let correlation = client.connection.budget.retain(JsValue::Object(correlation))?;
                         calls.insert(id.clone(), Call { request: raw, response: None, deliveries: 1 });
                         let handler = handler.clone();
-                        let budget = connection.budget.clone();
+                        let budget = client.connection.budget.clone();
                         callbacks.spawn(async move {
                             let payload = handler.module_call(callback_request).await;
                             drop(lease);
