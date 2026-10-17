@@ -29,7 +29,8 @@ globalThis.WebSocket = class extends Native {
   }
   send(data: any) { this.record('send', String(data)); super.send(data); }
 };
-const baseline = process.env.PDRS_BASELINE ?? '/Users/da/ws/pilotdeck-rs/resources/PilotDeck';
+const baseline = process.env.PDRS_BASELINE;
+if (!baseline) throw new Error('PDRS_BASELINE is required; run via run_round.py (#187: no hard-coded fallback)');
 // Use the actual public source entry point, resolved by the baseline tsx loader.
 const { GatewayWsClient, RemoteGateway, PILOTDECK_GATEWAY_PROTOCOL_VERSION: version } =
   await import(pathToFileURL(`${baseline}/src/gateway/index.js`).href);

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run one isolated Original parity round and record sidecar identity.
 
-Source (copied before editing):
-/Users/da/ws/PilotDeck-rust-program-20261009/build/CORE01-astra-deadline-closure-a1/harness/formal-round.py
+Source (copied before editing): the prior attempt's CORE01 harness formal-round.py,
+outside this repository and never read at runtime.
 Source sha256: 854d40a0c444bc9839e143c94b3137ccaf6db3652a4b17ceae0d55c8c22269b6
 Identity-only bind.mjs observes spawns; production env selects the binary.
 """

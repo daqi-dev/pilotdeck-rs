@@ -1,6 +1,6 @@
 # Gateway parity ruler（A2 / Issue #23）
 
-在仓根运行。Python 只用标准库；Node 22 + 基线自带 tsx。基线目录默认 `/Users/da/ws/pilotdeck-rs/resources/PilotDeck`，可用 `PDRS_BASELINE` 或 `--baseline` 指定，必须已构建且只读。Rust bin 来自本 workspace 的 `src/target/debug/pilotdeck-gateway`。
+在仓根运行。Python 只用标准库；Node 22 + 基线自带 tsx。基线目录按「`--baseline` > `PDRS_BASELINE` > 本 checkout 的 `resources/PilotDeck`」解析（worktree 里通常没有，需显式指定），缺失时 BLOCKED；必须已构建且只读。Rust bin 来自本 workspace 的 `src/target/debug/pilotdeck-gateway`。
 
 ```sh
 CARGO_HOME="$PWD/_build/cargo-home" cargo build --manifest-path src/Cargo.toml -p pilotdeck-gateway --locked
