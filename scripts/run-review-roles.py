@@ -249,9 +249,12 @@ def main() -> int:
     ok = all(results[r]["status"] == "PASS" for r in roles)
     tot = {k: sum((results[r]["counts"] or {}).get(k, 0) for r in roles) for k in ("P0", "P1", "P2", "P3")}
     marker_roles = ",".join(f"{r}:{results[r]['status']}" for r in roles)
+    # boundary 审 #2/#178（半修）：块内记录审计范围；gate 拒 partial 归 #178
+    scope = "partial" if a.paths else "full"
+    paths_kv = f" paths={','.join(a.paths)}" if a.paths else ""
     lines = [
         "## pr-ready 角色审计（scripts/run-review-roles.py）", "",
-        f"<!-- pr-gate:v1 head={head} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} -->", "",
+        f"<!-- pr-gate:v1 head={head} roles={marker_roles} p0={tot['P0']} p1={tot['P1']} diff_lines={diff_lines} scope={scope}{paths_kv} -->", "",
         "| 角色 | 状态 | P0 | P1 | P2 | P3 | 秒 | 说明 |", "|---|---|---|---|---|---|---|---|",
     ]
     for r in roles:
