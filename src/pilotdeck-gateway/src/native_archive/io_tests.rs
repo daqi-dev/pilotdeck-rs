@@ -92,9 +92,9 @@ impl Files for IoFiles {
     fn project_stat(&self, r: &Path, p: &Path) -> io::Result<(Stat, bool)> {
         self.snapshot.project_stat(r, p)
     }
-    fn archive_read(&self, root: &Path, p: &Path) -> io::Result<Vec<u8>> {
+    fn archive_read(&self, root: &Path, p: &Path, limit: usize) -> io::Result<Vec<u8>> {
         if p != self.target {
-            return self.snapshot.archive_read(root, p);
+            return self.snapshot.archive_read(root, p, limit);
         }
         Err(io::Error::from_raw_os_error(self.errno))
     }
@@ -181,6 +181,20 @@ fn archive_io_twelve_own_rpc_errors_match_and_guard_the_method_gate() {
                     Path::new("/fixture")
                 )
                 .0,
+                "TS_IO_REQUIRED"
+            );
+        }
+    }
+}
+#[test]
+fn archive_unmeasured_invalid_input_still_requires_ts() {
+    for method in ["native_archive_manifest", "native_archive_entries"] {
+        for error in [
+            io::Error::from(io::ErrorKind::InvalidInput),
+            io::Error::from_raw_os_error(libc::EINVAL),
+        ] {
+            assert_eq!(
+                secure_fs_error(error, method, "open", Path::new("/fixture")).0,
                 "TS_IO_REQUIRED"
             );
         }
