@@ -102,6 +102,8 @@ pub(super) async fn run(
                 let raw = input?;
                 match decode(&raw)? {
                     MessageRef::Response(response) => {
+                        // TS client:780-781 ignores non-execute replies, including
+                        // failed ACKs and unknown inReplyTo values, before checking ok.
                         if response.in_reply_to != &execute_id { continue; }
                         if response.fields.get("requestId").and_then(JsValue::as_string) != Some(&identity.request_id) {
                             return Err(HostError::protocol("Sidecar execute response does not match the active request."));
@@ -146,6 +148,8 @@ pub(super) async fn run(
                         if !matches!(call.body, RequestBodyRef::ModuleCall { .. }) { continue; }
                         let RequestBodyRef::ModuleCall { identity: call_identity, .. } = call.body else { unreachable!() };
                         let id = call.message_id.clone();
+                        // TS:1120-1121 revalidates identity before using the cache, so a
+                        // replayed wrong-identity call fails closed instead of replaying.
                         if calls.contains_key(&id)
                             && (call_identity.run_id != &identity.run_id || call_identity.operation_id != &identity.operation_id) {
                             return Err(HostError::protocol("Sidecar replayed a module_call with a conflicting immutable identity."));
