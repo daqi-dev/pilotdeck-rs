@@ -151,6 +151,7 @@ def build_body(a: argparse.Namespace) -> bytes:
         "model": a.model,
         "messages": [{"role": "user", "content": "".join(parts)}],
         "stream": False,
+        **({"max_tokens": a.max_tokens} if a.max_tokens else {}),
     }, ensure_ascii=False).encode()
 
 
@@ -235,21 +236,15 @@ def write_atomic(out: Path, text: str, force: bool) -> None:
             tmp = None
             return
         try:
-            try:
-                os.link(tmp, out)
-            except OSError as e:
-                if isinstance(e, FileExistsError) or e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
-                    raise
-                # 文件系统不支持硬链接：退到排他创建，仍不覆盖已存在的目标；写失败删掉自己建的半截文件
-                fd2 = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-                try:
-                    with os.fdopen(fd2, "w", encoding="utf-8") as f:
-                        f.write(text)
-                except BaseException:
-                    out.unlink(missing_ok=True)
-                    raise
+            os.link(tmp, out)
         except FileExistsError:
             raise Fail(1, f"{out} 在请求期间被别人创建，未覆盖；本次回复丢弃") from None
+        except OSError as e:
+            if e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
+                raise
+            # 文件系统不支持硬链接：不做非原子的原地写，回复留在临时文件里交给人决定
+            kept, tmp = tmp, None
+            raise Fail(1, f"{out.parent} 不支持硬链接，无法原子且不覆盖地发布；回复已保留在 {kept}，确认后可改用 --force") from None
     except (OSError, UnicodeError) as e:
         raise Fail(1, f"写 {out} 失败：{type(e).__name__}") from None
     finally:
@@ -285,6 +280,7 @@ def main() -> int:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--force", action="store_true", help="允许覆盖已存在的 --out")
     ap.add_argument("--model", default="deepseek-flash")
+    ap.add_argument("--max-tokens", type=int, help="输出上限；不给就用 API 默认值（截断时按失败退出）")
     ap.add_argument("--timeout", type=int, default=1800, help="整个请求的墙钟总时限（也是单次 socket 超时），秒")
     ap.add_argument("--api", default=API, help=argparse.SUPPRESS)  # 测试用假服务
     a = ap.parse_args()
