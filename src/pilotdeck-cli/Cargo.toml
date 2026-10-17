@@ -11,6 +11,9 @@ name = "pilotdeck"
 path = "src/main.rs"
 
 [dependencies]
+pilotdeck-protocol.workspace = true
+pilotdeck-yaml = { path = "../pilotdeck-yaml" }
+ryu-js.workspace = true
 
 [lints]
 workspace = true

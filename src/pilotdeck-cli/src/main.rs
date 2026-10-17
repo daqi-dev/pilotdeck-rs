@@ -1,3 +1,95 @@
-fn main() {
-    println!("pilotdeck {}", env!("CARGO_PKG_VERSION"));
+//! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
+mod config;
+mod json_syntax;
+mod paths;
+mod sdk;
+mod skills;
+
+use paths::Env;
+use std::io::{IsTerminal, Write};
+use std::path::Path;
+use std::process::ExitCode;
+
+pub enum Failure {
+    /// A thrown Error: TS main().catch prints its message and sets exit code 1.
+    Error(String),
+    /// A branch the Rust port has not reached yet. Never a parity result.
+    Todo(&'static str),
+}
+
+pub fn stdout_line(text: &str) {
+    let _ = writeln!(std::io::stdout().lock(), "{text}");
+}
+
+pub fn stderr_line(text: &str) {
+    let _ = writeln!(std::io::stderr().lock(), "{text}");
+}
+
+fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let env = Env::from_process();
+    let code = match std::env::current_dir() {
+        Ok(cwd) => run(&argv, &env, &cwd),
+        Err(_) => Err(Failure::Todo(
+            "startup without a readable working directory",
+        )),
+    };
+    ExitCode::from(match code {
+        Ok(code) => code,
+        Err(Failure::Error(message)) => {
+            stderr_line(&message);
+            1
+        }
+        Err(Failure::Todo(what)) => {
+            stderr_line(&format!(
+                "pilotdeck-rs TODO: {what} is not implemented yet."
+            ));
+            2
+        }
+    })
+}
+
+fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    let command = argv.first().map(String::as_str);
+    match command {
+        Some("run" | "resume" | "sessions" | "settings" | "help" | "--help" | "-h") => {
+            sdk::run_sdk_cli(argv, env, cwd)
+        }
+        Some("server") => Err(Failure::Todo("pilotdeck server")),
+        Some("gateway") => {
+            if argv.get(1).map(String::as_str) == Some("setup") {
+                return Err(Failure::Todo("pilotdeck gateway setup"));
+            }
+            stderr_line("Usage: pilotdeck gateway setup [feishu|weixin|wecom]");
+            Ok(1)
+        }
+        Some("cron") => Err(Failure::Todo("pilotdeck cron")),
+        Some("update") => Err(Failure::Todo("pilotdeck update")),
+        Some("skills") => Err(Failure::Todo("pilotdeck skills")),
+        Some("chat") => Err(Failure::Todo("pilotdeck chat")),
+        Some("tui") => {
+            if !std::io::stdin().is_terminal() {
+                stderr_line("pilotdeck tui requires an interactive terminal.");
+                return Ok(1);
+            }
+            Err(Failure::Todo("pilotdeck tui"))
+        }
+        _ => run_local_cli_channel(env, cwd),
+    }
+}
+
+/// createLocalGateway() up to its first observable effects, then CliChannel.
+fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    let pilot_home = paths::pilot_home(env, cwd)?;
+    let builtin = skills::builtin_skills(env, cwd);
+    for warning in skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin)? {
+        stderr_line(&warning);
+    }
+    config::check(env, cwd, &pilot_home)?;
+    Err(Failure::Todo(
+        "local Gateway and CliChannel for a valid config",
+    ))
 }

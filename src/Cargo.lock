@@ -670,6 +670,11 @@ dependencies = [
 [[package]]
 name = "pilotdeck-cli"
 version = "0.1.0"
+dependencies = [
+ "pilotdeck-protocol",
+ "pilotdeck-yaml",
+ "ryu-js",
+]
 
 [[package]]
 name = "pilotdeck-gateway"
