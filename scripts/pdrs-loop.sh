@@ -80,7 +80,7 @@ LEDGER="$RUN_DIR/ledger-v2.tsv"
 
 board_sum() { cksum < "$ROOT/state/board.md" | cut -d' ' -f1; }
 board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$ROOT/state/board.md" | head -1; }
-# 所有历史账本（按日期；同日先 v1 再 v2）末尾连续几行的 (ref, updated) 等于当前 = 连续未推进次数。
+# 所有历史账本（按日期；同日先 v1 再 v2）末尾连续几行的 (ref, updated) 等于当前、且未被 v2 记为 done = 连续未推进次数。
 # 跨启动、跨日、v1→v2 都持续计数（有意为之：人不改 board 就重起，不会白得新机会）。
 stale_count() {
   local f files=()
@@ -90,7 +90,9 @@ stale_count() {
   done
   [ "${#files[@]}" -gt 0 ] || { echo 0; return; }
   for f in "${files[@]}"; do tail -n +2 "$f"; done | awk -F'\t' -v r="$1" -v u="$2" \
-    '{ if (("x" $3) == ("x" r) && ("x" $4) == ("x" u)) n++; else n = 0 } END { print n + 0 }'
+    '{ if (NF >= 8 && $5 == "done") n = 0          # v2 行已确认推进（updated 或 board 内容变了）：清零，与落账同一判据
+       else if (("x" $3) == ("x" r) && ("x" $4) == ("x" u)) n++
+       else n = 0 } END { print n + 0 }'
 }
 
 iter=0

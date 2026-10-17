@@ -4,7 +4,8 @@
 # 覆盖：① 推进 → 账本 done、队列空 exit 0；② 再起一次（board 复位）→ 新 run-* 目录、前一跑 iter 原件不被覆盖；
 #       ③ 不推进 → 两行 no-progress、守卫 exit 1、第二迭代带「先处置」；④ 原样重起 → 守卫立即停、runner 不再被调用；
 #       ⑤ v1 账本已有两次未推进 → 首次 v2 启动不派发（⑤b 数字 ref 按字符串比）；⑥ 有 .git 的根拒绝锁/stop 覆盖；
-#       ⑦ board 无 updated 行 → board-unparsed；⑧ 同分钟推进记 done；⑨ runner 失败也计入、重起不派发。
+#       ⑦ board 无 updated 行 → board-unparsed；⑧ 同分钟推进记 done；⑨ runner 失败也计入、重起不派发；
+#       ⑩ 同分钟连续推进不触发守卫（落账与守卫同一判据）；⑪ 迭代超时记 timeout 并带交接提示。
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -36,6 +37,8 @@ case "$1" in
   progress) sed -i.bak -e 's/^updated: .*/updated: 2026-10-17 11:00 · by stub/' -e 's/| ready |/| human |/' "$T/root/state/board.md" ;;
   wipe) sed -i.bak -e '/^updated: /d' -e 's/| ready |/| human |/' "$T/root/state/board.md" ;;
   same-minute) sed -i.bak -e 's/| ready |/| human |/' "$T/root/state/board.md" ;;
+  touch-only) echo "> 进展 \$(cat "$T/calls" | wc -l)" >> "$T/root/state/board.md" ;;
+  hang) sleep 20 ;;
   fail) exit 1 ;;
 esac
 exit 0
@@ -49,7 +52,7 @@ calls() { [ -f "$T/calls" ] && wc -l < "$T/calls" | tr -d ' ' || echo 0; }
 run_loop() {
   set +e
   PATH="$T/bin:$PATH" PDRS_LOOP_LOCK="$T/lock" PDRS_LOOP_STOP="$T/stop" \
-    bash "$T/root/scripts/pdrs-loop.sh" --runner opencode --max-iter 5 --iter-timeout 30 > "$T/out.log" 2>&1
+    bash "$T/root/scripts/pdrs-loop.sh" --runner opencode --max-iter 5 --iter-timeout "${ITO:-30}" > "$T/out.log" 2>&1
   rc=$?
   set -e
 }
@@ -111,6 +114,15 @@ setup fail; run_loop
 check "⑨ 两行 error、守卫停 exit 1、runner 2 次" '[ "$rc" = 1 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^error$")" = 2 ] && [ "$(calls)" = 2 ]'
 run_loop
 check "⑨ 原样重起：exit 1、runner 仍 2 次、停机消息含恢复方法" '[ "$rc" = 1 ] && [ "$(calls)" = 2 ] && grep -q "恢复" "$T/out.log"'
+
+# ⑩ 同一单多迭代、每次只改 board 内容不改 updated：都记 done，守卫不误停，跑满 max-iter
+setup touch-only; run_loop
+check "⑩ 同分钟连续推进：5 行 done、exit 0（max-iter）" '[ "$rc" = 0 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^done$")" = 5 ] && [ "$(calls)" = 5 ]'
+
+# ⑪ 迭代超时：记 timeout，下一迭代任务书带超时交接提示，两次后守卫停
+setup hang; ITO=2 run_loop
+check "⑪ 超时：两行 timeout、守卫停 exit 1" '[ "$rc" = 1 ] && [ "$(cut -f5 "$(ledger)" | grep -c "^timeout$")" = 2 ]'
+check "⑪ 第二迭代任务书带超时交接提示" 'grep -q "超时终止" "$T"/root/_tmp/*-pdrs-loop/run-*/iter-002/prompt.md'
 
 check "锁已释放" '[ ! -e "$T/lock" ]'
 echo "test-pdrs-loop: $([ "$fails" = 0 ] && echo OK || echo "$fails FAIL")"
