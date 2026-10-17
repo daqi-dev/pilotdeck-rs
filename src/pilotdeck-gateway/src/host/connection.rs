@@ -1,5 +1,8 @@
-//! One owned child and independent pipe pumps. No callback runs in a pipe pump.
-use super::{HostError, HostErrorKind, Limits};
+//! One owned process group and independent pipe pumps. No callbacks in pumps.
+use super::{
+    HostError, HostErrorKind, Limits,
+    budget::{Budget, Frame, Lease},
+};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use std::{
     collections::VecDeque,
@@ -12,30 +15,40 @@ use std::{
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, Command},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
     time::timeout,
 };
 
 enum WriteCommand {
-    Frame(String),
-    Ack(String),
+    Frame(String, Lease),
     Flush(oneshot::Sender<()>),
 }
 
 pub(super) struct Connection {
     child: Child,
+    #[cfg(unix)]
+    group: Option<rustix::process::Pid>,
     outgoing: Option<mpsc::Sender<WriteCommand>>,
-    incoming: mpsc::Receiver<Result<JsValue, HostError>>,
+    // Separate one-slot allowances: optional writes cannot consume required
+    // queue slots or its byte budget. ACKs coalesce to the latest applied seq.
+    ack: watch::Sender<Option<Arc<String>>>,
+    cancel: watch::Sender<Option<Arc<String>>>,
+    incoming: mpsc::Receiver<Result<Frame, HostError>>,
     pumps: Vec<JoinHandle<()>>,
+    stderr_task: JoinHandle<()>,
     stderr: Arc<Mutex<VecDeque<u8>>>,
     pending_required: Arc<AtomicUsize>,
+    pub(super) budget: Arc<Budget>,
     limits: Limits,
     closed: bool,
 }
 
 impl Connection {
     pub(super) fn spawn(command: &mut Command, limits: Limits) -> Result<Self, HostError> {
+        // #191: Unix descendants belong to this client, including on Drop.
+        #[cfg(unix)]
+        command.process_group(0);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -43,56 +56,75 @@ impl Connection {
             .kill_on_drop(true)
             .spawn()
             .map_err(HostError::io)?;
+        #[cfg(unix)]
+        let group = child
+            .id()
+            .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
         let mut stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let mut stderr_pipe = child.stderr.take().expect("piped stderr");
         let (outgoing, mut writes) = mpsc::channel(limits.queue_capacity);
         let (reads, incoming) = mpsc::channel(limits.queue_capacity);
+        let (ack, mut acks) = watch::channel(None::<Arc<String>>);
+        let (cancel, mut cancels) = watch::channel(None::<Arc<String>>);
         let writer_errors = reads.clone();
         let pending_required = Arc::new(AtomicUsize::new(0));
         let pending = pending_required.clone();
         let writer = tokio::spawn(async move {
-            while let Some(command) = writes.recv().await {
-                let result = match command {
-                    WriteCommand::Frame(line) => {
-                        let result = stdin.write_all(line.as_bytes()).await;
-                        if result.is_ok() {
-                            pending.fetch_sub(1, Ordering::SeqCst);
+            loop {
+                tokio::select! {
+                    biased;
+                    command = writes.recv() => {
+                        let Some(command) = command else { break; };
+                        let result = match command {
+                            WriteCommand::Frame(line, _lease) => {
+                                let result = stdin.write_all(line.as_bytes()).await;
+                                if result.is_ok() { pending.fetch_sub(1, Ordering::SeqCst); }
+                                result
+                            }
+                            WriteCommand::Flush(done) => {
+                                // Include the optional slots in the barrier, but their
+                                // failures must not invalidate an authoritative final.
+                                let cancel = cancels.has_changed().unwrap_or(false).then(|| cancels.borrow_and_update().clone()).flatten();
+                                let ack = acks.has_changed().unwrap_or(false).then(|| acks.borrow_and_update().clone()).flatten();
+                                if let Some(line) = cancel { optional_write(&mut stdin, &line).await; }
+                                if let Some(line) = ack { optional_write(&mut stdin, &line).await; }
+                                match stdin.flush().await {
+                                    Ok(()) => { let _ = done.send(()); Ok(()) }
+                                    Err(e) => Err(e),
+                                }
+                            }
+                        };
+                        if let Err(error) = result {
+                            let _ = writer_errors.send(Err(HostError::io(error))).await;
+                            break;
                         }
-                        result
                     }
-                    WriteCommand::Ack(line) => {
-                        // TS client:961-970: ACK failures never enter the input stream.
-                        if let Err(error) = stdin.write_all(line.as_bytes()).await {
-                            best_effort_log(format_args!(
-                                "Sidecar ACK write failed (best-effort): {error}"
-                            ));
-                        }
-                        // Keep draining: a later required frame must report its own failure.
-                        continue;
+                    changed = cancels.changed() => {
+                        if changed.is_err() { break; }
+                        let line = cancels.borrow_and_update().clone();
+                        if let Some(line) = line { optional_write(&mut stdin, &line).await; }
                     }
-                    WriteCommand::Flush(done) => match stdin.flush().await {
-                        Ok(()) => {
-                            let _ = done.send(());
-                            Ok(())
-                        }
-                        Err(error) => Err(error),
-                    },
-                };
-                if let Err(error) = result {
-                    let _ = writer_errors.send(Err(HostError::io(error))).await;
-                    break;
+                    changed = acks.changed() => {
+                        if changed.is_err() { break; }
+                        let line = acks.borrow_and_update().clone();
+                        if let Some(line) = line { optional_write(&mut stdin, &line).await; }
+                    }
                 }
             }
         });
+        let budget = Budget::new(limits.max_buffered_bytes);
+        let input_budget = budget.clone();
         let reader = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             let mut line = Vec::new();
+            let mut line_lease = input_budget.reserve(0).expect("empty reservation");
             loop {
-                // read_until alone permits an unbounded unterminated line.
                 let available = match reader.fill_buf().await {
                     Ok([]) => {
-                        if !line.is_empty() && !deliver(&reads, &line).await {
+                        if !line.is_empty()
+                            && !deliver(&reads, std::mem::take(&mut line), line_lease).await
+                        {
                             return;
                         }
                         let _ = reads
@@ -122,17 +154,21 @@ impl Connection {
                         .await;
                     return;
                 }
+                if let Err(error) = line_lease.grow(size) {
+                    let _ = reads.send(Err(error)).await;
+                    return;
+                }
                 line.extend_from_slice(&available[..size]);
                 reader.consume(size);
                 if line.last() == Some(&b'\n') {
-                    if !deliver(&reads, &line).await {
+                    if !deliver(&reads, std::mem::take(&mut line), line_lease).await {
                         return;
                     }
-                    line.clear();
+                    line_lease = input_budget.reserve(0).expect("empty reservation");
                 }
             }
         });
-        // TS stdio connection: lines 81-84, 158-169; always drain, retain only tail.
+        // TS stdio:81-84,158-169: drain continuously, retain only the tail.
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
         let retained = stderr.clone();
         let stderr_task = tokio::spawn(async move {
@@ -149,11 +185,17 @@ impl Connection {
         });
         Ok(Self {
             child,
+            #[cfg(unix)]
+            group,
             outgoing: Some(outgoing),
+            ack,
+            cancel,
             incoming,
-            pumps: vec![reader, writer, stderr_task],
+            pumps: vec![reader, writer],
+            stderr_task,
             stderr,
             pending_required,
+            budget,
             limits,
             closed: false,
         })
@@ -161,22 +203,28 @@ impl Connection {
 
     pub(super) fn send(&self, value: &JsValue) -> Result<(), HostError> {
         let line = self.encode(value)?;
-        // Increment before enqueue: the writer may run immediately on another worker.
+        let lease = self.budget.reserve(line.len())?;
         self.pending_required.fetch_add(1, Ordering::SeqCst);
-        let result = self.enqueue(WriteCommand::Frame(line));
+        let result = self.enqueue(WriteCommand::Frame(line, lease));
         if result.is_err() {
             self.pending_required.fetch_sub(1, Ordering::SeqCst);
         }
         result
     }
     pub(super) fn send_ack(&self, value: &JsValue) {
-        if let Err(error) = self
-            .encode(value)
-            .and_then(|line| self.enqueue(WriteCommand::Ack(line)))
-        {
-            best_effort_log(format_args!(
-                "Sidecar ACK enqueue failed (best-effort): {error}"
-            ));
+        self.send_optional(value, &self.ack);
+    }
+    pub(super) fn send_cancel(&self, value: &JsValue) {
+        self.send_optional(value, &self.cancel);
+    }
+    fn send_optional(&self, value: &JsValue, slot: &watch::Sender<Option<Arc<String>>>) {
+        match self.encode(value) {
+            Ok(line) => {
+                let _ = slot.send(Some(Arc::new(line)));
+            }
+            Err(error) => best_effort_log(format_args!(
+                "Sidecar optional enqueue failed (best-effort): {error}"
+            )),
         }
     }
     fn encode(&self, value: &JsValue) -> Result<String, HostError> {
@@ -204,7 +252,7 @@ impl Connection {
                 )
             })
     }
-    pub(super) async fn receive(&mut self) -> Result<JsValue, HostError> {
+    pub(super) async fn receive(&mut self) -> Result<Frame, HostError> {
         self.incoming.recv().await.unwrap_or_else(|| {
             Err(HostError::new(
                 HostErrorKind::Disconnected,
@@ -227,16 +275,13 @@ impl Connection {
     }
     pub(super) async fn finish_terminal(&self) -> Result<(), HostError> {
         if let Err(error) = self.flush().await {
-            // A pending module response (or other required frame) still fails closed.
-            // Once those writes succeeded, only best-effort ACKs/flush remain.
             if self.pending_required.load(Ordering::SeqCst) != 0 {
                 return Err(error);
             }
             best_effort_log(format_args!(
-                "Sidecar terminal ACK flush failed (best-effort): {error}"
+                "Sidecar terminal optional flush failed (best-effort): {error}"
             ));
         } else if self.pending_required.load(Ordering::SeqCst) != 0 {
-            // Callers are serial today; this guards a required frame enqueued behind the Flush.
             return Err(HostError::new(
                 HostErrorKind::Disconnected,
                 "Sidecar required frame was not written before terminal flush.",
@@ -254,22 +299,29 @@ impl Connection {
         self.child.id()
     }
 
+    fn kill_group(&mut self) {
+        #[cfg(unix)]
+        if let Some(group) = self.group.take() {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        }
+    }
     pub(super) async fn close(&mut self) -> Result<(), HostError> {
         if self.closed {
             return Ok(());
         }
         self.closed = true;
         self.outgoing.take();
-        // Aborting the writer also closes a blocked stdin. Child exit, task joins,
-        // and post-kill wait share finite bounds (TS stdio:123-139 leaves last wait unbounded).
+        // Close stdin and stdout; stderr must survive through child exit/kill.
         for pump in &self.pumps {
             pump.abort();
         }
         let grace = timeout(self.limits.close_timeout, self.child.wait()).await;
+        // Even an exited leader may have descendants holding pipes open.
+        self.kill_group();
         let result = match grace {
             Ok(result) => result.map(|_| ()).map_err(HostError::io),
             Err(_) => {
-                self.child.start_kill().map_err(HostError::io)?;
+                let _ = self.child.start_kill();
                 timeout(self.limits.close_timeout, self.child.wait())
                     .await
                     .map_err(|_| {
@@ -279,6 +331,15 @@ impl Connection {
                     .map_err(HostError::io)
             }
         };
+        // TS stdio:123-154 keeps collecting exit diagnostics. EOF normally wins;
+        // a descendant that escaped the owned process group cannot hang close.
+        if timeout(self.limits.close_timeout, &mut self.stderr_task)
+            .await
+            .is_err()
+        {
+            self.stderr_task.abort();
+            let _ = timeout(self.limits.close_timeout, &mut self.stderr_task).await;
+        }
         let _ = timeout(self.limits.close_timeout, async {
             for task in self.pumps.drain(..) {
                 let _ = task.await;
@@ -290,25 +351,38 @@ impl Connection {
 }
 impl Drop for Connection {
     fn drop(&mut self) {
+        self.kill_group();
         for pump in &self.pumps {
             pump.abort();
         }
-        // Child::kill_on_drop covers dropped spawn/execute futures, too.
+        self.stderr_task.abort();
+        // Child::kill_on_drop also reaps dropped spawn/execute futures.
     }
 }
-async fn deliver(sender: &mpsc::Sender<Result<JsValue, HostError>>, bytes: &[u8]) -> bool {
-    let value = match std::str::from_utf8(bytes) {
+async fn deliver(
+    sender: &mpsc::Sender<Result<Frame, HostError>>,
+    bytes: Vec<u8>,
+    lease: Lease,
+) -> bool {
+    let value = match std::str::from_utf8(&bytes) {
         Ok(text) if text.trim().is_empty() => return true,
         Ok(text) => parse_json(text)
             .map_err(|error| HostError::protocol(format!("Malformed NDJSON: {error}"))),
         Err(error) => Err(HostError::protocol(format!("Malformed UTF-8: {error}"))),
-    };
+    }
+    .map(|value| Frame { value, lease });
+    drop(bytes);
     let valid = value.is_ok();
     sender.send(value).await.is_ok() && valid
 }
-
-/// Diagnostics on best-effort paths must never fail the turn: `eprintln!` panics
-/// when the host's stderr is closed, so write errors are ignored here.
+async fn optional_write(stdin: &mut tokio::process::ChildStdin, line: &str) {
+    // TS client:943-970: cancel and ACK failures never enter the input stream.
+    if let Err(error) = stdin.write_all(line.as_bytes()).await {
+        best_effort_log(format_args!(
+            "Sidecar optional write failed (best-effort): {error}"
+        ));
+    }
+}
 fn best_effort_log(message: std::fmt::Arguments<'_>) {
     use std::io::Write;
     let _ = writeln!(std::io::stderr(), "{message}");
@@ -346,21 +420,45 @@ mod tests {
         (connection, receiver)
     }
     #[tokio::test]
-    async fn ack_queue_full_and_closed_are_best_effort_but_required_frames_fail() {
-        let (mut connection, receiver) = controlled_queue(1);
+    async fn ack_coalesces_without_consuming_required_slots_or_budget() {
+        let (mut connection, mut receiver) = controlled_queue(1);
         let frame = parse_json(r#"{"kind":"request","method":"ack"}"#).unwrap();
-        connection.send_ack(&frame); // Fill the only slot.
-        connection.send_ack(&frame); // Full: must not fail execution.
-        let error = connection.send(&frame).unwrap_err();
-        assert!(error.message.contains("queue full"), "{error}");
-        assert_eq!(connection.pending_required.load(Ordering::SeqCst), 0);
-        connection.finish_terminal().await.unwrap();
+        // Keep receivers alive after the controlled writer was aborted.
+        let mut ack_receiver = connection.ack.subscribe();
+        for sequence in 0..100 {
+            let ack = parse_json(&format!(
+                r#"{{"kind":"request","method":"ack","lastAppliedSequence":{sequence}}}"#
+            ))
+            .unwrap();
+            connection.send_ack(&ack);
+        }
+        connection.send(&frame).unwrap();
+        assert!(matches!(
+            receiver.recv().await,
+            Some(WriteCommand::Frame(_, _))
+        ));
+        let latest = ack_receiver.borrow_and_update().clone().unwrap();
+        assert_eq!(
+            parse_json(&latest)
+                .unwrap()
+                .get("lastAppliedSequence")
+                .and_then(JsValue::as_number),
+            Some(99.0)
+        );
+        connection.send(&frame).unwrap();
+        assert_eq!(
+            connection.send(&frame).unwrap_err().kind,
+            HostErrorKind::Limit
+        );
         drop(receiver);
-        connection.send_ack(&frame); // Closed: must not fail execution.
-        let error = connection.send(&frame).unwrap_err();
-        assert!(error.message.contains("channel closed"), "{error}");
-        assert_eq!(connection.pending_required.load(Ordering::SeqCst), 0);
-        connection.finish_terminal().await.unwrap();
+        connection.send_ack(&frame);
+        assert!(
+            connection
+                .send(&frame)
+                .unwrap_err()
+                .message
+                .contains("channel closed")
+        );
         connection.close().await.unwrap();
     }
     #[tokio::test]
@@ -437,6 +535,53 @@ mod tests {
         assert_eq!(error.kind, HostErrorKind::Io);
         assert_eq!(connection.pending_required.load(Ordering::SeqCst), 1);
         assert!(connection.finish_terminal().await.is_err());
+        connection.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn inbound_and_outbound_frame_limits_include_newline_at_exact_boundary() {
+        let value = parse_json(r#"{"boundary":"x"}"#).unwrap();
+        let size = stringify_json(&value).unwrap().unwrap().len() + 1;
+        for maximum in [size, size - 1] {
+            let bounded = Limits {
+                max_frame_bytes: maximum,
+                ..limits()
+            };
+            let mut connection = Connection::spawn(&mut peer("frame-boundary"), bounded).unwrap();
+            if maximum == size {
+                connection.send(&value).unwrap();
+                let received = connection.receive().await.unwrap();
+                assert_eq!(received.value, value);
+            } else {
+                assert_eq!(
+                    connection.send(&value).unwrap_err().kind,
+                    HostErrorKind::Limit
+                );
+                connection.send(&parse_json("{}").unwrap()).unwrap();
+                let error = connection.receive().await.unwrap_err();
+                assert_eq!(error.kind, HostErrorKind::Limit);
+                assert!(error.message.contains("stdout frame exceeds"));
+            }
+            connection.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn required_write_byte_budget_is_released_when_queue_drops() {
+        let (mut connection, mut receiver) = controlled_queue(4);
+        let value = parse_json(r#"{"payload":"retained"}"#).unwrap();
+        let size = connection.encode(&value).unwrap().len();
+        connection.budget = Budget::new(size);
+        let _ack_receiver = connection.ack.subscribe();
+        connection.send_ack(&value);
+        connection.send(&value).unwrap();
+        let error = connection.send(&value).unwrap_err();
+        assert_eq!(error.kind, HostErrorKind::Limit);
+        assert!(error.message.contains("wire-byte budget"));
+        drop(receiver.recv().await);
+        connection.send(&value).unwrap();
+        drop(receiver);
+        // No retained required bytes remain after queue destruction.
+        let _lease = connection.budget.reserve(size).unwrap();
         connection.close().await.unwrap();
     }
 }

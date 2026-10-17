@@ -1,7 +1,7 @@
 //! Real TS production-sidecar cross-check. The model port alone is deterministic.
 use pilotdeck_gateway::host::{
-    ExecuteRequest, ExecuteResult, HostClient, HostError, HostErrorKind, HostFuture, HostHandler,
-    Limits,
+    Cancellation, ExecuteRequest, ExecuteResult, HostClient, HostError, HostErrorKind, HostFuture,
+    HostHandler, Limits,
 };
 use pilotdeck_protocol::{
     JsObject, JsValue, admission::ExecutionIdentity, parse_json, stringify_json,
@@ -15,10 +15,14 @@ use std::{
 };
 use tokio::process::Command;
 
-struct Model(AtomicUsize);
+struct Model {
+    calls: AtomicUsize,
+    cancel: Option<Cancellation>,
+}
 impl HostHandler for Model {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
-        self.0.fetch_add(1, Ordering::SeqCst);
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let cancellation = self.cancel.clone();
         println!("CALLBACK {}", stringify_json(&call).unwrap().unwrap());
         Box::pin(async move {
             let module = call.get("module").and_then(JsValue::as_string);
@@ -34,6 +38,12 @@ impl HostHandler for Model {
                     "Unexpected production callback",
                 ));
             }
+            if let Some(cancel) = cancellation {
+                // Real TS server:437-455 aborts its pending host-module wait.
+                // Callback arrival proves execute was accepted; no sleep races.
+                cancel.cancel(Some("host_probe_cancel".into()));
+                std::future::pending::<()>().await;
+            }
             Ok(parse_json(r#"{"events":[{"type":"message_start","role":"assistant"},{"type":"text_delta","text":"cross-ok"},{"type":"message_end","finishReason":"stop"}]}"#).unwrap().as_object().unwrap().clone())
         })
     }
@@ -45,8 +55,10 @@ impl HostHandler for Model {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 4 {
-        return Err("usage: a6_host_probe NODE BASELINE_DIR ISOLATED_DIR NO_LISTEN_PRELOAD".into());
+    if !(args.len() == 4 || (args.len() == 5 && args[4] == "cancel")) {
+        return Err(
+            "usage: a6_host_probe NODE BASELINE_DIR ISOLATED_DIR NO_LISTEN_PRELOAD [cancel]".into(),
+        );
     }
     let baseline = PathBuf::from(&args[1]);
     let isolated = PathBuf::from(&args[2]);
@@ -65,7 +77,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .env("HOME", &isolated)
         .env("PILOT_HOME", &isolated)
         .env("TMPDIR", &isolated);
-    let model = Arc::new(Model(AtomicUsize::new(0)));
+    let cancellation = Cancellation::default();
+    let cancel_mode = args.len() == 5;
+    let model = Arc::new(Model {
+        calls: AtomicUsize::new(0),
+        cancel: cancel_mode.then(|| cancellation.clone()),
+    });
     println!("SPAWN node={:?} entry={entry:?}", args[0]);
     let client = HostClient::spawn(
         &mut command,
@@ -78,18 +95,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client.child_id(),
         client.binding()
     );
-    let result = client.execute(ExecuteRequest { identity: ExecutionIdentity { run_id: "cross-run".into(), operation_id: "cross-op".into(),
+    let result = client.execute_cancellable(ExecuteRequest { identity: ExecutionIdentity { run_id: "cross-run".into(), operation_id: "cross-op".into(),
         request_id: "cross-request".into(), session_id: "cross-session".into(), turn_id: "cross-turn".into() },
         payload: parse_json(r#"{"provider":"host-fixture","model":"controlled","task":{"prompt":"hello"},"tools":[]}"#)?.as_object().unwrap().clone(),
-        idempotency_key: None, operation_deadline: None }, model.clone()).await?;
-    let ExecuteResult::Terminal(terminal) = result else {
-        return Err("production execute was rejected".into());
+        idempotency_key: None, operation_deadline: None }, model.clone(), cancellation).await?;
+    let (terminal, expected) = match result {
+        ExecuteResult::Terminal(terminal) => (
+            terminal,
+            if cancel_mode {
+                "cancelled"
+            } else {
+                "completed"
+            },
+        ),
+        ExecuteResult::Aborted {
+            terminal: Some(terminal),
+        } if cancel_mode => (terminal, "cancelled"),
+        other => return Err(format!("unexpected production result: {other:?}").into()),
     };
     if !terminal
         .get("outcome")
         .and_then(JsValue::as_string)
-        .is_some_and(|s| s.equals_str("completed"))
-        || model.0.load(Ordering::SeqCst) == 0
+        .is_some_and(|s| s.equals_str(expected))
+        || model.calls.load(Ordering::SeqCst) == 0
     {
         return Err(format!(
             "unexpected terminal: {}",
@@ -98,8 +126,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
     println!(
-        "CROSS_PASS real TS production sidecar; callbacks={}; terminal={}",
-        model.0.load(Ordering::SeqCst),
+        "CROSS_PASS real TS production sidecar; mode={}; callbacks={}; terminal={}",
+        if cancel_mode { "cancel" } else { "complete" },
+        model.calls.load(Ordering::SeqCst),
         stringify_json(&terminal)?.unwrap()
     );
     Ok(())

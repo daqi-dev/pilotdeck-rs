@@ -1,3 +1,4 @@
+use super::budget::Frame;
 use super::*;
 use pilotdeck_protocol::{
     module::ModuleOutcome,
@@ -5,26 +6,38 @@ use pilotdeck_protocol::{
     wire::{EventRef, RequestBodyRef},
 };
 use std::collections::{HashMap, VecDeque};
-use tokio::task::JoinSet;
+use tokio::{
+    task::JoinSet,
+    time::{Instant, sleep_until},
+};
 
 struct Call {
-    request: JsValue,
-    response: Option<JsValue>,
+    request: Frame,
+    response: Option<Frame>,
     deliveries: usize,
 }
 enum Completed {
-    Module(JsString, Result<JsObject, HostError>),
-    Event(JsValue, Result<(), HostError>),
+    Module(JsString, Result<Frame, HostError>),
+    Event(Frame, bool, Result<(), HostError>),
 }
 
 pub(super) async fn run(
     connection: &mut Connection,
     request: ExecuteRequest,
     handler: Arc<dyn HostHandler>,
-    ack_enabled: bool,
+    capabilities: (bool, bool),
     limits: Limits,
-    accepted: &mut bool,
+    progress: &mut Progress,
+    cancellation: Cancellation,
 ) -> Result<ExecuteResult, HostError> {
+    // TS client:593: an already-aborted input never sends execute.
+    if cancellation.is_cancelled() {
+        return Ok(ExecuteResult::Aborted { terminal: None });
+    }
+    let (ack_enabled, cancel_enabled) = capabilities;
+    let execution_deadline = Instant::now() + limits.execution_timeout;
+    let mut cancel_changes = cancellation.0.subscribe();
+    let mut cancel_sent = false;
     let execute_id = JsString::from("execute");
     let identity = request.identity;
     let mut outgoing = request_frame("execute", &execute_id, request.payload)
@@ -49,44 +62,108 @@ pub(super) async fn run(
     let outgoing = JsValue::Object(outgoing);
     decode(&outgoing)?;
     connection.send(&outgoing)?;
-    let mut stream_id: Option<JsString> = None;
+    drop(outgoing);
     let mut next_sequence = 0.0;
     let mut calls: HashMap<JsString, Call> = HashMap::new();
-    let mut events: VecDeque<JsValue> = VecDeque::new();
+    let mut events: VecDeque<(Frame, bool)> = VecDeque::new();
     let mut event_running = false;
     let mut terminal_received = false;
     let mut terminal_applied = None;
+    let mut drain_deadline = None;
     let mut callbacks = JoinSet::new();
     loop {
         if callbacks.is_empty()
             && let Some(terminal) = terminal_applied.take()
         {
-            return Ok(ExecuteResult::Terminal(terminal));
+            return Ok(terminal);
         }
-        if !event_running && let Some(event) = events.pop_front() {
+        if cancel_enabled
+            && !cancel_sent
+            && progress.stream_id.is_some()
+            && let Some(reason) = cancellation.reason()
+        {
+            // TS client:943-958: once, only after acceptance, no streamId/payload.
+            // Set before attempting the best-effort write; failure never retries.
+            cancel_sent = true;
+            let mut cancel = JsObject::new();
+            for (key, value) in [
+                ("kind", "request"),
+                ("messageId", "cancel-execute"),
+                ("method", "cancel"),
+            ] {
+                cancel.insert(key.into(), value.into());
+            }
+            for (key, value) in [
+                ("runId", &identity.run_id),
+                ("operationId", &identity.operation_id),
+                ("requestId", &identity.request_id),
+            ] {
+                cancel.insert(key.into(), JsValue::String(value.clone()));
+            }
+            cancel.insert(
+                "reason".into(),
+                JsValue::String(if reason.is_empty() {
+                    "host_abort".into()
+                } else {
+                    reason
+                }),
+            );
+            connection.send_cancel(&JsValue::Object(cancel));
+        }
+        if !event_running && let Some((event, aborted)) = events.pop_front() {
             let handler = handler.clone();
+            let lease = event.lease.duplicate()?;
+            let sequence = event
+                .get("sequence")
+                .and_then(JsValue::as_number)
+                .expect("validated event");
+            let last_applied = progress.last_applied_sequence.clone();
             callbacks.spawn(async move {
-                let result = handler.event(event.clone()).await;
-                Completed::Event(event, result)
+                let result = handler.event(event.value.clone()).await;
+                // Publish at callback success, not when the parent polls JoinSet:
+                // a simultaneously-ready EOF must retain the applied sequence.
+                if result.is_ok() {
+                    last_applied.store(sequence.to_bits(), Ordering::SeqCst);
+                }
+                drop(lease);
+                Completed::Event(event, aborted, result)
             });
             event_running = true;
         }
         tokio::select! {
+            _ = sleep_until(execution_deadline), if terminal_applied.is_none() => {
+                return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out."));
+            }
+            _ = sleep_until(drain_deadline.unwrap_or(execution_deadline)), if terminal_applied.is_some() => {
+                // TS processes callbacks serially (570-579); this host runs them
+                // concurrently. Once final is applied, bounded drain cannot turn
+                // a known terminal into an execution timeout (#191/2).
+                callbacks.abort_all();
+                while callbacks.join_next().await.is_some() {}
+                return Ok(terminal_applied.take().expect("applied terminal"));
+            }
+            _ = cancel_changes.changed(), if !cancel_sent => {}
+
             completion = callbacks.join_next(), if !callbacks.is_empty() => {
                 match completion.expect("nonempty callback set").map_err(|error|
                     HostError::new(HostErrorKind::Callback, format!("Host callback task failed: {error}")))? {
-                    Completed::Module(id, payload) => {
+                    Completed::Module(id, response) => {
                         let call = calls.get_mut(&id).expect("registered callback");
-                        let response = module_response(&call.request, payload);
                         // TS client:1129-1133: cache before write; no second effect.
-                        call.response = Some(response.clone());
-                        for _ in 0..call.deliveries { connection.send(&response)?; }
+                        call.response = Some(response?);
+                        for _ in 0..call.deliveries { connection.send(call.response.as_ref().unwrap())?; }
                     }
-                    Completed::Event(event, result) => {
+                    Completed::Event(event, aborted, result) => {
                         result?;
                         event_running = false;
                         let MessageRef::Event(view) = decode(&event)? else { unreachable!() };
-                        if view.final_event { terminal_applied = Some(event); continue; }
+                        if view.final_event {
+                            progress.terminal_lease = Some(event.lease);
+                            terminal_applied = Some(if aborted { ExecuteResult::Aborted { terminal: Some(event.value) } }
+                                else { ExecuteResult::Terminal(event.value) });
+                            drain_deadline = Some(Instant::now() + limits.terminal_drain_timeout);
+                            continue;
+                        }
                         // TS client:680-684, 961-970: ACK after application, never final.
                         if ack_enabled {
                             let mut ack = request_frame("ack", &format!("ack-{}", view.sequence.value()).into(), JsObject::new())
@@ -108,26 +185,28 @@ pub(super) async fn run(
                         if response.fields.get("requestId").and_then(JsValue::as_string) != Some(&identity.request_id) {
                             return Err(HostError::protocol("Sidecar execute response does not match the active request."));
                         }
-                        if stream_id.is_some() {
-                            return Err(HostError::protocol("Sidecar sent a duplicate execute acceptance."));
-                        }
                         if !response.ok {
                             if response.fields.get("final").and_then(JsValue::as_bool) == Some(true)
                                 && response.outcome == Some(ModuleOutcome::Failed) {
-                                return Ok(ExecuteResult::Rejected(raw));
+                                progress.terminal_lease = Some(raw.lease);
+                                return Ok(ExecuteResult::Rejected(raw.value));
                             }
-                            return Err(HostError::protocol("Sidecar rejected execute request."));
+                            let reason = response.fields.get("code").and_then(JsValue::as_string)
+                                .or_else(|| response.fields.get("error").and_then(|e| e.get("message")).and_then(JsValue::as_string))
+                                .map_or_else(|| "unknown error".to_owned(), |s| String::from_utf16_lossy(s.units()));
+                            return Err(HostError::protocol(format!("Sidecar rejected execute request: {reason}")));
                         }
                         if response.fields.get("final").and_then(JsValue::as_bool) == Some(true) {
                             return Err(HostError::protocol("Sidecar streaming execute response cannot be final when accepted."));
                         }
-                        stream_id = Some(response.fields.get("streamId").and_then(JsValue::as_string)
+                        // TS client:780-798 accepts repeated acceptance, updates
+                        // streamId without resetting sequence or re-sending cancel.
+                        progress.stream_id = Some(response.fields.get("streamId").and_then(JsValue::as_string)
                             .filter(|id| !id.is_empty()).ok_or_else(|| HostError::protocol("Sidecar execute response did not provide streamId."))?.clone());
-                        *accepted = true;
                     }
                     MessageRef::Event(event) => {
                         // TS client:879-893: all four IDs, strictly 0,1,...; any duplicate fails.
-                        if stream_id.as_ref() != Some(event.stream_id) || event.identity.run_id != &identity.run_id
+                        if progress.stream_id.as_ref() != Some(event.stream_id) || event.identity.run_id != &identity.run_id
                             || event.identity.operation_id != &identity.operation_id || event.identity.request_id != &identity.request_id {
                             return Err(HostError::protocol("Sidecar event identity does not match the active execution (or event before acceptance)."));
                         }
@@ -135,14 +214,14 @@ pub(super) async fn run(
                             return Err(HostError::protocol(format!("Sidecar event sequence mismatch: expected {next_sequence}, got {}.", event.sequence.value())));
                         }
                         next_sequence += 1.0;
-                        validate_event(event, &identity)?;
+                        let aborted = validate_event(event, &identity, &cancellation)?;
                         // TS:680 suppresses the non-authoritative turn_completed projection.
                         if !event.final_event && text_is(event.payload.get("type"), "turn_completed") { continue; }
                         terminal_received = event.final_event;
                         if events.len() >= limits.queue_capacity {
                             return Err(HostError::new(HostErrorKind::Limit, "Host event application queue full."));
                         }
-                        events.push_back(raw);
+                        events.push_back((raw, aborted));
                     }
                     MessageRef::Request(call) => {
                         if !matches!(call.body, RequestBodyRef::ModuleCall { .. }) { continue; }
@@ -162,8 +241,9 @@ pub(super) async fn run(
                             let response = module_response(&raw, Err(HostError::protocol("Sidecar module call identity does not match the active execution.")));
                             // TS:1119-1133 caches failure replies as well. A later
                             // corrected identity must not recycle this messageId.
-                            calls.insert(id, Call { request: raw.clone(), response: Some(response.clone()), deliveries: 1 });
                             connection.send(&response)?;
+                            let response = connection.budget.retain(response)?;
+                            calls.insert(id, Call { request: raw, response: Some(response), deliveries: 1 });
                             continue;
                         }
                         if let Some(previous) = calls.get_mut(&id) {
@@ -184,9 +264,26 @@ pub(super) async fn run(
                         if calls.len() >= limits.max_module_calls || callbacks.len() >= limits.queue_capacity {
                             return Err(HostError::new(HostErrorKind::Limit, "Host module callback limit reached."));
                         }
-                        calls.insert(id.clone(), Call { request: raw.clone(), response: None, deliveries: 1 });
+                        let lease = raw.lease.duplicate()?;
+                        let callback_request = raw.value.clone();
+                        // Only correlation IDs must survive the handler call. Charge
+                        // them too (IDs can be large), without another payload copy.
+                        let mut correlation = JsObject::new();
+                        for key in ["messageId", "requestId"] {
+                            correlation.insert(key.into(), raw.get(key).unwrap().clone());
+                        }
+                        let correlation = connection.budget.retain(JsValue::Object(correlation))?;
+                        calls.insert(id.clone(), Call { request: raw, response: None, deliveries: 1 });
                         let handler = handler.clone();
-                        callbacks.spawn(async move { Completed::Module(id, handler.module_call(raw).await) });
+                        let budget = connection.budget.clone();
+                        callbacks.spawn(async move {
+                            let payload = handler.module_call(callback_request).await;
+                            drop(lease);
+                            let response = module_response(&correlation, payload);
+                            // Acquire before JoinSet stores a completed result: many
+                            // finished callbacks cannot accumulate unbudgeted payloads.
+                            Completed::Module(id, budget.retain(response))
+                        });
                     }
                     MessageRef::Error(error) => return Err(HostError::protocol(format!("Sidecar transport error {:?}: {:?}", error.code, error.message))),
                 }
@@ -239,7 +336,11 @@ fn module_response(call: &JsValue, result: Result<JsObject, HostError>) -> JsVal
     }
     JsValue::Object(response)
 }
-fn validate_event(event: EventRef<'_>, identity: &ExecutionIdentity) -> Result<(), HostError> {
+fn validate_event(
+    event: EventRef<'_>,
+    identity: &ExecutionIdentity,
+    cancellation: &Cancellation,
+) -> Result<bool, HostError> {
     let matches_identity = |object: &JsObject, required_turn: bool| {
         object.get("sessionId").and_then(JsValue::as_string) == Some(&identity.session_id)
             && ((!required_turn && !object.contains_key("turnId"))
@@ -264,6 +365,30 @@ fn validate_event(event: EventRef<'_>, identity: &ExecutionIdentity) -> Result<(
                 HostErrorKind::ResultUnknown,
                 "Sidecar terminal outcome is result_unknown; host reconciliation is required.",
             ));
+        }
+        // TS client:1338-1350: only this local abort reason permits a missing
+        // result/messages fallback. A well-shaped contradictory result still fails.
+        let complete = event
+            .payload
+            .get("result")
+            .and_then(JsValue::as_object)
+            .is_some_and(|r| {
+                ["success", "error", "aborted", "max_turns"]
+                    .iter()
+                    .any(|t| text_is(r.get("type"), t))
+                    && ["sessionId", "turnId", "stopReason"]
+                        .iter()
+                        .all(|k| r.get(k).and_then(JsValue::as_string).is_some())
+                    && r.get("turns").and_then(JsValue::as_number).is_some()
+            })
+            && matches!(event.payload.get("messages"), Some(JsValue::Array(_)));
+        if !complete
+            && event.outcome == Some(ModuleOutcome::Cancelled)
+            && cancellation
+                .reason()
+                .is_some_and(|reason| reason.equals_str("compaction_persistence_failed"))
+        {
+            return Ok(true);
         }
         let result = event
             .payload
@@ -300,5 +425,5 @@ fn validate_event(event: EventRef<'_>, identity: &ExecutionIdentity) -> Result<(
             ));
         }
     }
-    Ok(())
+    Ok(false)
 }
