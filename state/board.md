@@ -1,5 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 第八轮（连续推进）：A5.3 合并（#163），四张 P2-跟进登记
+> **A5.3 完成**：session_domain.py E1 入口（calibrate 360 次测量全过 + 10 类负控 + F5 补四规则内存变异 + deadline 四格 NOT_RUN 结构自检）双家评审三轮收敛合并 main。**FROZEN 双重登记**：①补 #142 漏登的 accepted-diffs 哈希（人批 2026-10-17）②白名单 15 件 + 三新脚本；check_frozen 18 项 PASS。P2-跟进：#164（进程组免ps探测）#165（分母入FROZEN）#166（NOT_RUN退出码）#167（A2六轮重采+repetition=0缺口）——各标前置节点。
+> **待批清单（人出现时提醒，不停机）**：① #19 deadline 差异登记（decisions-20261017-deadline-diff.md，推荐A）；② D4 评分口径（exp014 六格材料齐）；③ #150 Draft 处置。
+> **下一单**：A5.4 兼容部分（E0 八组回归 + calibrate k=5 已备 + 评审记录整理）；冻结语义部分待 D4 人批。随后 #127（A6 起）。
+
 > ## 2026-10-17 · 第七轮（连续推进）：#19 调研收尾（#161 合并）、A5.3 开工
 > **#19（阶段 C 冲 53/53）**：codex 深挖修正旧现场——`sidecar_budget_limit` 与 `deadline_during_tool` **历史已修、各 5/5 PASS**（budget wire 语义链已查实：toAgentStatusEvent 省略 text→client 按 event 回退→原因码）；`deadline` **4/5**，两侧 sidecar wire 逐帧一致，r3 残差为 TS 宿主对账竞态（原版缺陷）。PR #161（deadline 部分文本边界回归，72+ 行纯测试）双家评审合并，冻结哈希核对过。**决策卡 `state/decisions-20261017-deadline-diff.md` 待人批**（推荐 A：登记已接受差异→复算→关 #19）；issue OPEN 不冒充。
 > **A5.3 开工**（codex 在 wt-19，分支 codex/a53-session-domain）：session_domain.py E1 入口（calibrate 编排 + deadline 四格结构 + 原生拓扑审计 + 九类负控 + 白名单同 PR 变更）。分阶段收。
