@@ -1,6 +1,6 @@
 [
-  {"id":"help-long","argv":["--help"],"stdinHex":"","token":false,"exit":0,"stdoutPrefix":"PilotDeck SDK CLI\n","stderr":""},
-  {"id":"help-short","argv":["-h"],"stdinHex":"","token":false,"exit":0,"stdoutPrefix":"PilotDeck SDK CLI\n","stderr":""},
+  {"id":"help-long","argv":["--help"],"stdinHex":"","token":false,"exit":0,"stdoutPrefix":"PilotDeck SDK CLI\n","stdoutSha256":"05b5205f82b8c66bafa30e3f3d372812af0b9c9f9e1876b498f51df1a6bb8ee6","stderr":""},
+  {"id":"help-short","argv":["-h"],"stdinHex":"","token":false,"exit":0,"stdoutPrefix":"PilotDeck SDK CLI\n","stdoutSha256":"05b5205f82b8c66bafa30e3f3d372812af0b9c9f9e1876b498f51df1a6bb8ee6","stderr":""},
   {"id":"version-default","argv":["--version"],"stdinHex":"","token":false,"exit":1,"stdout":"","stderr":"Config must contain an agent section.\n",
    "diskAdditions":{"pilot/.legacy-bundled-skills-migrated-v1":{"type":"file","mode":384,"size":10,"sha256":"d3be030801b90ea8057d3997d9845c7f850cc7b784450645d5ec2811cc927d7a"}}},
   {"id":"empty-nontty","argv":[],"stdinHex":"","token":false,"exit":1,"stdout":"","stderr":"Config must contain an agent section.\n",

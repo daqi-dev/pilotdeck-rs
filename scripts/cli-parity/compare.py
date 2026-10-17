@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare full D0 recordings. Missing evidence never compares equal."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -9,11 +10,35 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import HEAD, SCENARIOS, environment, env_summary, hashes, initial_tree, snapshot
+from common import HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, environment, env_summary, hashes, initial_tree, snapshot
+from policy import sandbox_profile
 
 RECORDING_ORIGIN = 'live-os-sandbox'
 PROBE_CHECKS = ('homeMatches', 'outsideReadDenied', 'outsideWriteDenied', 'listenDenied',
-                'connectDenied', 'childDenied', 'runtimeWritable')
+                'connectDenied', 'childDenied', 'runtimeWritable', 'outsideMetadataDenied', 'privateReadDenied')
+SQLITE_WARNING = re.compile(
+    rb'\A\(node:[0-9]+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n'
+    rb'\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n')
+
+
+def comparison_view(side, stderr, streams):
+    """Strip one exact TS stderr prefix; raw files/events stay untouched."""
+    match = SQLITE_WARNING.match(stderr) if side == 'ts' else None
+    if not match:
+        return stderr, streams
+    remaining, events = match.end(), []
+    for channel, data in streams:
+        if channel == 'stderr' and remaining:
+            consumed = min(remaining, len(data))
+            data, remaining = data[consumed:], remaining - consumed
+        if data:
+            events.append({'stream': channel, 'hex': data.hex()})
+    return stderr[match.end():], coalesce(events)
+
+
+def pair_failures(ac, bc):
+    return [{'rule': f'{name}.{field}'} for name in ac.keys() & bc.keys()
+            for field in ac[name] if ac[name][field] != bc[name][field]]
 
 
 def plain(path, directory=False):
@@ -83,10 +108,35 @@ def load_round(path):
         require(baseline['sourceHead'] == HEAD and valid_sha(baseline['entrySha256'])
                 and Path(baseline['path']).is_absolute() and bool(baseline['files'])
                 and all(valid_sha(value) for value in baseline['files'].values()), 'round.baseline-provenance')
+        require(set(baseline['trees']) == {'src', 'dist', 'packages', 'node_modules', 'skills'}
+                and all(valid_sha(value) for value in baseline['trees'].values()), 'round.baseline-trees')
+        require(provenance['side'] == run['side'], 'round.provenance-side')
+        require(provenance['opensslConfig'] == OPENSSL_CONFIG, 'round.openssl-config')
+        node = provenance['node']
+        require(valid_sha(node['sha256']) and Path(node['path']).is_absolute(), 'round.node')
         if run['side'] == 'ts':
-            require(provenance['sourceHead'] == HEAD, 'round.ts-source')
+            require(provenance['sourceHead'] == HEAD and provenance['executable'] == node
+                    and provenance['sourcePath'] == baseline['path'], 'round.ts-source')
+        else:
+            require(Path(provenance['sourcePath']).is_absolute()
+                    and provenance['sourcePath'] != baseline['path']
+                    and provenance['executable']['path'] != node['path']
+                    and provenance['executable']['sha256'] != node['sha256'], 'round.rust-source')
         runtime = Path(run['runtime'])
         require(runtime.is_absolute() and isolation['probe']['osHomedir'] == str(runtime / 'home'), 'round.os-home')
+        policy = sandbox_profile(runtime, Path(baseline['path']), provenance['executable']['path'], run['side'])
+        require(isolation['profileText'] == policy and isolation['profileSha256'] == hashlib.sha256(policy.encode()).hexdigest(),
+                'round.profile-binding')
+        probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts')
+        require(isolation['probeProfileSha256'] == hashlib.sha256(probe_policy.encode()).hexdigest(), 'round.probe-profile')
+        if run['side'] == 'rust':
+            denial = isolation['nodeExec']
+            require(denial['denied'] is True and denial['status'] == 'DONE' and denial['timedOut'] is False
+                    and type(denial['exitCode']) is int and denial['exitCode'] != 0
+                    and denial['stdoutHex'] == ''
+                    and b'execvp' in bytes.fromhex(denial['stderrHex'])
+                    and any(s in bytes.fromhex(denial['stderrHex']) for s in (b'Operation not permitted', b'Permission denied'))
+                    and denial['audit'] == {'allStopped': True, 'remaining': [], 'errors': []}, 'round.rust-node-exec')
         for scenario in SCENARIOS:
             name = scenario['id']
             folder = path / 'cases' / name
@@ -102,13 +152,15 @@ def load_round(path):
             streams = coalesce(events)
             require(b''.join(data for channel, data in streams if channel == 'stdout') == stdout, f'{name}.stdout.events')
             require(b''.join(data for channel, data in streams if channel == 'stderr') == stderr, f'{name}.stderr.events')
+            stderr, streams = comparison_view(run['side'], stderr, streams)
             require(record['status'] == 'DONE' and record['timedOut'] is False, f'{name}.complete')
             require(record['argv'] == scenario['argv'], f'{name}.argv')
             command = [provenance['executable']['path']]
             if run['side'] == 'ts':
-                command.append('--disable-warning=ExperimentalWarning')  # normalization.md 第 6 条
                 command.append(str(Path(baseline['path']) / 'dist/src/cli/pilotdeck.js'))
             require(record['executedArgv'] == command + scenario['argv'], f'{name}.executed-argv')
+            require(record['sandboxArgv'] == ['/usr/bin/sandbox-exec', '-f', isolation['profilePath'], *command, *scenario['argv']]
+                    and record['profileSha256'] == isolation['profileSha256'], f'{name}.sandbox-binding')
             require(record['stdinHex'] == scenario['stdinHex'], f'{name}.stdin')
             require(record['cwd'] == str(runtime / 'project'), f'{name}.cwd')
             require(record['env'] == env_summary(environment(runtime, scenario)), f'{name}.env')
@@ -128,6 +180,8 @@ def load_round(path):
                         require(data == scenario[channel].encode(), f'{name}.oracle.{channel}')
                     else:
                         require(data.startswith(scenario[channel + 'Prefix'].encode()) and data.endswith(b'\n'), f'{name}.oracle.{channel}')
+                    if channel + 'Sha256' in scenario:
+                        require(hashlib.sha256(data).hexdigest() == scenario[channel + 'Sha256'], f'{name}.oracle.{channel}')
                 additions = scenario.get('diskAdditions', {})
                 require(not (before.keys() & additions.keys()) and after == before | additions,
                         f'{name}.oracle.disk')
@@ -138,11 +192,11 @@ def load_round(path):
         return {}, cases, errors + [f'evidence.invalid: {error}']
 
 
-def compare(left, right):
+def compare(left, right, expected_rust=None):
     a, ac, ae = load_round(Path(left))
     b, bc, be = load_round(Path(right))
     failures = [{'side': side, 'rule': rule} for side, errors in (('left', ae), ('right', be)) for rule in errors]
-    if not failures:
+    if a and b:
         if a['side'] != 'ts':
             failures.append({'rule': 'round.reference-must-be-ts'})
         for field in ('runtime', 'apparatus', 'scenarios'):
@@ -150,10 +204,17 @@ def compare(left, right):
                 failures.append({'rule': f'round.{field}'})
         if a['provenance']['baseline'] != b['provenance']['baseline']:
             failures.append({'rule': 'round.baseline'})
-        for name in ac:
-            for field in ac[name]:
-                if ac[name][field] != bc[name][field]:
-                    failures.append({'rule': f'{name}.{field}'})
+        if a['provenance']['node'] != b['provenance']['node']:
+            failures.append({'rule': 'round.node'})
+        if b['side'] == 'rust':
+            observed = {key: b['provenance'].get(key) for key in ('side', 'executable', 'sourcePath', 'sourceHead')}
+            if expected_rust is None or observed != expected_rust:
+                failures.append({'rule': 'round.rust-binding'})
+        elif expected_rust is not None:
+            failures.append({'rule': 'round.expected-rust-side'})
+        # Keep testing pair semantics even when the independent TS oracle fails.
+        # Real negative controls must exercise both guards, not only the oracle.
+        failures.extend(pair_failures(ac, bc))
     return {'status': 'FAIL' if failures else 'PASS', 'failures': failures,
             'scenarios': len(ac), 'scope': 'D0-pr1 calibration only'}
 
@@ -162,7 +223,16 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('left', type=Path)
     ap.add_argument('right', type=Path)
+    ap.add_argument('--rust-bin', type=Path)
+    ap.add_argument('--rust-source', type=Path)
     args = ap.parse_args()
-    result = compare(args.left, args.right)
+    if bool(args.rust_bin) != bool(args.rust_source):
+        ap.error('--rust-bin and --rust-source must be supplied together')
+    if args.rust_bin:
+        from run_round import rust_identity
+        expected = rust_identity(args.rust_bin, args.rust_source)
+    else:
+        expected = None
+    result = compare(args.left, args.right, expected)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     raise SystemExit(0 if result['status'] == 'PASS' else 1)

@@ -1,0 +1,18 @@
+PilotDeck SDK CLI
+
+  pilotdeck run <prompt> [options]
+  pilotdeck resume <session-id> <prompt> [options]
+  pilotdeck sessions list [options]
+  pilotdeck sessions messages <session-id> [options]
+  pilotdeck settings get [options]
+  pilotdeck settings set '<json>' [options]
+
+Options:
+  --gateway-url <url>       Gateway WebSocket URL
+  --auth-token <token>      Gateway auth token
+  --project <path>          Explicit Gateway project key (defaults to Gateway workspace)
+  --channel <name>          Session channel (defaults to cli)
+  --model <provider/model>  Session model override
+  --permission-mode <mode>  Session permission mode
+  --json                    Print the final run/result as JSON
+  --stream-json             Print each run event as JSONL

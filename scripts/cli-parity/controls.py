@@ -56,9 +56,11 @@ def run_controls(source, output):
         result = compare(source, target)
         rules = [row['rule'] for row in result['failures']]
         expected = f'{scenario}.oracle.{surface}'
-        passed = result['status'] == 'FAIL' and expected in rules
+        pair_rule = f'{scenario}.{"exitCode" if surface == "exit" else surface}'
+        passed = result['status'] == 'FAIL' and expected in rules and pair_rule in rules
         save(output / (name + '.comparison.json'), result)
-        results.append({'name': name, 'passed': passed, 'expectedRule': expected, 'observedRules': rules})
+        results.append({'name': name, 'passed': passed, 'expectedRule': expected,
+                        'expectedPairRule': pair_rule, 'observedRules': rules})
     report = {'status': 'PASS' if all(row['passed'] for row in results) else 'FAIL',
               'source': str(source), 'controls': results}
     save(output / 'controls.json', report)

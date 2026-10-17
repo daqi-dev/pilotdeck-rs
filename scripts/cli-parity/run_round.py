@@ -9,15 +9,17 @@ from pathlib import Path
 import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (Blocked, CleanupBlocked, HEAD, ROOT, SCRIPT, SCENARIOS, baseline_path, digest, environment,
+from common import (Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, baseline_path, digest, environment,
                     env_summary, fixture, hashes, output_path, parity_lock, save, snapshot)
 from compare import compare
+from policy import sandbox_profile
 
 MAX_BYTES = 4 * 1024 * 1024
 
@@ -39,50 +41,75 @@ def executable(path):
     return {'path': str(path), 'sha256': digest(path)}
 
 
+def directory_identity(folder, baseline):
+    """Full installed content, including hidden pnpm entries and link targets.
+
+    pnpm hardlinks are content-hashed, not rejected. External symlinks fail
+    closed: a source outside this baseline has no registered read contract.
+    """
+    if not folder.is_dir():
+        raise Blocked(f'baseline dependency missing: {folder}')
+    manifest = {}
+    def visit(path, active):
+        resolved = path.resolve()
+        if not resolved.is_relative_to(baseline):
+            raise Blocked(f'baseline external link: {path}')
+        if resolved in active:
+            raise Blocked(f'baseline link cycle: {path}')
+        info = path.lstat()
+        row = {'mode': stat.S_IMODE(info.st_mode)}
+        if path.is_symlink():
+            # Target content is covered by its canonical subtree. Following
+            # dependency links recursively would recurse around pnpm cycles.
+            relative = resolved.relative_to(baseline)
+            if not resolved.exists():
+                raise Blocked(f'baseline dangling link target: {path}')
+            # Existing pnpm links to ui/apps stay inventoried, but their target
+            # data is not readable under policy.py (canonical vnode matching).
+            row.update(type='symlink', target=os.readlink(path), resolved=relative.as_posix())
+        elif path.is_dir():
+            row['type'] = 'directory'
+            for child in sorted(path.iterdir()):
+                visit(child, active | {resolved})
+        elif path.is_file():
+            row.update(type='file', size=path.stat().st_size, sha256=digest(path))
+        else:
+            raise Blocked(f'baseline special or dangling file: {path}')
+        manifest[path.relative_to(folder).as_posix()] = row
+    visit(folder, set())
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 def baseline_identity(baseline):
     head = git_head(baseline)
     if head != HEAD:
         raise Blocked(f'baseline HEAD {head} does not match registered {HEAD}')
-    # Hash actual build output and SDK source/build, not just the entry shim.
-    files = set()
-    for prefix in ('src', 'dist', 'packages/sdk'):
-        folder = baseline / prefix
-        if not folder.is_dir():
-            raise Blocked(f'baseline dependency missing: {folder}')
-        files.update(p for p in folder.rglob('*') if p.is_file() and 'node_modules' not in p.relative_to(folder).parts)
-    for name in ('package.json', 'package-lock.json', 'pnpm-lock.yaml'):
-        if (baseline / name).is_file():
-            files.add(baseline / name)
-    manifest = {p.relative_to(baseline).as_posix(): digest(p) for p in sorted(files)}
-    if not (baseline / 'node_modules').is_dir():
-        raise Blocked('baseline node_modules missing; no automatic install')
+    # Match every baseline subtree the TS policy permits, including dependencies
+    # and bundled skills. resources/ is not readable and is deliberately absent.
+    trees = {name: directory_identity(baseline / name, baseline)
+             for name in ('src', 'dist', 'packages', 'node_modules', 'skills')}
+    manifest = {name: digest(baseline / name)
+                for name in ('package.json', 'package-lock.json', 'pnpm-lock.yaml')
+                if (baseline / name).is_file()}
     return {'path': str(baseline), 'sourceHead': head, 'entrySha256': digest(baseline / 'dist/src/cli/pilotdeck.js'),
-            'files': manifest, 'trackedClean': 'NOT_ASSERTED (HEAD plus actual file hashes)'}
+            'files': manifest, 'trees': trees, 'trackedClean': 'NOT_ASSERTED (HEAD plus actual file hashes)'}
 
 
-def sandbox_profile(runtime, baseline, binary, node):
-    if sys.platform != 'darwin' or not Path('/usr/bin/sandbox-exec').is_file():
-        raise Blocked('D0-pr1 requires macOS sandbox-exec; no unconfined fallback')
-    # Product cannot write evidence, source, installed tools or any user directory.
-    # baseline/skills：内置 skills 根（LocalGatewayBootConfig.ts:81），缺读权会让 TS 多报一行迁移失败（真实定标实测）
-    read_dirs = [runtime, baseline / 'dist', baseline / 'node_modules', baseline / 'packages', baseline / 'skills',
-                 Path('/System'), Path('/usr/lib'), Path('/Library/Apple'), Path('/opt/homebrew/Cellar'),
-                 # Homebrew node 经 /opt/homebrew/opt/* 链接加载 dylib，启动时读 OpenSSL 配置（本机实测缺任一即 abort/exit 1）
-                 Path('/opt/homebrew/opt'), Path('/opt/homebrew/etc/openssl@3')]
-    read_files = [Path('/'), Path(node), Path(binary), baseline / 'package.json', SCRIPT / 'isolation_probe.mjs',
-                  Path('/dev/null'), Path('/dev/urandom'), Path('/dev/random')]
-    def item(kind, path):
-        return f'({kind} {json.dumps(str(path.resolve()))})'
-    rules = ['(version 1)', '(deny default)', '(allow file-read-metadata)', '(allow sysctl-read)',
-             '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo"))',
-             '(allow file-read-data file-map-executable ' + ' '.join(item('subpath', p) for p in read_dirs) + ' ' +
-             ' '.join(item('literal', p) for p in read_files) + ')',
-             '(allow file-write* ' + item('subpath', runtime) + ')',
-             '(allow file-read* file-write* (literal "/dev/null") (literal "/dev/stdin") (literal "/dev/stdout") (literal "/dev/stderr"))',
-             '(allow process-exec ' + ' '.join(item('literal', Path(p)) for p in {binary, node}) + ')',
-             # deny-default covers fork, network including loopback, and other files.
-             '(deny network*)', '(deny process-fork)']
-    return '\n'.join(rules) + '\n'
+def rust_identity(binary, source):
+    return {'side': 'rust', 'executable': executable(binary), 'sourceHead': git_head(source),
+            'sourcePath': str(Path(source).resolve())}
+
+
+def check_budget(timeout, with_rust):
+    rounds = 3 if with_rust else 2
+    # Reserve five minutes for hashing/probes/controls; a separate hard deadline
+    # covers slower-than-estimated work while the shared lock is held.
+    if len(SCENARIOS) > 30 or len(SCENARIOS) * timeout * rounds + 300 >= 2400:
+        raise Blocked('batch exceeds 30 scenarios or shared-lock 2400s lease budget')
+
+
+def lease_expired(signum, frame):
+    raise KeyboardInterrupt('batch lease deadline')
 
 
 def process_table():
@@ -183,7 +210,8 @@ def capture(argv, env, cwd, stdin, timeout):
 
 
 def preflight(output, runtime, profile, node):
-    evidence = {'status': 'BLOCKED', 'errors': [], 'profileSha256': digest(profile)}
+    evidence = {'status': 'BLOCKED', 'errors': [], 'profileSha256': digest(profile),
+                'profilePath': str(profile), 'profileText': profile.read_text(), 'probeProfileSha256': digest(profile)}
     sentinel = output / 'outside-sentinel.txt'
     sentinel.write_text('D0 must stay outside child read/write scope\n')
     original = digest(sentinel)
@@ -228,7 +256,32 @@ def preflight(output, runtime, profile, node):
     return evidence
 
 
+def rust_isolation(output, runtime, profile, node, ts_isolation):
+    """The common probe uses the TS policy; Rust is its restricted policy.
+
+    Its actual policy is reconstructed by compare. Additionally test exec of
+    Node under that exact Rust policy, without adding a probe exec exception.
+    """
+    record, streams, _ = capture(['/usr/bin/sandbox-exec', '-f', str(profile), node, '--version'],
+                                 environment(runtime, SCENARIOS[0]), runtime / 'project', b'', 10)
+    stderr = streams['stderr']
+    denied = record['status'] == 'DONE' and record['timedOut'] is False and record['exitCode'] not in (None, 0) and not streams['stdout'] and b'execvp' in stderr and any(
+        s in stderr for s in (b'Operation not permitted', b'Permission denied'))
+    proof = {'denied': denied, 'exitCode': record['exitCode'], 'stdoutHex': streams['stdout'].hex(),
+             'stderrHex': stderr.hex(), 'audit': record['audit'], 'status': record['status'], 'timedOut': record['timedOut']}
+    evidence = {**ts_isolation, 'profilePath': str(profile), 'profileText': profile.read_text(),
+                'profileSha256': digest(profile), 'nodeExec': proof, 'status': 'PASS' if denied else 'BLOCKED'}
+    save(output / 'rust-isolation.json', evidence)
+    if not record['audit']['allStopped']:
+        raise CleanupBlocked('Rust Node-denial probe cleanup failed')
+    if not denied:
+        raise Blocked('Rust sandbox did not prove Node exec denied')
+    return evidence
+
+
 def run_round(output, runtime, profile, isolation, side, provenance, timeout):
+    if baseline_identity(Path(provenance['baseline']['path'])) != provenance['baseline']:
+        raise Blocked('baseline changed before round')
     folder = output / side
     folder.mkdir()
     (folder / 'cases').mkdir()
@@ -244,16 +297,17 @@ def run_round(output, runtime, profile, isolation, side, provenance, timeout):
         save(case / 'initial.json', snapshot(runtime))
         command = [provenance['executable']['path']]
         if actual_side == 'ts':
-            # Node 运行时实验特性警告（如 SQLite ExperimentalWarning，含每次不同的 PID）不是产品输出；
-            # 只关这一类运行时警告，产品自身 stderr 不过滤（specs/cli-parity/normalization.md 第 6 条）
-            command.append('--disable-warning=ExperimentalWarning')
             command.append(str(Path(provenance['baseline']['path']) / 'dist/src/cli/pilotdeck.js'))
         command.extend(scenario['argv'])
         env = environment(runtime, scenario)
-        record, streams, events = capture(['/usr/bin/sandbox-exec', '-f', str(profile), *command],
+        if digest(profile) != isolation['profileSha256']:
+            raise Blocked('sandbox profile changed before scenario')
+        sandbox_argv = ['/usr/bin/sandbox-exec', '-f', str(profile), *command]
+        record, streams, events = capture(sandbox_argv,
                                            env, runtime / 'project', bytes.fromhex(scenario['stdinHex']), timeout)
         record.update(argv=scenario['argv'], executedArgv=command, stdinHex=scenario['stdinHex'],
-                      cwd=str(runtime / 'project'), env=env_summary(env))
+                      cwd=str(runtime / 'project'), env=env_summary(env), sandboxArgv=sandbox_argv,
+                      profileSha256=digest(profile))
         for name, value in streams.items():
             (case / f'{name}.bin').write_bytes(value)
         save(case / 'events.json', events)
@@ -263,8 +317,12 @@ def run_round(output, runtime, profile, isolation, side, provenance, timeout):
         print(f'{side} {scenario["id"]}: {record["status"]} exit={record["exitCode"]}', flush=True)
         if not record['audit']['allStopped']:
             raise CleanupBlocked(f'{side}/{scenario["id"]}: cleanup failed; retaining shared lock')
+        if record['profileSha256'] != isolation['profileSha256']:
+            raise Blocked('sandbox profile changed during scenario')
         if record['status'] != 'DONE':
             raise Blocked(f'{side}/{scenario["id"]}: incomplete recording')
+    if baseline_identity(Path(provenance['baseline']['path'])) != provenance['baseline']:
+        raise Blocked('baseline changed during round')
     run['status'] = 'DONE'
     save(folder / 'round.json', run)
     return folder
@@ -283,21 +341,33 @@ def main():
         ap.error('--timeout must be finite and in (0, 60]')
     if bool(args.rust_bin) != bool(args.rust_source):
         ap.error('--rust-bin and --rust-source must be supplied together')
+    check_budget(args.timeout, bool(args.rust_bin))
     output = output_path(args.output)
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, mode=0o700)
     summary = {'status': 'BLOCKED', 'scope': 'D0-pr1 calibration; no command migration claim'}
     try:
+        if sys.platform != 'darwin' or not Path('/usr/bin/sandbox-exec').is_file():
+            raise Blocked('D0-pr1 requires macOS sandbox-exec; no unconfined fallback')
         baseline = baseline_path(args.baseline)
         if not args.node:
             raise Blocked('Node executable not found')
         node = executable(args.node)
         identity = baseline_identity(baseline)
-        provenance = {'executable': node, 'sourceHead': HEAD, 'baseline': identity}
+        provenance = {'side': 'ts', 'executable': node, 'sourceHead': HEAD, 'sourcePath': str(baseline),
+                      'baseline': identity, 'node': node, 'opensslConfig': OPENSSL_CONFIG}
         runtime = output / 'runtime'
-        binary = executable(args.rust_bin) if args.rust_bin else node
-        profile = output / 'sandbox.sb'
-        profile.write_text(sandbox_profile(runtime, baseline, binary['path'], node['path']))
+        expected_rust = rust_identity(args.rust_bin, args.rust_source) if args.rust_bin else None
+        if expected_rust and (expected_rust['executable']['path'] == node['path']
+                              or expected_rust['executable']['sha256'] == node['sha256']
+                              or expected_rust['sourcePath'] == str(baseline)):
+            raise Blocked('Rust candidate must not be the TS runtime or source')
+        profile = output / 'ts.sb'
+        profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts'))
         with parity_lock() as owner:
+            # Stop before other runners may consider the lease expired. The
+            # handler raises through capture's finally so owned groups are reaped.
+            previous_alarm = signal.signal(signal.SIGALRM, lease_expired)
+            signal.alarm(2280)
             save(output / 'lock.json', owner)
             fixture(runtime)
             isolation = preflight(output, runtime, profile, node['path'])
@@ -313,20 +383,28 @@ def main():
                 summary['controls'] = run_controls(first, output / 'controls')
                 summary['status'] = summary['controls']['status']
                 if args.rust_bin:
-                    rust_provenance = {'executable': binary, 'sourceHead': git_head(args.rust_source),
-                                       'sourcePath': str(args.rust_source.resolve()), 'baseline': identity}
-                    candidate = run_round(output, runtime, profile, isolation, 'rust', rust_provenance, args.timeout)
-                    summary['rustComparison'] = compare(first, candidate)
+                    rust_profile = output / 'rust.sb'
+                    rust_profile.write_text(sandbox_profile(runtime, baseline, expected_rust['executable']['path'], 'rust'))
+                    fixture(runtime)
+                    rust_probe = rust_isolation(output, runtime, rust_profile, node['path'], isolation)
+                    runtime.rename(output / 'rust-preflight-tree')
+                    rust_provenance = {**expected_rust, 'baseline': identity, 'node': node, 'opensslConfig': OPENSSL_CONFIG}
+                    candidate = run_round(output, runtime, rust_profile, rust_probe, 'rust', rust_provenance, args.timeout)
+                    summary['rustComparison'] = compare(first, candidate, expected_rust)
                     if summary['rustComparison']['status'] != 'PASS':
                         summary['status'] = 'FAIL'
             # Ensure baseline executable and observed source/build were unchanged during recording.
             if executable(args.node) != node or baseline_identity(baseline) != identity:
                 raise Blocked('baseline/runtime changed during recording')
-            if args.rust_bin and executable(args.rust_bin) != binary:
-                raise Blocked('Rust executable changed during recording')
+            if args.rust_bin and rust_identity(args.rust_bin, args.rust_source) != expected_rust:
+                raise Blocked('Rust executable/source HEAD changed during recording')
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         summary['status'] = 'BLOCKED'
         summary['error'] = str(error)
+    finally:
+        if 'previous_alarm' in locals():
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous_alarm)
     save(output / 'summary.json', summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2}[summary['status']]
