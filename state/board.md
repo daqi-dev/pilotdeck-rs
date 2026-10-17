@@ -1,5 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 第九轮（连续推进）：#167 修复部分合并（#169），A5.4 兼容主体齐
+> **#169 合并**：validate_calibration 核对 repetition/phase/variant 与预注册 ID + 空账本拒绝（audit P1 缺口闭合）；24 条负控；FROZEN 三登 check_frozen 18 项 PASS（评审 P1 条件项经协调者实跑闭合）。#170（Node 侧轮次标签）登记。
+> **#167 留开**：六轮重采被 controls 自比门挡（fresh proxy 产物与 fixed manifest 不匹配：G0.round unfinished / G1.coverage 场景目录缺多）——独立装置问题待调查，前置于 A5.4 定标与 E0 证据。
+> **A5 状态**：A5.1✅ A5.2✅ A5.3✅ A5.4 兼容主体齐（calibrate 360 次 PASS）；未冻结部分= D4 评分口径 + deadline 差异（均待人批）+ #167 重采。**#67 保持 OPEN**（按 plan005 口径标「兼容部分完成，修正口径待批」的时点未到——重采未完）。
+> **下一单**：#127（A6 Rust 宿主能力）调研与首包（A5.1 账本已在 main，A6 按包拆 PR 可起步；D4 未批不阻塞 A6 的存储/宿主基建）。
+
 > ## 2026-10-17 · 第八轮（连续推进）：A5.3 合并（#163），四张 P2-跟进登记
 > **A5.3 完成**：session_domain.py E1 入口（calibrate 360 次测量全过 + 10 类负控 + F5 补四规则内存变异 + deadline 四格 NOT_RUN 结构自检）双家评审三轮收敛合并 main。**FROZEN 双重登记**：①补 #142 漏登的 accepted-diffs 哈希（人批 2026-10-17）②白名单 15 件 + 三新脚本；check_frozen 18 项 PASS。P2-跟进：#164（进程组免ps探测）#165（分母入FROZEN）#166（NOT_RUN退出码）#167（A2六轮重采+repetition=0缺口）——各标前置节点。
 > **待批清单（人出现时提醒，不停机）**：① #19 deadline 差异登记（decisions-20261017-deadline-diff.md，推荐A）；② D4 评分口径（exp014 六格材料齐）；③ #150 Draft 处置。
