@@ -18,12 +18,21 @@ use std::{fmt, io};
 pub enum LedgerError {
     Io(io::Error),
     Invalid(String),
+    /// The store can no longer certify its in-memory view. Drop the ledger and
+    /// reopen the transcript before retrying, including after an uncertain commit.
+    ReopenRequired(String),
 }
 impl fmt::Display for LedgerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => e.fmt(f),
             Self::Invalid(s) => f.write_str(s),
+            Self::ReopenRequired(reason) => {
+                write!(
+                    f,
+                    "Session operation ledger must be reopened before use: {reason}"
+                )
+            }
         }
     }
 }
@@ -31,7 +40,7 @@ impl std::error::Error for LedgerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Invalid(_) => None,
+            Self::Invalid(_) | Self::ReopenRequired(_) => None,
         }
     }
 }

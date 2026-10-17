@@ -118,10 +118,15 @@ struct Record {
     terminal: Option<Terminal>,
 }
 
-/// A synchronous commit boundary. Returning Err must not report a committed event.
+/// A synchronous commit boundary. The ledger publishes memory only after Ok.
+/// A sink with an uncertain disk result must reject further use via check_health
+/// until reopened; Err must never be treated as evidence that retry is safe.
 /// Mutable access serializes writes; callers using async code should own the ledger
 /// on a blocking worker rather than perform filesystem IO on the executor thread.
 pub trait TranscriptSink {
+    fn check_health(&self) -> Result<()> {
+        Ok(())
+    }
     fn append(&mut self, session_id: &JsString, turn_id: &JsString, event: JsObject) -> Result<()>;
 }
 
@@ -232,7 +237,11 @@ impl<S: TranscriptSink> SessionOperationLedger<S> {
             };
         }
         let mut stable = input.clone();
-        stable.resolution.seed_state = normalize_seed(input.resolution.seed_state.as_ref())?;
+        let serialized_seed = serialize_seed(input.resolution.seed_state.as_ref())?;
+        // TS cloneSeedState parses the serialized projection, not the caller's
+        // object (e.g. nullable top-level fields are omitted by serialization).
+        // Validate before append; malformed-value failure timing remains #201.
+        stable.resolution.seed_state = normalize_seed(serialized_seed.as_ref())?;
         let mut event = id.event("agent_loop_operation_terminal");
         optional_string(&mut event, "streamId", input.stream_id.as_ref());
         event.insert(
@@ -248,7 +257,7 @@ impl<S: TranscriptSink> SessionOperationLedger<S> {
             "messages".into(),
             JsValue::Array(input.resolution.messages.clone()),
         );
-        if let Some(seed) = serialize_seed(input.resolution.seed_state.as_ref())? {
+        if let Some(seed) = serialized_seed {
             event.insert("seedState".into(), seed);
         }
         id.append_key(&mut event);
@@ -306,6 +315,9 @@ impl<S: TranscriptSink> SessionOperationLedger<S> {
             }))
     }
     fn assert_session(&self, input: &OperationIdentity) -> Result<()> {
+        // Guard reads and idempotent no-ops too: a failed store must not answer
+        // from memory when its disk outcome is unknown.
+        self.sink.check_health()?;
         if input.session_id == self.session_id {
             Ok(())
         } else {
@@ -529,7 +541,7 @@ fn nonempty_string(value: &JsValue, key: &str) -> Option<JsString> {
         .filter(|s| !s.is_empty())
         .cloned()
 }
-fn truthy(v: &JsValue) -> bool {
+pub(super) fn truthy(v: &JsValue) -> bool {
     match v {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(b) => *b,

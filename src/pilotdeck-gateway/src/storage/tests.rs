@@ -619,14 +619,11 @@ fn partial_fs_write_and_rename_failure_leave_disk_and_revision_unchanged() {
         }
         assert!(matches!(
             l.accept(&id(), &"stream-1".into()),
-            Err(LedgerError::Io(_))
+            Err(LedgerError::ReopenRequired(_))
         ));
         assert_eq!(fs::read(scratch.path()).unwrap(), before);
         assert_eq!(l.sink().snapshot_state(), state);
-        assert_eq!(
-            l.recover(&id()).unwrap(),
-            Some(OperationRecovery::Incomplete)
-        );
+        assert_store_requires_reopen(&mut l);
         assert!(
             fs::read_dir(&scratch.0).unwrap().all(|e| !e
                 .unwrap()
@@ -634,9 +631,129 @@ fn partial_fs_write_and_rename_failure_leave_disk_and_revision_unchanged() {
                 .to_string_lossy()
                 .ends_with(".tmp"))
         );
+        drop(l);
+        let mut l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+        assert_eq!(l.sink().snapshot_state(), state);
+        assert_eq!(
+            l.recover(&id()).unwrap(),
+            Some(OperationRecovery::Incomplete)
+        );
         l.accept(&id(), &"stream-2".into()).unwrap();
         assert_eq!(l.sink().snapshot_state().sequence, state.sequence + 1);
     }
+}
+
+fn assert_store_requires_reopen(l: &mut SessionOperationLedger<JsonlLedgerStore>) {
+    // Includes reads and the already-started no-op, which never call append.
+    assert!(matches!(
+        l.recover(&id()),
+        Err(LedgerError::ReopenRequired(_))
+    ));
+    assert!(matches!(
+        l.reconcile(&unknown()),
+        Err(LedgerError::ReopenRequired(_))
+    ));
+    assert!(matches!(
+        l.start(&id()),
+        Err(LedgerError::ReopenRequired(_))
+    ));
+    assert!(matches!(
+        l.accept(&id(), &"stream-1".into()),
+        Err(LedgerError::ReopenRequired(_))
+    ));
+    assert!(matches!(
+        l.terminal(&known()),
+        Err(LedgerError::ReopenRequired(_))
+    ));
+    assert!(matches!(
+        l.result_unknown(&unknown()),
+        Err(LedgerError::ReopenRequired(_))
+    ));
+}
+
+#[test]
+fn uncertain_commit_requires_reopen_before_recovery_or_retry() {
+    let scratch = Scratch::new();
+    let mut l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+    l.start(&id()).unwrap();
+    let before = l.sink().snapshot_state();
+    l.sink_mut().fail_after_rename = true;
+    let error = l.accept(&id(), &"stream-1".into()).unwrap_err();
+    assert!(matches!(error, LedgerError::ReopenRequired(_)));
+    assert!(error.to_string().contains("must be reopened"));
+    // Disk committed, but memory did not: no cached operation can be observed.
+    assert_eq!(l.sink().snapshot_state(), before);
+    let bytes = fs::read(scratch.path()).unwrap();
+    assert_eq!(read_transcript(scratch.path()).unwrap().entries.len(), 2);
+    assert_store_requires_reopen(&mut l);
+    assert_eq!(fs::read(scratch.path()).unwrap(), bytes);
+    drop(l);
+    let mut l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+    assert_eq!(l.sink().snapshot_state().sequence, 2);
+    l.accept(&id(), &"stream-1".into()).unwrap();
+    assert_eq!(fs::read(scratch.path()).unwrap(), bytes);
+    assert!(l.accept(&id(), &"different-stream".into()).is_err());
+    l.terminal(&known()).unwrap();
+    assert_eq!(l.sink().snapshot_state().sequence, 3);
+}
+
+#[test]
+fn lost_disk_history_poison_is_sticky_until_reopen() {
+    let scratch = Scratch::new();
+    let mut l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+    l.start(&id()).unwrap();
+    let started = fs::read(scratch.path()).unwrap();
+    l.accept(&id(), &"stream-1".into()).unwrap();
+    let accepted = fs::read(scratch.path()).unwrap();
+    // Model storage rolling back an acknowledged directory entry, without
+    // pretending to simulate an actual power cut or claim fsync durability.
+    fs::write(scratch.path(), &started).unwrap();
+    assert!(matches!(
+        l.terminal(&known()),
+        Err(LedgerError::ReopenRequired(_))
+    ));
+    assert_eq!(fs::read(scratch.path()).unwrap(), started);
+    assert_store_requires_reopen(&mut l);
+    // Even if external bytes later match again, this instance stays unusable.
+    fs::write(scratch.path(), &accepted).unwrap();
+    assert_store_requires_reopen(&mut l);
+    drop(l);
+    let mut l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+    l.terminal(&known()).unwrap();
+    assert_eq!(l.sink().snapshot_state().sequence, 3);
+}
+
+#[cfg(unix)]
+#[test]
+fn hard_link_aliases_fork_on_replace_and_are_not_shared_sessions() {
+    use std::os::unix::fs::MetadataExt;
+    let scratch = Scratch::new();
+    scratch.fixture("incomplete");
+    let alias = scratch.0.join("hard-link.jsonl");
+    fs::hard_link(scratch.path(), &alias).unwrap();
+    assert_eq!(
+        fs::metadata(scratch.path()).unwrap().ino(),
+        fs::metadata(&alias).unwrap().ino()
+    );
+    let mut first = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+    let mut second = JsonlLedgerStore::open(&alias, "session-1").unwrap();
+    first.terminal(&known()).unwrap();
+    assert_ne!(
+        fs::metadata(scratch.path()).unwrap().ino(),
+        fs::metadata(&alias).unwrap().ino()
+    );
+    second.result_unknown(&unknown()).unwrap();
+    drop((first, second));
+    let first = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+    let second = JsonlLedgerStore::open(alias, "session-1").unwrap();
+    assert!(matches!(
+        first.recover(&id()).unwrap(),
+        Some(OperationRecovery::Terminal(_))
+    ));
+    assert!(matches!(
+        second.recover(&id()).unwrap(),
+        Some(OperationRecovery::ResultUnknown(_))
+    ));
 }
 #[test]
 fn lock_contention_and_drop_release_cover_canonical_path_aliases() {
@@ -775,6 +892,126 @@ fn malformed_history_conflicts_fail_without_rewriting_bytes() {
         );
         assert_eq!(fs::read_to_string(scratch.path()).unwrap(), bytes);
     }
+}
+
+#[test]
+fn real_ts_rejects_mismatched_accepted_and_terminal_identities() {
+    let fixture = oracle();
+    let JsValue::Array(cases) = field(&fixture, "rejectedCases") else {
+        panic!()
+    };
+    assert_eq!(cases.len(), 16);
+    for case in cases {
+        let name = string(field(case, "name"));
+        let scratch = Scratch::new();
+        scratch.fixture(&name);
+        let before = fs::read(scratch.path()).unwrap();
+        // The real TS reader accepted every envelope, then its ledger rejected
+        // the identity. Assert the same layer, not an unrelated IO/shape error.
+        assert!(
+            read_transcript(scratch.path())
+                .unwrap()
+                .diagnostics
+                .is_empty()
+        );
+        let error = match JsonlLedgerStore::open(scratch.path(), "session-1") {
+            Ok(_) => panic!("accepted TS-rejected identity: {name}"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, LedgerError::Invalid(_)), "{name}: {error}");
+        assert!(
+            error.to_string().contains("before it started"),
+            "{name}: {error}"
+        );
+        assert_eq!(fs::read(scratch.path()).unwrap(), before, "{name}");
+    }
+}
+
+#[test]
+fn real_ts_seed_admission_matches_on_disk_and_online() {
+    let fixture = oracle();
+    let JsValue::Array(cases) = field(&fixture, "seedCases") else {
+        panic!()
+    };
+    assert_eq!(cases.len(), 6);
+    for case in cases {
+        let name = string(field(case, "name"));
+        let scratch = Scratch::new();
+        scratch.fixture(&format!("seed-{name}"));
+        let before = fs::read(scratch.path()).unwrap();
+        match JsonlLedgerStore::open(scratch.path(), "session-1") {
+            Ok(l) => {
+                assert_eq!(field(case, "restoreError"), &JsValue::Null, "{name}");
+                assert_eq!(
+                    recovery_json(l.recover(&id()).unwrap()),
+                    *field(case, "recovery"),
+                    "{name}"
+                );
+            }
+            Err(error) => {
+                assert!(
+                    field(case, "restoreError").as_string().is_some(),
+                    "{name}: {error}"
+                );
+                assert!(matches!(error, LedgerError::Invalid(_)), "{name}: {error}");
+            }
+        }
+        assert_eq!(fs::read(scratch.path()).unwrap(), before, "{name}");
+
+        let online = Scratch::new();
+        let mut l = JsonlLedgerStore::open(online.path(), "session-1").unwrap();
+        l.start(&id()).unwrap();
+        l.accept(&id(), &"stream-1".into()).unwrap();
+        let mut terminal = known();
+        terminal.resolution.seed_state = Some(field(case, "input").clone());
+        let result = l.terminal(&terminal);
+        if field(case, "onlineError") == &JsValue::Null {
+            result.unwrap();
+            assert_eq!(
+                recovery_json(l.recover(&id()).unwrap()),
+                *field(case, "recovery"),
+                "{name}"
+            );
+            let actual = mask_generated_envelopes(&fs::read_to_string(online.path()).unwrap());
+            let expected = mask_generated_envelopes(std::str::from_utf8(&before).unwrap());
+            assert_eq!(actual, expected, "{name}");
+            drop(l);
+            let l = JsonlLedgerStore::open(online.path(), "session-1").unwrap();
+            assert_eq!(
+                recovery_json(l.recover(&id()).unwrap()),
+                *field(case, "recovery"),
+                "{name}"
+            );
+        } else {
+            assert!(matches!(result, Err(LedgerError::Invalid(_))), "{name}");
+            // #201: TS writes this invalid terminal before clone/parse fails;
+            // Rust validates before publishing. Do not make disk corrupt for parity.
+            assert_eq!(read_transcript(online.path()).unwrap().entries.len(), 2);
+            assert_eq!(
+                l.recover(&id()).unwrap(),
+                Some(OperationRecovery::Incomplete)
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_utf8_and_non_date_timestamp_match_real_ts_without_rewriting() {
+    let fixture = oracle();
+    let expected = field(&fixture, "utf8Read");
+    let scratch = Scratch::new();
+    scratch.fixture("invalid-utf8");
+    let original = fs::read(scratch.path()).unwrap();
+    assert!(std::str::from_utf8(&original).is_err());
+    let read = read_transcript(scratch.path()).unwrap();
+    assert!(read.diagnostics.is_empty());
+    assert_eq!(JsValue::Array(read.entries), *field(expected, "entries"));
+    let mut l = JsonlLedgerStore::open(scratch.path(), "session-1").unwrap();
+    assert_eq!(l.sink().snapshot_state().sequence, 1);
+    l.accept(&id(), &"stream-1".into()).unwrap();
+    let after = fs::read(scratch.path()).unwrap();
+    assert!(after.starts_with(&original));
+    assert_eq!(l.sink().snapshot_state().sequence, 2);
 }
 #[test]
 fn outside_writer_changes_are_not_overwritten() {

@@ -1,13 +1,14 @@
 //! The ledger seed projection preserves optional fields and duplicate paths.
 //! The agent constructor's state projection has different normalization rules.
-use super::{Result, invalid};
+use super::{Result, invalid, ledger::truthy};
 use pilotdeck_protocol::{JsObject, JsValue};
 
 // TS serializeAgentLoopSeedStateProjection selects top-level fields, but does
 // not normalize each Map value. Preserve that distinction for JSON.stringify
-// identity: clone/restore parses the projection only after persistence.
+// identity: TS clone/restore parses the serialized projection. Rust retains the
+// same wire/in-memory distinction but validates before append (timing: #201).
 pub(super) fn serialize_seed(value: Option<&JsValue>) -> Result<Option<JsValue>> {
-    let Some(value) = value.filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined)) else {
+    let Some(value) = value.filter(|v| truthy(v)) else {
         return Ok(None);
     };
     let source = value
@@ -15,10 +16,7 @@ pub(super) fn serialize_seed(value: Option<&JsValue>) -> Result<Option<JsValue>>
         .ok_or_else(|| invalid("Invalid sidecar seedState: expected an object."))?;
     let mut result = JsObject::new();
     for key in ["allowedReadFiles", "readFileState", "writeSnapshots"] {
-        if let Some(value) = source
-            .get(key)
-            .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
-        {
+        if let Some(value) = source.get(key).filter(|v| truthy(v)) {
             result.insert(key.into(), value.clone());
         }
     }
