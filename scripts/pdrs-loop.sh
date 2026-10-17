@@ -76,7 +76,7 @@ stale=0
 carry=""   # 留给下一迭代任务书的「先处置」指令
 while :; do
   iter=$((iter + 1))
-  [ "$iter" -le "$MAX_ITER" ] || { echo "pdrs-loop: 到 max-iter=$MAX_ITER，停"; exit 0; }
+  [ "$iter" -le "$MAX_ITER" ] || { echo "pdrs-loop: 到 max-iter=${MAX_ITER}，停"; exit 0; }
   if [ -e "$STOP_FILE" ]; then echo "pdrs-loop: 见 stop 文件，停"; rm -f "$STOP_FILE"; exit 0; fi
 
   used_kib="$({ du -sk "$ROOT/_build" "$ROOT/_tmp" 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')"
@@ -90,7 +90,7 @@ while :; do
   case "$rc" in
     0) ;;
     3) echo "pdrs-loop: 队列无 ready 项，停（连续推进停机条件④）"; exit 0 ;;
-    *) echo "pdrs-loop: next-task 退出码 $rc，停；先修 board READY 块" >&2; exit 1 ;;
+    *) echo "pdrs-loop: next-task 退出码 ${rc}，停；先修 board READY 块" >&2; exit 1 ;;
   esac
   ref="$(printf '%s' "$head_line" | cut -f1)"
   kind="$(printf '%s' "$head_line" | cut -f2)"
@@ -106,22 +106,22 @@ while :; do
     stale=0
   fi
   if [ "$stale" -ge 2 ]; then
-    echo "pdrs-loop: $ref 连续两迭代未推进且未被挂起，停（交人看 $RUN_DIR）" >&2; exit 1
+    echo "pdrs-loop: $ref 连续两迭代未推进且未被挂起，停（交人看 ${RUN_DIR}）" >&2; exit 1
   fi
   if [ "$stale" = 1 ]; then
-    carry="${carry:+$carry }上一迭代结束时没有更新 board，队首仍是 $ref。先核现场（worktree、在途进程、_tmp 证据），把 $ref 在 READY 块标为 blocked 并在本轮段写明原因（单线挂起），再取下一条 ready 继续。"
+    carry="${carry:+$carry }上一迭代结束时没有更新 board，队首仍是 ${ref}。先核现场（worktree、在途进程、_tmp 证据），把 $ref 在 READY 块标为 blocked 并在本轮段写明原因（单线挂起），再取下一条 ready 继续。"
   fi
 
   idir="$RUN_DIR/iter-$(printf '%03d' "$iter")"
   mkdir -p "$idir"
   cat > "$idir/prompt.md" <<EOF
-# 外层循环第 $iter 迭代 · 协调者任务书（scripts/pdrs-loop.sh 生成）
+# 外层循环第 ${iter} 迭代 · 协调者任务书（scripts/pdrs-loop.sh 生成）
 
 你是 PilotDeck-RS 本迭代的协调者。按 CLAUDE.md 开工协议读 .42cog/、board、memory 后，**只做这一单**：
 
-- 队首：$ref（kind=$kind）— $summary
-- 路由（正本在 scripts/next-task.sh route_for）：$route
-${carry:+- **先处置**：$carry}
+- 队首：${ref}（kind=${kind}）— ${summary}
+- 路由（正本在 scripts/next-task.sh route_for）：${route}
+${carry:+- **先处置**：${carry}}
 
 规则：
 1. 技能停点按 CLAUDE.md「技能停点覆盖表」处理，不等人；需人拍板的写决策卡，把该条目在 READY 块改为 human，然后结束本迭代。
@@ -137,7 +137,7 @@ EOF
     claude)   cmd=(claude -p --model claude-opus-5-5 --permission-mode dontAsk --output-format stream-json --verbose) ;;
   esac
   printf '%s ' "${cmd[@]}" > "$idir/command.txt"; echo "< $idir/prompt.md  # cwd=$ROOT timeout=${ITER_TIMEOUT}s" >> "$idir/command.txt"
-  echo "pdrs-loop: 第 $iter 迭代 $ref（$kind）→ $RUNNER；证据 $idir"
+  echo "pdrs-loop: 第 $iter 迭代 ${ref}（${kind}）→ ${RUNNER}；证据 $idir"
   if [ "$DRY" = 1 ]; then echo "pdrs-loop: dry-run，任务书与命令已写，停"; exit 0; fi
 
   start="$(date '+%F %T')"
@@ -150,6 +150,6 @@ EOF
   case "$ec" in 0) status=done ;; 124|137) status=timeout ;; *) status=error ;; esac
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$iter" "$start" "$ref" "$upd_before" "$status" "$ec" >> "$LEDGER"
   if [ "$status" = timeout ]; then
-    carry="上一迭代（$ref）在两小时交接点被超时终止。先核现场与 board 是否已写交接，缺则补写，再继续。"
+    carry="上一迭代（${ref}）在两小时交接点被超时终止。先核现场与 board 是否已写交接，缺则补写，再继续。"
   fi
 done

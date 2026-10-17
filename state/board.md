@@ -1,14 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 13:55 · by 协调者(GLM)
-- A6.1-pr1 | impl | ready | 协议 client：spawn/handshake/execute + seq/ACK + 断线 fail-closed；任务书 _tmp/20261017-a61/brief-next.md
+updated: 2026-10-17 15:24 · by 协调者(GLM)
+- A6.1-pr1 | impl | ready | 协议 client：spawn/handshake/execute + seq/ACK + 断线 fail-closed；任务书 _tmp/20261017-a61/brief-next.md（首跑因 claude dontAsk 缺 allow 列表未开工；白名单已补 .claude/settings.json，待二跑）
 - #167 | research | ready | 重采调查：controls 自比门（fresh proxy 与 fixed manifest 不匹配）
 - A6.1-pr2 | impl | blocked | replay/cancel，前置 A6.1-pr1 合并
 - #19 | coord | human | deadline 差异登记待人批：state/decisions-20261017-deadline-diff.md
 - D4 | coord | human | 评分口径待人批（exp014 六格材料）
 - #150 | coord | human | Draft 处置待人定
 <!-- READY:END -->
+
+> ## 2026-10-17 · 外层循环首跑验收（--max-iter 1，runner=claude）
+> **机制四项全过**：拉起协调会话→任务书派发→7200s 时限→ledger 落账 done/exit0→按 max-iter 自然停。**通道被权限卡死**：claude dontAsk 无项目 allow 列表，Edit/codex/cargo/git 全拒，A6.1-pr1 未开工；opus 协调者（14 轮/$0.92）正确拒绝自我扩权并留完整交接（`_tmp/20261017-pdrs-loop/iter-001/out.log`）。修复：`.claude/settings.json` 白名单（与第 14 条授权对齐）+ pdrs-loop.sh bash3.2 多字节变量 9 处花括号化。**磁盘 43.6/46G**：开 wt-a61 前须先清 _tmp（归档后删）。二跑待人确认。
 
 > ## 2026-10-17 · 第十轮（本轮收尾）：A6.1 调研完成，任务书就绪
 > **A6.1 发车调研**：TS 协议面 2021 行（client 1784 + stdio 237）已量；Rust 侧方向确认（宿主 client 放 `pilotdeck-gateway/src/host/`，与 sidecar 侧 transport 分离；复用 protocol crate 与 exp015 交叉装置）。**任务书 `_tmp/20261017-a61/brief-next.md`**——下一棒直接派 codex 发车第一 PR（协议 client：spawn/handshake/execute + stream identity/seq/ACK + 断线 fail-closed + TS↔Rust 交叉测试）。
