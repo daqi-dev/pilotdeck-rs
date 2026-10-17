@@ -1,14 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 16:28 · by 协调者(opus·loop三跑)
-- #167-resample | impl | ready | A2 六轮重采：wt 内先 CARGO_TARGET_DIR=<wt>/src/target cargo build -p pilotdeck-gateway，持锁串行跑 ts1-5+proxy+controls，按 #163 程序重登记；根因见 _tmp/20261017-167/investigation.md
-- A6.1-pr1 | impl | blocked | 协议 client（任务书 _tmp/20261017-a61/brief-next.md）；连续三迭代未开工（前两跑权限卡），循环卡队首保护挂起；三跑实测单段 Bash/gh 可用、复合命令（cd &&、ps）被拒，下一协调者核 codex exec 可派后改回 ready
+updated: 2026-10-17 17:40 · by 协调者(opus·/loop 交互会话)
+- #167-resample | review | blocked | 两家独立审查在跑（codex + GLM，任务书 _tmp/20261017-167-resample/review-task.md）；收敛无 P0/P1 后开 PR（分支 docs/167-a1-resample，wt-167）rebase 合并
+- A6.1-pr1 | impl | ready | 协议 client（任务书 _tmp/20261017-a61/brief-next.md）；本会话已实测 codex exec 可派（只读评审通道跑通），可发车
 - A6.1-pr2 | impl | blocked | replay/cancel，前置 A6.1-pr1 合并
 - #19 | coord | human | deadline 差异登记待人批：state/decisions-20261017-deadline-diff.md
 - D4 | coord | human | 评分口径待人批（exp014 六格材料）
 - #150 | coord | human | Draft 处置待人定
 <!-- READY:END -->
+
+> ## 2026-10-17 · /loop 交互首轮：#167 A2 尺子 r4 重采机器项全绿，待两家审
+> 主仓 HEAD 构建 gateway 后六轮都跑起来了，但 proxy 轮判 G2.observer：A4 已把十个只读 method 本地化，冻结规约要求 A1 代理全透传——尺子没错，是被测物换代了；同一原件用规约已授权的 `compare --local-method ×10` 复核 PASS。正式重采改用 A1 纯透传源 896b37f 构建 proxy（冻结件零改动）：`check_ruler` 机器项全 true、PENDING_REVIEW（原件 `_tmp/20261017-167-resample/ruler-r4-a1/`）。登记见 exp006 readme r4 段与 `state/decisions-20261017-167-ruler.md`（A1 选取 AI 代批待复核；check_ruler 升 A4 语义列入待批）。codex + GLM 独立审查在跑。杂项：主仓 `_tmp/` 五个裸 tgz 违反命名规范（上一会话归档遗留），待整理。**下一步**：审查收敛→开 PR 合并→A6.1-pr1 发车。
 
 > ## 2026-10-17 · 外层循环三跑：A6.1-pr1 挂起，#167 调查结案
 > **A6.1-pr1 → blocked**（任务书指令：上一迭代未推进即挂起；现场仅主仓 worktree、无 wt-a61、无在途证据）。**#167 根因**：「controls 自比门」失败不是装置失配——proxy 轮 `run.json` 为 ERROR，`run_round.py:160` 硬编码的 `src/target/debug/pilotdeck-gateway` 在 wt-167 不存在，G0/G1/G3 全是级联；TS 五轮自比全 PASS。处置不动冻结件：wt 内按该路径构建后重采（`_tmp/20261017-167/investigation.md`，已评论 issue）。**权限观察**：dontAsk 下 `cd … &&` 复合命令与 `ps` 被拒，单段命令可用。**下一单**：#167-resample。
