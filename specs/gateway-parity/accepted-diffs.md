@@ -21,9 +21,9 @@ A1 的 RSV/continuation/unmasked codec 差异由 A2 原始 WS 探针实际判 FA
 
 - **类别**：bug 修复（意向书「bug 默认修」第③项：有安全问题）。
 - **基线依据**（cc7c4e6 `src/`）：transcript 读取链（`cli/createLocalGateway.ts:1183-1196`）realpath 后默认跟随符号链接，静态根外链接与检查后替换均读出根外内容（真实 Node RPC 9 场景原件：TS 读出根外 sequence 4242）。
-- **Rust 行为**：canonical 双侧 containment + 从 `/` 起逐层 `O_SEARCH|DIRECTORY|NOFOLLOW` checked-open + fd fstat；根外链接/替换/非 regular file/超限 → `PATH_NOT_ALLOWED` 本地拒绝，**从不返回根外内容，也不回退 TS**。
+- **Rust 行为**：canonical 双侧 containment + 从 `/` 起逐层 `O_SEARCH|DIRECTORY|NOFOLLOW` checked-open + fd fstat。两档拒绝：**非 regular file（FIFO/device，含 stat 后 descriptor 竞态变非常规）或 >2GiB → `PATH_NOT_ALLOWED` 本地拒绝**；**50MiB < size ≤ 2GiB → `SESSION_TRANSCRIPT_INVALID`**（stat 阶段的 EISDIR 等仍走既有 errno 白名单的 TS 一致错误）。根外链接/检查后替换 → `PATH_NOT_ALLOWED`。**从不返回根外内容，也不回退 TS。**
 - **范围与披露**：合法外部存储布局（transcript 根软链到别处）同被拒绝——行为回归属登记语义家族（人批 2026-10-17）。不防硬链接/bind mount；注册目录枚举与 stat 元数据仍跟随链接（不读内容）。
-- **机器判据**：`native_archive/security_tests.rs` 9 场景（normal/静态外链/受控替换 × 三 method）：normal 与 TS 逐字节相等；拒绝场景本地应答且 pairing receipt 唯一、上游零转发。
+- **机器判据**：`native_archive/security_tests.rs` 9 场景（normal/静态外链/受控替换 × 三 method）本地应答 + `pairing/tests.rs` 8 个 wire 级配对测试（normal 与 TS 逐字节相等；拒绝场景 pairing receipt 唯一、上游零转发）。
 - **批准记录**：人批 2026-10-17「批准 #134 的登记范围」，见 `state/decisions-20261017.md`。
 
 ## A4-ARCHIVE-SEC-002 · native_archive_entries 根外读取安全拒绝（原版缺陷 · 安全）
