@@ -1,5 +1,14 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 第五轮：#134 人批落地——#142 合并，A4 收官（#46 关闭）
+> **人批**：「批准 #134 的登记范围」→ accepted-diffs 追加 A4-ARCHIVE-SEC-001/002/003（两档拒绝口径、硬链接/挂载披露、合法外部存储布局显式列出、按 method 分别登记），授权记录 `state/decisions-20261017.md` + 安全差异登记原则。
+> **#142 三轮评审合并**：r1 双家无 P0/P1（P2 六条三分）→ r2 codex 便宜修（未测量错误本地拒绝 + transcript 50MiB+1 上限）但 **rebase 机械取 main 侧丢 8 个 pairing 测试被 Claude 评审 P1 拦下** → r3 恢复测试适配 Pair::finish/join_pair_task/eof（178 passed）→ CI 三绿 rebase 合并 main@0e07260。教训已沉淀为 CLAUDE.md 规则（PR #155 合并）：**状态文件冲突可取 main 侧；代码测试必须真合并**。
+> **A4 收官**：十项 (a) method 全部 LOCAL_METHODS；#46 按「大步骤收尾自查」关闭（证据表贴 issue：前置 #45/#40 已关、双计分条件机器判据、零占位、178 passed；桌面端人肉验收标注未做待人工）。#134 关闭（六要素闭合）。阶段 A 下一棒：#67（A5 深水区含 #19 六格）、#127（A6–A8）。
+> **分支清理（legacy 化）**：本地 35 个旧分支删除、远端 21 个删除（PR 已合并/快照类）；保留 #150 的 ready-admission-probe（Draft 开着）与 archive-safe-candidate（刚合并）。
+> **在途**：codex 正做 #154（session 文件级 errno 补证，wt-142 内新分支 codex/metadata-file-errno，前置 #139 关闭）——完成后双家快审 → 合并 → 关 #139。协调者接手提交（codex 沙箱不能写 worktree git 元数据）。
+> **坑（新）**：主仓 untracked 文件与 ff 目标同名会静默挡住 `merge --ff-only`（错误信息被管道 tail 吞）——先核对 untracked 同名文件再快进。
+> **下一步**：① 收 #154 → 评审 → 合并 → 关 #139；② #150 处置（装置 Draft，A5 需要时评估）；③ 开 #67/#19（A5 深水区）；④ #128（B3–B6）/#129（F3–F6）排队。
+
 > ## 2026-10-17 · 第四轮：#138、#141 双双合并，P0 链清偿推进
 > **合并**：#141（metadata 三路径 errno 回放 + baseline_source_guard 工具链护栏 + CI observer job）经两家非作者评审（GLM 全实测 + Claude 无 P0/P1，R2 由协调者裁决维持 P2）+ 作者轮 r2（guard `GIT_*` env 清洗 + 影子仓库负控 + git 路径参数化 + md 三标注）+ rebase 到新 main 后 CI 三绿，rebase 合入 main@1b5798b。#139（P0）**暂不关闭**——新开 #154（P2-跟进：session 文件级 errno 补证，前置于 #139 关闭），按 P2 折中「到点必还」执行。
 > **累计（今日四轮）**：#138+#141 两笔真实代码合并、#56 关闭、#151 关闭、#154 登记、4 worktree 清理回收 6G（归档 115M 于 `_tmp/archive/worktrees-20261017/`，含 wt-pr41）、CLAUDE.md 精简（PR #153 已 rebase 新 main 待合并）。
