@@ -40,6 +40,18 @@
 
 三区共同规则：**日期一律打头**（方能一路排序、一眼看出时间）；**均禁裸文件与目录混住**（找起来累，管起来更累）。
 
+### worktree 与分支（2026-10-17 登记现行实践）
+
+| 对象 | 格式 | 例 |
+|---|---|---|
+| worktree | `_build/wt-<issue号或阶段码>[-<短名>]/` | `_build/wt-19/`、`_build/wt-a53/` |
+| 一次性构建目录 | `_build/YYYYMMDD-HHMMSS[-<用途>]/` | `_build/20261016-093057/`、`_build/20261016-112000-order/` |
+| 分支 | `<owner>/<issue或阶段码>-<内容>` | `codex/issue-19-terminal`、`codex/a53-session-domain`、`fix/a53-repetition-guard` |
+
+- owner ∈ **codex**（worker 实现）/ **fix**（评审修复轮）/ **docs** / **dev** / **chore**。
+- **一个 worktree 恰好一个分支**；PR 描述写三角对应：worktree ↔ 分支 ↔ issue/阶段。
+- 机器检查：`python3 scripts/check-naming.py`（**协调者/worker 开工自查**；忽略区不入库故 CI 查不到本地脏）。存量违规冻结于 `scripts/check-naming.baseline.txt`，**只减不增**——清一项删一行，新增即 FAIL。
+
 ## 格式
 
 ### 提交信息
