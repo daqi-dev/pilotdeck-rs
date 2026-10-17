@@ -2,9 +2,16 @@
 //! The wire format remains the TS transcript JSONL format (no extra revision field).
 //! 恢复校验仅覆盖事件日志层（validateSessionEventLog）；SessionRuntime.ts:109
 //! 的 validateSessionDomainLog 领域校验留给接入 host/runtime 的后续 PR。
+//! `run_registry` is the TS RunRegistry snapshot store; it is not wired into
+//! the host or gateway methods either.
 mod ledger;
 mod projection;
+mod run_registry;
 mod transcript;
+
+pub use run_registry::{
+    FileRunRegistry, RunAcceptInput, RunAccepted, RunRecord, RunRef, RunRegistryError, RunState,
+};
 
 pub use ledger::{
     KnownTerminal, OperationIdentity, OperationRecovery, OperationResolution,
@@ -59,5 +66,7 @@ fn invalid(message: impl Into<String>) -> LedgerError {
     LedgerError::Invalid(message.into())
 }
 
+#[cfg(test)]
+mod run_registry_tests;
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,1 @@
+{"schemaVersion":1,"records":[{"sessionKey":"s","runId":"r","requestMaterial":"m","state":"running","ownerPid":2147483648,"revision":1,"lastSeq":1}],"events":[[{"seq":1,"event":{"type":"kept-under-index-key"}}]]}

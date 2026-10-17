@@ -1,0 +1,2054 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37"
+  },
+  "generatorPid": 40710,
+  "dead": 2147483647,
+  "huge": 2147483648,
+  "scenarios": [
+    {
+      "name": "normal",
+      "initial": null,
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1",
+            "requestMaterial": "request-1"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-1",
+              "requestMaterial": "request-1",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1",
+            "requestMaterial": "request-1"
+          },
+          "outcome": {
+            "duplicate": true,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-1",
+              "requestMaterial": "request-1",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1",
+            "requestMaterial": "other"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "conflict",
+              "message": "Run run-1 already exists with different request material."
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1"
+          },
+          "event": {
+            "type": "input_accepted",
+            "runId": "run-1"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-1",
+              "requestMaterial": "request-1",
+              "ownerPid": "<self>",
+              "state": "running",
+              "revision": 2,
+              "lastSeq": 1,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1"
+          },
+          "event": {
+            "type": "assistant_text_delta",
+            "runId": "run-1",
+            "text": "中文\ud800",
+            "nested": {
+              "1": "index-first",
+              "z": 0,
+              "a": 1
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1"
+          },
+          "event": {
+            "type": "turn_completed",
+            "runId": "run-1",
+            "usage": {},
+            "finishReason": "completed"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1"
+          },
+          "event": {
+            "type": "assistant_text_delta",
+            "runId": "run-1",
+            "text": "late"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "terminal",
+              "message": "Run run-1 is already terminal (completed)."
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-2",
+            "requestMaterial": "request-2"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-2",
+              "requestMaterial": "request-2",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-2"
+          },
+          "event": {
+            "type": "error",
+            "runId": "run-2",
+            "code": "admission_rejected",
+            "message": "busy",
+            "recoverable": true
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-2"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-2",
+              "requestMaterial": "request-2",
+              "ownerPid": "<self>",
+              "state": "failed",
+              "revision": 2,
+              "lastSeq": 1,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>",
+              "result": {
+                "type": "error",
+                "runId": "run-2",
+                "code": "admission_rejected",
+                "message": "busy",
+                "recoverable": true
+              }
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-2"
+          },
+          "event": {
+            "type": "turn_completed",
+            "runId": "run-2",
+            "usage": {},
+            "finishReason": "task_budget"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "",
+            "runId": "run-2",
+            "requestMaterial": "request-2"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "",
+              "runId": "run-2",
+              "requestMaterial": "request-2",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-3",
+            "requestMaterial": "request-3"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-3",
+              "requestMaterial": "request-3",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-3"
+          },
+          "event": {
+            "type": "turn_completed",
+            "runId": "run-3",
+            "usage": {},
+            "finishReason": "aborted_streaming"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-3"
+          },
+          "event": {
+            "type": "turn_completed",
+            "runId": "run-3",
+            "usage": {},
+            "finishReason": "completed"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "terminal",
+              "message": "Run run-3 is already terminal (aborted)."
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-4",
+            "requestMaterial": "request-4"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-4",
+              "requestMaterial": "request-4",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-4"
+          },
+          "event": {
+            "type": "error",
+            "runId": "run-4",
+            "code": "result_unknown",
+            "message": "lost",
+            "recoverable": false
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-4"
+          },
+          "event": {
+            "type": "input_accepted",
+            "runId": "run-4"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "terminal",
+              "message": "Run run-4 is already terminal (interrupted)."
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "missing"
+          },
+          "event": {
+            "type": "input_accepted",
+            "runId": "missing"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run missing is not registered."
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "other-project",
+            "runId": "run-1"
+          },
+          "event": {
+            "type": "input_accepted",
+            "runId": "run-1"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run run-1 is not registered."
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-5",
+            "requestMaterial": "request-5"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-5",
+              "requestMaterial": "request-5",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-5"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-5",
+              "requestMaterial": "request-5",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-6",
+            "requestMaterial": "request-6"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-6",
+              "requestMaterial": "request-6",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-6"
+          },
+          "event": "raw-event",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-6"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "run-6",
+              "requestMaterial": "request-6",
+              "ownerPid": "<self>",
+              "state": "running",
+              "revision": 2,
+              "lastSeq": 1,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "missing"
+          },
+          "outcome": {
+            "record": null
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-1"
+          },
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "run-1"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "assistant_text_delta",
+                  "runId": "run-1",
+                  "text": "中文\ud800",
+                  "nested": {
+                    "1": "index-first",
+                    "z": 0,
+                    "a": 1
+                  }
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "turn_completed",
+                  "runId": "run-1",
+                  "usage": {},
+                  "finishReason": "completed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "mark",
+          "outcome": {
+            "ok": true
+          }
+        }
+      ],
+      "after": "normal.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "orphans",
+      "initial": "orphans.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-accepted"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-dead-accepted",
+              "requestMaterial": "dead-accepted",
+              "ownerPid": 2147483647,
+              "state": "interrupted",
+              "revision": 2,
+              "lastSeq": 0,
+              "acceptedAt": "2026-10-17T22:26:30.527Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-running"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-dead-running",
+              "requestMaterial": "dead-running",
+              "ownerPid": 2147483647,
+              "state": "interrupted",
+              "revision": 3,
+              "lastSeq": 1,
+              "acceptedAt": "2026-10-17T22:26:30.527Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-absent"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-absent",
+              "requestMaterial": "absent",
+              "state": "interrupted",
+              "revision": 2,
+              "lastSeq": 0,
+              "acceptedAt": "2026-10-17T22:26:30.528Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-zero"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-zero",
+              "requestMaterial": "zero",
+              "ownerPid": 0,
+              "state": "interrupted",
+              "revision": 3,
+              "lastSeq": 1,
+              "acceptedAt": "2026-10-17T22:26:30.529Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-negative"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-negative",
+              "requestMaterial": "negative",
+              "ownerPid": -5,
+              "state": "interrupted",
+              "revision": 2,
+              "lastSeq": 0,
+              "acceptedAt": "2026-10-17T22:26:30.530Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-fraction"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-fraction",
+              "requestMaterial": "fraction",
+              "ownerPid": 1.5,
+              "state": "interrupted",
+              "revision": 2,
+              "lastSeq": 0,
+              "acceptedAt": "2026-10-17T22:26:30.530Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-string"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-string",
+              "requestMaterial": "string",
+              "ownerPid": "1",
+              "state": "interrupted",
+              "revision": 2,
+              "lastSeq": 0,
+              "acceptedAt": "2026-10-17T22:26:30.531Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-init"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-init",
+              "requestMaterial": "init",
+              "ownerPid": 1,
+              "state": "running",
+              "revision": 2,
+              "lastSeq": 1,
+              "acceptedAt": "2026-10-17T22:26:30.531Z",
+              "updatedAt": "2026-10-17T22:26:30.532Z"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-huge"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-huge",
+              "requestMaterial": "huge",
+              "ownerPid": 2147483648,
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "2026-10-17T22:26:30.532Z",
+              "updatedAt": "2026-10-17T22:26:30.532Z"
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-completed"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-dead-completed",
+              "requestMaterial": "dead-completed",
+              "ownerPid": 2147483647,
+              "state": "completed",
+              "revision": 2,
+              "lastSeq": 1,
+              "acceptedAt": "2026-10-17T22:26:30.533Z",
+              "updatedAt": "2026-10-17T22:26:30.533Z",
+              "result": {
+                "type": "turn_completed",
+                "runId": "orphan-dead-completed",
+                "usage": {},
+                "finishReason": "completed"
+              }
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-failed"
+          },
+          "outcome": {
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-dead-failed",
+              "requestMaterial": "dead-failed",
+              "ownerPid": 2147483647,
+              "state": "failed",
+              "revision": 2,
+              "lastSeq": 1,
+              "acceptedAt": "2026-10-17T22:26:30.534Z",
+              "updatedAt": "2026-10-17T22:26:30.534Z",
+              "result": {
+                "type": "error",
+                "runId": "orphan-dead-failed",
+                "code": "boom",
+                "message": "x",
+                "recoverable": false
+              }
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-running",
+            "requestMaterial": "dead-running"
+          },
+          "outcome": {
+            "duplicate": true,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-dead-running",
+              "requestMaterial": "dead-running",
+              "ownerPid": 2147483647,
+              "state": "interrupted",
+              "revision": 3,
+              "lastSeq": 1,
+              "acceptedAt": "2026-10-17T22:26:30.527Z",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-running"
+          },
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "orphan-dead-running"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-running"
+          },
+          "event": {
+            "type": "turn_completed",
+            "runId": "orphan-dead-running",
+            "usage": {},
+            "finishReason": "completed"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "terminal",
+              "message": "Run orphan-dead-running is already terminal (interrupted)."
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "orphan-dead-completed",
+            "requestMaterial": "dead-completed"
+          },
+          "outcome": {
+            "duplicate": true,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "orphan-dead-completed",
+              "requestMaterial": "dead-completed",
+              "ownerPid": 2147483647,
+              "state": "completed",
+              "revision": 2,
+              "lastSeq": 1,
+              "acceptedAt": "2026-10-17T22:26:30.533Z",
+              "updatedAt": "2026-10-17T22:26:30.533Z",
+              "result": {
+                "type": "turn_completed",
+                "runId": "orphan-dead-completed",
+                "usage": {},
+                "finishReason": "completed"
+              }
+            }
+          }
+        },
+        {
+          "op": "mark",
+          "outcome": {
+            "ok": true
+          }
+        }
+      ],
+      "after": "orphans.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "paging",
+      "initial": "paging.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "run-page"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "assistant_text_delta",
+                  "runId": "run-page",
+                  "text": "partial"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "turn_completed",
+                  "runId": "run-page",
+                  "usage": {},
+                  "finishReason": "completed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "afterSeq": 1,
+          "outcome": {
+            "events": [
+              {
+                "seq": 2,
+                "event": {
+                  "type": "assistant_text_delta",
+                  "runId": "run-page",
+                  "text": "partial"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "turn_completed",
+                  "runId": "run-page",
+                  "usage": {},
+                  "finishReason": "completed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "limit": 2,
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "run-page"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "assistant_text_delta",
+                  "runId": "run-page",
+                  "text": "partial"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "afterSeq": 0,
+          "limit": 0,
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "limit": -1,
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "run-page"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "assistant_text_delta",
+                  "runId": "run-page",
+                  "text": "partial"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "limit": -10,
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "limit": 1.5,
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "run-page"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "limit": -0.5,
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "afterSeq": 1.5,
+          "outcome": {
+            "events": [
+              {
+                "seq": 2,
+                "event": {
+                  "type": "assistant_text_delta",
+                  "runId": "run-page",
+                  "text": "partial"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "turn_completed",
+                  "runId": "run-page",
+                  "usage": {},
+                  "finishReason": "completed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "afterSeq": -1,
+          "limit": 500,
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted",
+                  "runId": "run-page"
+                }
+              },
+              {
+                "seq": 2,
+                "event": {
+                  "type": "assistant_text_delta",
+                  "runId": "run-page",
+                  "text": "partial"
+                }
+              },
+              {
+                "seq": 3,
+                "event": {
+                  "type": "turn_completed",
+                  "runId": "run-page",
+                  "usage": {},
+                  "finishReason": "completed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-page"
+          },
+          "afterSeq": 3,
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-weird"
+          },
+          "outcome": {
+            "events": [
+              {
+                "seq": "2",
+                "event": "string-seq"
+              },
+              {
+                "seq": true,
+                "event": "bool-seq"
+              },
+              {
+                "seq": " 0x3 ",
+                "event": "hex-seq"
+              },
+              {
+                "seq": [
+                  4
+                ],
+                "event": "array-seq"
+              },
+              {
+                "seq": "1e0",
+                "event": "exp-seq"
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "run-weird"
+          },
+          "afterSeq": 1,
+          "outcome": {
+            "events": [
+              {
+                "seq": "2",
+                "event": "string-seq"
+              },
+              {
+                "seq": " 0x3 ",
+                "event": "hex-seq"
+              },
+              {
+                "seq": [
+                  4
+                ],
+                "event": "array-seq"
+              }
+            ]
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "ghost"
+          },
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "ghost"
+          },
+          "outcome": {
+            "record": null
+          }
+        }
+      ],
+      "after": "paging.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "quirk-duplicates",
+      "initial": "quirk-duplicates.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "dup",
+            "requestMaterial": "second"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "s",
+              "projectKey": "project",
+              "runId": "dup",
+              "requestMaterial": "second",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "dup",
+            "requestMaterial": "first"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "conflict",
+              "message": "Run dup already exists with different request material."
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "q",
+            "requestMaterial": "q"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "s",
+              "projectKey": "project",
+              "runId": "q",
+              "requestMaterial": "q",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        }
+      ],
+      "after": "quirk-duplicates.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "quirk-empty-project",
+      "initial": "quirk-empty-project.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "r"
+          },
+          "outcome": {
+            "record": null
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "",
+            "runId": "r",
+            "requestMaterial": "n"
+          },
+          "outcome": {
+            "duplicate": true,
+            "record": {
+              "projectKey": "",
+              "sessionKey": "s",
+              "runId": "r",
+              "requestMaterial": "n",
+              "state": "completed"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "r",
+            "requestMaterial": "m"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "s",
+              "projectKey": "project",
+              "runId": "r",
+              "requestMaterial": "m",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "q",
+            "requestMaterial": "q"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "s",
+              "projectKey": "project",
+              "runId": "q",
+              "requestMaterial": "q",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        }
+      ],
+      "after": "quirk-empty-project.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "quirk-coerce",
+      "initial": "quirk-coerce.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "7",
+            "projectKey": "project",
+            "runId": "r"
+          },
+          "outcome": {
+            "record": null
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "7",
+            "projectKey": "project",
+            "runId": "r"
+          },
+          "event": {
+            "type": "input_accepted"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run r is not registered."
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "7",
+            "projectKey": "project",
+            "runId": "r"
+          },
+          "outcome": {
+            "record": null
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "",
+            "runId": "a,,b"
+          },
+          "outcome": {
+            "record": {
+              "projectKey": null,
+              "sessionKey": "s",
+              "runId": [
+                "a",
+                null,
+                "b"
+              ],
+              "requestMaterial": "m",
+              "state": "interrupted",
+              "ownerPid": 2147483647,
+              "revision": 2,
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "a,,b"
+          },
+          "event": {
+            "type": "input_accepted"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run a,,b is not registered."
+            }
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "obj"
+          },
+          "event": {
+            "type": "input_accepted"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run obj is not registered."
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "obj"
+          },
+          "outcome": {
+            "record": null
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "undefined",
+            "projectKey": "project",
+            "runId": "undefined"
+          },
+          "outcome": {
+            "record": null
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "undefined",
+            "projectKey": "project",
+            "runId": "undefined",
+            "requestMaterial": "replaces-falsy"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "undefined",
+              "projectKey": "project",
+              "runId": "undefined",
+              "requestMaterial": "replaces-falsy",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        }
+      ],
+      "after": "quirk-coerce.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "quirk-events-array",
+      "initial": "quirk-events-array.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "r"
+          },
+          "event": {
+            "type": "input_accepted"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run r is not registered."
+            }
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "r"
+          },
+          "outcome": {
+            "events": []
+          }
+        }
+      ],
+      "after": "quirk-events-array.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "quirk-events-string",
+      "initial": "quirk-events-string.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "q",
+            "requestMaterial": "q"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "s",
+              "projectKey": "project",
+              "runId": "q",
+              "requestMaterial": "q",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        }
+      ],
+      "after": "quirk-events-string.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "quirk-lists",
+      "initial": "quirk-lists.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "str"
+          },
+          "event": {
+            "type": "input_accepted"
+          },
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run str is not registered."
+            }
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "str"
+          },
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "nul"
+          },
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "ok"
+          },
+          "event": null,
+          "outcome": {
+            "error": {
+              "name": "RunRegistryError",
+              "code": "not_found",
+              "message": "Run ok is not registered."
+            }
+          }
+        },
+        {
+          "op": "get",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "ok"
+          },
+          "outcome": {
+            "record": null
+          }
+        }
+      ],
+      "after": "quirk-lists.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "quirk-invalid-utf8",
+      "initial": "quirk-invalid-utf8.json",
+      "lock": null,
+      "openError": null,
+      "steps": [
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "r",
+            "requestMaterial": "�"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "s",
+              "projectKey": "project",
+              "runId": "r",
+              "requestMaterial": "�",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        },
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "project",
+            "runId": "q",
+            "requestMaterial": "q"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "s",
+              "projectKey": "project",
+              "runId": "q",
+              "requestMaterial": "q",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        }
+      ],
+      "after": "quirk-invalid-utf8.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-tail",
+      "initial": "bad-tail.json",
+      "lock": null,
+      "openError": {
+        "name": "SyntaxError",
+        "message": "Unterminated string in JSON at position 3008 (line 1 column 3009)"
+      },
+      "steps": [],
+      "after": "bad-tail.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-empty",
+      "initial": "bad-empty.json",
+      "lock": null,
+      "openError": {
+        "name": "SyntaxError",
+        "message": "Unexpected end of JSON input"
+      },
+      "steps": [],
+      "after": "bad-empty.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-schema",
+      "initial": "bad-schema.json",
+      "lock": null,
+      "openError": {
+        "name": "Error",
+        "message": "invalid run registry snapshot"
+      },
+      "steps": [],
+      "after": "bad-schema.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-records",
+      "initial": "bad-records.json",
+      "lock": null,
+      "openError": {
+        "name": "Error",
+        "message": "invalid run registry snapshot"
+      },
+      "steps": [],
+      "after": "bad-records.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-events-null",
+      "initial": "bad-events-null.json",
+      "lock": null,
+      "openError": {
+        "name": "Error",
+        "message": "invalid run registry snapshot"
+      },
+      "steps": [],
+      "after": "bad-events-null.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-events-missing",
+      "initial": "bad-events-missing.json",
+      "lock": null,
+      "openError": {
+        "name": "Error",
+        "message": "invalid run registry snapshot"
+      },
+      "steps": [],
+      "after": "bad-events-missing.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-events-zero",
+      "initial": "bad-events-zero.json",
+      "lock": null,
+      "openError": {
+        "name": "Error",
+        "message": "invalid run registry snapshot"
+      },
+      "steps": [],
+      "after": "bad-events-zero.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-null",
+      "initial": "bad-null.json",
+      "lock": null,
+      "openError": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'schemaVersion')"
+      },
+      "steps": [],
+      "after": "bad-null.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "bad-null-record",
+      "initial": "bad-null-record.json",
+      "lock": null,
+      "openError": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'projectKey')"
+      },
+      "steps": [],
+      "after": "bad-null-record.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "lock-stale-dead",
+      "initial": "lock-stale-dead.json",
+      "lock": {
+        "contents": "{\"pid\":2147483647,\"acquiredAt\":\"2026-10-18T00:00:00.000Z\"}",
+        "ageMs": 120000
+      },
+      "openError": null,
+      "steps": [
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "after-lock",
+            "requestMaterial": "x"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "after-lock",
+              "requestMaterial": "x",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        }
+      ],
+      "after": "lock-stale-dead.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "lock-stale-garbage",
+      "initial": "lock-stale-garbage.json",
+      "lock": {
+        "contents": "not json",
+        "ageMs": 120000
+      },
+      "openError": null,
+      "steps": [
+        {
+          "op": "accept",
+          "input": {
+            "sessionKey": "session",
+            "projectKey": "project",
+            "runId": "after-lock",
+            "requestMaterial": "x"
+          },
+          "outcome": {
+            "duplicate": false,
+            "record": {
+              "sessionKey": "session",
+              "projectKey": "project",
+              "runId": "after-lock",
+              "requestMaterial": "x",
+              "ownerPid": "<self>",
+              "state": "accepted",
+              "revision": 1,
+              "lastSeq": 0,
+              "acceptedAt": "<new>",
+              "updatedAt": "<new>"
+            }
+          }
+        }
+      ],
+      "after": "lock-stale-garbage.after.json",
+      "lockLeft": false
+    },
+    {
+      "name": "lock-stale-live",
+      "initial": "lock-stale-live.json",
+      "lock": {
+        "contents": "{ \"pid\" : 1 }",
+        "ageMs": 120000
+      },
+      "openError": {
+        "name": "Error",
+        "message": "Timed out acquiring run registry lock: <dir>/lock-stale-live.json.lock"
+      },
+      "steps": [],
+      "after": "lock-stale-live.after.json",
+      "lockLeft": true
+    }
+  ]
+}
