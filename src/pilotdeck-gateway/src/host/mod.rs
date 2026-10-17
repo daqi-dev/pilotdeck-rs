@@ -4,6 +4,13 @@
 //! `spawn_resumable` can replace the stdio transport once, without re-executing
 //! the turn. The replacement must reach the same logical sidecar instance;
 //! ordinary TS stdio processes have no process-external replay store.
+//! Two cursors are distinct here: ACK `lastAppliedSequence` is the last event
+//! the handler applied (TS client:680-684, 961-970), while the resume frame and
+//! reconnect observation send the last ACCEPTED event, nextSequence - 1 (TS
+//! client:859, 906). TS's serial generator makes them equal; this concurrent
+//! host keeps accepted-but-unapplied events queued across the replacement and
+//! applies them once, so the peer replays from nextSequence exactly. Replay is
+//! held to TS's strict sequence check (client:889-892): no overlap tolerated.
 //! Callbacks must be cooperative async work, and may complete concurrently with
 //! incoming frames. Dropping their futures must stop host work they own. Transport
 //! failure after acceptance is uncertainty, never permission to retry an effect.
@@ -198,6 +205,7 @@ pub trait HostHandler: Send + Sync + 'static {
 pub enum ReconnectObservation {
     Started {
         attempt: u32,
+        /// TS name kept; value is the last accepted event (client:906).
         last_applied_sequence: f64,
     },
     Succeeded {

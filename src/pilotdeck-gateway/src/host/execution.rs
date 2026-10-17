@@ -70,7 +70,6 @@ pub(super) async fn run(
     let mut drain_deadline = None;
     let mut callbacks = JoinSet::new();
     let mut interruption = None;
-    let mut replay = super::recovery::ReplayOrder::default();
     loop {
         if let Some(error) = interruption.take() {
             // A known final never opens another connection. Preserve pr2's
@@ -80,16 +79,17 @@ pub(super) async fn run(
             }
             // Old response deliveries belong to the lost connection. Keep the
             // cached response/future, and wait for the peer's immutable replay.
+            // Accepted but not yet applied events stay queued and are applied
+            // in order; the cursor below tells the peer not to replay them.
             for call in calls.values_mut() {
                 call.deliveries = 0;
             }
             tokio::select! {
-                result = client.reconnect(progress, &handler, error) => result?,
+                result = client.reconnect(progress, &handler, error, next_sequence - 1.0) => result?,
                 _ = wait_for_deadline(execution_deadline) => {
                     return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out during reconnect."));
                 }
             }
-            replay.begin();
         }
         if callbacks.is_empty()
             && let Some(terminal) = terminal_applied.take()
@@ -239,13 +239,17 @@ pub(super) async fn run(
                             .filter(|id| !id.is_empty()).ok_or_else(|| HostError::protocol("Sidecar execute response did not provide streamId."))?.clone());
                     }
                     MessageRef::Event(event) => {
-                        // TS client:879-893: all four IDs, strictly 0,1,... outside replay.
+                        // TS client:879-893: all four IDs, strictly 0,1,..., replay
+                        // included. Any duplicate/backward/gap fails closed.
                         if progress.stream_id.as_ref() != Some(event.stream_id) || event.identity.run_id != &identity.run_id
                             || event.identity.operation_id != &identity.operation_id || event.identity.request_id != &identity.request_id {
                             return Err(HostError::protocol("Sidecar event identity does not match the active execution (or event before acceptance)."));
                         }
                         let aborted = validate_event(event, &identity, &cancellation)?;
-                        if !replay.accept(event.sequence.value(), &mut next_sequence)? { continue; }
+                        if event.sequence.value() != next_sequence {
+                            return Err(HostError::protocol(format!("Sidecar event sequence mismatch: expected {next_sequence}, got {}.", event.sequence.value())));
+                        }
+                        next_sequence += 1.0;
                         // TS:680 suppresses the non-authoritative turn_completed projection.
                         if !event.final_event && text_is(event.payload.get("type"), "turn_completed") { continue; }
                         terminal_received = event.final_event;
