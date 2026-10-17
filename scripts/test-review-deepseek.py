@@ -228,6 +228,12 @@ def main() -> int:
     ok = ok and "max_tokens" not in json.loads(Fake.last_body)
     print(f"{'PASS' if ok else 'FAIL'} max_tokens 请求体")
     fails += not ok
+    case("默认关思考", (200, ok_body("x")), 0)
+    ok = json.loads(Fake.last_body).get("thinking") == {"type": "disabled"}
+    case("--thinking enabled 透传", (200, ok_body("x")), 0, "--thinking", "enabled")
+    ok = ok and json.loads(Fake.last_body).get("thinking") == {"type": "enabled"}
+    print(f"{'PASS' if ok else 'FAIL'} thinking 请求体")
+    fails += not ok
     ok = elapsed < 5 and elapsed_err < 5  # 整包滴完要 8 s 以上；总时限 1 s 应在几秒内返回
     print(f"{'PASS' if ok else 'FAIL'} 慢滴流按总时限及时返回 正文={elapsed:.1f}s 错误正文={elapsed_err:.1f}s")
     fails += not ok
@@ -283,7 +289,7 @@ def main() -> int:
         (tmp / "i.txt").write_bytes(b"b" * 20)
         rd.open = lambda p, mode="r": Rec(real_open(p, mode))
         try:
-            rd.build_body(type("A", (), {"prompt": tmp / "p.md", "input": [tmp / "i.txt"], "model": "m", "max_tokens": None})())
+            rd.build_body(type("A", (), {"prompt": tmp / "p.md", "input": [tmp / "i.txt"], "model": "m", "max_tokens": None, "thinking": "disabled"})())
         finally:
             del rd.open
     want = [rd.MAX_INPUT_BYTES + 1, rd.MAX_INPUT_BYTES - 10 + 1]
