@@ -6,10 +6,19 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import SCRIPT, digest, save
-from session_domain import (CELLS, audit_native, calibration_coverage, observation_check, read)
+from session_domain import (CELLS, EvidenceError, audit_native, calibration_coverage,
+                            observation_check, read, require, validate_calibration)
+
+CALIBRATION_CASES = {
+    'calibration-empty-observer': 'EMPTY_OBSERVER',
+    'calibration-capability': 'CAPABILITY',
+    'calibration-independent-oracle': 'INDEPENDENT_ORACLE',
+    'calibration-identity': 'IDENTITY',
+}
 
 CASES = {
     'ts-gateway': 'TS_HOST',
@@ -29,6 +38,7 @@ CASES = {
     'calibration-missing-group': 'COVERAGE',
     'calibration-missing-variant': 'COVERAGE',
     'calibration-unavailable': 'CAPABILITY',
+    **CALIBRATION_CASES,
 }
 
 
@@ -84,7 +94,66 @@ def observation_fixture(source):
             'registry': {'applicable': False, 'reason': 'runRegistry was not configured'}}
 
 
+def calibration_case(name, output, source):
+    """Mutate fresh reads only; validate every variant against a healthy real run."""
+    require(source is not None, 'CONTROL_PRECONDITION', 'calibration control requires --source')
+    source = source.resolve()
+    baseline = Path(read(source / 'launch.json')['environment']['A52_BASELINE']).resolve()
+    try:
+        validate_calibration(source, output / 'healthy-calibration', baseline)
+    except EvidenceError as error:
+        raise EvidenceError('CONTROL_PRECONDITION', f'healthy calibration failed: {error.rule}: {error}') from error
+
+    cell = 'registry-fast' if name == 'calibration-capability' else 'no-registry-fast'
+    target = source / 'raw' / (cell + '.json')
+    original = read(target)
+    if name == 'calibration-identity':
+        target = source / 'raw/manifest.json'
+        original = read(target)
+        variants = [('baseline-commit', ('baselineCommit',), '0' * 40),
+                    ('fixture-hash', ('fixtureFiles', 0, 'sha256'), '0' * 64),
+                    ('imported-source-hash', ('importedSources', 0, 'sha256'), '0' * 64)]
+    else:
+        observation = original['observations'][0]
+        prefix = ('observations', 0)
+        if name == 'calibration-empty-observer':
+            variants = [(field, prefix + (field,), []) for field in ('frames', 'timeline')]
+        elif name == 'calibration-capability':
+            variants = [('registry-applicable', prefix + ('registry', 'applicable'),
+                         not observation['registry']['applicable'])]
+        else:
+            variants = [('missing-loop-final', prefix + ('timeline',),
+                         [row for row in observation['timeline'] if row['kind'] != 'loop.final'])]
+
+    results = []
+    for variant, keys, value in variants:
+        mutated = copy.deepcopy(original)
+        parent = mutated
+        for key in keys[:-1]:
+            parent = parent[key]
+        parent[keys[-1]] = value
+
+        def mutated_read(path):
+            return copy.deepcopy(mutated) if Path(path).resolve() == target else read(path)
+
+        failure = None
+        with patch('session_domain.read', side_effect=mutated_read):
+            try:
+                validate_calibration(source, output / variant, baseline)
+            except EvidenceError as error:
+                failure = error
+        results.append({'variant': variant, 'firstRule': failure.rule if failure else None,
+                        'detail': str(failure) if failure else 'mutation accepted'})
+        save(output / 'calibration-mutations.json', results)
+        require(failure is not None and failure.rule == CASES[name], 'CONTROL_EXPECTATION',
+                f'{variant}: expected {CASES[name]}, got {results[-1]}')
+    raise failure
+
+
 def check_case(name, output, source=None):
+    if name in CALIBRATION_CASES:
+        calibration_case(name, output, source)
+        return
     evidence, contract = native_fixture(output)
     observation = observation_fixture(source)
     # Every mutation has the same known-good predecessor; exceptions are not a pass.
@@ -157,7 +226,8 @@ def check_case(name, output, source=None):
 def run_all(output, source=None):
     output.mkdir(parents=True, exist_ok=False)
     results = []
-    for name in ('healthy', *CASES):
+    not_run = [] if source else list(CALIBRATION_CASES)
+    for name in ('healthy', *(case for case in CASES if case not in not_run)):
         command = [sys.executable, str(SCRIPT / 'controls/session_domain.py'),
                    '--case', name, '--output', str(output / name)]
         if source:
@@ -176,7 +246,8 @@ def run_all(output, source=None):
         results.append({'case': name, 'command': command, 'exitCode': proc.returncode,
                         'expectedRule': expected, 'firstRule': verdict.get('rule'), 'passed': passed})
     report = {'status': 'PASS' if all(r['passed'] for r in results) else 'FAIL',
-              'scope': 'apparatus mutation tests only', 'cases': results}
+              'scope': 'apparatus mutation tests only', 'cases': results,
+              'notRun': [{'case': case, 'reason': 'requires real calibration --source'} for case in not_run]}
     save(output / 'results.json', report)
     return report
 
@@ -184,7 +255,8 @@ def run_all(output, source=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', choices=('all', 'healthy', *CASES), default='all')
-    parser.add_argument('--source', type=Path, help='fresh A5.2a output containing raw/; otherwise synthetic')
+    parser.add_argument('--source', type=Path,
+                        help='fresh A5.2a output; omitted: synthetic controls only, real calibration controls NOT_RUN')
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     if args.case == 'all':
