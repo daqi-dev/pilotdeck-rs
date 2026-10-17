@@ -412,13 +412,13 @@ fn valid_id(value: &JsValue) -> Result<&JsString> {
         .filter(|v| !js_trim(&String::from_utf16_lossy(v.units())).is_empty())
         .ok_or_else(|| invalid("Session event entryId must be a non-empty string."))
 }
-pub(super) fn private_open() -> OpenOptions {
+fn private_open() -> OpenOptions {
     let mut options = OpenOptions::new();
     #[cfg(unix)]
     options.mode(0o600);
     options
 }
-pub(super) fn private_dirs(dir: &Path) -> io::Result<()> {
+fn private_dirs(dir: &Path) -> io::Result<()> {
     let mut dirs = fs::DirBuilder::new();
     dirs.recursive(true);
     #[cfg(unix)]

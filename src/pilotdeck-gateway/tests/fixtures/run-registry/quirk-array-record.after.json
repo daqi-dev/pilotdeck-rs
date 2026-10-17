@@ -1,0 +1,1 @@
+{"schemaVersion":1,"records":[["x",1],{"sessionKey":"s","runId":"ok","requestMaterial":"m","state":"completed"}],"events":{"\u0000undefined\u0000undefined":[{"seq":null,"event":{"type":"input_accepted"}},{"seq":null,"event":{"type":"turn_completed","runId":"undefined","usage":{},"finishReason":"completed"}}]}}

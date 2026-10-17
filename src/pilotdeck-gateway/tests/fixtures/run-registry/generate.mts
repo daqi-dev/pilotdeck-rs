@@ -19,8 +19,9 @@ const { FileRunRegistry } = await import(pathToFileURL(join(baseline, source)).h
 // makes Node's process.kill throw ERR_INVALID_ARG_TYPE, which TS treats as alive.
 const DEAD = 2147483647;
 const HUGE = 2147483648;
-const ref = (runId: string, projectKey: string | undefined = 'project', sessionKey = 'session') =>
-  projectKey === undefined ? { sessionKey, runId } : { sessionKey, projectKey, runId };
+const ref = (runId: string, projectKey = 'project', sessionKey = 'session') => ({ sessionKey, projectKey, runId });
+// No projectKey at all (a default parameter would fill an explicit undefined).
+const bare = (runId: string, sessionKey: string) => ({ sessionKey, runId });
 const accept = (r: any, requestMaterial: string) => ({ op: 'accept', input: { ...r, requestMaterial } });
 const append = (r: any, event: unknown) => ({ op: 'append', input: r, event });
 const completed = (runId: string, finishReason = 'completed') => ({ type: 'turn_completed', runId, usage: {}, finishReason });
@@ -135,11 +136,25 @@ async function realSnapshot(build: (registry: any) => Promise<void>, edit?: (sna
   }
   return bytes.replace(new RegExp(`"ownerPid":${process.pid}(?![0-9.eE])`, 'g'), `"ownerPid":${DEAD}`);
 }
+// Every step must reach the branch its scenario claims, not miss the record:
+// the last scenario's outcomes, one kind per step.
+const kind = (o: any) =>
+  o.error ? o.error.code ?? o.error.name
+  : 'duplicate' in o ? (o.duplicate ? 'duplicate' : 'created')
+  : 'record' in o ? (o.record === null ? 'absent' : 'record')
+  : 'events' in o ? `events:${o.events.length}` : 'ok';
+function expectKinds(expected: string[]) {
+  const last = scenarios.at(-1);
+  assert.equal(last.openError, null, last.name);
+  assert.deepEqual(last.steps.map((s: any) => kind(s.outcome)), expected, last.name);
+  return last.steps.map((s: any) => s.outcome);
+}
+const afterSnapshot = async () => JSON.parse(await readFile(join(output, scenarios.at(-1).after), 'utf8'));
 
 try {
   // Fresh registry: duplicate, conflict, every state transition and RunRegistryError branch.
   const p = (runId: string) => ref(runId);
-  const noProject = ref('run-2', undefined);
+  const noProject = bare('run-2', 'session');
   await scenario('normal', {
     steps: [
       accept(p('run-1'), 'request-1'),
@@ -173,6 +188,12 @@ try {
       { op: 'mark' },
     ],
   });
+  expectKinds([
+    'created', 'duplicate', 'conflict', 'ok', 'record', 'ok', 'ok', 'terminal',
+    'created', 'ok', 'record', 'ok', 'duplicate',
+    'created', 'ok', 'terminal', 'created', 'ok', 'terminal', 'not_found', 'not_found',
+    'created', 'record', 'created', 'ok', 'record', 'absent', 'events:3', 'ok',
+  ]);
 
   // Restart: real TS records whose owners are rewritten, then reopened.
   const owners: [string, unknown, unknown[]][] = [
@@ -241,15 +262,17 @@ try {
       { sessionKey: 's', runId: 'other', requestMaterial: 'other' },
       { sessionKey: 's', runId: 'dup', requestMaterial: 'second', custom: 2 },
     ], events: {} }),
-    steps: [accept(ref('dup', undefined, 's'), 'second'), accept(ref('dup', undefined, 's'), 'first'), accept(ref('q', undefined, 's'), 'q')],
+    steps: [accept(bare('dup', 's'), 'second'), accept(bare('dup', 's'), 'first'), accept(bare('q', 's'), 'q')],
   });
+  assert.equal(expectKinds(['duplicate', 'conflict', 'created'])[0].record.custom, 2);
   await scenario('quirk-empty-project', {
     initial: JSON.stringify({ schemaVersion: 1, records: [
       { sessionKey: 's', runId: 'r', requestMaterial: 'm', state: 'completed' },
       { projectKey: '', sessionKey: 's', runId: 'r', requestMaterial: 'n', state: 'completed' },
     ], events: {} }),
-    steps: [{ op: 'get', input: ref('r', undefined, 's') }, accept(ref('r', '', 's'), 'n'), accept(ref('r', undefined, 's'), 'm'), accept(ref('q', undefined, 's'), 'q')],
+    steps: [{ op: 'get', input: bare('r', 's') }, accept(ref('r', '', 's'), 'n'), accept(bare('r', 's'), 'm'), accept(bare('q', 's'), 'q')],
   });
+  assert.equal(expectKinds(['record', 'duplicate', 'conflict', 'created'])[0].record.requestMaterial, 'n');
   await scenario('quirk-coerce', {
     initial: JSON.stringify({ schemaVersion: 1, records: [
       0,
@@ -258,27 +281,82 @@ try {
       { sessionKey: 's', runId: 'obj', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: {}, lastSeq: [2] },
     ], events: {} }),
     steps: [
-      { op: 'get', input: ref('r', undefined, '7') },
-      append(ref('r', undefined, '7'), { type: 'input_accepted' }),
-      { op: 'get', input: ref('r', undefined, '7') },
+      { op: 'get', input: bare('r', '7') },
+      append(bare('r', '7'), { type: 'input_accepted' }),
+      { op: 'get', input: bare('r', '7') },
       { op: 'get', input: ref('a,,b', '', 's') },
-      append(ref('a,,b', undefined, 's'), { type: 'input_accepted' }),
-      append(ref('obj', undefined, 's'), { type: 'input_accepted' }),
-      { op: 'get', input: ref('obj', undefined, 's') },
-      { op: 'get', input: ref('undefined', undefined, 'undefined') },
-      accept(ref('undefined', undefined, 'undefined'), 'replaces-falsy'),
+      append(bare('a,,b', 's'), { type: 'input_accepted' }),
+      append(bare('obj', 's'), { type: 'input_accepted' }),
+      { op: 'get', input: bare('obj', 's') },
+      { op: 'get', input: bare('undefined', 'undefined') },
+      accept(bare('undefined', 'undefined'), 'replaces-falsy'),
     ],
   });
+  {
+    const o = expectKinds(['record', 'ok', 'record', 'record', 'terminal', 'ok', 'record', 'absent', 'created']);
+    // null + 1, "1" + 1, true + 1 (open fence), [2] + 1, {} + 1.
+    assert.deepEqual([o[2].record.lastSeq, o[2].record.revision], [1, '11']);
+    assert.deepEqual([o[3].record.state, o[3].record.revision], ['interrupted', 2]);
+    assert.deepEqual([o[6].record.lastSeq, o[6].record.revision], ['21', '[object Object]1']);
+    // The new record takes the falsy record's first position.
+    assert.equal((await afterSnapshot()).records[0].requestMaterial, 'replaces-falsy');
+  }
+  // A falsy record is absent to get/append, but `events` checks Map.has, and
+  // accept replaces it in place, appending after the events already stored.
+  const falsy = bare('undefined', 'undefined');
+  await scenario('quirk-falsy', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [
+      { sessionKey: 's', runId: 'before', requestMaterial: 'm', state: 'completed' },
+      false,
+      { sessionKey: 's', runId: 'after', requestMaterial: 'm', state: 'completed' },
+    ], events: { '\0undefined\0undefined': [{ seq: 1, event: { type: 'kept-for-falsy' } }] } }),
+    steps: [
+      { op: 'get', input: falsy }, append(falsy, { type: 'input_accepted' }), { op: 'events', input: falsy },
+      accept(falsy, 'replaces-falsy'), append(falsy, { type: 'input_accepted' }), { op: 'get', input: falsy }, { op: 'events', input: falsy },
+    ],
+  });
+  expectKinds(['absent', 'not_found', 'events:1', 'created', 'ok', 'record', 'events:2']);
+  assert.deepEqual((await afterSnapshot()).records.map((r: any) => r.runId), ['before', 'undefined', 'after']);
+  // An array record is an object to JS: append's writes land on the in-memory
+  // array, JSON.stringify drops them, so only the event list changes on disk.
+  await scenario('quirk-array-record', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [
+      ['x', 1],
+      { sessionKey: 's', runId: 'ok', requestMaterial: 'm', state: 'completed' },
+    ], events: {} }),
+    steps: [
+      { op: 'get', input: falsy }, accept(falsy, 'm'), append(falsy, { type: 'input_accepted' }), append(falsy, completed('undefined')),
+      { op: 'get', input: falsy }, { op: 'events', input: falsy, afterSeq: -1 }, { op: 'events', input: falsy }, { op: 'mark' },
+    ],
+  });
+  {
+    const o = expectKinds(['record', 'conflict', 'ok', 'ok', 'record', 'events:2', 'events:0', 'ok']);
+    assert.deepEqual(o[4].record, ['x', 1]);
+    const after = await afterSnapshot();
+    assert.deepEqual(after.records[0], ['x', 1]);
+    assert.deepEqual(after.events['\0undefined\0undefined'].map((e: any) => e.seq), [null, null]);
+  }
   await scenario('quirk-events-array', {
     initial: JSON.stringify({ schemaVersion: 1, records: [
       { sessionKey: 's', runId: 'r', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 1 },
     ], events: [[{ seq: 1, event: { type: 'kept-under-index-key' } }]] }),
-    steps: [append(ref('r', undefined, 's'), { type: 'input_accepted' }), { op: 'events', input: ref('r', undefined, 's') }],
+    steps: [append(bare('r', 's'), { type: 'input_accepted' }), { op: 'events', input: bare('r', 's') }],
   });
+  expectKinds(['ok', 'events:1']);
+  assert.deepEqual(Object.keys((await afterSnapshot()).events), ['0', '\0s\0r']);
   await scenario('quirk-events-string', {
     initial: JSON.stringify({ schemaVersion: 1, records: [], events: 'ab' }),
-    steps: [accept(ref('q', undefined, 's'), 'q')],
+    steps: [accept(bare('q', 's'), 'q')],
   });
+  expectKinds(['created']);
+  // Object.entries splits a string by UTF-16 code unit: CJK, a surrogate pair
+  // split into two lone halves, and a lone surrogate each become one entry.
+  await scenario('quirk-events-utf16', {
+    initial: JSON.stringify({ schemaVersion: 1, records: [], events: '中😀\ud800' }),
+    steps: [accept(bare('q', 's'), 'q')],
+  });
+  expectKinds(['created']);
+  assert.deepEqual(Object.values((await afterSnapshot()).events), ['中', '\ud83d', '\ude00', '\ud800']);
   await scenario('quirk-lists', {
     initial: JSON.stringify({ schemaVersion: 1, records: [
       { sessionKey: 's', runId: 'str', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 0 },
@@ -286,19 +364,26 @@ try {
       { sessionKey: 's', runId: 'ok', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 0 },
     ], events: { '\0s\0str': 'oops', '\0s\0nul': [null] } }),
     steps: [
-      append(ref('str', undefined, 's'), { type: 'input_accepted' }),
-      { op: 'events', input: ref('str', undefined, 's') },
-      { op: 'events', input: ref('nul', undefined, 's') },
-      append(ref('ok', undefined, 's'), null),
-      { op: 'get', input: ref('ok', undefined, 's') },
+      append(bare('str', 's'), { type: 'input_accepted' }),
+      append(bare('nul', 's'), { type: 'input_accepted' }),
+      { op: 'events', input: bare('str', 's') },
+      { op: 'events', input: bare('nul', 's') },
+      append(bare('ok', 's'), null),
+      { op: 'get', input: bare('ok', 's') },
     ],
   });
+  {
+    const o = expectKinds(['TypeError', 'ok', 'TypeError', 'TypeError', 'TypeError', 'record']);
+    assert.equal(o[5].record.lastSeq, 0);
+    assert.deepEqual((await afterSnapshot()).events['\0s\0nul'].map((e: any) => e?.seq ?? e), [null, 2]);
+  }
   // Node readFile('utf8') replaces the invalid byte; the next write re-encodes U+FFFD.
   const utf8 = JSON.stringify({ schemaVersion: 1, records: [{ sessionKey: 's', runId: 'r', requestMaterial: 'invalid-byte-marker', state: 'completed' }], events: {} }).split('invalid-byte-marker');
   await scenario('quirk-invalid-utf8', {
     initial: Buffer.concat([Buffer.from(utf8[0]), Buffer.from([0xff]), Buffer.from(utf8[1])]),
-    steps: [accept(ref('r', undefined, 's'), '\ufffd'), accept(ref('q', undefined, 's'), 'q')],
+    steps: [accept(bare('r', 's'), '\ufffd'), accept(bare('q', 's'), 'q')],
   });
+  expectKinds(['duplicate', 'created']);
 
   // Bad tail and invalid shapes: readiness rejects, bytes untouched, lock released.
   // normal.after.json carries this run's pid; seed bad-tail with it fenced to DEAD.
