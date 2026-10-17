@@ -108,9 +108,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "completed"
             },
         ),
-        ExecuteResult::Aborted {
-            terminal: Some(terminal),
-        } if cancel_mode => (terminal, "cancelled"),
         other => return Err(format!("unexpected production result: {other:?}").into()),
     };
     if !terminal

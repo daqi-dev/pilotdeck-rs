@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import subprocess
+import select
 from pathlib import Path
 
 mode = sys.argv[1]
@@ -37,6 +38,7 @@ known_modes.update({
     'cancel-compaction-conflict', 'cancel-compaction-no-messages', 'cancel-compaction-malformed',
     'frame-boundary', 'cancel-write-failure', 'cancel-duplicate-acceptance', 'event-then-disconnect',
     'cancel-before-timeout', 'cancel-before-disconnect',
+    'batched-split-frames', 'accepted-then-rejected', 'close-term-cleanup',
 })
 if mode not in known_modes:
     sys.exit('unknown fixture mode: ' + mode)
@@ -49,7 +51,9 @@ def write_receipt():
 
 
 def read():
-    line = sys.stdin.readline()
+    # Do not prefetch the next line: ordering probes must see all unread bytes
+    # through select, including a cancel batched with the module response.
+    line = sys.stdin.buffer.raw.readline()
     if not line:
         raise RuntimeError('unexpected host EOF')
     return json.loads(line)
@@ -65,6 +69,15 @@ def response(request, **fields):
 
 
 hello = read()
+if mode == 'batched-split-frames':
+    # Two complete frames and half a third in one syscall; complete the third
+    # only once the host has consumed the first two and asked for the rest.
+    os.write(sys.stdout.fileno(), b'{"frame":1}\n{"frame":2}\n{"frame":')
+    assert read() == {'continue': True}
+    os.write(sys.stdout.fileno(), b'3}\n')
+    assert sys.stdin.read() == ''
+    write_receipt()
+    sys.exit(0)
 if mode == 'frame-boundary':
     send({'boundary': 'x'})
     sys.stdin.read()
@@ -119,7 +132,24 @@ if mode.startswith('grandchild-'):
     receipt.with_suffix('.pid').write_text(str(descendant.pid))
 if mode == 'no-streaming':
     methods[0]['profiles'] = ['unary']
+if mode == 'close-hang':
+    import signal
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if mode == 'close-term-cleanup':
+    import signal
+
+    def cleanup(_signum, _frame):
+        assert receipt.with_suffix('.eof').exists(), 'SIGTERM arrived before stdin EOF'
+        write_receipt()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, cleanup)
 send(response(capabilities, **binding, payload=dict(capabilitiesVersion='v1', methods=methods)))
+if mode == 'close-term-cleanup':
+    assert sys.stdin.read() == ''
+    receipt.with_suffix('.eof').write_text('EOF\n')
+    while True:
+        signal.pause()
 if mode == 'cancel-pre-execute':
     assert sys.stdin.read() == ''
     write_receipt()
@@ -171,11 +201,15 @@ if mode.startswith('cancel-before-'):
     send(module_call())
     reply = read()
     assert reply['inReplyTo'] == 'call-1' and reply['ok']
+    if mode in ('cancel-before-accepted', 'cancel-before-disconnect'):
+        readable, _, _ = select.select([sys.stdin], [], [], 0.05)
+        assert not readable, 'host wrote bytes before execute acceptance'
     if mode == 'cancel-before-timeout':
         assert sys.stdin.read() == ''  # no acceptance, hence never send cancel
         write_receipt()
         sys.exit(0)
     if mode == 'cancel-before-disconnect':
+        write_receipt()
         sys.exit(0)
 if mode == 'rejected':
     send(dict(response(execute, requestId=execute['requestId']), ok=False, final=True, outcome='failed', code='DEADLINE_EXCEEDED'))
@@ -239,6 +273,15 @@ if mode.startswith('cancel-'):
 if mode.startswith('grandchild-'):
     send(module_call())
     time.sleep(60)
+if mode == 'accepted-then-rejected':
+    send(event())
+    ack = read()
+    assert ack['method'] == 'ack' and ack['lastAppliedSequence'] == 0
+    send(dict(response(execute, requestId=execute['requestId']), ok=False,
+              final=True, outcome='failed', code='CONTROLLED_REJECTION'))
+    assert sys.stdin.read() == ''
+    write_receipt()
+    sys.exit(0)
 if mode in ('duplicate-acceptance', 'duplicate-acceptance-new-stream'):
     new_stream = 'replacement' if mode.endswith('new-stream') else 'stream'
     if new_stream == 'replacement':
