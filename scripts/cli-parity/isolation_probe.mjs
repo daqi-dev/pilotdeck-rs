@@ -1,4 +1,5 @@
-// Runs before product code, under the exact same OS sandbox and environment.
+// TS common-policy probe. Rust removes TS read/exec privileges and separately
+// verifies Node exec denial under its exact candidate policy.
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
@@ -23,14 +24,23 @@ const connectDenied = await new Promise(resolve => {
 });
 const child = spawnSync(process.execPath, ['--version']);
 const home = os.homedir();
+let passwdHomeMatches = false;
+let passwdLookupDenied = false;
+try { passwdHomeMatches = os.userInfo().homedir === home; }
+catch { passwdLookupDenied = true; }
 const writable = path.join(process.env.TMPDIR, 'probe.txt');
 fs.writeFileSync(writable, 'isolated');
 const result = {
   osHomedir: home,
   homeMatches: home === process.env.HOME,
   // passwd lookup is not remapped by Seatbelt; access outside runtime is denied.
-  passwdHomeMatches: os.userInfo().homedir === home,
+  passwdHomeMatches,
+  passwdLookupDenied,
   outsideReadDenied: denied(() => fs.readFileSync(sentinel)),
+  outsideMetadataDenied: denied(() => fs.statSync(sentinel)),
+  // This harmless file is present on the calibration host. ENOENT is not a
+  // denial: missing fixtures/unsupported hosts block instead of faking proof.
+  privateReadDenied: denied(() => fs.readFileSync('/opt/homebrew/etc/openssl@3/private/.keepme')),
   outsideWriteDenied: denied(() => fs.writeFileSync(sentinel, 'unexpected')),
   listenDenied: socketDenied,
   connectDenied,
@@ -40,7 +50,7 @@ const result = {
 };
 fs.unlinkSync(writable);
 const checks = ['homeMatches', 'outsideReadDenied', 'outsideWriteDenied', 'listenDenied',
-  'connectDenied', 'childDenied', 'runtimeWritable'];
+  'connectDenied', 'childDenied', 'runtimeWritable', 'outsideMetadataDenied', 'privateReadDenied'];
 result.status = checks.every(key => result[key]) && !result.stdinIsTTY ? 'PASS' : 'FAIL';
 console.log(JSON.stringify(result));
 process.exitCode = result.status === 'PASS' ? 0 : 1;

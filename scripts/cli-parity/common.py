@@ -15,7 +15,9 @@ HEAD = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
 LOCK = Path('/tmp/pdrs-parity.lock')
 TOKEN = 'd0-fixture-not-a-secret'
 DIRS = ('home', 'pilot', 'project', 'tmp', 'bin', 'xdg-config', 'xdg-cache', 'xdg-data', 'xdg-state')
-FILES = {'pilot/pilotdeck.yaml': b'schemaVersion: 1\n', 'project/keep.txt': b'D0 fixture\x00\xff\n'}
+FILES = {'pilot/pilotdeck.yaml': b'schemaVersion: 1\n', 'project/keep.txt': b'D0 fixture\x00\xff\n',
+         'openssl.cnf': b''}
+OPENSSL_CONFIG = {'path': 'openssl.cnf', 'sha256': hashlib.sha256(b'').hexdigest()}
 SCENARIOS = json.loads((SCRIPT / 'scenarios.json').read_text())
 
 
@@ -40,7 +42,7 @@ def digest(path):
 
 
 def hashes():
-    paths = list(SCRIPT.glob('*.py')) + list(SCRIPT.glob('*.mjs')) + [SCRIPT / 'scenarios.json']
+    paths = [p for p in SCRIPT.iterdir() if p.is_file() and p.suffix in ('.py', '.mjs', '.c', '.txt', '.md', '.json')]
     paths += list((ROOT / 'specs/cli-parity').glob('*.md'))
     return {p.relative_to(ROOT).as_posix(): digest(p) for p in sorted(paths)}
 
@@ -114,7 +116,8 @@ def environment(runtime, scenario):
              'PILOT_HOME': 'pilot', 'PILOTDECK_CONFIG_PATH': 'pilot/pilotdeck.yaml',
              'XDG_CONFIG_HOME': 'xdg-config', 'XDG_CACHE_HOME': 'xdg-cache',
              'XDG_DATA_HOME': 'xdg-data', 'XDG_STATE_HOME': 'xdg-state',
-             'TMPDIR': 'tmp', 'TMP': 'tmp', 'TEMP': 'tmp', 'PWD': 'project', 'PATH': 'bin'}
+             'TMPDIR': 'tmp', 'TMP': 'tmp', 'TEMP': 'tmp', 'PWD': 'project', 'PATH': 'bin',
+             'OPENSSL_CONF': 'openssl.cnf'}
     env = {key: str(runtime / value) for key, value in paths.items()}
     env.update(LANG='C', LC_ALL='C', TZ='UTC', TERM='dumb', NO_COLOR='1',
                ANALYTICS_ENABLED='0', DOCKER_CONTAINER='1', COMMIT_HASH=HEAD,
@@ -133,22 +136,39 @@ def env_summary(env):
 
 
 @contextmanager
+def lock_guard(lock):
+    path = lock.with_name(lock.name + '.guard')
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'r+') as guard:
+        info = os.fstat(guard.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
+            raise Blocked('unsafe parity guard')
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        yield
+
+
+@contextmanager
 def parity_lock(lock=LOCK):
     """Cooperate with existing .guard + mkdir contract; never steal a lock."""
     mine = {'pid': os.getpid(), 'timestamp': time.time(), 'token': uuid.uuid4().hex}
-    with lock.with_name(lock.name + '.guard').open('a') as guard:
-        fcntl.flock(guard, fcntl.LOCK_EX)
+    with lock_guard(lock):
         try:
-            lock.mkdir()
+            lock.mkdir(mode=0o700)
         except FileExistsError as error:
             raise Blocked(f'parity lock held: {lock}') from error
+        identity = lock.lstat()
+        directory = os.open(lock, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        current = os.fstat(directory)
+        if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino) or current.st_uid != os.getuid():
+            os.close(directory)
+            raise Blocked('lock directory changed before ownership write')
         try:
-            save(lock / 'owner.json', mine)
+            fd = os.open('owner.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            with os.fdopen(fd, 'w') as owner:
+                json.dump(mine, owner)
         except BaseException:
-            lock.rmdir()
+            os.close(directory)
             raise
-        finally:
-            fcntl.flock(guard, fcntl.LOCK_UN)
     release = True
     try:
         yield mine
@@ -156,10 +176,17 @@ def parity_lock(lock=LOCK):
         release = False
         raise
     finally:
-        with lock.with_name(lock.name + '.guard').open('a') as guard:
-            fcntl.flock(guard, fcntl.LOCK_EX)
-            if json.loads((lock / 'owner.json').read_text()) != mine:
-                raise Blocked('lock ownership changed; retaining lock')
-            if release:
-                (lock / 'owner.json').unlink()
-                lock.rmdir()
+        try:
+            with lock_guard(lock):
+                current = lock.lstat()
+                if (identity.st_dev, identity.st_ino) != (current.st_dev, current.st_ino):
+                    raise Blocked('lock directory changed; retaining lock')
+                fd = os.open('owner.json', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                with os.fdopen(fd) as owner:
+                    if json.load(owner) != mine:
+                        raise Blocked('lock ownership changed; retaining lock')
+                if release:
+                    os.unlink('owner.json', dir_fd=directory)
+                    lock.rmdir()
+        finally:
+            os.close(directory)
