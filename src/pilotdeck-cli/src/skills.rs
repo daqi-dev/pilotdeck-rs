@@ -7,18 +7,34 @@ use std::path::{Path, PathBuf};
 
 const MARKER: &str = ".legacy-bundled-skills-migrated-v1";
 
-pub enum BuiltinSkills {
-    /// PILOTDECK_BUNDLED_SKILLS_DIR, checked on disk exactly like TS.
-    Dir(PathBuf),
-    /// Skills shipped with the release itself (TS: the package `skills/` next to dist).
-    Packaged,
-}
-
-pub fn builtin_skills(env: &Env, cwd: &Path) -> BuiltinSkills {
-    match env.get("PILOTDECK_BUNDLED_SKILLS_DIR") {
-        Some(dir) if !dir.is_empty() => BuiltinSkills::Dir(paths::resolve(cwd, Path::new(dir))),
-        _ => BuiltinSkills::Packaged,
+/// resolveBuiltinSkillsRoot (src/cli/LocalGatewayBootConfig.ts:70-85). A non-empty
+/// PILOTDECK_BUNDLED_SKILLS_DIR wins; otherwise the first existing candidate, falling
+/// back to `<cwd>/skills`. TS candidates are relative to dist/src/cli; the Rust release
+/// layout puts the binary in `<root>/bin`, so they are relative to the executable's
+/// directory (taken as-is from current_exe, symlinks not resolved).
+pub fn builtin_skills_root(
+    env: &Env,
+    cwd: &Path,
+    exe_dir: Option<&Path>,
+) -> Result<PathBuf, Failure> {
+    if let Some(dir) = env
+        .get("PILOTDECK_BUNDLED_SKILLS_DIR")
+        .filter(|d| !d.is_empty())
+    {
+        return Ok(paths::resolve(cwd, Path::new(dir)));
     }
+    let exe_dir = exe_dir.ok_or(Failure::Todo(
+        "locating bundled skills without a known executable path",
+    ))?;
+    let fallback = paths::resolve(cwd, Path::new("skills"));
+    let candidates = [
+        paths::resolve(cwd, &exe_dir.join("../skills")),
+        paths::resolve(cwd, &exe_dir.join("../../skills")),
+    ];
+    Ok(candidates
+        .into_iter()
+        .find(|candidate| candidate.exists())
+        .unwrap_or(fallback))
 }
 
 fn has_bundled_skills(root: &Path) -> bool {
@@ -37,17 +53,13 @@ fn warning(slug: &str, message: &str) -> String {
 /// Returns the console.warn lines createLocalGateway prints for failures.
 pub fn migrate_legacy_bundled_skill_copies(
     pilot_home: &Path,
-    builtin: &BuiltinSkills,
+    builtin_root: &Path,
 ) -> Result<Vec<String>, Failure> {
     let marker = pilot_home.join(MARKER);
     if marker.exists() {
         return Ok(vec![]);
     }
-    let has_skills = match builtin {
-        BuiltinSkills::Dir(root) => has_bundled_skills(root),
-        BuiltinSkills::Packaged => true,
-    };
-    if !has_skills {
+    if !has_bundled_skills(builtin_root) {
         return Ok(vec![warning(
             "__migration__",
             "Bundled skills root is missing or contains no skills; legacy copies were left untouched.",
@@ -95,10 +107,20 @@ mod tests {
         dir
     }
 
+    fn bundled_root(home: &Path) -> PathBuf {
+        let root = home.join("bundled");
+        fs::create_dir_all(root.join("docx")).unwrap();
+        fs::write(root.join("docx/SKILL.md"), "x").unwrap();
+        root
+    }
+
+    const MISSING_ROOT_WARNING: &str = "[pilotdeck] Could not migrate legacy skill '__migration__': Bundled skills root is missing or contains no skills; legacy copies were left untouched.";
+
     #[test]
     fn writes_marker_once_with_default_file_mode() {
         let home = temp_home("marker");
-        let warnings = migrate_legacy_bundled_skill_copies(&home, &BuiltinSkills::Packaged);
+        let root = bundled_root(&home);
+        let warnings = migrate_legacy_bundled_skill_copies(&home, &root);
         assert!(matches!(warnings, Ok(w) if w.is_empty()));
         let marker = home.join(MARKER);
         assert_eq!(fs::read(&marker).unwrap(), b"completed\n");
@@ -113,15 +135,21 @@ mod tests {
         let home = temp_home("empty-root");
         let root = home.join("bundled");
         fs::create_dir_all(root.join("not-a-skill")).unwrap();
-        let warnings = migrate_legacy_bundled_skill_copies(&home, &BuiltinSkills::Dir(root))
+        let warnings = migrate_legacy_bundled_skill_copies(&home, &root)
             .ok()
             .unwrap();
-        assert_eq!(
-            warnings,
-            vec![
-                "[pilotdeck] Could not migrate legacy skill '__migration__': Bundled skills root is missing or contains no skills; legacy copies were left untouched."
-            ]
-        );
+        assert_eq!(warnings, vec![MISSING_ROOT_WARNING]);
+        assert!(!home.join(MARKER).exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn missing_root_warns_and_leaves_no_marker() {
+        let home = temp_home("missing-root");
+        let warnings = migrate_legacy_bundled_skill_copies(&home, &home.join("absent"))
+            .ok()
+            .unwrap();
+        assert_eq!(warnings, vec![MISSING_ROOT_WARNING]);
         assert!(!home.join(MARKER).exists());
         fs::remove_dir_all(home).unwrap();
     }
@@ -129,11 +157,50 @@ mod tests {
     #[test]
     fn user_skill_copy_is_an_explicit_todo() {
         let home = temp_home("copies");
+        let root = bundled_root(&home);
         fs::create_dir_all(home.join("skills/docx")).unwrap();
         fs::write(home.join("skills/docx/SKILL.md"), "x").unwrap();
-        let result = migrate_legacy_bundled_skill_copies(&home, &BuiltinSkills::Packaged);
+        let result = migrate_legacy_bundled_skill_copies(&home, &root);
         assert!(matches!(result, Err(Failure::Todo(_))));
         assert!(!home.join(MARKER).exists());
         fs::remove_dir_all(home).unwrap();
+    }
+
+    fn root_of(env: &Env, cwd: &Path, exe_dir: &Path) -> PathBuf {
+        builtin_skills_root(env, cwd, Some(exe_dir)).ok().unwrap()
+    }
+
+    #[test]
+    fn explicit_root_wins_and_empty_value_probes() {
+        let base = temp_home("explicit-root");
+        let exe_dir = base.join("stage/bin");
+        fs::create_dir_all(base.join("stage/skills")).unwrap();
+        let cwd = base.join("work");
+        let env = Env::from_pairs(&[("PILOTDECK_BUNDLED_SKILLS_DIR", "rel")]);
+        assert_eq!(root_of(&env, &cwd, &exe_dir), cwd.join("rel"));
+        let env = Env::from_pairs(&[("PILOTDECK_BUNDLED_SKILLS_DIR", "")]);
+        assert_eq!(root_of(&env, &cwd, &exe_dir), base.join("stage/skills"));
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn probes_candidates_in_order_then_falls_back_to_cwd() {
+        let base = temp_home("candidates");
+        let exe_dir = base.join("a/stage/bin");
+        let cwd = base.join("work");
+        let env = Env::from_pairs(&[]);
+        let first = base.join("a/stage/skills");
+        let second = base.join("a/skills");
+        for dir in [&first, &second, &cwd.join("skills")] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        assert_eq!(root_of(&env, &cwd, &exe_dir), first);
+        fs::remove_dir_all(&first).unwrap();
+        assert_eq!(root_of(&env, &cwd, &exe_dir), second);
+        fs::remove_dir_all(&second).unwrap();
+        assert_eq!(root_of(&env, &cwd, &exe_dir), cwd.join("skills"));
+        fs::remove_dir_all(cwd.join("skills")).unwrap();
+        assert_eq!(root_of(&env, &cwd, &exe_dir), cwd.join("skills"));
+        fs::remove_dir_all(base).unwrap();
     }
 }

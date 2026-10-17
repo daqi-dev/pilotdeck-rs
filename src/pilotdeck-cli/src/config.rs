@@ -148,6 +148,9 @@ pub fn check(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
         .fold(JsObject::new(), |output, source| {
             deep_merge(&output, source)
         });
+    // TS runs applyProjectBinding on the merged config (loadPilotConfig.ts:105) before
+    // validateTopLevel (:106) and the first throwConfigErrorIfFatal (:128), and it can
+    // throw on its own (projectBinding.ts:49,51), so the TODO stays at that point.
     if env.get("STAFFDECK_PROJECT_BINDING_ENABLED") == Some(std::ffi::OsStr::new("true")) {
         return Err(Failure::Todo(
             "StaffDeck project binding (applyProjectBinding)",
@@ -254,6 +257,28 @@ mod tests {
         assert_eq!(
             run("valid", "schemaVersion: 1\nagent: {}\nmodel: {}\n", None),
             "ok"
+        );
+    }
+
+    #[test]
+    fn project_binding_runs_before_the_first_fatal_like_ts() {
+        let binding = Some(("STAFFDECK_PROJECT_BINDING_ENABLED", "true"));
+        for (name, yaml) in [
+            ("binding-agent", "schemaVersion: 1\n"),
+            ("binding-yaml", "a: [\n"),
+        ] {
+            assert_eq!(
+                run(name, yaml, binding),
+                "TODO StaffDeck project binding (applyProjectBinding)"
+            );
+        }
+        assert_eq!(
+            run(
+                "binding-off",
+                "schemaVersion: 1\n",
+                Some(("STAFFDECK_PROJECT_BINDING_ENABLED", "1"))
+            ),
+            "Config must contain an agent section."
         );
     }
 

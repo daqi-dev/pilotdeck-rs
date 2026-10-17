@@ -84,8 +84,10 @@ fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
 /// createLocalGateway() up to its first observable effects, then CliChannel.
 fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let pilot_home = paths::pilot_home(env, cwd)?;
-    let builtin = skills::builtin_skills(env, cwd);
-    for warning in skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin)? {
+    let exe = std::env::current_exe().ok();
+    let exe_dir = exe.as_deref().and_then(Path::parent);
+    let builtin_root = skills::builtin_skills_root(env, cwd, exe_dir)?;
+    for warning in skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root)? {
         stderr_line(&warning);
     }
     config::check(env, cwd, &pilot_home)?;

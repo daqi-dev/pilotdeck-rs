@@ -101,6 +101,25 @@ def rust_identity(binary, source):
             'sourcePath': str(Path(source).resolve())}
 
 
+def stage_rust(output, expected, baseline):
+    """Rust release layout built per round, never committed: the --rust-bin copy at
+    <output>/rust-stage/bin/pilotdeck next to a copy of the baseline skills/ tree.
+    The original binary stays the identity; the copy must hash identically."""
+    stage = output / 'rust-stage'
+    (stage / 'bin').mkdir(parents=True, mode=0o700)
+    staged = stage / 'bin' / 'pilotdeck'
+    shutil.copyfile(expected['executable']['path'], staged)
+    staged.chmod(0o755)
+    shutil.copytree(baseline / 'skills', stage / 'skills', symlinks=True)
+    # Links would point back into the baseline, which the Rust policy cannot read.
+    if any(path.is_symlink() for path in (stage / 'skills').rglob('*')):
+        raise Blocked('baseline skills/ contains symlinks; Rust stage copy not registered')
+    identity = executable(staged)
+    if identity['path'] != str(staged) or identity['sha256'] != expected['executable']['sha256']:
+        raise Blocked('staged Rust binary differs from --rust-bin')
+    return identity
+
+
 def check_budget(timeout, with_rust):
     rounds = 3 if with_rust else 2
     # Reserve five minutes for hashing/probes/controls; a separate hard deadline
@@ -332,7 +351,7 @@ def run_round(output, runtime, profile, isolation, side, provenance, timeout):
         case.mkdir()
         fixture(runtime)
         save(case / 'initial.json', snapshot(runtime))
-        command = [provenance['executable']['path']]
+        command = [provenance.get('stagedExecutable', provenance['executable'])['path']]
         if actual_side == 'ts':
             command.append(str(Path(provenance['baseline']['path']) / 'dist/src/cli/pilotdeck.js'))
         command.extend(scenario['argv'])
@@ -382,6 +401,7 @@ def main():
     output = output_path(args.output)
     output.mkdir(parents=True, mode=0o700)
     summary = {'status': 'BLOCKED', 'scope': 'D0-pr1 calibration; no command migration claim'}
+    staged = None
     try:
         if sys.platform != 'darwin' or not Path('/usr/bin/sandbox-exec').is_file():
             raise Blocked('D0-pr1 requires macOS sandbox-exec; no unconfined fallback')
@@ -420,12 +440,14 @@ def main():
                 summary['controls'] = run_controls(first, output / 'controls')
                 summary['status'] = summary['controls']['status']
                 if args.rust_bin:
+                    staged = stage_rust(output, expected_rust, baseline)
                     rust_profile = output / 'rust.sb'
-                    rust_profile.write_text(sandbox_profile(runtime, baseline, expected_rust['executable']['path'], 'rust'))
+                    rust_profile.write_text(sandbox_profile(runtime, baseline, staged['path'], 'rust'))
                     fixture(runtime)
                     rust_probe = rust_isolation(output, runtime, rust_profile, node['path'], isolation)
                     runtime.rename(output / 'rust-preflight-tree')
-                    rust_provenance = {**expected_rust, 'baseline': identity, 'node': node, 'opensslConfig': OPENSSL_CONFIG}
+                    rust_provenance = {**expected_rust, 'stagedExecutable': staged, 'baseline': identity,
+                                       'node': node, 'opensslConfig': OPENSSL_CONFIG}
                     candidate = run_round(output, runtime, rust_profile, rust_probe, 'rust', rust_provenance, args.timeout)
                     summary['rustComparison'] = compare(first, candidate, expected_rust)
                     if summary['rustComparison']['status'] != 'PASS':
@@ -435,6 +457,8 @@ def main():
                 raise Blocked('baseline/runtime changed during recording')
             if args.rust_bin and rust_identity(args.rust_bin, args.rust_source) != expected_rust:
                 raise Blocked('Rust executable/source HEAD changed during recording')
+            if staged and executable(staged['path']) != staged:
+                raise Blocked('staged Rust binary changed during recording')
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         summary['status'] = 'BLOCKED'
         summary['error'] = str(error)

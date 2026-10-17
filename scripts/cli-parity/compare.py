@@ -125,7 +125,13 @@ def load_round(path):
                     and provenance['executable']['sha256'] != node['sha256'], 'round.rust-source')
         runtime = Path(run['runtime'])
         require(runtime.is_absolute() and isolation['probe']['osHomedir'] == str(runtime / 'home'), 'round.os-home')
-        policy = sandbox_profile(runtime, Path(baseline['path']), provenance['executable']['path'], run['side'])
+        executed = provenance['executable']
+        if run['side'] == 'rust':
+            # The run uses the staged copy (run_round.stage_rust); identity stays the original.
+            executed = provenance['stagedExecutable']
+            require(executed == {'path': str(runtime.parent / 'rust-stage/bin/pilotdeck'),
+                                 'sha256': provenance['executable']['sha256']}, 'round.rust-stage')
+        policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'])
         require(isolation['profileText'] == policy and isolation['profileSha256'] == hashlib.sha256(policy.encode()).hexdigest(),
                 'round.profile-binding')
         probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts')
@@ -156,7 +162,7 @@ def load_round(path):
             stderr, streams = comparison_view(run['side'], stderr, streams)
             require(record['status'] == 'DONE' and record['timedOut'] is False, f'{name}.complete')
             require(record['argv'] == scenario['argv'], f'{name}.argv')
-            command = [provenance['executable']['path']]
+            command = [executed['path']]
             if run['side'] == 'ts':
                 command.append(str(Path(baseline['path']) / 'dist/src/cli/pilotdeck.js'))
             require(record['executedArgv'] == command + scenario['argv'], f'{name}.executed-argv')
