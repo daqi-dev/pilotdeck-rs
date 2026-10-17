@@ -85,6 +85,8 @@ fn load(path: &Path) -> Result<(Vec<u8>, TranscriptRead)> {
         entries: vec![],
         diagnostics: vec![],
     };
+    // Match Node readFile(path, "utf8"): replacement characters are observable
+    // in parsed values, while original bytes stay intact for the next append.
     for (index, line) in String::from_utf8_lossy(&bytes).split('\n').enumerate() {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if js_trim(line).is_empty() {
@@ -161,7 +163,12 @@ fn load(path: &Path) -> Result<(Vec<u8>, TranscriptRead)> {
 /// The lock file is kept so contenders always lock the same inode; Drop releases
 /// the OS lock, including after crashes. TS does not honor this Rust lock:
 /// TS/Rust cutover must stop the previous writer before opening this store.
+/// Hard-link aliases are unsupported: each name has its own lock, and replacing
+/// one name forks its history away from the other names of the original inode.
 /// Appends preserve original bytes and atomically replace through a sibling file.
+/// Atomic visibility does not promise power-loss durability: like TS persistence,
+/// this adapter does not fsync the parent directory. A write failure requires
+/// dropping/reopening the ledger; cached recoveries and no-op writes also fail.
 /// This is O(transcript bytes) per commit; loading retains the TS 50 MiB ceiling.
 /// Historical replacement transactions and arbitrary transcript writes are not
 /// exposed by this ledger-only adapter.
@@ -172,10 +179,13 @@ pub struct JsonlLedgerStore {
     state: WriterState,
     entry_ids: HashSet<JsString>,
     diagnostics: Vec<Diagnostic>,
+    reopen_reason: Option<String>,
     #[cfg(test)]
     pub(super) fail_write: bool,
     #[cfg(test)]
     pub(super) fail_rename: bool,
+    #[cfg(test)]
+    pub(super) fail_after_rename: bool,
 }
 impl JsonlLedgerStore {
     pub fn open(
@@ -234,13 +244,18 @@ impl JsonlLedgerStore {
             state,
             entry_ids,
             diagnostics: read.diagnostics,
+            reopen_reason: None,
             #[cfg(test)]
             fail_write: false,
             #[cfg(test)]
             fail_rename: false,
+            #[cfg(test)]
+            fail_after_rename: false,
         };
         SessionOperationLedger::new(session_id.into(), store, &read.entries)
     }
+    /// Last acknowledged in-memory state, for diagnostics only if poisoned.
+    /// This does not certify the disk outcome; reopen to recover after failure.
     pub fn snapshot_state(&self) -> WriterState {
         self.state.clone()
     }
@@ -255,6 +270,15 @@ impl JsonlLedgerStore {
         self._lock.0.try_clone()
     }
     fn replace(&mut self, appended: &[u8]) -> Result<()> {
+        self.check_health()?;
+        if let Err(error) = self.replace_inner(appended) {
+            let reason = error.to_string();
+            self.reopen_reason = Some(reason.clone());
+            return Err(LedgerError::ReopenRequired(reason));
+        }
+        Ok(())
+    }
+    fn replace_inner(&mut self, appended: &[u8]) -> Result<()> {
         let current = match fs::read(&self.path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
@@ -289,23 +313,34 @@ impl JsonlLedgerStore {
         file.sync_all()?;
         #[cfg(test)]
         if std::mem::take(&mut self.fail_rename) {
-            // A real failing rename syscall: a file cannot replace its directory.
-            fs::rename(&cleanup.0, self.path.parent().unwrap())?;
-            unreachable!("rename of a file over its nonempty parent directory succeeded");
+            return Err(io::Error::other("injected rename failure").into());
         }
-        // Only this rename publishes. No fallible operation follows the commit.
+        // Rename is the visibility commit point; subsequent production memory
+        // updates are infallible. No directory fsync/power-loss guarantee (TS
+        // JsonlSessionPersistence.ts:24-30 does not sync ordinary ledger writes).
         fs::rename(&cleanup.0, &self.path)?;
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_after_rename) {
+            return Err(io::Error::other("injected uncertain outcome after rename").into());
+        }
         self.bytes = next;
         Ok(())
     }
 }
 impl TranscriptSink for JsonlLedgerStore {
+    fn check_health(&self) -> Result<()> {
+        match &self.reopen_reason {
+            Some(reason) => Err(LedgerError::ReopenRequired(reason.clone())),
+            None => Ok(()),
+        }
+    }
     fn append(
         &mut self,
         session_id: &JsString,
         turn_id: &JsString,
         mut event: JsObject,
     ) -> Result<()> {
+        self.check_health()?;
         let sequence = self.state.sequence + 1;
         if sequence as f64 > MAX_SAFE_INTEGER {
             return Err(invalid(

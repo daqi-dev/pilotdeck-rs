@@ -479,5 +479,266 @@
         }
       ]
     }
-  ]
+  ],
+  "rejectedCases": [
+    {
+      "name": "identity-accepted-requestId",
+      "file": "identity-accepted-requestId.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-accepted-runId",
+      "file": "identity-accepted-runId.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-accepted-turnId",
+      "file": "identity-accepted-turnId.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-accepted-idempotencyKey",
+      "file": "identity-accepted-idempotencyKey.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-accepted-key-absent",
+      "file": "identity-accepted-key-absent.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-accepted-key-empty",
+      "file": "identity-accepted-key-empty.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-accepted-moduleInstanceId",
+      "file": "identity-accepted-moduleInstanceId.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-accepted-connectionGeneration",
+      "file": "identity-accepted-connectionGeneration.jsonl",
+      "error": "Restored AgentLoop operation op-1 was accepted before it started."
+    },
+    {
+      "name": "identity-terminal-requestId",
+      "file": "identity-terminal-requestId.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    },
+    {
+      "name": "identity-terminal-runId",
+      "file": "identity-terminal-runId.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    },
+    {
+      "name": "identity-terminal-turnId",
+      "file": "identity-terminal-turnId.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    },
+    {
+      "name": "identity-terminal-idempotencyKey",
+      "file": "identity-terminal-idempotencyKey.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    },
+    {
+      "name": "identity-terminal-key-absent",
+      "file": "identity-terminal-key-absent.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    },
+    {
+      "name": "identity-terminal-key-empty",
+      "file": "identity-terminal-key-empty.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    },
+    {
+      "name": "identity-terminal-moduleInstanceId",
+      "file": "identity-terminal-moduleInstanceId.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    },
+    {
+      "name": "identity-terminal-connectionGeneration",
+      "file": "identity-terminal-connectionGeneration.jsonl",
+      "error": "Restored AgentLoop operation op-1 terminated before it started."
+    }
+  ],
+  "seedCases": [
+    {
+      "name": "invalid-kind",
+      "file": "seed-invalid-kind.jsonl",
+      "input": {
+        "readFileState": {
+          "a": {
+            "mtimeMs": 1,
+            "kind": "other"
+          }
+        }
+      },
+      "onlineError": "Invalid readFileState entry: a.",
+      "restoreError": "Invalid readFileState entry: a.",
+      "entryCount": 3,
+      "recovery": null
+    },
+    {
+      "name": "string-mtime",
+      "file": "seed-string-mtime.jsonl",
+      "input": {
+        "readFileState": {
+          "a": {
+            "mtimeMs": "1",
+            "kind": "text"
+          }
+        }
+      },
+      "onlineError": "Invalid readFileState entry: a.",
+      "restoreError": "Invalid readFileState entry: a.",
+      "entryCount": 3,
+      "recovery": null
+    },
+    {
+      "name": "invalid-write",
+      "file": "seed-invalid-write.jsonl",
+      "input": {
+        "writeSnapshots": {
+          "a": {
+            "mtimeMs": 1
+          }
+        }
+      },
+      "onlineError": "Invalid writeSnapshots entry: a.",
+      "restoreError": "Invalid writeSnapshots entry: a.",
+      "entryCount": 3,
+      "recovery": null
+    },
+    {
+      "name": "null-fields",
+      "file": "seed-null-fields.jsonl",
+      "input": {
+        "allowedReadFiles": null,
+        "readFileState": null,
+        "writeSnapshots": null
+      },
+      "onlineError": null,
+      "restoreError": null,
+      "entryCount": 3,
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {}
+        }
+      }
+    },
+    {
+      "name": "falsy-fields",
+      "file": "seed-falsy-fields.jsonl",
+      "input": {
+        "allowedReadFiles": false,
+        "readFileState": 0,
+        "writeSnapshots": ""
+      },
+      "onlineError": null,
+      "restoreError": null,
+      "entryCount": 3,
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {}
+        }
+      }
+    },
+    {
+      "name": "optional-fields",
+      "file": "seed-optional-fields.jsonl",
+      "input": {
+        "readFileState": {
+          "a": {
+            "kind": "text",
+            "mtimeMs": 1,
+            "offset": "ignored",
+            "ignored": true
+          }
+        }
+      },
+      "onlineError": null,
+      "restoreError": null,
+      "entryCount": 3,
+      "recovery": {
+        "state": "terminal",
+        "resolution": {
+          "outcome": "completed",
+          "result": {
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "text": "中文\ud800",
+            "nested": {
+              "z": 0,
+              "a": 1
+            }
+          },
+          "messages": [],
+          "seedState": {
+            "readFileState": {
+              "a": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "utf8Read": {
+    "file": "invalid-utf8.jsonl",
+    "entries": [
+      {
+        "type": "agent_loop_operation_started",
+        "runId": "run-1",
+        "operationId": "op-1",
+        "requestId": "req-1",
+        "binding": {
+          "moduleInstanceId": "module-1",
+          "connectionGeneration": "generation-1"
+        },
+        "idempotencyKey": "once",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "sequence": 1,
+        "createdAt": "not-a-date",
+        "entryId": "ts-entry-1",
+        "parentEntryId": null,
+        "annotation": "�"
+      }
+    ],
+    "diagnostics": [],
+    "state": {
+      "sequence": 1,
+      "lastEntryId": "ts-entry-1"
+    }
+  }
 }

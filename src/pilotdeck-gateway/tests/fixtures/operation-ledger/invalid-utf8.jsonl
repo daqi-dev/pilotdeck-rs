@@ -1,0 +1,1 @@
+{"type":"agent_loop_operation_started","runId":"run-1","operationId":"op-1","requestId":"req-1","binding":{"moduleInstanceId":"module-1","connectionGeneration":"generation-1"},"idempotencyKey":"once","sessionId":"session-1","turnId":"turn-1","sequence":1,"createdAt":"not-a-date","entryId":"ts-entry-1","parentEntryId":null,"annotation":"ÿ"}
