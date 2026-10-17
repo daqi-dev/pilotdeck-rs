@@ -1,6 +1,6 @@
 ---
 name: parity-binary-path
-description: gateway-parity 的 Rust 轮从「所跑脚本所在 checkout」的 src/target/debug 取二进制；A2 校准用 A1 纯透传源、A4 用 HEAD；成片缺场景先查 run.json error。
+description: gateway-parity 的 Rust 轮从装置树（所跑脚本所在 checkout）的 src/target/debug 取二进制；A2 校准在 A1 纯透传源树构建并把产物指进装置树，A4 用 HEAD 同树；成片缺场景先查 run.json error。
 type: project
 ---
 
