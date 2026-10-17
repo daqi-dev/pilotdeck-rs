@@ -15,6 +15,7 @@ mod session_model;
 pub mod storage;
 #[cfg(test)]
 mod test_process;
+pub mod upload;
 mod upstream;
 
 use bytes::Bytes;
