@@ -6,6 +6,8 @@ type: feedback
 
 # 本机评审入口：2026-10-15 经验
 
+**2026-10-17 GLM 走 Claude Code（首选）**：`claude -p` 设 `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic`、`ANTHROPIC_AUTH_TOKEN=$ZAI_API_KEY`（`.env.local`）、`--model glm-5.3` 即跑 GLM，init 报 `model=glm-5.3`、工具白名单照常在执行层生效（实测原件 `_tmp/20261017-review-roles-glm/`）。`scripts/run-review-roles.py` 默认就走它（`--runner zai`）。比 opencode 好在只读可证明；opencode 只剩人工对话用途。GLM 开几个角度都只算**一个谱系**，双谱系评审仍需另一家非作者。
+
 **2026-10-17 更新（用户指示，优先于下文 dsh 用法）**：DeepSeek 谱系**首选** `python3 -I scripts/review-deepseek.py --prompt <任务书> --input <diff/源码>... --out <out.md>`（默认 `deepseek-flash`，可选 `--model deepseek-v4-pro`）。它直连 API、密钥先取环境变量 `DEEPSEEK_API_KEY`，没有再读 `.env.local`（先当前检出根，再主仓根，所以在 `_build/wt-*` 里跑也找得到；已在 .gitignore），模型无工具、天然只读；需要的上下文必须用 `--input` 显式附上（它读不到仓库；合计上限 2 MiB，超了分批）。长评审建议显式传 `--max-tokens`（不传用 API 默认输出上限，截断时按失败退出、费用已花）。`--out` 已存在默认拒绝（保护上一轮原件），只有 exit 0 才算有完整回复，失败不写 out。冒烟原件 `_tmp/20261017-deepseek-smoke/`（exit 0、SMOKE-OK）。脚本报 HTTP/余额错误时才回退 dsh。不要读取、打印或复制 `.env.local`。
 
 **为什么**：用户指定的是 Z.AI Coding Plan 的 GLM5.3，不是 OpenCode 当时默认的 LLMcenter。DeepSeek Harness 默认 headless 的 `deepseek-official` 曾返回 402，但桌面使用的 `deepseek-account` 可正常响应；单个通道失败不能推断整个 Harness 不可用。实际调用与代码评审原件在主仓本机 `_tmp/20261015-multi-model/`，这是本机经验索引，不是 CI 的证据依赖。

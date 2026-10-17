@@ -28,27 +28,55 @@ ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 
 
+def check_block(attrs: str, head: str) -> list[str]:
+    errs: list[str] = []
+    # 注释内全文直接 findall：roles=...\s+...\s+... 多键值里 \S+ 会在首个空格截断（P1 修复）
+    pairs = re.findall(r"(\w+):([A-Z_]+)", attrs)
+    roles = dict(pairs)
+    dup = sorted({r for r, _ in pairs if [x for x, _ in pairs].count(r) > 1})
+    if dup:
+        errs.append(f"结果块角色重复 {dup}（后出现的会遮蔽前面的状态）")
+    for r in REQUIRED_ROLES:
+        if r not in roles:
+            errs.append(f"结果块缺角色 {r}")
+        elif roles[r] != "PASS":
+            errs.append(f"角色 {r} 状态 {roles[r]}（只有 PASS 计入闸门；PARTIAL/TIMEOUT 须重跑或分批）")
+    # #200：按完整键解析（空白分隔的 key=value），每个键恰好一次
+    kv: dict[str, list[str]] = {}
+    for tok in attrs.split():
+        k, sep, v = tok.partition("=")
+        if sep:
+            kv.setdefault(k, []).append(v)
+    one = {k: v[0] for k, v in kv.items() if len(v) == 1}
+    for k in ("head", "roles", "readonly", "runner", "model"):
+        if len(kv.get(k, [])) != 1:
+            errs.append(f"结果块键 {k} 须恰好出现一次（现 {len(kv.get(k, []))} 次）；重跑 run-review-roles.py")
+    if one.get("readonly", "tools") != "tools":
+        errs.append(f"结果块 readonly={one['readonly']}：只接受 readonly=tools（执行层工具白名单）")
+    prefix = {"zai": "glm-", "anthropic": "claude-"}
+    rn, md = one.get("runner"), one.get("model", "")
+    if rn is not None and (rn not in prefix or not md.startswith(prefix[rn])):
+        errs.append(f"结果块 runner={rn} model={md} 不是已知组合（zai→glm-*，anthropic→claude-*）")
+    # P1（boundary 审 #1）：head= 必须与当前 PR head 比对，防「推新提交后旧 PASS 块照样过闸」
+    if head:
+        bhead = one.get("head", "")  # 完整键、恰一次（nothead= 不算，重复 head 已在上面拒）
+        short, full = sorted((bhead, head), key=len)
+        if not re.fullmatch(r"[0-9a-f]{7,40}", bhead):
+            errs.append(f"结果块 head=「{bhead}」不是 commit SHA（外部 diff 占位不得过闸）；重跑 run-review-roles.py")
+        elif not full.startswith(short):
+            errs.append(f"结果块 head={bhead} 与当前 PR head={head} 不符（审计结果属于旧提交）；重跑 run-review-roles.py")
+    return errs
+
+
 def check(body: str, head: str = "") -> list[str]:
     errs: list[str] = []
-    m = MARKER.search(body)
+    blocks = list(MARKER.finditer(body))
     w = WAIVER.search(body)
-    if m:
-        # 注释内全文直接 findall：roles=...\s+...\s+... 多键值里 \S+ 会在首个空格截断（P1 修复）
-        roles = dict(re.findall(r"(\w+):([A-Z_]+)", m.group(1)))
-        for r in REQUIRED_ROLES:
-            if r not in roles:
-                errs.append(f"结果块缺角色 {r}")
-            elif roles[r] != "PASS":
-                errs.append(f"角色 {r} 状态 {roles[r]}（只有 PASS 计入闸门；PARTIAL/TIMEOUT 须重跑或分批）")
-        # P1（boundary 审 #1）：head= 必须与当前 PR head 比对，防「推新提交后旧 PASS 块照样过闸」
-        if head:
-            bm = re.search(r"head=(\S+)", m.group(1))
-            bhead = bm.group(1) if bm else ""
-            short, full = sorted((bhead, head), key=len)
-            if not re.fullmatch(r"[0-9a-f]{7,40}", bhead):
-                errs.append(f"结果块 head=「{bhead}」不是 commit SHA（外部 diff 占位不得过闸）；重跑 run-review-roles.py")
-            elif not full.startswith(short):
-                errs.append(f"结果块 head={bhead} 与当前 PR head={head} 不符（审计结果属于旧提交）；重跑 run-review-roles.py")
+    if blocks:
+        # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
+        for n, m in enumerate(blocks, 1):
+            tag = f"结果块 {n}/{len(blocks)}：" if len(blocks) > 1 else ""
+            errs.extend(tag + e for e in check_block(m.group(1), head))
     elif w:
         reason = w.group(1).strip()
         if len(reason) < 8:
