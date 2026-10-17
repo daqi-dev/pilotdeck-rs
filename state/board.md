@@ -1,14 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 15:24 · by 协调者(GLM)
-- A6.1-pr1 | impl | ready | 协议 client：spawn/handshake/execute + seq/ACK + 断线 fail-closed；任务书 _tmp/20261017-a61/brief-next.md（首跑因 claude dontAsk 缺 allow 列表未开工；白名单已补 .claude/settings.json，待二跑）
-- #167 | research | ready | 重采调查：controls 自比门（fresh proxy 与 fixed manifest 不匹配）
+updated: 2026-10-17 16:28 · by 协调者(opus·loop三跑)
+- #167-resample | impl | ready | A2 六轮重采：wt 内先 CARGO_TARGET_DIR=<wt>/src/target cargo build -p pilotdeck-gateway，持锁串行跑 ts1-5+proxy+controls，按 #163 程序重登记；根因见 _tmp/20261017-167/investigation.md
+- A6.1-pr1 | impl | blocked | 协议 client（任务书 _tmp/20261017-a61/brief-next.md）；连续三迭代未开工（前两跑权限卡），循环卡队首保护挂起；三跑实测单段 Bash/gh 可用、复合命令（cd &&、ps）被拒，下一协调者核 codex exec 可派后改回 ready
 - A6.1-pr2 | impl | blocked | replay/cancel，前置 A6.1-pr1 合并
 - #19 | coord | human | deadline 差异登记待人批：state/decisions-20261017-deadline-diff.md
 - D4 | coord | human | 评分口径待人批（exp014 六格材料）
 - #150 | coord | human | Draft 处置待人定
 <!-- READY:END -->
+
+> ## 2026-10-17 · 外层循环三跑：A6.1-pr1 挂起，#167 调查结案
+> **A6.1-pr1 → blocked**（任务书指令：上一迭代未推进即挂起；现场仅主仓 worktree、无 wt-a61、无在途证据）。**#167 根因**：「controls 自比门」失败不是装置失配——proxy 轮 `run.json` 为 ERROR，`run_round.py:160` 硬编码的 `src/target/debug/pilotdeck-gateway` 在 wt-167 不存在，G0/G1/G3 全是级联；TS 五轮自比全 PASS。处置不动冻结件：wt 内按该路径构建后重采（`_tmp/20261017-167/investigation.md`，已评论 issue）。**权限观察**：dontAsk 下 `cd … &&` 复合命令与 `ps` 被拒，单段命令可用。**下一单**：#167-resample。
 
 > ## 2026-10-17 · 外层循环二跑验收（--max-iter 1）：trust 卡点已解，白名单微补
 > 二跑（15:40，opus 17 轮/$0.52）机制依旧全过（落账 done/exit0）；A6.1-pr1 仍未开工——**workspace trust 未标记**导致 allow 被忽略（opus 正确拒绝改 `~/.claude.json` 自我解锁）。协调者复核：`hasTrustDialogAccepted` 现已为 True（探针实证 settings 被读取、Write 生效），首跑 err.log 的 Ignoring 为旧记录。**磁盘 34.3/46G**（归档压缩 11.7G→2.16G tgz，零丢失校验后删源，board 旧值 43.6G 作废）。白名单补 shell 原语（echo/printf/grep/find/sort 等，复合命令逐段匹配所需）。**三跑待本 PR 合并**。READY：A6.1-pr1 保持 ready。
