@@ -4876,6 +4876,7 @@ mod owning_cancel_branch_tests {
         CompleteThenAbort,
         /// A pre-stream abort must never reach the model host at all.
         Unreached,
+        DeadlineUnknown,
         DeadlineUnknownBadAssembly,
     }
     struct Host {
@@ -4929,7 +4930,7 @@ mod owning_cancel_branch_tests {
                                 done: true,
                             }))
                         }
-                        StreamPlan::DeadlineUnknownBadAssembly => {
+                        StreamPlan::DeadlineUnknown | StreamPlan::DeadlineUnknownBadAssembly => {
                             assert!(self.cancellation.cancel(CancelCause::Deadline));
                             Err(PortError::AcceptedUnknown {
                                 identity: Box::new(crate::ports::ExecutionIdentity {
@@ -5054,7 +5055,32 @@ mod owning_cancel_branch_tests {
             Ok(())
         }
         fn emit_accepted(&mut self, event: BoundarySnapshot) -> PortResult<()> {
-            push(&self.0, Self::label(&event));
+            let label = Self::label(&event);
+            if label == "assistant_message" {
+                assert_partial_text(event.value().get("message").expect("assistant message"));
+            }
+            if label == "turn_completed" {
+                let result = event.value().get("result").expect("completion result");
+                assert_eq!(result.get("type"), Some(&JsValue::from("aborted")));
+                assert_eq!(
+                    result.get("stopReason"),
+                    Some(&JsValue::from("aborted_streaming"))
+                );
+                if self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry == "assistant_message")
+                {
+                    assert_partial_text(
+                        result
+                            .get("finalMessage")
+                            .expect("completed partial message"),
+                    );
+                }
+            }
+            push(&self.0, label);
             Ok(())
         }
     }
@@ -5161,6 +5187,7 @@ mod owning_cancel_branch_tests {
         StreamThrow,
         /// `stream_eos`: the abort fires and the iterator completes normally.
         StreamEos,
+        DeadlineUnknown,
         DeadlineUnknownBadAssembly,
     }
     fn run_result(trigger: Trigger, reason: &'static str) -> (PortResult<TurnOutput>, Vec<String>) {
@@ -5174,6 +5201,7 @@ mod owning_cancel_branch_tests {
             Trigger::InPrepare => StreamPlan::Unreached,
             Trigger::StreamThrow => StreamPlan::ThrowWhileAborted,
             Trigger::StreamEos => StreamPlan::CompleteThenAbort,
+            Trigger::DeadlineUnknown => StreamPlan::DeadlineUnknown,
             Trigger::DeadlineUnknownBadAssembly => StreamPlan::DeadlineUnknownBadAssembly,
         };
         let mut host = Host {
@@ -5223,6 +5251,36 @@ mod owning_cancel_branch_tests {
         (output, log)
     }
     #[test]
+    fn deadline_unknown_with_partial_text_completes_turn_without_settling_model_call() {
+        // TS publishes an aborted turn before its DEADLINE_EXCEEDED outer
+        // result_unknown terminal. Completion must not erase the pending call.
+        let (result, log) = run_result(Trigger::DeadlineUnknown, "unused");
+        let Err(PortError::AcceptedUnknown {
+            identity,
+            last_applied_sequence,
+        }) = result
+        else {
+            panic!("aborted completion must retain the accepted model uncertainty");
+        };
+        assert!(identity.request_id.equals_str("accepted-model"));
+        assert_eq!(last_applied_sequence, Some(7.0));
+        assert_eq!(
+            log,
+            vec![
+                "prepare",
+                "model_request_started",
+                "host:stream_next:1",
+                "model_event",
+                "model_event",
+                "host:stream_next:2",
+                "project_assembly",
+                "assistant_message",
+                "host:capture_turn:3",
+                "turn_completed",
+            ]
+        );
+    }
+    #[test]
     fn deadline_unknown_with_assembly_type_error_preserves_ts_no_completion_boundary() {
         let (result, log) = run_result(Trigger::DeadlineUnknownBadAssembly, "unused");
         let Err(PortError::AcceptedUnknown {
@@ -5254,13 +5312,18 @@ mod owning_cancel_branch_tests {
         // Both stream branches keep the safe partial text message (:861-873
         // and :917-929): durableMessageRoles ["assistant"] in the probe.
         assert_eq!(output.messages.len(), 3);
-        let text = output
-            .result
-            .final_message
-            .as_ref()
-            .expect("partial assistant message is the final message")
-            .boundary
-            .value()
+        assert_partial_text(
+            output
+                .result
+                .final_message
+                .as_ref()
+                .expect("partial assistant message is the final message")
+                .boundary
+                .value(),
+        );
+    }
+    fn assert_partial_text(message: &JsValue) {
+        let text = message
             .get("content")
             .and_then(|content| match content {
                 JsValue::Array(blocks) => blocks.first(),
