@@ -305,6 +305,81 @@ impl Connection {
             let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
         }
     }
+    #[cfg(unix)]
+    async fn wait_for_exit_unreaped(&mut self) -> Result<bool, HostError> {
+        let Some(group) = self.group else {
+            return Ok(true);
+        };
+        let observe = async {
+            // WNOWAIT retains the leader (including a zombie) so its process
+            // group ID cannot be reused before our final group signal.
+            #[cfg(not(any(
+                target_os = "cygwin",
+                target_os = "horizon",
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "wasi"
+            )))]
+            loop {
+                use rustix::process::{WaitId, WaitIdOptions, waitid};
+                match waitid(
+                    WaitId::Pid(group),
+                    WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+                ) {
+                    Ok(Some(_)) => return Ok(()),
+                    Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(5)).await,
+                    Err(rustix::io::Errno::INTR) => continue,
+                    Err(error) => return Err(HostError::io(error.into())),
+                }
+            }
+            // Platforms without WNOWAIT conservatively use the whole grace
+            // period. Never substitute try_wait: that would reap the leader.
+            #[cfg(any(
+                target_os = "cygwin",
+                target_os = "horizon",
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "wasi"
+            ))]
+            {
+                let _ = group;
+                std::future::pending::<Result<(), HostError>>().await
+            }
+        };
+        match timeout(self.limits.close_timeout, observe).await {
+            Ok(result) => result.map(|()| true),
+            Err(_) => Ok(false),
+        }
+    }
+    async fn stop_child(&mut self) -> Result<(), HostError> {
+        #[cfg(unix)]
+        {
+            if !self.wait_for_exit_unreaped().await? {
+                if let Some(group) = self.group {
+                    let _ =
+                        rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
+                }
+                self.wait_for_exit_unreaped().await?;
+            }
+            // Also clean descendants of a naturally exited leader. Clear the
+            // group before the only reaping wait, so Drop cannot signal it again.
+            self.kill_group();
+        }
+        #[cfg(not(unix))]
+        {
+            if let Ok(result) = timeout(self.limits.close_timeout, self.child.wait()).await {
+                return result.map(|_| ()).map_err(HostError::io);
+            }
+            let _ = self.child.start_kill();
+        }
+        timeout(self.limits.close_timeout, self.child.wait())
+            .await
+            .map_err(|_| {
+                HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
+            })?
+            .map(|_| ())
+            .map_err(HostError::io)
+    }
     pub(super) async fn close(&mut self) -> Result<(), HostError> {
         if self.closed {
             return Ok(());
@@ -315,22 +390,12 @@ impl Connection {
         for pump in &self.pumps {
             pump.abort();
         }
-        let grace = timeout(self.limits.close_timeout, self.child.wait()).await;
-        // Even an exited leader may have descendants holding pipes open.
-        self.kill_group();
-        let result = match grace {
-            Ok(result) => result.map(|_| ()).map_err(HostError::io),
-            Err(_) => {
-                let _ = self.child.start_kill();
-                timeout(self.limits.close_timeout, self.child.wait())
-                    .await
-                    .map_err(|_| {
-                        HostError::new(HostErrorKind::Timeout, "Sidecar did not exit after kill.")
-                    })?
-                    .map(|_| ())
-                    .map_err(HostError::io)
-            }
-        };
+        // Aborting only schedules cancellation. Join the writer before starting
+        // the EOF grace period so the stdin handle has actually been dropped.
+        if let Some(mut writer) = self.pumps.pop() {
+            let _ = timeout(self.limits.close_timeout, &mut writer).await;
+        }
+        let result = self.stop_child().await;
         // TS stdio:123-154 keeps collecting exit diagnostics. EOF normally wins;
         // a descendant that escaped the owned process group cannot hang close.
         if timeout(self.limits.close_timeout, &mut self.stderr_task)
@@ -418,6 +483,76 @@ mod tests {
         connection.pumps[1].abort();
         connection.outgoing = Some(sender);
         (connection, receiver)
+    }
+    #[tokio::test]
+    async fn ndjson_splits_batched_frames_and_preserves_cross_write_partial_frame() {
+        let mut connection =
+            Connection::spawn(&mut peer("batched-split-frames"), limits()).unwrap();
+        connection.send(&parse_json("{}").unwrap()).unwrap();
+        for expected in [1.0, 2.0] {
+            let frame = timeout(Duration::from_secs(2), connection.receive())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                frame.get("frame").and_then(JsValue::as_number),
+                Some(expected)
+            );
+        }
+        assert!(
+            timeout(Duration::from_millis(30), connection.receive())
+                .await
+                .is_err()
+        );
+        connection
+            .send(&parse_json(r#"{"continue":true}"#).unwrap())
+            .unwrap();
+        let frame = timeout(Duration::from_secs(2), connection.receive())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(frame.get("frame").and_then(JsValue::as_number), Some(3.0));
+        drop(frame);
+        connection.close().await.unwrap();
+        println!("NDJSON_PASS one write: frames 1,2 + partial 3; second write: completed 3");
+    }
+    #[tokio::test]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "cygwin",
+            target_os = "horizon",
+            target_os = "openbsd",
+            target_os = "redox",
+            target_os = "wasi"
+        ))
+    ))]
+    async fn exited_leader_is_not_reaped_until_group_signal_is_consumed() {
+        let mut command = Command::new("python3");
+        command.args(["-c", "pass"]);
+        let mut connection = Connection::spawn(
+            &mut command,
+            Limits {
+                close_timeout: Duration::from_secs(2),
+                ..limits()
+            },
+        )
+        .unwrap();
+        let pid = connection.pid().unwrap();
+        assert!(connection.wait_for_exit_unreaped().await.unwrap());
+        assert_eq!(connection.pid(), Some(pid));
+        assert!(connection.group.is_some());
+        // A second observation of the zombie also succeeds: WNOWAIT did not reap.
+        assert!(connection.wait_for_exit_unreaped().await.unwrap());
+        connection.kill_group();
+        assert!(connection.group.is_none());
+        connection.child.wait().await.unwrap();
+        assert_eq!(connection.pid(), None);
+        connection.close().await.unwrap();
+        assert!(connection.group.is_none());
+        println!(
+            "GROUP_LIFETIME_PASS exited leader retained until group signal; no pgid after wait"
+        );
     }
     #[tokio::test]
     async fn ack_coalesces_without_consuming_required_slots_or_budget() {

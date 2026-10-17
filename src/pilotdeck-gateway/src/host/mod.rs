@@ -23,6 +23,7 @@
 //! `terminal_drain_timeout`; unfinished cooperative callbacks are then dropped.
 //! Unix close/Drop kills the owned process group, including grandchildren that
 //! retain pipes. A subprocess that deliberately leaves that group is not owned.
+//! Abrupt host death that bypasses close/Drop has no descendant cleanup guarantee.
 mod budget;
 mod connection;
 mod execution;
@@ -66,6 +67,8 @@ pub struct Limits {
     /// ACK/cancel each have a separate latest slot and in-flight allowance,
     /// each bounded by max_frame_bytes (see module resource policy).
     /// Handler-owned allocations and allocator overhead are outside this budget.
+    /// Must cover at least one max_frame_bytes frame. Concurrent copies/cache
+    /// can still exhaust this shared budget and fail closed with Limit.
     pub max_buffered_bytes: usize,
 }
 impl Default for Limits {
@@ -116,6 +119,11 @@ impl Limits {
                     format!("Sidecar {name} exceeds maximum {maximum}."),
                 ));
             }
+        }
+        if self.max_buffered_bytes < self.max_frame_bytes {
+            return Err(HostError::protocol(
+                "Sidecar max_buffered_bytes must be at least max_frame_bytes.",
+            ));
         }
         Ok(())
     }
@@ -193,12 +201,14 @@ pub enum ExecuteResult {
     Terminal(JsValue),
     /// TS abortedResult (client:330,593,1338-1350,1434-1448). The session layer
     /// projects type=aborted, stopReason=aborted_streaming, turns=0 and retains
-    /// its original input messages. None means execute was never sent; Some
-    /// retains the incomplete cancelled final from the compaction fallback.
+    /// its original input messages. None covers both an input cancelled before
+    /// execute and the incomplete compaction final; raw incomplete payloads are
+    /// never exposed as a terminal or delivered to the event handler.
     Aborted {
         terminal: Option<JsValue>,
     },
-    /// TS client:785-789 accepts a final failed execute response before a stream.
+    /// TS client:780-789 accepts a final failed execute response even after a
+    /// stream was accepted. This is an authoritative failure, not retry permission.
     Rejected(JsValue),
 }
 

@@ -80,7 +80,7 @@ impl HostHandler for Handler {
             }
             let mut response = JsObject::new();
             if large_response {
-                response.insert("padding".into(), JsValue::String("x".repeat(8192).into()));
+                response.insert("padding".into(), JsValue::String("x".repeat(2800).into()));
             }
             Ok(response)
         })
@@ -438,6 +438,56 @@ async fn oversized_limits_are_rejected_before_spawn() {
     }
 }
 #[tokio::test]
+async fn zero_and_inconsistent_limits_are_rejected_before_spawn() {
+    for field in [
+        "handshake_timeout",
+        "execution_timeout",
+        "terminal_drain_timeout",
+        "io_timeout",
+        "close_timeout",
+        "queue_capacity",
+        "max_frame_bytes",
+        "max_stderr_bytes",
+        "max_module_calls",
+        "max_buffered_bytes",
+        "buffer_smaller_than_frame",
+    ] {
+        let mut bounded = limits();
+        match field {
+            "handshake_timeout" => bounded.handshake_timeout = Duration::ZERO,
+            "execution_timeout" => bounded.execution_timeout = Duration::ZERO,
+            "terminal_drain_timeout" => bounded.terminal_drain_timeout = Duration::ZERO,
+            "io_timeout" => bounded.io_timeout = Duration::ZERO,
+            "close_timeout" => bounded.close_timeout = Duration::ZERO,
+            "queue_capacity" => bounded.queue_capacity = 0,
+            "max_frame_bytes" => bounded.max_frame_bytes = 0,
+            "max_stderr_bytes" => bounded.max_stderr_bytes = 0,
+            "max_module_calls" => bounded.max_module_calls = 0,
+            "max_buffered_bytes" => bounded.max_buffered_bytes = 0,
+            "buffer_smaller_than_frame" => bounded.max_buffered_bytes = bounded.max_frame_bytes - 1,
+            _ => unreachable!(),
+        }
+        let error = HostClient::spawn(
+            &mut Command::new("nonexistent-sidecar-for-limit-test"),
+            None,
+            bounded,
+        )
+        .await
+        .err()
+        .expect("invalid limits must fail before spawn");
+        assert_eq!(error.kind, HostErrorKind::Protocol, "{field}: {error}");
+        let reason = if field == "buffer_smaller_than_frame" {
+            "must be at least max_frame_bytes"
+        } else {
+            "must be positive"
+        };
+        assert!(error.message.contains(reason), "{field}: {error}");
+    }
+    let mut boundary = limits();
+    boundary.max_buffered_bytes = boundary.max_frame_bytes;
+    boundary.validate().unwrap();
+}
+#[tokio::test]
 async fn invalid_frames_sequences_and_terminal_never_succeed() {
     for (mode, reason) in [
         ("sequence", "sequence mismatch"),
@@ -612,10 +662,80 @@ async fn cancel_run(mode: &str) -> (Result<ExecuteResult, HostError>, Arc<Handle
     let result = client
         .execute_cancellable(request(), handler.clone(), cancellation)
         .await;
-    if result.is_ok() {
+    if result.is_ok() || matches!(mode, "cancel-before-disconnect" | "cancel-before-timeout") {
         receipt.assert_pass(mode);
     }
     (result, handler)
+}
+
+#[tokio::test]
+async fn accepted_then_final_failed_response_matches_ts_rejection() {
+    let mode = "accepted-then-rejected";
+    let handler = Handler::new(mode);
+    let (mut command, receipt) = peer(mode);
+    let client = HostClient::spawn(&mut command, None, limits())
+        .await
+        .unwrap();
+    let result = client.execute(request(), handler.clone()).await.unwrap();
+    let ExecuteResult::Rejected(raw) = result else {
+        panic!("expected TS rejection")
+    };
+    assert!(text_is(raw.get("outcome"), "failed"));
+    assert_eq!(handler.applied_events.load(Ordering::SeqCst), 1);
+    receipt.assert_pass(mode);
+    println!("TS_REJECTION_PASS acceptance -> applied event 0/ACK -> final failed response");
+}
+
+#[tokio::test]
+async fn maximum_execution_and_terminal_drain_durations_do_not_panic() {
+    for bounded in [
+        Limits {
+            execution_timeout: Duration::MAX,
+            ..limits()
+        },
+        Limits {
+            terminal_drain_timeout: Duration::MAX,
+            ..limits()
+        },
+    ] {
+        let (mut command, receipt) = peer("positive");
+        let client = HostClient::spawn(&mut command, None, bounded)
+            .await
+            .unwrap();
+        let result = timeout(
+            Duration::from_secs(2),
+            client.execute(request(), Handler::new("positive")),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(matches!(result, ExecuteResult::Terminal(_)));
+        receipt.assert_pass("positive");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn close_allows_sigterm_cleanup_after_stdin_eof() {
+    let mode = "close-term-cleanup";
+    let (mut command, receipt) = peer(mode);
+    let bounded = Limits {
+        close_timeout: Duration::from_millis(100),
+        ..limits()
+    };
+    let client = HostClient::spawn(&mut command, None, bounded)
+        .await
+        .unwrap();
+    let pid = client.child_id().unwrap();
+    timeout(Duration::from_secs(2), client.close())
+        .await
+        .unwrap()
+        .unwrap();
+    receipt.assert_pass(mode);
+    assert_reaped(pid).await;
+    println!(
+        "CLOSE_TERM_PASS stdin EOF observed before SIGTERM; cleanup receipt persisted; child reaped"
+    );
 }
 
 #[tokio::test]
@@ -677,13 +797,14 @@ async fn compaction_abort_fallback_matches_ts_shape_and_three_conditions() {
     ] {
         let (result, handler) = cancel_run(mode).await;
         assert!(
-            matches!(
-                result.unwrap(),
-                ExecuteResult::Aborted { terminal: Some(_) }
-            ),
+            matches!(result.unwrap(), ExecuteResult::Aborted { terminal: None }),
             "{mode}"
         );
-        assert_eq!(handler.events.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            handler.events.load(Ordering::SeqCst),
+            1,
+            "incomplete final must not reach the handler: {mode}"
+        );
     }
     for mode in [
         "cancel-conflict",
@@ -697,6 +818,16 @@ async fn compaction_abort_fallback_matches_ts_shape_and_three_conditions() {
         assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
         assert!(error.accepted, "{mode}");
     }
+}
+
+#[tokio::test]
+async fn cancel_before_disconnect_never_writes_pre_acceptance_bytes() {
+    let (result, _) = cancel_run("cancel-before-disconnect").await;
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, HostErrorKind::Disconnected);
+    assert!(!error.accepted);
+    assert!(!error.message.contains("AssertionError"), "{error}");
+    // cancel_run also requires the receipt written only after the quiet window.
 }
 
 #[tokio::test]
@@ -811,7 +942,10 @@ async fn every_execution_limit_fails_closed_and_drops_callbacks() {
             "active-call-limit" | "duplicate-call-limit" | "event-queue-limit" => {
                 bounded.queue_capacity = 2
             }
-            _ => bounded.max_buffered_bytes = 3000,
+            _ => {
+                bounded.max_buffered_bytes = 3000;
+                bounded.max_frame_bytes = 3000;
+            }
         }
         let client = HostClient::spawn(&mut command(mode), None, bounded)
             .await

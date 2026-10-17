@@ -35,7 +35,7 @@ pub(super) async fn run(
         return Ok(ExecuteResult::Aborted { terminal: None });
     }
     let (ack_enabled, cancel_enabled) = capabilities;
-    let execution_deadline = Instant::now() + limits.execution_timeout;
+    let execution_deadline = Instant::now().checked_add(limits.execution_timeout);
     let mut cancel_changes = cancellation.0.subscribe();
     let mut cancel_sent = false;
     let execute_id = JsString::from("execute");
@@ -119,10 +119,17 @@ pub(super) async fn run(
                 .expect("validated event");
             let last_applied = progress.last_applied_sequence.clone();
             callbacks.spawn(async move {
-                let result = handler.event(event.value.clone()).await;
+                // TS readFinalTerminal replaces an incomplete compaction final
+                // with abortedResult(input). Do not expose that raw payload to
+                // a handler; the session layer projects the original input.
+                let result = if aborted {
+                    Ok(())
+                } else {
+                    handler.event(event.value.clone()).await
+                };
                 // Publish at callback success, not when the parent polls JoinSet:
                 // a simultaneously-ready EOF must retain the applied sequence.
-                if result.is_ok() {
+                if result.is_ok() && !aborted {
                     last_applied.store(sequence.to_bits(), Ordering::SeqCst);
                 }
                 drop(lease);
@@ -131,10 +138,10 @@ pub(super) async fn run(
             event_running = true;
         }
         tokio::select! {
-            _ = sleep_until(execution_deadline), if terminal_applied.is_none() => {
+            _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() => {
                 return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out."));
             }
-            _ = sleep_until(drain_deadline.unwrap_or(execution_deadline)), if terminal_applied.is_some() => {
+            _ = wait_for_deadline(drain_deadline), if terminal_applied.is_some() => {
                 // TS processes callbacks serially (570-579); this host runs them
                 // concurrently. Once final is applied, bounded drain cannot turn
                 // a known terminal into an execution timeout (#191/2).
@@ -159,9 +166,9 @@ pub(super) async fn run(
                         let MessageRef::Event(view) = decode(&event)? else { unreachable!() };
                         if view.final_event {
                             progress.terminal_lease = Some(event.lease);
-                            terminal_applied = Some(if aborted { ExecuteResult::Aborted { terminal: Some(event.value) } }
+                            terminal_applied = Some(if aborted { ExecuteResult::Aborted { terminal: None } }
                                 else { ExecuteResult::Terminal(event.value) });
-                            drain_deadline = Some(Instant::now() + limits.terminal_drain_timeout);
+                            drain_deadline = Instant::now().checked_add(limits.terminal_drain_timeout);
                             continue;
                         }
                         // TS client:680-684, 961-970: ACK after application, never final.
@@ -291,6 +298,14 @@ pub(super) async fn run(
         }
     }
     // JoinSet aborts unfinished callbacks on any return/drop, including timeouts.
+}
+// An unrepresentable deadline is effectively unbounded, like Tokio timeout's
+// checked-add path. Keep execution and terminal drain independently optional.
+async fn wait_for_deadline(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
 }
 pub(super) fn same_call(left: &JsValue, right: &JsValue) -> Result<bool, HostError> {
     let fields = [
