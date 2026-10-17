@@ -28,7 +28,7 @@ ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 
 
-def check(body: str) -> list[str]:
+def check(body: str, head: str = "") -> list[str]:
     errs: list[str] = []
     m = MARKER.search(body)
     w = WAIVER.search(body)
@@ -40,6 +40,15 @@ def check(body: str) -> list[str]:
                 errs.append(f"结果块缺角色 {r}")
             elif roles[r] != "PASS":
                 errs.append(f"角色 {r} 状态 {roles[r]}（只有 PASS 计入闸门；PARTIAL/TIMEOUT 须重跑或分批）")
+        # P1（boundary 审 #1）：head= 必须与当前 PR head 比对，防「推新提交后旧 PASS 块照样过闸」
+        if head:
+            bm = re.search(r"head=(\S+)", m.group(1))
+            bhead = bm.group(1) if bm else ""
+            short, full = sorted((bhead, head), key=len)
+            if not re.fullmatch(r"[0-9a-f]{7,40}", bhead):
+                errs.append(f"结果块 head=「{bhead}」不是 commit SHA（外部 diff 占位不得过闸）；重跑 run-review-roles.py")
+            elif not full.startswith(short):
+                errs.append(f"结果块 head={bhead} 与当前 PR head={head} 不符（审计结果属于旧提交）；重跑 run-review-roles.py")
     elif w:
         reason = w.group(1).strip()
         if len(reason) < 8:
@@ -58,6 +67,7 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--body-file")
     g.add_argument("--pr")
+    ap.add_argument("--head", default=os.environ.get("PR_HEAD", ""), help="PR 当前 head SHA；给定时与结果块 head= 比对")
     a = ap.parse_args()
     if a.body_file:
         body = open(a.body_file, encoding="utf-8").read()
@@ -72,7 +82,7 @@ def main() -> int:
     else:
         print("check-pr-gate: 需要 --body-file / --pr / 环境变量 PR_BODY", file=sys.stderr)
         return 2
-    errs = check(body)
+    errs = check(body, a.head)
     for e in errs:
         print(f"check-pr-gate: FAIL {e}")
     if not errs:
