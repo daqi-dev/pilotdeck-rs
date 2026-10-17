@@ -11,7 +11,7 @@ const MARKER: &str = ".legacy-bundled-skills-migrated-v1";
 /// PILOTDECK_BUNDLED_SKILLS_DIR wins; otherwise the first existing candidate, falling
 /// back to `<cwd>/skills`. TS candidates are relative to dist/src/cli; the Rust release
 /// layout puts the binary in `<root>/bin`, so they are relative to the executable's
-/// directory (taken as-is from current_exe, symlinks not resolved).
+/// directory (current_exe after realpath, as Node resolves import.meta.url).
 pub fn builtin_skills_root(
     env: &Env,
     cwd: &Path,
