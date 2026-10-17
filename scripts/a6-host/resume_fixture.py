@@ -3,7 +3,9 @@
 
 This is NOT a production TS sidecar: its process-external state stands in for a
 long-lived transport owner. Cursor/cleanup rules follow streamReplayStore.ts:
-98-142; duplicate replay cases explicitly exercise the host's overlap tolerance.
+98-142. The resume cursor is the host's last ACCEPTED sequence (TS client:859,
+906); replay restarts exactly there, and any duplicate/gap must fail closed
+(TS client:889-892).
 """
 import json
 import os
@@ -161,7 +163,7 @@ if generation == 1:
             assert response['inReplyTo'] == 'call-1' and response['ok']
             state['response'] = response
             save()
-    elif mode in ('reconnect-terminal', 'reconnect-backward', 'reconnect-overlap-gap'):
+    elif mode in ('reconnect-terminal', 'reconnect-backward'):
         send(event(1))
         ack(1)
     elif mode == 'reconnect-ack-coalesced':
@@ -234,17 +236,17 @@ if mode == 'reconnect-twice':
     send(event(1))
     ack(1)
     sys.exit(0)
-if mode == 'reconnect-gap':
+if mode in ('reconnect-gap', 'reconnect-duplicate'):
+    assert cursor == 0
+    # First replayed frame must be exactly cursor + 1: next + 1 or next - 1 fails.
+    send(event(2 if mode == 'reconnect-gap' else 0))
+    finish()
+if mode == 'reconnect-backward':
+    assert cursor == 1
     send(event(2))
-    finish()
-if mode in ('reconnect-backward', 'reconnect-overlap-gap'):
-    send(event(0))
-    if mode == 'reconnect-backward':
-        send(event(1))
-        send(event(0))
-    else:
-        send(event(2))
-    finish()
+    send(event(1))
+    sys.stdin.read()  # ACK 2 may or may not be written before the host fails.
+    sys.exit(0)
 if mode.startswith('reconnect-module-'):
     if mode == 'reconnect-module-pending':
         send(event(1))  # Releases the original pending callback, never starts another.
@@ -274,14 +276,14 @@ if mode == 'reconnect-ack-coalesced':
     assert cursor == 65 and state['acks'] == [0, 64]
     assert state['replayed'] == [66, 67]
     send(event(66))
-    send(event(66))
     ack(66)
     send(event(67, final=True))
     finish()
 if mode in ('reconnect-events', 'reconnect-event-failure'):
-    assert cursor == 0, 'pending/queued events must not advance the resume cursor'
-    for n in (1, 1, 2, 2, 3):
-        send(event(n))
+    # 1 is applying and 2 is queued: both were accepted, so the host keeps and
+    # applies them itself; replay starts at 3 with no overlap (TS client:906).
+    assert cursor == 2, 'resume cursor must be the last accepted sequence'
+    send(event(3))
     if mode == 'reconnect-event-failure':
         # An application error must remain an error even after resume succeeds.
         sys.stdin.read()
@@ -304,11 +306,8 @@ if mode == 'reconnect-accepted':
     ack(0)
     send(event(1, final=True))
     finish()
-if mode in ('reconnect-duplicate', 'reconnect-observer-panic', 'reconnect-command'):
+if mode in ('reconnect-observer-panic', 'reconnect-command'):
     assert cursor == 0
-    send(event(0))
-    send(event(0))
-    send(event(1))
     send(event(1))
     ack(1)
     send(event(2, final=True))

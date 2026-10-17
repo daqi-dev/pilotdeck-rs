@@ -140,12 +140,10 @@ async fn execute(
 }
 
 #[tokio::test]
-async fn resume_keeps_pending_and_queued_events_and_deduplicates_replay() {
+async fn resume_sends_accepted_cursor_and_replays_from_next_sequence() {
     for (mode, count, cursor) in [
         ("reconnect-accepted", 2, -1.0),
-        ("reconnect-events", 5, 0.0),
         ("reconnect-terminal", 3, 1.0),
-        ("reconnect-duplicate", 3, 0.0),
         ("reconnect-observer-panic", 3, 0.0),
     ] {
         let (result, handler, receipt) = execute(mode, limits()).await;
@@ -165,6 +163,52 @@ async fn resume_keeps_pending_and_queued_events_and_deduplicates_replay() {
         println!(
             "RESUME_PASS {mode}; applied=0..{count}; cursor={cursor}; observations=started,succeeded; spawns=2"
         );
+    }
+}
+
+#[tokio::test]
+async fn accepted_but_unapplied_events_survive_resume_and_apply_once_in_order() {
+    // At EOF event 1 is still applying and 2 is queued. TS client:859, 906
+    // sends nextSequence - 1 (=2) as the cursor; the host must still apply
+    // 1 and 2 itself, and the peer replays only 3 and the final 4.
+    let mode = "reconnect-events";
+    let (result, handler, receipt) = execute(mode, limits()).await;
+    assert!(
+        matches!(result, Ok(ExecuteResult::Terminal(_))),
+        "{result:?}"
+    );
+    assert_eq!(*handler.applied.lock().unwrap(), vec![0, 1, 2, 3, 4]);
+    handler.assert_observations(2.0, true);
+    receipt.assert_pass(mode);
+    let state = state(&receipt);
+    assert_eq!(state["spawns"], 2);
+    assert_eq!(state["resumeCursor"], 2);
+    assert_eq!(state["replayed"], serde_json::json!([3, 4]));
+    println!(
+        "RESUME_QUEUED_PASS cursor=2 (accepted); queued 1,2 applied once after resume; replay=3,4; applied=0..4 in order"
+    );
+}
+
+#[tokio::test]
+async fn first_replayed_event_must_be_exactly_next_sequence_like_ts() {
+    // TS client:889-892 has no replay overlap tolerance: next - 1 and next + 1
+    // both fail closed with the same message.
+    for (mode, got) in [("reconnect-duplicate", 0), ("reconnect-gap", 2)] {
+        let (result, handler, receipt) = execute(mode, limits()).await;
+        let error = result.unwrap_err();
+        assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
+        assert!(
+            error.message.contains(&format!(
+                "Sidecar event sequence mismatch: expected 1, got {got}."
+            )),
+            "{mode}: {error}"
+        );
+        assert!(error.accepted);
+        assert_eq!(error.last_applied_sequence, Some(0.0));
+        assert_eq!(*handler.applied.lock().unwrap(), vec![0], "{mode}");
+        handler.assert_observations(0.0, true);
+        assert_eq!(state(&receipt)["spawns"], 2);
+        println!("REPLAY_STRICT {mode}: {error}; first replayed frame != next fails closed");
     }
 }
 
@@ -334,19 +378,9 @@ async fn reconnect_preserves_command_environment_clear_removals_and_cwd() {
 async fn successful_resume_never_observes_failure_or_retries_after_bad_replay() {
     for (mode, kind, expected) in [
         (
-            "reconnect-gap",
-            HostErrorKind::Protocol,
-            "sequence mismatch",
-        ),
-        (
             "reconnect-backward",
             HostErrorKind::Protocol,
-            "sequence mismatch",
-        ),
-        (
-            "reconnect-overlap-gap",
-            HostErrorKind::Protocol,
-            "sequence mismatch",
+            "Sidecar event sequence mismatch: expected 3, got 1.",
         ),
         (
             "reconnect-module-conflict",
@@ -371,10 +405,11 @@ async fn successful_resume_never_observes_failure_or_retries_after_bad_replay() 
         assert!(error.accepted);
         assert_eq!(state(&receipt)["spawns"], 2);
         handler.assert_observations(
-            if matches!(mode, "reconnect-backward" | "reconnect-overlap-gap") {
-                1.0
-            } else {
-                0.0
+            match mode {
+                "reconnect-backward" => 1.0,
+                // Event 1 is applying and 2 queued at EOF: both accepted.
+                "reconnect-event-failure" => 2.0,
+                _ => 0.0,
             },
             true,
         );
@@ -409,9 +444,10 @@ async fn coalesced_ack_cumulative_cleanup_slow_pipe_disconnect_and_resume_are_lo
     assert_eq!(state["spawns"], 2);
     assert_eq!(state["acks"], serde_json::json!([0, 64, 66]));
     assert_eq!(state["resumeCursor"], 65);
+    // Cursor = accepted (TS client:859), so replay starts at next=66, no overlap.
     assert_eq!(state["replayed"], serde_json::json!([66, 67]));
     assert_eq!(state["retained"], serde_json::json!([67]));
     println!(
-        "ACK_REPLAY_PASS slow 2 MiB write; ACK 1..64 coalesced to 64; cumulative cleanup 0..64; ACK 65 lost; resume cursor=65; replay=66,67 (66 duplicated); applied=0..67 exactly once; effect_count=1"
+        "ACK_REPLAY_PASS slow 2 MiB write; ACK 1..64 coalesced to 64; cumulative cleanup 0..64; ACK 65 lost; resume cursor=65 (accepted); replay=66,67 (no duplicate); applied=0..67 exactly once; effect_count=1"
     );
 }

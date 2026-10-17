@@ -14,6 +14,9 @@ impl HostClient {
         progress: &Progress,
         handler: &Arc<dyn HostHandler>,
         mut interruption: HostError,
+        // TS client:859, 906: nextSequence - 1, the last ACCEPTED event, not
+        // the ACK's last applied one (see module docs).
+        cursor: f64,
     ) -> Result<(), HostError> {
         // TS client:895-928. No retry before accepted, without all three
         // capabilities/transport opt-in, or after the single replacement.
@@ -28,7 +31,6 @@ impl HostClient {
             return Err(interruption);
         }
         self.reconnect_attempted = true;
-        let cursor = f64::from_bits(progress.last_applied_sequence.load(Ordering::SeqCst));
         observe(
             handler,
             ReconnectObservation::Started {
@@ -130,41 +132,5 @@ impl HostClient {
                 .push_str(&format!("; original interruption: {interruption}"));
             error
         })
-    }
-}
-
-/// During replacement the server can replay an overlap with events already
-/// queued/applied here. Deduplicate only on this connection; normal delivery
-/// remains strict (TS client:879-892). This overlap tolerance is the explicit
-/// A6.1-pr3 requirement, beyond TS's strict event sequence check.
-#[derive(Default)]
-pub(super) struct ReplayOrder {
-    active: bool,
-    last: Option<f64>,
-}
-impl ReplayOrder {
-    pub(super) fn begin(&mut self) {
-        self.active = true;
-        self.last = None;
-    }
-    /// True means this event is new; false means an ordered duplicate.
-    pub(super) fn accept(&mut self, sequence: f64, next: &mut f64) -> Result<bool, HostError> {
-        if sequence > *next
-            || (!self.active && sequence != *next)
-            || (self.active
-                && self
-                    .last
-                    .is_some_and(|last| sequence < last || sequence > last + 1.0))
-        {
-            return Err(HostError::protocol(format!(
-                "Sidecar event sequence mismatch: expected {next}, got {sequence}."
-            )));
-        }
-        self.last = Some(sequence);
-        if sequence < *next {
-            return Ok(false);
-        }
-        *next += 1.0;
-        Ok(true)
     }
 }
