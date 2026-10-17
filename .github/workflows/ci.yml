@@ -44,6 +44,7 @@ jobs:
         run: |
           python3 -I scripts/test-approval-provenance.py
           python3 -I scripts/test-review-deepseek.py
+          bash scripts/test-pdrs-loop.sh
           python3 -I scripts/check-approval-provenance.py
           python3 -I scripts/ui-server-parity/check_frozen.py
       # A3 · gateway 协议 schema 静态断言：CI 没有基线目录（resources/ 不入库），

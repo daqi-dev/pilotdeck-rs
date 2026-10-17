@@ -14,8 +14,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-LOCK_DIR=/tmp/pdrs-loop.lock
-STOP_FILE=/tmp/pdrs-loop.stop
+LOCK_DIR="${PDRS_LOOP_LOCK:-/tmp/pdrs-loop.lock}"   # 环境变量覆盖只给测试用
+STOP_FILE="${PDRS_LOOP_STOP:-/tmp/pdrs-loop.stop}"
 RUNNER=opencode
 MAX_ITER=50
 ITER_TIMEOUT=7200
@@ -65,9 +65,13 @@ trap cleanup EXIT
 trap 'echo "pdrs-loop: 中断" >&2; exit 130' INT TERM
 
 RUN_DIR="$ROOT/_tmp/$(date +%Y%m%d)-pdrs-loop"
+# 每次启动一个独立目录：同日再起循环不会覆盖前一跑的 iter-NNN 原件
+LAUNCH_DIR="$RUN_DIR/run-$(date +%H%M%S)-$$"
 mkdir -p "$RUN_DIR"
-LEDGER="$RUN_DIR/ledger.tsv"
-[ -f "$LEDGER" ] || printf 'iter\tstart\tref\tupdated\tstatus\texit\n' > "$LEDGER"
+mkdir "$LAUNCH_DIR"
+# v2 账本：status 以 board updated 是否变化判推进（exit 0 但 updated 未变 = no-progress），不只看退出码
+LEDGER="$RUN_DIR/ledger-v2.tsv"
+[ -f "$LEDGER" ] || printf 'iter\tstart\tref\tupdated\tstatus\texit\tupdated_after\tlaunch\n' > "$LEDGER"
 
 board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$ROOT/state/board.md" | head -1; }
 
@@ -112,8 +116,8 @@ while :; do
     carry="${carry:+$carry }上一迭代结束时没有更新 board，队首仍是 ${ref}。先核现场（worktree、在途进程、_tmp 证据），把 $ref 在 READY 块标为 blocked 并在本轮段写明原因（单线挂起），再取下一条 ready 继续。"
   fi
 
-  idir="$RUN_DIR/iter-$(printf '%03d' "$iter")"
-  mkdir -p "$idir"
+  idir="$LAUNCH_DIR/iter-$(printf '%03d' "$iter")"
+  mkdir "$idir"
   cat > "$idir/prompt.md" <<EOF
 # 外层循环第 ${iter} 迭代 · 协调者任务书（scripts/pdrs-loop.sh 生成）
 
@@ -147,8 +151,13 @@ EOF
   wait "$child"; ec=$?
   child=""
   set -e
-  case "$ec" in 0) status=done ;; 124|137) status=timeout ;; *) status=error ;; esac
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$iter" "$start" "$ref" "$upd_before" "$status" "$ec" >> "$LEDGER"
+  upd_after="$(board_updated)"
+  case "$ec" in
+    0) if [ "$upd_after" != "$upd_before" ]; then status=done; else status=no-progress; fi ;;
+    124|137) status=timeout ;;
+    *) status=error ;;
+  esac
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$iter" "$start" "$ref" "$upd_before" "$status" "$ec" "$upd_after" "${LAUNCH_DIR##*/}" >> "$LEDGER"
   if [ "$status" = timeout ]; then
     carry="上一迭代（${ref}）在两小时交接点被超时终止。先核现场与 board 是否已写交接，缺则补写，再继续。"
   fi
