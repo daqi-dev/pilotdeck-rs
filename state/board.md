@@ -1,5 +1,10 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
+> ## 2026-10-17 · 第十轮（本轮收尾）：A6.1 调研完成，任务书就绪
+> **A6.1 发车调研**：TS 协议面 2021 行（client 1784 + stdio 237）已量；Rust 侧方向确认（宿主 client 放 `pilotdeck-gateway/src/host/`，与 sidecar 侧 transport 分离；复用 protocol crate 与 exp015 交叉装置）。**任务书 `_tmp/20261017-a61/brief-next.md`**——下一棒直接派 codex 发车第一 PR（协议 client：spawn/handshake/execute + stream identity/seq/ACK + 断线 fail-closed + TS↔Rust 交叉测试）。
+> **本会话累计（连续推进五~十轮）**：合并 5 个代码 PR（#138/#141/#142/#161/#163/#169——含今日全部）+ 3 个 docs PR；关闭 #46/#56/#134/#139/#154；#19 决策卡待批；A4 收官、A5 兼容主体齐、A6.1 就绪。开着的 P2-跟进：#120/#164/#165/#166/#167（重采缺口）/#170 等；待人批三项：#19 deadline 差异、D4 评分口径、#150 处置。
+> **下一棒顺序**：① A6.1 第一 PR（任务书就绪）→ ② #167 重采调查（controls 自比门）→ ③ A6.1 replay/cancel 后续 PR。资源：worktree 已清至仅主仓，磁盘 _build+tmp 约 40G/46G。
+
 > ## 2026-10-17 · 第九轮（连续推进）：#167 修复部分合并（#169），A5.4 兼容主体齐
 > **#169 合并**：validate_calibration 核对 repetition/phase/variant 与预注册 ID + 空账本拒绝（audit P1 缺口闭合）；24 条负控；FROZEN 三登 check_frozen 18 项 PASS（评审 P1 条件项经协调者实跑闭合）。#170（Node 侧轮次标签）登记。
 > **#167 留开**：六轮重采被 controls 自比门挡（fresh proxy 产物与 fixed manifest 不匹配：G0.round unfinished / G1.coverage 场景目录缺多）——独立装置问题待调查，前置于 A5.4 定标与 E0 证据。
