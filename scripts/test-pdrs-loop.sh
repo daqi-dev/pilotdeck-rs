@@ -7,8 +7,10 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
-T="$(mktemp -d)"
-trap 'rm -rf "$T"' EXIT
+BASE="$(mktemp -d)"
+trap 'rm -rf "$BASE"' EXIT
+T="$BASE/loop fixture"   # 路径含空格：守卫遍历历史账本不能按空白拆词
+mkdir -p "$T"
 fails=0
 check() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fails=$((fails + 1)); fi; }
 
@@ -36,6 +38,9 @@ esac
 exit 0
 EOF
   chmod +x "$T/bin/opencode"
+  # 固定时钟：日期目录与 run-HHMMSS 恒定，两次启动必然同秒、只靠 PID 区分；不受跨午夜影响
+  printf '%s\n' '#!/usr/bin/env bash' 'case "${1:-}" in' '  +%Y%m%d) echo 20261017 ;;' '  +%H%M%S) echo 120000 ;;' '  *) exec /bin/date "$@" ;;' 'esac' > "$T/bin/date"
+  chmod +x "$T/bin/date"
 }
 calls() { [ -f "$T/calls" ] && wc -l < "$T/calls" | tr -d ' ' || echo 0; }
 run_loop() {
@@ -77,6 +82,14 @@ mkdir -p "$T/root/_tmp/20261016-pdrs-loop"
 printf 'iter\tstart\tref\tupdated\tstatus\texit\n1\tx\tt1\t2026-10-17 10:00\tdone\t0\n2\tx\tt1\t2026-10-17 10:00\tdone\t0\n' > "$T/root/_tmp/20261016-pdrs-loop/ledger.tsv"
 run_loop
 check "⑤ v1 历史两次未推进：exit 1、runner 0 次" '[ "$rc" = 1 ] && [ "$(calls)" = 0 ]'
+
+# ⑤b 数字形 ref 按字符串比较：历史是 001、01，当前队首 1 从未执行，不能被误判为已两次未推进
+setup stall
+sed -i.bak 's/- t1 |/- 1 |/' "$T/root/state/board.md"
+mkdir -p "$T/root/_tmp/20261016-pdrs-loop"
+printf 'iter\tstart\tref\tupdated\tstatus\texit\n1\tx\t001\t2026-10-17 10:00\tdone\t0\n2\tx\t01\t2026-10-17 10:00\tdone\t0\n' > "$T/root/_tmp/20261016-pdrs-loop/ledger.tsv"
+run_loop
+check "⑤b ref 1 与历史 001/01 不相等：runner 被调用" '[ "$(calls)" -ge 1 ]'
 
 # ⑥ 有 .git 的根拒绝覆盖锁/stop
 setup progress; mkdir "$T/root/.git"; run_loop
