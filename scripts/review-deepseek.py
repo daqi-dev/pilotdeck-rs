@@ -30,6 +30,18 @@ MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 KEY_RE = re.compile(r"[A-Za-z0-9._\-]+")
 
 
+def say(msg: str, stream=None) -> None:
+    """尽力输出：日志流坏了（管道关闭、编码）不影响退出码；stdout 失败后改指 devnull，免得退出时刷新再报错。"""
+    stream = stream or sys.stderr
+    try:
+        print(msg, file=stream, flush=True)
+    except Exception:
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), stream.fileno())
+        except Exception:
+            pass
+
+
 class Fail(Exception):
     def __init__(self, code: int, msg: str):
         super().__init__(msg)
@@ -131,7 +143,7 @@ def build_body(a: argparse.Namespace) -> bytes:
     except (OSError, UnicodeError) as e:
         raise Fail(2, f"读取输入失败：{type(e).__name__}") from None
     parts = [texts[0], *(f"\n\n===== {p} =====\n{t}" for p, t in zip(a.input, texts[1:]))]
-    print(f"review-deepseek: 输入 {total} 字节（{1 + len(a.input)} 个文件）", file=sys.stderr)
+    say(f"review-deepseek: 输入 {total} 字节（{1 + len(a.input)} 个文件）")
     return json.dumps({
         "model": a.model,
         "messages": [{"role": "user", "content": "".join(parts)}],
@@ -203,7 +215,7 @@ def write_atomic(out: Path, text: str, force: bool) -> None:
             try:
                 tmp.unlink(missing_ok=True)
             except OSError as e:
-                print(f"review-deepseek: 警告：临时文件 {tmp} 未能删除（{type(e).__name__}）", file=sys.stderr)
+                say(f"review-deepseek: 警告：临时文件 {tmp} 未能删除（{type(e).__name__}）")
 
 
 def success_line(resp: dict, out: Path, key: str) -> str:
@@ -248,15 +260,12 @@ def main() -> int:
         line = success_line(resp, a.out, key)
         write_atomic(a.out, text, a.force)
     except Fail as e:
-        print(f"review-deepseek: {redact(str(e), key)}", file=sys.stderr)
+        say(f"review-deepseek: {redact(str(e), key)}")
         return e.code
     except Exception as e:  # 兜底：任何意外都给受控诊断，不出 traceback
-        print(f"review-deepseek: 意外错误 {type(e).__name__}: {redact(str(e), key)}", file=sys.stderr)
+        say(f"review-deepseek: 意外错误 {type(e).__name__}: {redact(str(e), key)}")
         return stage
-    try:  # 已发布：日志失败（编码、管道关闭）不改变结果
-        print(line)
-    except Exception:
-        pass
+    say(line, sys.stdout)  # 已发布：日志失败不改变结果
     return 0
 
 
