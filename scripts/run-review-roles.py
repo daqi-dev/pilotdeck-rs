@@ -100,25 +100,38 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
         def pump() -> None:
             assert proc.stdout is not None
             for line in proc.stdout:
-                fraw.write(line)
-                fraw.flush()
                 try:
-                    ev = json.loads(line)
-                except ValueError:
-                    continue
-                if ev.get("type") == "system" and ev.get("subtype") == "init":
-                    tools = ev.get("tools")
-                    # fail-closed：init 缺 tools 字段=无法证明只读，按越权处理（boundary 审 #4）
-                    if not isinstance(tools, list) or not tools:
-                        tools = None
-                    extra = sorted(set(tools) - set(ALLOWED_TOOLS))
-                    if extra:
-                        violation.extend(extra)
+                    fraw.write(line)
+                    fraw.flush()
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(ev, dict):
+                        raise TypeError(f"stream-json 行不是对象：{line[:80]!r}")
+                    if ev.get("type") == "system" and ev.get("subtype") == "init":
+                        tools = ev.get("tools")
+                        # fail-closed：init 缺 tools 字段=无法证明只读，按越权处理（boundary 审 #4），
+                        # 且不得让本分支自身抛异常杀死 pump（concurrency 审 r2 #1：set(None)/TypeError → fail-open）
+                        if not isinstance(tools, list) or not tools or not all(isinstance(x, str) for x in tools):
+                            violation.append("<missing-or-invalid-tools>")
+                            os.killpg(proc.pid, signal.SIGKILL)
+                            return
+                        extra = sorted(set(tools) - set(ALLOWED_TOOLS))
+                        if extra:
+                            violation.extend(extra)
+                            os.killpg(proc.pid, signal.SIGKILL)
+                            return
+                        result["init_seen"] = True
+                    if ev.get("type") == "result":
+                        result.update(ev)
+                except Exception as e:  # noqa: BLE001 —— pump 必须先杀进程再死，绝不留下未验证的进程
+                    violation.append(f"<pump-error:{type(e).__name__}>")
+                    try:
                         os.killpg(proc.pid, signal.SIGKILL)
-                        return
-                    result["init_seen"] = True
-                if ev.get("type") == "result":
-                    result.update(ev)
+                    except ProcessLookupError:
+                        pass
+                    return
 
         t = threading.Thread(target=pump, daemon=True)
         t.start()
