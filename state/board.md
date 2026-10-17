@@ -1,8 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-17 19:50 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
-- #182-review | review | ready | #182 合并时零评审，补审；有 P0/P1 开修复单
+updated: 2026-10-17 20:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #187 | impl | ready | B1 装置脚本硬编码绝对路径（run_round/session_domain/parity round.py，均在冻结白名单，走冻结程序）
 - loop-fix | impl | ready | pdrs-loop.sh 两处：迭代目录按启动时间命名防覆盖（三跑已覆盖前两跑原件）；ledger 以 board updated 是否变化判推进，不只看退出码
 - p2-sweep | coord | ready | 开着的 P2-跟进 18 张（gh 核于 10-17），超过 10 张，触发「定期清账」：派 1 个 worker 集中清理（仍两家评审）
@@ -13,6 +12,9 @@ updated: 2026-10-17 19:50 · by 协调者(Claude Code 交互·opus-5.5·/loop �
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-17 · /loop：#182 补审完成
+> #182（外层循环产出、合并时零评审）由 codex+GLM 补审四轮收敛到 0/0/0。实质问题在 `state/memory/20261017-parity-binary-path.md`：原文没区分 A2 校准（A1 纯透传源）与 A4（HEAD），也没分开装置树与被测源树，照做会再选错二进制（两家撞车，P1）。已按 #167 r4-a1 实际做法改写正文、description 与索引；原件 `_tmp/20261017-issue-182-review/`。#182 的 board 历史段两家核过，无事实相反陈述。**下一单**：#187。
 
 > ## 2026-10-17 · /loop（Claude Code 交互）：#192 A6.1-pr1 合并、#185 合并；两小时交接
 > **合并**：#192（A6.1-pr1 宿主 sidecar client，f479f73，Refs #127）——GLM+DeepSeek 三轮收敛到 0/0/0；首轮四角色 boundary#2 经 TS:1120-1121 判误报，DeepSeek「缺 rustix」驳回（Cargo.toml:19）；遗留 14 条 P2 合进 #191，前置于 A6.1-pr2。#185（review-deepseek.py，982b964）——用户插单，codex+GLM 九轮收敛（codex 前后报 P0×12，全修，含实测 urllib 跟 302 外带 Authorization）；四角色同谱系只计「做了」（决策卡 state/decisions-20261017.md 末）。两次合并 committer 仍是真实邮箱（老坑，待人改 GitHub 设置）。
