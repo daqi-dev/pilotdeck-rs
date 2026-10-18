@@ -113,7 +113,9 @@ def main() -> int:
     # 署名误识别负例：普通人的邮箱/缩写不算模型
     for line, want in [("David Smith <ds@example.org>", set()), ("Alex <alex@gpt.example.org>", set()),
                        ("Claude Opus 5.5 <noreply@anthropic.com>", {"claude"}), ("Bot <ci@openai.com>", {"codex"}),
-                       ("opencode <glm-5.3@opencode>", {"glm"}), ("GLM-5.3 <noreply@zhipu.com>", {"glm"})]:
+                       ("opencode <glm-5.3@opencode>", {"glm"}), ("GLM-5.3 <noreply@zhipu.com>", {"glm"}),
+                       ("alex@gpt.example.org", set()), ("ci@openai.com", {"codex"}),
+                       ("OpenAI <noreply@example.org>", {"codex"}), ("Zhipu <noreply@example.org>", {"glm"})]:
         got = gate.trailer_family_of(line)
         good = got == want
         print(f"{'PASS' if good else 'FAIL'} 署名识别「{line}」→ {sorted(got)}")
@@ -162,7 +164,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 16} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 20} 例）")
     return 1 if fails else 0
 
 

@@ -48,7 +48,7 @@ def family(name: str) -> str | None:
 
 # 署名识别分两处看：名字部分（< 之前）按模型名单词匹配；邮箱只认已知厂商域名。
 # 不拆整条邮箱：普通人的 ds@example.org、alex@gpt.example.org 不能算成模型作者。
-TRAILER_NAME_EXTRA = {"opencode": "glm"}
+TRAILER_NAME_EXTRA = {"opencode": "glm", "openai": "codex", "zhipu": "glm"}
 NAME_SKIP = {"ds"}  # 太短，人名缩写常见
 VENDOR_DOMAINS = {"anthropic.com": "claude", "openai.com": "codex", "deepseek.com": "deepseek",
                   "zhipu.com": "glm", "zhipuai.cn": "glm", "bigmodel.cn": "glm", "z.ai": "glm", "opencode": "glm"}
@@ -57,6 +57,8 @@ VENDOR_DOMAINS = {"anthropic.com": "claude", "openai.com": "codex", "deepseek.co
 def trailer_family_of(line: str) -> set[str]:
     m = re.match(r"\s*([^<]*?)\s*(?:<([^>]*)>)?\s*$", line)
     name, email = (m.group(1), m.group(2) or "") if m else (line, "")
+    if not email and re.fullmatch(r"\S+@\S+", name.strip()):
+        name, email = "", name.strip()  # 裸邮箱：只按域名判，不拆词
     out = set()
     words = {k: v for k, v in {**FAMILY, **TRAILER_NAME_EXTRA}.items() if k not in NAME_SKIP}
     for tok in re.findall(r"[a-z0-9]+", name.lower()):
