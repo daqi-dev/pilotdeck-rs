@@ -9,7 +9,7 @@ fn oracle() -> JsValue {
         "../../../tests/fixtures/host-modules/oracle.json"
     ))
     .unwrap();
-    assert_eq!(array(&value, "routing").len(), 81);
+    assert_eq!(array(&value, "routing").len(), 863);
     assert_eq!(array(&value, "errors").len(), 11);
     assert_eq!(array(&value, "fields").len(), 90);
     value
@@ -236,6 +236,44 @@ async fn dropped_execute_joins_callbacks_before_dispose() {
     .unwrap();
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
     assert_eq!(handler.calls_at_dispose.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn execute_dropped_outside_runtime_still_joins_callbacks_and_disposes_once() {
+    let mut command = command("callback-timeout");
+    let client = HostClient::spawn(&mut command, None, protocol_limits())
+        .await
+        .unwrap();
+    let handler = Handler::new("callback-timeout");
+    let mut execution = Box::pin(client.execute(request(), handler.clone()));
+    timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            result = &mut execution => panic!("execution finished before drop: {result:?}"),
+            () = async {
+                while handler.active_calls.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+            } => {}
+        }
+    })
+    .await
+    .unwrap();
+    std::thread::spawn(move || {
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        drop(execution);
+    })
+    .join()
+    .unwrap();
+    timeout(Duration::from_secs(5), async {
+        while handler.disposed.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    assert_eq!(handler.calls_at_dispose.load(Ordering::SeqCst), 0);
+    assert_eq!(handler.active_calls.load(Ordering::SeqCst), 0);
 }
 
 struct DisposeProbe {

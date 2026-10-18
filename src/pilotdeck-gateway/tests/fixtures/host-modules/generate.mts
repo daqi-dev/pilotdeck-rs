@@ -12,10 +12,16 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
+const contracts = JSON.parse(await readFile(new URL('../../../src/config/contracts.json', import.meta.url), 'utf8'));
+const operations = [...new Set([
+  'unknown', '', null, 3, ' ', '\ud800',
+  ...Object.values(contracts).flatMap((contract: any) => contract.methods),
+])];
 const commit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 assert.equal(commit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
 const base = 'src/agent/modules/transport/';
-const files = [base + 'agentLoopSidecarClient.ts', base + 'sidecarDefaultModuleDispatcher.ts'];
+const files = [base + 'agentLoopSidecarClient.ts', base + 'sidecarDefaultModuleDispatcher.ts',
+  'src/agent/modules/capability/hostPlanTodoModuleHandler.ts'];
 assert.equal(execFileSync('git', ['-C', baseline, 'diff', 'HEAD', '--', ...files], { encoding: 'utf8' }), '');
 const requireBaseline = createRequire(join(baseline, 'package.json'));
 const requireTsx = createRequire(requireBaseline.resolve('tsx'));
@@ -41,16 +47,21 @@ async function expose(source: string, names: string[]) {
 const { SidecarTurnProtocol } = await expose(files[0], ['SidecarTurnProtocol']);
 const helpers = await expose(files[1], ['stringField', 'optionalStringField', 'booleanField', 'positiveFinite', 'optionalNonNegativeFinite']);
 const { createSidecarDefaultModuleDispatcher } = await import(pathToFileURL(join(baseline, files[1])).href);
+const { createHostPlanTodoModuleHandler } = await import(pathToFileURL(join(baseline, files[2])).href);
+sources[files[2]] = createHash('sha256').update(await readFile(join(baseline, files[2]))).digest('hex');
 const input = { sessionId: 'session', turnId: 'turn', messages: [], execution: { runId: 'run', operationId: 'operation' } };
 const context = { permissionContext: () => ({}), toolRuntimeContext: () => ({}), executionContext: () => ({}) };
 const dispatcher = createSidecarDefaultModuleDispatcher({
   config: { cwd: '/fixture', provider: 'fixture', model: 'fixture', permissionMode: 'default' }, input,
-  checkpoint: {}, capabilityResultObserver: {}, planTodoHandler: async () => ({}),
+  checkpoint: {}, capabilityResultObserver: {},
+  planTodoHandler: createHostPlanTodoModuleHandler({ sessionId: input.sessionId, turnId: input.turnId, resolve: () => undefined }),
   modules: {
     model: { execution: {} }, budget: {},
     capability: { runtimeContext: { bindTurn: () => context }, execution: { list: () => [] } },
     permission: { requestContext: { bindTurn: () => context } },
-    context: { requestIdentity: { bindTurn: () => ({ contextIdentity: () => ({}) }) }, execution: {} },
+    // No context execution port is installed in X0. An empty object would
+    // instead claim a port exists and produce a fixture-only JS TypeError.
+    context: { requestIdentity: { bindTurn: () => ({ contextIdentity: () => ({}) }) } },
     lifecycle: {}, event: {},
   },
 } as any);
@@ -69,11 +80,10 @@ async function response(call: any, handlers = dispatcher.handlers) {
 }
 const routing = [];
 for (const module of ['model', 'budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event', 'checkpoint', 'skills', 'knowledge', 'unknown', '\ud800']) {
-  for (const operation of ['unknown', '', null, 3, ' ', '\ud800']) {
+  for (const operation of operations) {
     const request = call(module, { operation, preparationId: 'prepared', input: {} });
     const expected = await response(request);
-    assert.equal(expected.ok, false);
-    assert.equal(expected.code, 'HOST_MODULE_FAILED');
+    if (!expected.ok) assert.equal(expected.code, 'HOST_MODULE_FAILED');
     routing.push({ call: request, response: expected });
   }
 }
@@ -83,6 +93,17 @@ for (const payload of [{}, { operation: 'unknown' }, { operation: 'unknown', pre
   assert.equal(expected.ok, false);
   routing.push({ call: request, response: expected });
 }
+for (const module of ['budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event']) {
+  for (const payload of [{ operation: 'unknown' }, { preparationId: 'prepared' }]) {
+    const request = call(module, payload);
+    const expected = await response(request);
+    assert.equal(expected.ok, false);
+    routing.push({ call: request, response: expected });
+    console.log('MODULE_FIELD_BOUNDARY ' + JSON.stringify({ module, payload, response: expected }));
+  }
+}
+const metadataWithoutPreparation = call('model', { operation: 'get_metadata' });
+routing.push({ call: metadataWithoutPreparation, response: await response(metadataWithoutPreparation) });
 const errors = [];
 const errorCases = [
   {}, { code: 'MODEL_RATE_LIMIT', error: { code: 'rate_limit', message: 'retry', vendor: { status: 429 } }, retryable: true, retryAfterMs: 12.5 },
@@ -124,9 +145,15 @@ for (const helper of ['stringField', 'optionalStringField', 'booleanField', 'pos
   }
 }
 await dispatcher.dispose();
-assert.equal(routing.length, 81);
+assert.equal(routing.length, 13 * operations.length + 18);
 assert.equal(errors.length, 11);
 assert.equal(fields.length, 90);
+const rejectedModules = new Set(['unknown', '\ud800']);
+const stdioCounts = Object.fromEntries(Object.entries({ routing, errors }).map(([key, cases]) => [
+  key, cases.filter(({ call }) => !rejectedModules.has(call.module)).length,
+]));
+assert.equal(stdioCounts.routing, 11 * operations.length + 18);
+assert.equal(stdioCounts.errors, errors.length);
 await mkdir(output, { recursive: true });
-await writeFile(join(output, 'oracle.json'), JSON.stringify({ commit, sources, routing, errors, fields }, null, 2) + '\n');
+await writeFile(join(output, 'oracle.json'), JSON.stringify({ commit, sources, stdioCounts, routing, errors, fields }, null, 2) + '\n');
 console.log(`HOST_MODULE_ORACLE_PASS routing=${routing.length} errors=${errors.length} fields=${fields.length}`);
