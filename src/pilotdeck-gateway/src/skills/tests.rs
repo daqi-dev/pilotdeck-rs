@@ -706,3 +706,108 @@ fn real_ts_and_rust_read_each_others_skill_trees() {
     let written = fs::read(format!("{root}/home/skills/ts-written/SKILL.md")).unwrap();
     assert!(written.windows(3).any(|w| w == "\u{fffd}".as_bytes()));
 }
+
+#[test]
+fn unreadable_scan_child_matches_real_ts_before_denial_and_after_restore() {
+    use std::os::unix::fs::PermissionsExt;
+    struct Restore(std::path::PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    let scratch = Scratch::new();
+    let root = scratch.root();
+    let oracle = json(include_str!("../../tests/fixtures/runtime-boundaries.json"));
+    let skills = oracle.get("skills").unwrap();
+    let blocked = scratch.0.join("bundle/blocked");
+    fs::create_dir_all(&blocked).unwrap();
+    fs::write(
+        scratch.0.join("bundle/SKILL.md"),
+        str_of(skills.get("skillMd").unwrap()),
+    )
+    .unwrap();
+    fs::write(blocked.join("data.txt"), "hidden").unwrap();
+    let manager = manager(&root, &json("{}"));
+    let input = object([("parentPath", format!("{root}/bundle").as_str().into())]);
+    let scan = || normalize(&manager.scan(&input).unwrap(), &root, false);
+    let expected = skills.get("scan").unwrap();
+    assert_eq!(scan(), expected.get("before").unwrap().clone());
+    let restore = Restore(blocked.clone());
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
+    // Independent OS capability check: never count a privileged read as proof
+    // that the manager swallowed an actual EACCES.
+    match fs::read_dir(&blocked) {
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Ok(_) => {
+            eprintln!("NOT_RUN: permission-denied scan requires an unprivileged filesystem");
+            return;
+        }
+        Err(e) => panic!("unexpected raw readdir error: {e}"),
+    }
+    assert_eq!(scan(), expected.get("denied").unwrap().clone());
+    drop(restore);
+    assert_eq!(scan(), expected.get("restored").unwrap().clone());
+    println!("PASS: real EACCES and healthy scan controls");
+}
+
+#[test]
+fn deep_directory_import_matches_real_ts_content_result_and_modes() {
+    use std::os::unix::fs::PermissionsExt;
+    struct Restore(std::path::PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            if self.0.exists() {
+                fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+    }
+    let scratch = Scratch::new();
+    let root = scratch.root();
+    let oracle = json(include_str!("../../tests/fixtures/runtime-boundaries.json"));
+    let skills = oracle.get("skills").unwrap();
+    let copy = skills.get("copy").unwrap();
+    let depth = copy.get("depth").unwrap().as_number().unwrap() as usize;
+    let relative = vec!["d"; depth].join("/");
+    let source = scratch.0.join("source");
+    fs::create_dir_all(source.join(&relative)).unwrap();
+    fs::write(
+        source.join("SKILL.md"),
+        str_of(skills.get("skillMd").unwrap()),
+    )
+    .unwrap();
+    fs::write(
+        source.join(&relative).join("leaf.txt"),
+        str_of(copy.get("content").unwrap()),
+    )
+    .unwrap();
+    let mode = copy.get("mode").unwrap().as_number().unwrap() as u32;
+    assert_eq!(
+        mode & 0o200,
+        0,
+        "read-only mode must catch chmod before children"
+    );
+    let _restore_source = Restore(source.join("d"));
+    let _restore_dest = Restore(scratch.0.join("home/skills/deep/d"));
+    fs::set_permissions(source.join("d"), fs::Permissions::from_mode(mode)).unwrap();
+    let result = manager(&root, &json("{}"))
+        .import(&object([
+            ("scope", "user".into()),
+            ("sourcePath", source.to_str().unwrap().into()),
+            ("slug", "deep".into()),
+        ]))
+        .unwrap();
+    assert_eq!(
+        normalize(&result, &root, false),
+        copy.get("result").unwrap().clone()
+    );
+    let dest = scratch.0.join("home/skills/deep");
+    assert_eq!(
+        fs::read_to_string(dest.join(&relative).join("leaf.txt")).unwrap(),
+        str_of(copy.get("content").unwrap())
+    );
+    assert_eq!(
+        fs::metadata(dest.join("d")).unwrap().permissions().mode() & 0o777,
+        mode
+    );
+}

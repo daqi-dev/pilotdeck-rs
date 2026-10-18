@@ -856,7 +856,11 @@ fn deep_sequence_array_message_is_a_range_error_not_a_stack_overflow() {
     let entries = [object([("sequence", sequence)])];
     match transcript_adapter::validate_event_log(&entries) {
         Err(AdapterError::Range(message)) => {
-            assert_eq!(message, "Maximum call stack size exceeded")
+            let oracle = js(include_str!("../../tests/fixtures/runtime-boundaries.json"));
+            let expected = oracle.get("deepErrors").unwrap().get("transcript").unwrap();
+            assert_eq!(expected.get("name"), Some(&"RangeError".into()));
+            assert_eq!(expected.get("code"), Some(&JsValue::Null));
+            assert_eq!(expected.get("message"), Some(&message.as_str().into()));
         }
         other => panic!("expected RangeError, got {other:?}"),
     }

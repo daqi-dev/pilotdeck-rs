@@ -29,7 +29,7 @@ fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
 }
 /// `String(value)`. A too-deep array is V8's RangeError, surfaced as a plain
-/// gateway error (TS actual error shape pending measurement).
+/// gateway error (real TS + WS evidence: tests/fixtures/runtime-boundaries.json).
 fn display(value: &JsValue) -> Result<String> {
     crate::js_value::display(value).map_err(|_| {
         error(

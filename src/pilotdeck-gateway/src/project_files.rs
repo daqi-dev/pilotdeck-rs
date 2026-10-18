@@ -40,7 +40,7 @@ fn index_limit() -> Error {
     )
 }
 /// `Number(maxBytes)` on a too-deep array: V8's RangeError, which TS reports
-/// as a plain gateway error (TS actual error shape pending measurement).
+/// as a plain gateway error (real TS + WS evidence: tests/fixtures/runtime-boundaries.json).
 fn stack_overflow(_: crate::js_value::StackOverflow) -> Error {
     (
         "gateway_request_failed",

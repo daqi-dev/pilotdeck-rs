@@ -625,8 +625,11 @@ fn deep_max_bytes_array_is_a_local_error_not_a_stack_overflow() {
     let (code, message) = execute(&metadata, "project_file_read", &params)
         .expect("answered locally, never forwarded")
         .unwrap_err();
-    assert_eq!(code, "gateway_request_failed");
-    assert_eq!(message, "Maximum call stack size exceeded");
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/runtime-boundaries.json")).unwrap();
+    let expected = &oracle["wireErrors"]["projectFile"]["error"];
+    assert_eq!(code, expected["code"].as_str().unwrap());
+    assert_eq!(message, expected["message"].as_str().unwrap());
 }
 
 #[test]

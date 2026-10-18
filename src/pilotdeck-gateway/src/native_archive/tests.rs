@@ -222,9 +222,15 @@ fn deep_artifact_name_array_is_an_error_not_a_stack_overflow() {
         ),
     ]);
     let response = response(&request, &metadata).expect("answered locally");
+    let oracle = parse_json(include_str!("../../tests/fixtures/runtime-boundaries.json")).unwrap();
     assert_eq!(
-        String::from_utf8(response).unwrap(),
-        r#"{"type":"response","id":"deep","ok":false,"error":{"code":"gateway_request_failed","message":"Maximum call stack size exceeded"}}"#
+        parse_json(std::str::from_utf8(&response).unwrap()).unwrap(),
+        oracle
+            .get("wireErrors")
+            .unwrap()
+            .get("nativeArchive")
+            .unwrap()
+            .clone(),
     );
 }
 static NEXT: AtomicUsize = AtomicUsize::new(0);

@@ -132,7 +132,7 @@ impl SkillManager {
         // strcmp: the same byte order as OsString, so the stable sort below
         // breaks ties exactly as TS does (CLAUDE.md 问题分级, 2026-10-14).
         // This holds only for scandir; fs.cp walks with opendir, which is
-        // unsorted (see copy_dir).
+        // unsorted (see copy_entry).
         entries.sort_by_key(|e| e.file_name());
         let current = scan_folder(&root, basename(&root));
         let collator = node_collator(&self.locale)
@@ -219,7 +219,8 @@ fn scan_folder(dir: &str, folder_name: &str) -> ScanFolder {
 /// following stat of every listed path. The recursive readdir descends every
 /// entry its internalModuleStat sees as a directory, symlinks included, so a
 /// link cycle unrolls until stat hits ELOOP; any listing failure rejects the
-/// whole readdir, which scan swallows as zero files. 待实测 (scan fixture).
+/// whole readdir, which scan swallows as zero files. Measured with a real
+/// unreadable child in tests/record_runtime_boundaries.mts.
 fn tree_files(dir: &str) -> (f64, f64) {
     let mut listed = vec![];
     let mut queue = vec![dir.to_owned()];
@@ -253,7 +254,7 @@ fn tree_files(dir: &str) -> (f64, f64) {
 fn cp(src: &str, dest: &str) -> Result<()> {
     let (src_stat, dest_stat) = check_paths(src, dest)?;
     check_parent_paths(src, &src_stat, dest)?;
-    copy_entry(&src_stat, dest_stat.as_ref(), src, dest)
+    copy_entry(src_stat, dest_stat, src, dest)
 }
 
 /// cp.js checkPaths with lstat on both sides (dereference: false).
@@ -311,24 +312,64 @@ fn check_parent_paths(src: &str, src_stat: &Metadata, dest: &str) -> Result<()> 
     }
 }
 
-/// cp.js getStatsForCopy (lstat, recursive).
+/// Copy entries depth first without putting directory depth on the native
+/// stack. Visit children in opendir order and chmod a new directory only after
+/// all its children succeed, just like cp.js mkDirAndCopy.
+/// Node 22 opendir ordering was measured in A6.8-pr4 gate 2:
+/// `_tmp/20261018-a68-pr4/cp-order-probe.log` (sorting changes the first error).
 fn copy_entry(
+    src_stat: Metadata,
+    dest_stat: Option<Metadata>,
+    src: &str,
+    dest: &str,
+) -> Result<()> {
+    enum Work {
+        Entry(String, String),
+        Mode(String, Metadata),
+    }
+    let mut pending = vec![Work::Entry(src.to_owned(), dest.to_owned())];
+    let mut root_stats = Some((src_stat, dest_stat));
+    while let Some(work) = pending.pop() {
+        let (src, dest) = match work {
+            Work::Mode(dest, stat) => {
+                set_mode(&dest, &stat)?;
+                continue;
+            }
+            Work::Entry(src, dest) => (src, dest),
+        };
+        let (src_stat, dest_stat) = match root_stats.take() {
+            Some(stats) => stats,
+            None => check_paths(&src, &dest)?,
+        };
+        if !src_stat.is_dir() {
+            copy_non_directory(&src_stat, dest_stat.as_ref(), &src, &dest)?;
+            continue;
+        }
+        if dest_stat.is_none() {
+            fs::create_dir(&dest).map_err(|e| SkillError::io(&e, "mkdir", Some(&dest)))?;
+            pending.push(Work::Mode(dest.clone(), src_stat));
+        }
+        let entries = fs::read_dir(&src)
+            .and_then(|r| r.collect::<io::Result<Vec<_>>>())
+            .map_err(|e| SkillError::io(&e, "opendir", Some(&src)))?;
+        // LIFO scheduling preserves the native directory order. Delay each
+        // child's checkPaths until its turn, so a later error cannot mask an
+        // earlier child's copy failure or suppress its already-written files.
+        for entry in entries.into_iter().rev() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            pending.push(Work::Entry(join(&src, &name), join(&dest, &name)));
+        }
+    }
+    Ok(())
+}
+
+fn copy_non_directory(
     src_stat: &Metadata,
     dest_stat: Option<&Metadata>,
     src: &str,
     dest: &str,
 ) -> Result<()> {
     let kind = src_stat.file_type();
-    if kind.is_dir() {
-        // onDir: only mkDirAndCopy ends in setDestMode; an existing dest
-        // directory keeps its own mode.
-        if dest_stat.is_none() {
-            fs::create_dir(dest).map_err(|e| SkillError::io(&e, "mkdir", Some(dest)))?;
-            copy_dir(src, dest)?;
-            return set_mode(dest, src_stat);
-        }
-        return copy_dir(src, dest);
-    }
     if kind.is_file() || kind.is_char_device() || kind.is_block_device() {
         // onFile; force: true unlinks an existing dest first.
         if dest_stat.is_some() {
@@ -366,27 +407,6 @@ fn copy_entry(
         &format!("cannot copy {what}: {dest}"),
         dest,
     ))
-}
-
-/// cp.js copyDir: each entry passes checkPaths before it is copied.
-///
-/// No sort, on purpose: copyDir iterates `fs.opendir` (uv_fs_opendir/readdir),
-/// which yields the native directory order, and `fs::read_dir` yields the same.
-/// Measured (A6.8-pr4 gate 2, Node 22.22, `_tmp/20261018-a68-pr4/cp-order-probe.log`):
-/// with zz.txt, b.pipe, mm.txt, a.pipe created in that order, opendir returns
-/// that order and cp fails first on b.pipe, while sorted readdirSync puts
-/// a.pipe first.
-fn copy_dir(src: &str, dest: &str) -> Result<()> {
-    let entries = fs::read_dir(src)
-        .and_then(|r| r.collect::<io::Result<Vec<_>>>())
-        .map_err(|e| SkillError::io(&e, "opendir", Some(src)))?;
-    for entry in entries {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let (src_item, dest_item) = (join(src, &name), join(dest, &name));
-        let (src_stat, dest_stat) = check_paths(&src_item, &dest_item)?;
-        copy_entry(&src_stat, dest_stat.as_ref(), &src_item, &dest_item)?;
-    }
-    Ok(())
 }
 
 /// cp.js onLink (verbatimSymlinks: false): a relative link target is made
@@ -474,5 +494,41 @@ fn dirname(path: &str) -> String {
     match path.rfind('/') {
         Some(0) | None => "/".into(),
         Some(i) => path[..i].into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_copy_does_not_use_native_stack_per_level() {
+        // The public import replay checks TS behavior on a normal thread. This
+        // deliberately small stack catches reintroducing copy_dir recursion.
+        let root = std::env::temp_dir().join(format!("pdrs-copy-depth-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                fs::remove_dir_all(&self.0).unwrap();
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let relative = vec!["d"; 240].join("/");
+        let source = root.join("src");
+        let dest = root.join("dst");
+        fs::create_dir_all(source.join(&relative)).unwrap();
+        fs::write(source.join(&relative).join("leaf"), b"leaf").unwrap();
+        std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(move || cp(source.to_str().unwrap(), dest.to_str().unwrap()))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fs::read(root.join("dst").join(relative).join("leaf")).unwrap(),
+            b"leaf"
+        );
     }
 }

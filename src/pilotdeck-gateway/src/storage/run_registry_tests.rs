@@ -783,3 +783,27 @@ fn real_ts_reads_rust_registry_and_honours_its_lock() {
         1
     );
 }
+
+#[test]
+fn million_level_arrays_fail_locally_without_changing_registry_or_leaving_locks() {
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    let deep = format!("{}1{}", "[".repeat(1_000_000), "]".repeat(1_000_000));
+    let oracle = parse_json(include_str!("../../tests/fixtures/runtime-boundaries.json")).unwrap();
+    for key in ["projectKey", "sessionKey", "runId"] {
+        let text = format!(
+            r#"{{"schemaVersion":1,"records":[{{"state":"completed","{key}":{deep}}}],"events":{{}}}}"#
+        );
+        fs::write(&path, &text).unwrap();
+        let expected = oracle.get("registryErrors").unwrap().get(key).unwrap();
+        let Err(RunRegistryError::Invalid(message)) = FileRunRegistry::open(&path) else {
+            panic!("deep {key} must return a local RangeError message");
+        };
+        assert_eq!(expected.get("name"), Some(&"RangeError".into()));
+        assert_eq!(expected.get("code"), Some(&JsValue::Null));
+        assert_eq!(expected.get("message"), Some(&message.as_str().into()));
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+        assert!(!lock_path(&path).exists());
+        no_temporaries(&scratch.0);
+    }
+}

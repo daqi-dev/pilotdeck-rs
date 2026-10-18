@@ -1,0 +1,195 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/extension/skills/SkillManager.ts": "b971873bf42bb0141480e42826088c5e30bd1c1617fc1710375762ded3f87111",
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/gateway/server/GatewayWsConnection.ts": "cbc27036572bbb7874b195a97ce584fee3f621c48a617f3e48c3fb010e154d0f",
+    "src/session/events/SessionEventLogValidation.ts": "56712300dae1794cc59814c425cf4291cc88109a7af4590ae41218ef84216ca4",
+    "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37"
+  },
+  "node": "v22.22.0",
+  "arrayDepth": 10000,
+  "deepErrors": {
+    "projectFile": {
+      "name": "RangeError",
+      "code": null,
+      "message": "Maximum call stack size exceeded"
+    },
+    "nativeArchive": {
+      "name": "RangeError",
+      "code": null,
+      "message": "Maximum call stack size exceeded"
+    },
+    "transcript": {
+      "name": "RangeError",
+      "code": null,
+      "message": "Maximum call stack size exceeded"
+    }
+  },
+  "shallow": {
+    "projectFile": {
+      "path": "a.txt",
+      "content": "inside",
+      "encoding": "utf-8"
+    },
+    "nativeArchive": {
+      "name": "DialogGatewayError",
+      "code": "INVALID_ARCHIVE_ARTIFACT",
+      "message": "artifactName must be a single safe artifact name."
+    },
+    "transcript": {
+      "name": "SessionEventValidationError",
+      "code": "invalid_sequence",
+      "message": "Session event sequence must be a positive safe integer: 1."
+    }
+  },
+  "wireErrors": {
+    "projectFile": {
+      "type": "response",
+      "id": "deep",
+      "ok": false,
+      "error": {
+        "code": "gateway_request_failed",
+        "message": "Maximum call stack size exceeded"
+      }
+    },
+    "nativeArchive": {
+      "type": "response",
+      "id": "deep",
+      "ok": false,
+      "error": {
+        "code": "gateway_request_failed",
+        "message": "Maximum call stack size exceeded"
+      }
+    }
+  },
+  "registryErrors": {
+    "projectKey": {
+      "name": "RangeError",
+      "code": null,
+      "message": "Maximum call stack size exceeded"
+    },
+    "sessionKey": {
+      "name": "RangeError",
+      "code": null,
+      "message": "Maximum call stack size exceeded"
+    },
+    "runId": {
+      "name": "RangeError",
+      "code": null,
+      "message": "Maximum call stack size exceeded"
+    }
+  },
+  "skills": {
+    "skillMd": "---\nname: Boundary\ndescription: Real filesystem boundary regression\n---\n",
+    "scan": {
+      "before": {
+        "parentPath": "<dir>/bundle",
+        "folders": [
+          {
+            "folderName": "bundle",
+            "hasSkillMd": true,
+            "name": "Boundary",
+            "description": "Real filesystem boundary regression",
+            "sourcePath": "<dir>/bundle",
+            "fileCount": 2,
+            "totalSize": 78
+          },
+          {
+            "folderName": "blocked",
+            "hasSkillMd": false,
+            "name": null,
+            "description": null,
+            "sourcePath": "<dir>/bundle/blocked",
+            "fileCount": 0,
+            "totalSize": 0
+          }
+        ]
+      },
+      "denied": {
+        "parentPath": "<dir>/bundle",
+        "folders": [
+          {
+            "folderName": "bundle",
+            "hasSkillMd": true,
+            "name": "Boundary",
+            "description": "Real filesystem boundary regression",
+            "sourcePath": "<dir>/bundle",
+            "fileCount": 0,
+            "totalSize": 0
+          },
+          {
+            "folderName": "blocked",
+            "hasSkillMd": false,
+            "name": null,
+            "description": null,
+            "sourcePath": "<dir>/bundle/blocked",
+            "fileCount": 0,
+            "totalSize": 0
+          }
+        ]
+      },
+      "restored": {
+        "parentPath": "<dir>/bundle",
+        "folders": [
+          {
+            "folderName": "bundle",
+            "hasSkillMd": true,
+            "name": "Boundary",
+            "description": "Real filesystem boundary regression",
+            "sourcePath": "<dir>/bundle",
+            "fileCount": 2,
+            "totalSize": 78
+          },
+          {
+            "folderName": "blocked",
+            "hasSkillMd": false,
+            "name": null,
+            "description": null,
+            "sourcePath": "<dir>/bundle/blocked",
+            "fileCount": 0,
+            "totalSize": 0
+          }
+        ]
+      }
+    },
+    "copy": {
+      "depth": 240,
+      "content": "deep leaf",
+      "mode": 361,
+      "result": {
+        "ok": true,
+        "mode": "copy",
+        "scope": "user",
+        "slug": "deep",
+        "sourcePath": "<dir>/source",
+        "skillPath": "<dir>/home/skills/deep",
+        "skill": {
+          "slug": "deep",
+          "name": "Boundary",
+          "description": "Real filesystem boundary regression",
+          "version": null,
+          "skillFile": "<dir>/home/skills/deep/SKILL.md",
+          "skillDir": "<dir>/home/skills/deep",
+          "scope": "user",
+          "readonly": false,
+          "mtime": "<mtime>"
+        },
+        "validation": {
+          "ok": true,
+          "hardFails": [],
+          "warnings": [],
+          "stats": {
+            "fileCount": 2,
+            "totalBytes": 81
+          },
+          "frontmatter": {
+            "name": "Boundary",
+            "description": "Real filesystem boundary regression"
+          }
+        }
+      }
+    }
+  }
+}
