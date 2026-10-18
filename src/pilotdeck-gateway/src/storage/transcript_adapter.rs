@@ -39,7 +39,7 @@ pub enum AdapterError {
     /// TS TypeError. Only the V8 messages listed at the construction sites are modelled.
     Type(String),
     /// TS RangeError: V8's too-deep `Array.prototype.join` while building a
-    /// message (TS actual error shape pending measurement).
+    /// message (real TS evidence: tests/fixtures/runtime-boundaries.json).
     Range(String),
     /// A TS module this adapter does not port would decide this input.
     NodeHostRequired(String),

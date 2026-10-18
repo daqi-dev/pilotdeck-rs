@@ -603,6 +603,7 @@ async fn timeout_and_frame_limits_close_owned_processes() {
         .err()
         .unwrap();
     assert_eq!(error.kind, HostErrorKind::Timeout);
+    bounded = protocol_limits();
     bounded.max_frame_bytes = 1024;
     let error = HostClient::spawn(&mut command("oversized"), None, bounded)
         .await
@@ -610,16 +611,25 @@ async fn timeout_and_frame_limits_close_owned_processes() {
         .unwrap();
     assert_eq!(error.kind, HostErrorKind::Limit);
     bounded.execution_timeout = Duration::from_millis(100);
-    bounded.handshake_timeout = Duration::from_secs(2);
     let client = HostClient::spawn(&mut command("callback-timeout"), None, bounded)
         .await
         .unwrap();
-    let error = client
-        .execute(request(), Handler::new("callback-timeout"))
-        .await
-        .unwrap_err();
+    let handler = Handler::new("callback-timeout");
+    let clock = ManualClock::start();
+    let task = tokio::spawn(client.execute(request(), handler.clone()));
+    wait_for_event("pending module callback", || {
+        handler.active_calls.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    assert!(!task.is_finished(), "timed out before callback started");
+    tokio::time::advance(bounded.execution_timeout + Duration::from_millis(1)).await;
+    // Resume the real clock only after the deadline is ready; child shutdown
+    // still uses OS pipes, whose scheduling is independent of Tokio time.
+    drop(clock);
+    let error = task.await.unwrap().unwrap_err();
     assert_eq!(error.kind, HostErrorKind::Timeout);
     assert!(error.accepted);
+    assert_eq!(handler.active_calls.load(Ordering::SeqCst), 0);
     println!("HOST_REJECT callback-timeout: {error}");
 }
 #[test]
@@ -982,20 +992,61 @@ async fn applied_terminal_bounds_pending_callback_drain() {
     let bounded = Limits {
         terminal_drain_timeout: Duration::from_millis(300),
         execution_timeout: Duration::from_millis(200),
-        ..limits()
+        ..protocol_limits()
     };
     let client = HostClient::spawn(&mut command, None, bounded)
         .await
         .unwrap();
     let handler = Handler::new(mode);
-    let started = Instant::now();
-    let result = client.execute(request(), handler.clone()).await.unwrap();
+    let clock = ManualClock::start();
+    let execute = client.execute(request(), handler.clone());
+    tokio::pin!(execute);
+    tokio::select! {
+        biased;
+        result = &mut execute => panic!("finished before terminal drain: {result:?}"),
+        _ = wait_for_event("terminal applied with pending callback", || {
+            handler.applied_events.load(Ordering::SeqCst) == 1
+                && handler.active_calls.load(Ordering::SeqCst) == 1
+        }) => {}
+    }
+    // Consume the completed event and register its drain timer before moving
+    // the virtual clock. Merely observing the handler's counter is too early.
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(execute.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    tokio::time::advance(bounded.execution_timeout + Duration::from_millis(1)).await;
+    std::future::poll_fn(|cx| {
+        assert!(
+            std::future::Future::poll(execute.as_mut(), cx).is_pending(),
+            "known terminal must survive execution timeout and wait for drain"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+    tokio::time::advance(bounded.terminal_drain_timeout - bounded.execution_timeout).await;
+    let finished = tokio::select! {
+        biased;
+        result = &mut execute => Some(result),
+        _ = wait_for_event("terminal drain aborted callback", || {
+            handler.active_calls.load(Ordering::SeqCst) == 0
+        }) => None
+    };
+    // stop_child polls the OS with real-time sleeps. Only the drain assertion
+    // needs virtual time; resume before awaiting pipe flush and child reaping.
+    drop(clock);
+    let result = match finished {
+        Some(result) => result,
+        None => timeout(Duration::from_secs(10), &mut execute)
+            .await
+            .expect("transport cleanup watchdog"),
+    }
+    .unwrap();
     assert!(matches!(result, ExecuteResult::Terminal(_)));
     assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
     assert_eq!(handler.active_calls.load(Ordering::SeqCst), 0);
     assert_eq!(handler.events.load(Ordering::SeqCst), 1);
-    assert!(started.elapsed() >= bounded.terminal_drain_timeout);
-    assert!(started.elapsed() < Duration::from_secs(1));
     receipt.assert_pass(mode);
 }
 
