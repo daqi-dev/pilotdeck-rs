@@ -21,6 +21,8 @@ add("t", "tx", "tru", "trux", "nul", "nulL", "fals", "falsex", "nullnull", "[tru
 add("{", "[", "{}x", "{} x", "[]]", "{,}", "{\"a\":1,}", "[1,]", "{\"a\"}", "{\"a\" \"b\"}", "{'a':1}",
   "{a:1}", "[1;2]", "[1 2]", "{\"a\":1 \"b\":2}", "{\"a\":1,\"b\"}", "[\"a\" 1]", "{\"a\":{\"b\":[1,{]}}");
 // Strings: unterminated, escapes, control characters, \u forms.
+// Unterminated \\u escapes: V8 reports Bad Unicode escape, not end of input.
+add("\"\\u", "\"\\u1", "\"\\u12", "\"\\u123", "\"\\uZ", "\"a\\x");
 add("\"abc", "\"a\\", "\"\\x\"", "\"\\u12\"", "\"\\u12G4\"", "\"\\u\"", "\"\t\"", "\"\u0000\"", "\"\\uD800\"", "[\"\\uDC00\" 1]");
 // Non-JSON whitespace before a value, and BOM.
 add("\u00a0{}", "\ufeff{}", "\u2028[]", "\u000b1");
