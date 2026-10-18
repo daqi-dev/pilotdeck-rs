@@ -358,3 +358,129 @@ fn watched_paths_follow_exists_then_dirname() {
         ]
     );
 }
+
+/// Records `(previous, next, changed path count)` per event.
+fn path_recorder(store: &ConfigStore) -> Arc<Mutex<Vec<(f64, f64, usize)>>> {
+    let events = Arc::new(Mutex::new(vec![]));
+    let sink = events.clone();
+    store.subscribe(Arc::new(move |event: &ReloadEvent| {
+        lock(&sink).push((
+            version(&event.previous_snapshot),
+            version(&event.next_snapshot),
+            event.changed_paths.len(),
+        ));
+    }));
+    events
+}
+
+async fn advance(ms: u64) {
+    for _ in 0..ms {
+        tokio::time::advance(Duration::from_millis(1)).await;
+        settle().await;
+    }
+}
+
+/// Pins the sampling behaviour with the default 20 ms poll. Changes land
+/// 5 ms after a tick, so each is sampled 15 ms late.
+#[tokio::test(start_paused = true)]
+async fn change_spacing_around_the_debounce_window() {
+    let run_policy = format!("{BASE}runPolicy: {{failureGuard: {{enabled: true}}}}\n");
+    // 300 ms apart: two reloads with each change's own content, as in TS
+    // (BASE -> other: 2 agent.model paths; other -> runPolicy: 3 paths).
+    {
+        let root = Root::new();
+        root.write(BASE);
+        let (store, loads) = store(&root);
+        let events = path_recorder(&store);
+        let watch = store.start_watching(WatchOptions::default());
+        settle().await;
+        advance(5).await;
+        root.write(&other_model());
+        advance(300).await;
+        root.write(&run_policy);
+        advance(600).await;
+        assert_eq!(loads.load(Ordering::SeqCst), 3);
+        assert_eq!(*lock(&events), vec![(1.0, 2.0, 2), (2.0, 3.0, 3)]);
+        watch.stop().await;
+    }
+    // 260 ms apart: TS reloads at 255 ms (first content) and 515 ms (second).
+    // Here the first change is sampled at 20 ms, so the first reload runs at
+    // 270 ms and already reads the second change (written at 265 ms); the
+    // second change is sampled at 280 ms and yields an identity reload.
+    {
+        let root = Root::new();
+        root.write(BASE);
+        let (store, loads) = store(&root);
+        let events = path_recorder(&store);
+        let watch = store.start_watching(WatchOptions::default());
+        settle().await;
+        advance(5).await;
+        root.write(&other_model());
+        advance(260).await;
+        root.write(&run_policy);
+        advance(600).await;
+        assert_eq!(loads.load(Ordering::SeqCst), 3);
+        // BASE -> runPolicy is one path (`runPolicy`): the first change's
+        // `agent.model` edit was never published as its own snapshot.
+        assert_eq!(*lock(&events), vec![(1.0, 2.0, 1), (2.0, 3.0, 0)]);
+        watch.stop().await;
+    }
+}
+
+/// Documents the net-zero limitation: content and metadata restored between
+/// two samples produce no reload (fs.watch would give an identity reload).
+#[tokio::test(start_paused = true)]
+async fn net_zero_change_between_samples_is_not_seen() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let (store, loads) = store(&root);
+    let watch = store.start_watching(WatchOptions::default());
+    settle().await;
+    advance(5).await;
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    root.write(&other_model());
+    root.write(BASE);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    advance(600).await;
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    watch.stop().await;
+}
+
+#[test]
+fn relative_global_config_path_is_anchored_at_cwd() {
+    let root = Root::new();
+    let cwd = root.0.join("cwd");
+    std::fs::create_dir(&cwd).unwrap();
+    std::fs::write(cwd.join("cfg.yaml"), BASE).unwrap();
+    let options = StoreOptions::new(
+        &root.0,
+        &cwd,
+        Env::from([
+            (
+                "PILOT_HOME".to_owned(),
+                root.0.to_string_lossy().into_owned(),
+            ),
+            ("PILOTDECK_CONFIG_PATH".to_owned(), "cfg.yaml".to_owned()),
+        ]),
+    );
+    let store = ConfigStore::new(options).expect("loads cwd/cfg.yaml");
+    let watched = |store: &ConfigStore| {
+        store
+            .watched_paths()
+            .into_iter()
+            .filter_map(WatchedPath::new)
+            .map(|w| (w.path, w.directory))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(watched(&store), [(cwd.join("cfg.yaml"), false)]);
+    // Missing: watched through `dirname`, i.e. cwd (TS: `dirname("cfg.yaml")`
+    // is `.`), not skipped because the bare name has an empty parent.
+    std::fs::remove_file(cwd.join("cfg.yaml")).unwrap();
+    assert_eq!(watched(&store), [(cwd.clone(), true)]);
+}

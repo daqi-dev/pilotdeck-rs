@@ -38,8 +38,9 @@ loaded_at)` 返回与 `loadPilotConfig` 输出同形的 `version`、`schemaVersi
 `changes.rs` diff/classify 后按 JS `Set` 迭代语义发布给订阅者（订阅者 panic
 被隔离）、只有 `PilotConfigError` 替换保留的 reload 诊断、`start_watching` 以
 250 ms 去抖触发 `reload("watch")` 并吞掉失败。基线用 `fs.watch`，本 crate 无原生
-watcher 依赖，改为按 `WatchOptions::poll_interval` 轮询被监视路径；监视对象的
-选取与基线一致。真实 TS 原件与回放见 `tests/fixtures/config-store/README.md`。
+watcher 依赖，改为按 `WatchOptions::poll_interval`（默认 20 ms）轮询被监视路径；
+监视对象的选取与基线一致。差异是「延迟 + 采样合并 + 净零突发不触发 identity
+reload」，详见 `tests/fixtures/config-store/README.md`。真实 TS 原件与回放见 `tests/fixtures/config-store/README.md`。
 
 `load_project` / `load_project_with_files` 的公开行为不变；`snapshot.rs` 只投影
 已验证的值，不新增诊断或改变校验。完整快照的真实 TS 原件、生成器和回放见

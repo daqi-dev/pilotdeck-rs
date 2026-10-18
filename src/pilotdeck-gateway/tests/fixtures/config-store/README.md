@@ -53,8 +53,20 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   `diagnostics`；Rust `Error.code` 对这类错误是网关线协议码，回放按基线形状记为
   `undefined`、不记 `diagnostics`。
 - 时间走 Tokio 暂停时钟：`wait` 推进虚拟时间，watcher 的轮询与去抖计时确定性
-  触发，不依赖真实 sleep。Rust 以轮询（默认 100 ms）代替 `fs.watch` 事件，监视
+  触发，不依赖真实 sleep。Rust 以轮询（默认 20 ms）代替 `fs.watch` 事件，监视
   对象的选取（存在则监视自身、否则监视父目录、父目录也不存在则不监视）与基线一致。
+  本原件的 watch 场景写入间隔 30 ms，加一个轮询周期仍远小于 250 ms 去抖，结论不受
+  下列差异影响。
+- 与 `fs.watch` 不全等的三处（不加 crate 时无法消除，已用单测钉住现行为）：
+  ① 延迟：去抖从**采样到**变化时起算，最多晚一个轮询周期；② 采样合并：两次变化
+  的采样时刻落在同一去抖窗口内只 reload 一次，真实间隔略超 250 ms（默认 20 ms
+  轮询下约 250–270 ms，随 tick 相位变化）也会合并，订阅者看不到中间快照
+  （`change_spacing_around_the_debounce_window`：260 ms 间隔得「一次含第二次内容 +
+  一次 identity」，300 ms 间隔与 TS 一致）；③ 净零突发：两次采样之间内容**和**
+  元数据都恢复原状（同一周期内 A→B→A 且 mtime 相同，或被监视目录内建后即删）
+  不触发 reload，而 `fs.watch` 会给一次 identity reload
+  （`net_zero_change_between_samples_is_not_seen`）。相对的全局配置路径
+  （`PILOTDECK_CONFIG_PATH`）按 `StoreOptions.cwd` 锚定，与 loader 读的是同一文件。
 
 ```sh
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \

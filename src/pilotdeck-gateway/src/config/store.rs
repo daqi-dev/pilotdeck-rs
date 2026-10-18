@@ -19,9 +19,21 @@
 //!   one `reload("watch")` whose failure is swallowed (diagnostics stay on the
 //!   store). The baseline uses `fs.watch`; this crate has no native watcher
 //!   dependency, so watched paths are polled for changes (see
-//!   [`WatchOptions::poll_interval`]). The decision of what to watch matches
-//!   the baseline: an existing path is watched itself, a missing one through
-//!   its parent directory, and a path whose parent is missing is not watched.
+//!   [`WatchOptions::poll_interval`], 20 ms by default). The decision of what
+//!   to watch matches the baseline: an existing path is watched itself, a
+//!   missing one through its parent directory, and a path whose parent is
+//!   missing is not watched; relative config paths are anchored at
+//!   [`StoreOptions::cwd`] like the loader. Polling differs from `fs.watch` in
+//!   three observable ways: (1) latency — the debounce starts when a change
+//!   is *sampled*, up to one poll interval after it happened; (2) sampling
+//!   merge — two changes whose sampled times fall within one debounce window
+//!   yield one reload although their real spacing was slightly over 250 ms
+//!   (with 20 ms polling, spacings in roughly 250–270 ms depending on tick
+//!   phase); (3) net-zero bursts — changes that leave content *and* metadata
+//!   identical between two samples (A→B→A within one interval with the same
+//!   mtime, or a create+delete inside a watched directory) trigger no reload,
+//!   where `fs.watch` would produce an identity reload (version+1, empty
+//!   `changedPaths`).
 use super::{
     Env, Error,
     changes::{ChangeClass, classify_config_changes, diff_config_snapshots},
@@ -102,6 +114,7 @@ pub struct WatchOptions {
     /// Quiet period after the last change before reloading (baseline 250 ms).
     pub debounce: Duration,
     /// How often watched paths are checked; stands in for `fs.watch` events.
+    /// Kept well below `debounce` so the sampling merge window stays small.
     pub poll_interval: Duration,
 }
 
@@ -109,7 +122,7 @@ impl Default for WatchOptions {
     fn default() -> Self {
         Self {
             debounce: Duration::from_millis(250),
-            poll_interval: Duration::from_millis(100),
+            poll_interval: Duration::from_millis(20),
         }
     }
 }
@@ -242,10 +255,13 @@ impl ConfigStore {
     fn watched_paths(&self) -> Vec<PathBuf> {
         let options = &self.inner.options;
         let cwd = super::absolute_cwd(&options.cwd);
-        let mut paths = vec![PathBuf::from(super::global_config_path(
-            &options.pilot_home,
-            &options.env,
-        ))];
+        // The loader reads the global path through `metadata::resolve(cwd, ..)`;
+        // watch the same file (a relative `PILOTDECK_CONFIG_PATH` is relative
+        // to `cwd`, and an empty one is `cwd` itself).
+        let mut paths = vec![crate::metadata::resolve(
+            &cwd,
+            &super::global_config_path(&options.pilot_home, &options.env),
+        )];
         if let Some(project) = super::project_config_path(&cwd, options.project.as_deref())
             && !paths.contains(&project)
         {
@@ -471,14 +487,17 @@ impl WatchedPath {
     /// `existsSync(path) ? path : dirname(path)`; `fs.watch` throws (and the
     /// path is skipped) when that target does not exist.
     fn new(path: PathBuf) -> Option<Self> {
-        let (path, directory) = if path.exists() {
-            (path, false)
+        let path = if path.exists() {
+            path
         } else {
-            (path.parent()?.to_path_buf(), true)
+            path.parent()?.to_path_buf()
         };
         if !path.exists() {
             return None;
         }
+        // An existing directory (e.g. an empty config path resolving to cwd)
+        // is fingerprinted by its entries, like `fs.watch` on a directory.
+        let directory = path.is_dir();
         let fingerprint = fingerprint(&path, directory);
         Some(Self {
             path,
