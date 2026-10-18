@@ -6,6 +6,7 @@ use std::{collections::HashMap, fmt};
 pub mod admission;
 mod codec;
 mod consumer;
+pub mod json_syntax;
 pub mod model;
 pub mod module;
 mod snapshots;

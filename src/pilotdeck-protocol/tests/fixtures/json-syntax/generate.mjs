@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Records host JSON.parse SyntaxError messages for json_syntax.rs differential tests.
+// Records host JSON.parse SyntaxError messages for pilotdeck-protocol/src/json_syntax.rs differential tests.
 // Usage: node generate.mjs  (writes cases.json beside this file; Node 22 required)
 import { writeFileSync } from "node:fs";
 

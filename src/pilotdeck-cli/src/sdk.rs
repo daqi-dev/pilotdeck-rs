@@ -1,6 +1,7 @@
 //! runSdkCli from src/cli/sdkCli.ts: argument reading and pre-network checks.
 use crate::paths::{self, Env};
-use crate::{Failure, json_syntax, stdout_line};
+use crate::{Failure, stdout_line};
+use pilotdeck_protocol::json_syntax;
 use std::path::Path;
 
 const VALUE_FLAGS: [&str; 6] = [

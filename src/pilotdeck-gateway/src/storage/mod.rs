@@ -10,6 +10,7 @@ pub mod recorder;
 mod run_registry;
 mod transcript;
 mod transcript_adapter;
+mod workspace_snapshot;
 
 pub use run_registry::{
     FileRunRegistry, RunAcceptInput, RunAccepted, RunRecord, RunRef, RunRegistryError, RunState,
@@ -27,6 +28,12 @@ pub use ledger::{
 pub use transcript::{
     Diagnostic, JsonlLedgerStore, TranscriptRead, WriterState, read_transcript,
     read_transcript_limited,
+};
+pub use workspace_snapshot::{
+    ContentAddressedWorkspaceSnapshotRecorder, RestoredSnapshot, SnapshotPhase, SnapshotState,
+    WorkspaceSnapshotConfig, WorkspaceSnapshotDescriptor, WorkspaceSnapshotError,
+    WorkspaceSnapshotInput, WorkspaceSnapshotProvider, WorkspaceSnapshotResult,
+    create_workspace_snapshot_provider, resolve_workspace_snapshot_config,
 };
 
 use std::{fmt, io};

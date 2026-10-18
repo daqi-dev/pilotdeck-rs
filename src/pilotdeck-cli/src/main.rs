@@ -1,6 +1,5 @@
 //! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
 mod config;
-mod json_syntax;
 mod paths;
 mod sdk;
 mod skills;
