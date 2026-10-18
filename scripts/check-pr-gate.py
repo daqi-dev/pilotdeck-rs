@@ -10,7 +10,8 @@
   2. 有 issue 关联：`Closes|Fixes|Resolves #N`（合并即关单，GitHub 定顺序）或 `Refs #N`（一单多 PR，单保持开），
      或 `<!-- no-issue <理由> -->`。
   3. 谁写谁不审（CLAUDE.md「当前协作与持续推进」）：PR 描述有 `<!-- reviewers: A,B -->`，列出双谱系评审的两家；
-     作者谱系取 `<!-- author: X -->`，没有则按分支前缀推断（codex/ glm/ deepseek/ claude/）；两者都没有即 FAIL。
+     作者谱系：分支前缀是 codex/ glm/ deepseek/ claude/ 时以前缀为准（`<!-- author: X -->` 可写但必须一致，冲突即 FAIL）；
+     其它前缀（docs/ chore/ fix/ dev/）必须写 `<!-- author: X -->`，否则 FAIL。
      评审至少两家不同谱系、都不是作者；角色审计结果块的 runner 谱系（zai→GLM、anthropic→Claude）也不得是作者。
      谱系名不区分大小写，dsh/ds→deepseek，gpt→codex，opus/sonnet→claude，zai→glm。
 
@@ -31,8 +32,9 @@ MARKER = re.compile(r"<!--\s*pr-gate:v1\b([^>]*)-->")
 WAIVER = re.compile(r"<!--\s*pr-gate:waiver\s+(.+?)\s*-->", re.S)
 ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d+\b", re.I)
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
-REVIEWERS = re.compile(r"<!--\s*reviewers:\s*([^>]*?)\s*-->", re.I)
-AUTHOR = re.compile(r"<!--\s*author:\s*([^>]*?)\s*-->", re.I)
+# 取完整注释正文再校验（不能用 [^>]：正文含 > 时整条会被静默忽略）
+REVIEWERS = re.compile(r"<!--\s*reviewers\s*:(.*?)-->", re.I | re.S)
+AUTHOR = re.compile(r"<!--\s*author\s*:(.*?)-->", re.I | re.S)
 FAMILY = {"codex": "codex", "gpt": "codex", "glm": "glm", "zai": "glm", "deepseek": "deepseek", "dsh": "deepseek",
           "ds": "deepseek", "claude": "claude", "opus": "claude", "sonnet": "claude", "anthropic": "claude"}
 BRANCH_FAMILY = {"codex": "codex", "glm": "glm", "deepseek": "deepseek", "claude": "claude"}
@@ -44,19 +46,23 @@ def family(name: str) -> str | None:
 
 def check_reviewers(body: str, head_ref: str) -> list[str]:
     errs: list[str] = []
-    am = AUTHOR.findall(body)
+    am = [x.strip() for x in AUTHOR.findall(body)]
     if len(am) > 1:
         return [f"有 {len(am)} 个 author 标记；只许一个"]
-    author = family(am[0]) if am else BRANCH_FAMILY.get(head_ref.split("/", 1)[0].lower()) if "/" in head_ref else None
-    if am and author is None:
+    branch = BRANCH_FAMILY.get(head_ref.strip().split("/", 1)[0].lower()) if "/" in head_ref else None
+    declared = family(am[0]) if am else None
+    if am and declared is None:
         errs.append(f"author「{am[0]}」不是已知谱系（codex/GLM/DeepSeek/Claude）")
+    if branch and declared and branch != declared:
+        errs.append(f"author 标记（{declared}）与分支前缀（{branch}）冲突；分支前缀是唯一非自述信号，以它为准")
+    author = branch or declared
     if author is None and not am:
-        errs.append(f"无法确定作者谱系：分支「{head_ref or '未知'}」前缀不是 codex/glm/deepseek/claude，且没有 <!-- author: X -->")
+        errs.append(f"无法确定作者谱系：分支「{head_ref or '未知'}」前缀不是 codex/glm/deepseek/claude，须写 <!-- author: X -->")
     rm = REVIEWERS.findall(body)
     if len(rm) != 1:
         errs.append(f"须恰好一个 <!-- reviewers: A,B --> 标记（现 {len(rm)} 个），列出双谱系评审的两家")
         return errs
-    names = [x for x in re.split(r"[,\s]+", rm[0]) if x]
+    names = [x for x in re.split(r"[,\s]+", rm[0].strip()) if x]
     fams = [family(x) for x in names]
     bad = [n for n, f in zip(names, fams) if f is None]
     if bad:
@@ -142,7 +148,7 @@ def main() -> int:
     g.add_argument("--body-file")
     g.add_argument("--pr")
     ap.add_argument("--head", default=os.environ.get("PR_HEAD", ""), help="PR 当前 head SHA；给定时与结果块 head= 比对")
-    ap.add_argument("--head-ref", default=os.environ.get("PR_HEAD_REF", ""), help="PR 分支名，用来推断作者谱系")
+    ap.add_argument("--head-ref", default=None, help="PR 分支名，用来推断作者谱系（默认：--pr 取目标 PR 的分支；否则取环境变量 PR_HEAD_REF）")
     a = ap.parse_args()
     if a.body_file:
         body = open(a.body_file, encoding="utf-8").read()
@@ -154,12 +160,15 @@ def main() -> int:
         import json
         pr = json.loads(cp.stdout)
         body = pr.get("body") or ""
-        a.head_ref = a.head_ref or pr.get("headRefName", "")
+        # --pr 一律用目标 PR 自己的分支，不继承环境里别的 PR 的 PR_HEAD_REF（防用他人分支判作者）
+        a.head_ref = a.head_ref if a.head_ref is not None else pr.get("headRefName", "")
     elif "PR_BODY" in os.environ:
         body = os.environ["PR_BODY"]
     else:
         print("check-pr-gate: 需要 --body-file / --pr / 环境变量 PR_BODY", file=sys.stderr)
         return 2
+    if a.head_ref is None:
+        a.head_ref = os.environ.get("PR_HEAD_REF", "")
     errs = check(body, a.head, a.head_ref)
     for e in errs:
         print(f"check-pr-gate: FAIL {e}")

@@ -40,6 +40,12 @@ CASES = [
     ("未知 author", BASE + "<!-- author: gemini -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "不是已知谱系"),
     ("两个 author 标记", BASE + "<!-- author: codex -->\n<!-- author: glm -->\n<!-- reviewers: deepseek,claude -->", "chore/x", False, "只许一个"),
     ("GLM 写、四角色也用 GLM（zai）", GLM_BLOCK + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", False, "runner=zai"),
+    ("author 与已知前缀冲突（#234 式改写自述）", GLM_BLOCK + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "glm/a68-p2", False, "冲突"),
+    ("author 与前缀一致：放行", BASE + "<!-- author: DeepSeek -->\n<!-- reviewers: codex,glm -->", "deepseek/x", True, ""),
+    ("chore 前缀 + author 标记：放行", BASE + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "chore/gate", True, ""),
+    ("reviewers 正文含 > 不得被忽略（重复）", BASE + "<!-- reviewers: codex,deepseek -->\n<!-- reviewers: claude,glm > -->", "claude/x", False, "恰好一个"),
+    ("author 正文含 > 不得被忽略（未知谱系）", BASE + "<!-- author: gemini > -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "不是已知谱系"),
+    ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
     ("GLM 写、四角色用 GLM 以外：放行", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
      + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", True, ""),
 ]
@@ -52,12 +58,25 @@ def main() -> int:
         good = (not e) if ok else (bool(e) and any(want in x for x in e))
         print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
         fails += not good
+    # --pr 模式用目标 PR 的分支，不继承环境 PR_HEAD_REF（codex 评审 P1 的复现）
+    import json, os, subprocess, tempfile
+    with tempfile.TemporaryDirectory() as td:
+        fake = Path(td) / "gh"
+        payload = Path(td) / "pr.json"  # 不经 shell echo：macOS sh 的 echo 会把 JSON 里的 \\n 转义成真换行
+        payload.write_text(json.dumps({"body": BASE + "<!-- reviewers: claude,glm -->", "headRefName": "claude/fork"}))
+        fake.write_text(f"#!/bin/sh\ncat '{payload}'\n")
+        fake.chmod(0o755)
+        env = dict(os.environ, PATH=f"{td}:{os.environ['PATH']}", PR_HEAD_REF="codex/other-pr")
+        cp = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "check-pr-gate.py"), "--pr", "1"], capture_output=True, text=True, env=env)
+        good = cp.returncode == 1 and "谁写谁不审" in cp.stdout
+        print(f"{'PASS' if good else 'FAIL'} --pr 用目标 PR 分支、不继承 PR_HEAD_REF（rc={cp.returncode}）")
+        fails += not good
     # check() 整体也接上了：作者自审的 PR 过不了
     whole = gate.check(BASE + "<!-- reviewers: dsh,codex -->", "", "deepseek/x")
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 1} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 2} 例）")
     return 1 if fails else 0
 
 
