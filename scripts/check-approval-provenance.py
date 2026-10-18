@@ -35,6 +35,14 @@ def regular(path, root):
                     if parent == root or root in parent.parents))
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def check(root):
     root = Path(root).absolute()
     errors, sources, archived = [], {}, {}
@@ -87,7 +95,7 @@ def check(root):
             path = root / name
             if not regular(path, root):
                 errors.append(f'missing/nonregular approval original: {name}')
-            elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            elif sha256_file(path) != expected:
                 errors.append(f'approval original SHA256 mismatch: {name}')
     except (OSError, UnicodeError, ValueError) as error:
         errors.append(str(error))
