@@ -320,7 +320,7 @@ impl Harness {
 async fn replay_real_gateway_async_hooks() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 36);
+    assert_eq!(scenarios.len(), 37);
     let mut count = 0;
     for scenario in scenarios {
         let name = string(field(scenario, "name")).to_utf8().unwrap();
@@ -370,7 +370,7 @@ async fn replay_real_gateway_async_hooks() {
             "{name:?} mutations"
         );
     }
-    assert_eq!(count, 261);
+    assert_eq!(count, 270);
 }
 
 #[tokio::test(start_paused = true)]
@@ -757,4 +757,177 @@ async fn dropping_registry_cancels_pending_and_retention_timers() {
     tokio::time::advance(std::time::Duration::from_millis(300_001)).await;
     tokio::task::yield_now().await;
     assert_eq!(*events.lock().unwrap(), vec!["delivered".to_string()]);
+}
+
+/// Sink that records `id:status`; its first call waits for `go` before
+/// recording, holding the drainer inside the sink while the test settles
+/// another hook on a different thread.
+fn blocking_first_sink(
+    events: &Arc<Mutex<Vec<String>>>,
+) -> (
+    impl Fn(&JsString, JsObject) + use<>,
+    std::sync::mpsc::Receiver<()>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let gate = Mutex::new(Some((entered_tx, go_rx)));
+    let sink = events.clone();
+    let callback = move |_: &JsString, event: JsObject| {
+        let text = |key| {
+            event
+                .get(key)
+                .and_then(JsValue::as_string)
+                .unwrap()
+                .to_utf8()
+                .unwrap()
+        };
+        let first = gate.lock().unwrap().take();
+        if let Some((entered, go)) = first {
+            entered.send(()).unwrap();
+            go.recv().unwrap();
+        }
+        sink.lock()
+            .unwrap()
+            .push(format!("{}:{}", text("invocationId"), text("status")));
+    };
+    (callback, entered_rx, go_tx)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn expiry_event_precedes_delivery_that_settled_after_it() {
+    // TS `expiry-during-write-then-accepted`: expiry settles and emits while
+    // the steer write is pending; the accepted write then settles delivered.
+    // Hold the expiry thread between settlement and the sink, let delivery
+    // settle meanwhile, and require the TS order [expired, delivered] so the
+    // last event matches the stored outcome.
+    let clock = Arc::new(Clock::default());
+    let recording = Arc::new(Recording::default());
+    let gate = Arc::new(Gate::default());
+    *recording.gate.lock().unwrap() = Some(gate.clone());
+    let mailbox = SteerMailbox::new(Some(Arc::new(Recorder {
+        session: "s".into(),
+        state: recording.clone(),
+    })));
+    mailbox.start("r".into());
+    let turn = AsyncHookTurn {
+        run_id: "r".into(),
+        mailbox,
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (sink, entered, go) = blocking_first_sink(&events);
+    let registry = AsyncHookRegistry::new(clock.clone(), move |_| Some(turn.clone()), sink);
+    registry.register(registration("a", 10.0)).unwrap();
+    let context = object([(
+        "hookSpecificOutput",
+        object([
+            ("hookEventName", "PreToolUse".into()),
+            ("additionalContext", "context".into()),
+        ]),
+    )]);
+    let submitted = registry.submit("s".into(), "a".into(), context);
+    gate.entered.notified().await;
+    let timer = {
+        let clock = clock.clone();
+        std::thread::spawn(move || clock.advance(10.0, true))
+    };
+    tokio::task::spawn_blocking(move || entered.recv().unwrap())
+        .await
+        .unwrap();
+    gate.release.notify_one();
+    assert_eq!(submitted.await.unwrap().status.as_str(), "delivered");
+    go.send(()).unwrap();
+    timer.join().unwrap();
+    assert_eq!(*events.lock().unwrap(), ["a:expired", "a:delivered"]);
+    let again = registry
+        .submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    assert_eq!(again.status.as_str(), "duplicate");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn expire_for_turn_burst_is_not_interleaved() {
+    // TS expires a whole turn in one synchronous loop. Hold the burst's first
+    // event in the sink while another session settles on this thread: its
+    // event must follow the burst, not split it or jump ahead of it.
+    let clock = Arc::new(Clock::default());
+    let turns = HashMap::from([
+        (JsString::from("s"), started_turn()),
+        (
+            JsString::from("t"),
+            AsyncHookTurn {
+                run_id: "r".into(),
+                mailbox: {
+                    let mailbox = SteerMailbox::new(None);
+                    mailbox.start("r".into());
+                    mailbox
+                },
+            },
+        ),
+    ]);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (sink, entered, go) = blocking_first_sink(&events);
+    let registry = AsyncHookRegistry::new(
+        clock.clone(),
+        move |session| turns.get(session).cloned(),
+        sink,
+    );
+    registry.register(registration("a", 10_000.0)).unwrap();
+    registry.register(registration("b", 10_000.0)).unwrap();
+    registry
+        .register(AsyncHookRegistration {
+            session_key: "t".into(),
+            ..registration("c", 10_000.0)
+        })
+        .unwrap();
+    let burst = {
+        let registry = registry.clone();
+        std::thread::spawn(move || registry.expire_for_turn(&"s".into(), &"r".into()))
+    };
+    tokio::task::spawn_blocking(move || entered.recv().unwrap())
+        .await
+        .unwrap();
+    let c = registry
+        .submit("t".into(), "c".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    assert_eq!(c.status.as_str(), "delivered");
+    go.send(()).unwrap();
+    burst.join().unwrap();
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["a:expired", "b:expired", "c:delivered"]
+    );
+}
+
+#[tokio::test]
+async fn sink_may_reenter_registry_without_deadlock() {
+    // The sink runs outside every registry lock. A re-entrant settlement is
+    // queued and delivered after the current sink call returns.
+    let clock = Arc::new(Clock::default());
+    let turn = started_turn();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let own = Arc::new(std::sync::OnceLock::<AsyncHookRegistry>::new());
+    let (sink, reenter) = (events.clone(), own.clone());
+    let registry = AsyncHookRegistry::new(
+        clock.clone(),
+        move |_| Some(turn.clone()),
+        move |_, event| {
+            let id = event.get("invocationId").and_then(JsValue::as_string);
+            let id = id.unwrap().to_utf8().unwrap();
+            if id == "a" {
+                reenter
+                    .get()
+                    .unwrap()
+                    .expire_for_turn(&"s".into(), &"r".into());
+            }
+            sink.lock().unwrap().push(id);
+        },
+    );
+    own.set(registry.clone()).ok().unwrap();
+    registry.register(registration("a", 10.0)).unwrap();
+    registry.register(registration("b", 10_000.0)).unwrap();
+    clock.advance(10.0, true);
+    assert_eq!(*events.lock().unwrap(), ["a", "b"]);
 }

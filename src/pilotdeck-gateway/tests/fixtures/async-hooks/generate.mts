@@ -86,6 +86,7 @@ const specs = [
   { name: 'retention-waits-for-timer', steps: [start(),reg(),sub('a',{}),now(300001),sub(),tick(0),sub()] },
   { name: 'registration-ownership-no-refresh', steps: [reg(),start(),reg('',{}),reg(' \ufeff'),reg(),now(9),reg('a',{timeoutMs:100,hookName:'ignored'}),start('next'),reg(),start('r','other'),reg('a',{sessionKey:'other'}),now(1),sub()] },
   { name: 'minimum-and-default-timeout', steps: [start(),reg('a',{timeoutMs:0}),reg('b',{timeoutMs:-4}),reg('c',{timeoutMs:undefined}),tick(1),sub(),sub('b'),tick(59998),sub('c',{}),reg('d',{timeoutMs:undefined}),tick(60000),sub('d')] },
+  { name: 'minimum-timeout-deadline-check', steps: [start(),reg('a',{timeoutMs:0}),reg('b',{timeoutMs:-4}),reg('c',{timeoutMs:0.5}),sub('a',{}),now(0.5),sub('b',{}),now(0.5),sub('c',{})] },
   { name: 'fractional-timer-fires-before-expiry', steps: [start(),reg('a',{timeoutMs:1.9}),tick(1),sub()] },
   { name: 'old-run-context-fence', steps: [start(),reg(),start('next'),sub(),{...drain,run:'next'}] },
   { name: 'old-run-empty-fence', steps: [start(),reg(),start('next'),sub('a',{}),{...drain,run:'next'}] },
@@ -186,7 +187,7 @@ try {
   process.chdir(scratch);
   const scenarios = [];
   for (const spec of specs) scenarios.push(await run(spec));
-  assert.equal(scenarios.length,36);
+  assert.equal(scenarios.length,37);
   bindSourceTree(baseline,commit,git);
   assertTrackedClean();
   const data = JSON.stringify({sourceCommit,sourceSha256,scenarios},null,2)+'\n';
