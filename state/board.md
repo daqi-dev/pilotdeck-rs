@@ -1,16 +1,18 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-19 00:35 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.3-pr6 | gate | ready | PR #291 已入队（会话权限 registry，DeepSeek→codex，squash 实署名）
-- A6.6-pr3 | gate | ready | WorkspaceSnapshot（wt-a66-pr3 @616af3a，GLM→DeepSeek）：两家 0/0；闸门 sibling 超时，拆成生产与测试两段重跑中
-- A6.7-pr2 | review | ready | event.emit 适配（wt-a67-pr2 @83edc84，DeepSeek）：闸门 P0/P1=0；P2 抛错金样已补，codex + Claude 增量确认中；顺序契约登记 #289
-- A6.4-pr2b | review | ready | budget module 适配（wt-a63-pr1 @97ae7ed，codex）：两条 P1 已修（金样改由真实 TS 组合录制），DeepSeek + Claude 增量确认中
-- A6.5-pr2 | review | ready | 轮内 checkpoint + 工具运行上下文（wt-a65-pr2 @fc7f7a3，codex）：复跑 354/0，DeepSeek + Claude 评审中
-- A6-recorder | impl | ready | durable model/tool 记录（A6.4-pr10 + A6.5-pr13，wt-a6-recorder，DeepSeek→codex）：codex 评审报 P1×7（与 TranscriptWriter 共享序号与父链等），codex 接手修复
-- A6.7-pr1 | impl | blocked | SteerMailbox + turn drain；等 A6.5-pr2 合并
+updated: 2026-10-19 04:52 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.4-pr3 | gate | ready | PR #307 evaluate_request_budget（wt-a6-x0 @b0a05f3，codex）：rebase 过 #306 冲突（runtime/mod.rs 三行 mod 全留），复跑 450/0；HEAD 变了，重跑闸门 gate3 中，过了即入队
+- A6.3-pr2 | impl | ready | 完整配置快照（wt-a6-recorder @81148b5，DeepSeek）：闸门 P1×1（回放未走共享溯源守卫）+ boundary 四条「需实测」按 P2-b 当 P1，DeepSeek 第四轮修复中（fix-r3.md）
+- A6.6-pr4 | review | ready | snapshot 管理投影（wt-a66-pr3 @a95e3f4，DeepSeek）：复跑 441/0、regen 一致，codex + Claude 评审中
+- A6.6-pr1 | impl | ready | context module 适配（wt-a63-pr1，codex/a66-pr1，codex）
+- A6.6-pr2 | impl | ready | persist_compaction + durable context（wt-a64-pr11，deepseek/a66-pr2，DeepSeek）
+- A6.6-pr9 | impl | ready | memory 管理投影 + bundle 生命周期（wt-a65-pr2，deepseek/a66-pr9，DeepSeek；EdgeClaw 不做，sqlite 未批）
+- A6.5-pr3 | impl | ready | ToolRegistry + 调度/取消/deadline（wt-a67-pr2，codex/a65-pr3，codex）
+- A6.7-pr5 | impl | ready | async hook registry（wt-p2-sweep-4，codex/a67-pr5，codex）
+- A6.3-pr3 | impl | blocked | ConfigStore；等 A6.3-pr2 合并
+- p2-sweep-6 | impl | ready | P2-跟进 30 个（>10）：有空槽就开下一批，codex
 - #275 | coord | blocked | 合并闸门机器校验「谁写谁不审」：同一类 Markdown 绕过修了 8 轮未收敛，挂起转 draft；重启需人选 (a) 标准 CommonMark 解析器（新依赖）或 (b) 评审声明改走 label/JSON 通道
-- p2-sweep-5 | impl | ready | P2-跟进 30 个（>10）：下一批清账，优先 #280（生成器溯源守卫铺满），codex
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -18,6 +20,11 @@ updated: 2026-10-19 00:35 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-19 04:52 · /loop 两小时交接（自 00:35 起）
+> 合并 9 个产品 PR：#291 A6.3-pr6、#294 A6.6-pr3、#295 A6.7-pr2、#296 A6.4-pr2b、#298 A6-recorder、#299 p2-sweep-5（清 #280，生成器统一溯源守卫）、#300 A6.5-pr2、#302 A6.3-pr4、#306 A6.7-pr1。#294、#306 曾因宿主测试 `close_timeout_kills_and_reaps…` 偶发失败被队列踢出，登记 #308 后重新入队。
+> 现在 #307（A6.4-pr3）因 #306 的 runtime/mod.rs 冲突 rebase 后重跑闸门；腾出的 5 个 worktree 复用（均已合并、无未提交改动，worker 的 _tmp 证据保留）派了新单：codex 做 A6.6-pr1、A6.5-pr3、A6.7-pr5，DeepSeek 做 A6.6-pr2、A6.6-pr9。
+> **持有人与后台**：协调者本会话。worktree 10/12（含 #275 两个），磁盘 82.1/100 GiB，P2-跟进 30 个。在跑：5 个实现、DeepSeek 修 A6.3-pr2、A6.6-pr4 两家评审、#307 闸门。**下一步**：#307 闸门过即入队；A6.3-pr2 修完开 PR 后放出 A6.3-pr3；磁盘超 90 GiB 时先清已合并 worktree 的 target。
 
 > ## 2026-10-19 00:35 · /loop 两小时交接（自 17:10 起，期间 22:40 有一次中段记录）
 > 合并（17:10 以来共 19 个 PR）：产品方面有 #266 A6-X0、#267 A6.3-pr1、#272 A6.4-pr11、#278 A6.7-pr3、#279 D2-pr1、#284 F2-A34-pr2、#285 A6.5-pr1、#286 A6.4-pr2a、#288 A6.4-pr1，以及 #257/#262 B2 重冻结和 #269 p2-sweep-4；其余是 board 与规则（含 #282 署名口径 B、#264 模型分工 v2）。入队中：#291 A6.3-pr6。
