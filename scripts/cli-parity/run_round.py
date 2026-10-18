@@ -110,6 +110,9 @@ def stage_rust(output, expected, baseline):
     staged = stage / 'bin' / 'pilotdeck'
     shutil.copyfile(expected['executable']['path'], staged)
     staged.chmod(0o755)
+    # copytree follows a root-level link, so the scan below would not see it.
+    if (baseline / 'skills').is_symlink():
+        raise Blocked('baseline skills/ is a symlink; Rust stage copy not registered')
     shutil.copytree(baseline / 'skills', stage / 'skills', symlinks=True)
     # Links would point back into the baseline, which the Rust policy cannot read.
     if any(path.is_symlink() for path in (stage / 'skills').rglob('*')):
@@ -401,7 +404,7 @@ def main():
     output = output_path(args.output)
     output.mkdir(parents=True, mode=0o700)
     summary = {'status': 'BLOCKED', 'scope': 'D0-pr1 calibration; no command migration claim'}
-    staged = None
+    staged = staged_skills = None
     try:
         if sys.platform != 'darwin' or not Path('/usr/bin/sandbox-exec').is_file():
             raise Blocked('D0-pr1 requires macOS sandbox-exec; no unconfined fallback')
@@ -441,6 +444,8 @@ def main():
                 summary['status'] = summary['controls']['status']
                 if args.rust_bin:
                     staged = stage_rust(output, expected_rust, baseline)
+                    # The Rust round reads this copy, not baseline/skills; re-checked below.
+                    staged_skills = directory_identity(output / 'rust-stage/skills', output / 'rust-stage')
                     rust_profile = output / 'rust.sb'
                     rust_profile.write_text(sandbox_profile(runtime, baseline, staged['path'], 'rust'))
                     fixture(runtime)
@@ -459,6 +464,8 @@ def main():
                 raise Blocked('Rust executable/source HEAD changed during recording')
             if staged and executable(staged['path']) != staged:
                 raise Blocked('staged Rust binary changed during recording')
+            if staged and directory_identity(output / 'rust-stage/skills', output / 'rust-stage') != staged_skills:
+                raise Blocked('staged Rust skills changed during recording')
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         summary['status'] = 'BLOCKED'
         summary['error'] = str(error)
