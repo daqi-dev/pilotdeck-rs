@@ -9,10 +9,10 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/config-changes
 ```
 
-生成器先断言基线 HEAD 和源文件路径；覆盖 87 对快照与 20 组直接 classify 输入：
+生成器先断言基线 HEAD 和源文件路径；覆盖 91 对快照与 23 组直接 classify 输入：
 
 - `classifyPath` 全部分支：`agent.`/`model.`、`extension.includeHookEvents` 精确匹配与其它 `extension.`、`router.`、`alwaysOn.`/`cron.`/`tools.`、`modules`/`modules.`、`proxy`/`proxy.`、`runPolicy`/`runPolicy.`、默认分支；裸 `agent`、`model`、`extension`、`router` 等边界。
-- `classifyRouterPath` 全部子路径：scenarios/fallback/tokenSaver.tiers、zeroUsageRetry 两个精确键、tokenSaver.judge 前缀、autoOrchestrate、stats、customRouter、默认。
+- `classifyRouterPath` 全部子路径：scenarios/fallback/tokenSaver.tiers、zeroUsageRetry 两个精确键、`transientRetry`（容器、enabled/maxAttempts/baseDelayMs/maxDelayMs 与未知子键，TS 均落默认 `next-runtime`）、tokenSaver.judge 前缀、autoOrchestrate、stats、customRouter、默认。
 - diff：数组等长逐项/长度不等/数组换对象、对象字段增删（新增对象值只报父路径）、嵌套数组、根数组与根标量、整数键与 UTF-16 码元排序（含非 BMP 与孤立代理键）、多类混合时的首次出现顺序。
 - JS 值边界：`NaN` 与自身相等、`NaN`/`null`/`undefined`/`-0`/`±Infinity` 与删除 `undefined` 键不产生 diff、`null` 对 `undefined`、布尔对数字；`-Infinity` 有实际输入对。
 - JS 原型查找：`Object.prototype` 的 12 个内建成员（`constructor`、`hasOwnProperty`、`isPrototypeOf`、`propertyIsEnumerable`、`toLocaleString`、`toString`、`valueOf`、`__proto__`、4 个 `__define*`/`__lookup*`）缺失时回落到函数值；JSON.parse 产生的自有 `__proto__` 键；`Object.create([7])` 的显式数组原型（索引、`length`、`Array.prototype` 方法与 `Array.prototype` 的 `__proto__`）；`Object.create({x:1})` 的显式对象原型；`Object.create(null)` 的无内建回落。

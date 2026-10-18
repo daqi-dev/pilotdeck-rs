@@ -593,6 +593,135 @@
       "runPolicyOnly": false
     },
     {
+      "name": "router-transient-enabled",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.transientRetry.enabled"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-transient-max-attempts",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": {
+              "maxAttempts": 2
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": {
+              "maxAttempts": 3
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.transientRetry.maxAttempts"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-transient-delays",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": {
+              "baseDelayMs": 500,
+              "maxDelayMs": 8000
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": {
+              "baseDelayMs": 750,
+              "maxDelayMs": 9000
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.transientRetry.baseDelayMs",
+        "router.transientRetry.maxDelayMs"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-transient-container-replaced",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "transientRetry": 1
+          }
+        }
+      },
+      "changedPaths": [
+        "router.transientRetry"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
       "name": "always-on",
       "previous": {
         "schemaVersion": 1,
@@ -2782,6 +2911,41 @@
       "name": "router-zero-suffix-not-exact",
       "paths": [
         "router.zeroUsageRetry.maxAttempts.x"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-transient-exact",
+      "paths": [
+        "router.transientRetry"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-transient-fields",
+      "paths": [
+        "router.transientRetry.enabled",
+        "router.transientRetry.maxAttempts",
+        "router.transientRetry.baseDelayMs",
+        "router.transientRetry.maxDelayMs"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-transient-suffix-not-exact",
+      "paths": [
+        "router.transientRetry.maxAttempts.x",
+        "router.transientRetry.enabled.x",
+        "router.transientRetry.unknown"
       ],
       "classes": [
         "next-runtime"
