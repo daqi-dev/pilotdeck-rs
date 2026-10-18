@@ -1,0 +1,7907 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sources": {
+    "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts": "77a492b9a1a01cad44a6c7feb51fddaaf1d26a5a28de939abf3ed6310216424e"
+  },
+  "cases": [
+    {
+      "name": "list-refresh",
+      "config": {
+        "refreshedTools": [
+          {
+            "fields": {
+              "name": "fresh",
+              "description": "Read fixture",
+              "kind": "builtin",
+              "inputSchema": {
+                "type": "object"
+              },
+              "private": "catalog-only"
+            }
+          }
+        ]
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-1",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "list_tools"
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "tools": [
+            {
+              "name": "fresh",
+              "description": "Read fixture",
+              "kind": "builtin",
+              "inputSchema": {
+                "type": "object"
+              },
+              "readOnly": false,
+              "concurrencySafe": false,
+              "requiresUserInteraction": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "refresh"
+        },
+        {
+          "event": "list"
+        },
+        {
+          "event": "predicate",
+          "name": "fresh",
+          "predicate": "readOnly",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "fresh",
+          "predicate": "concurrencySafe",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "name": "list-empty",
+      "config": {
+        "tools": []
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-2",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "list_tools"
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "tools": []
+        }
+      },
+      "trace": [
+        {
+          "event": "refresh"
+        },
+        {
+          "event": "list"
+        }
+      ]
+    },
+    {
+      "name": "list-descriptor-shapes",
+      "config": {
+        "tools": [
+          {
+            "fields": {
+              "name": "read",
+              "description": "Read fixture",
+              "kind": "builtin",
+              "inputSchema": {
+                "type": "object"
+              },
+              "private": "catalog-only"
+            }
+          },
+          {
+            "fields": {
+              "name": "full",
+              "description": null,
+              "kind": "mcp",
+              "inputSchema": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array"
+                  }
+                ]
+              },
+              "title": "omit",
+              "aliases": [
+                "omit"
+              ]
+            },
+            "flags": {
+              "readOnly": {
+                "value": true
+              },
+              "concurrencySafe": {
+                "value": true
+              },
+              "requiresUserInteraction": {
+                "value": true
+              }
+            },
+            "capabilities": [
+              "files",
+              "network"
+            ]
+          },
+          {
+            "fields": {
+              "name": "throwing",
+              "inputSchema": false
+            },
+            "flags": {
+              "readOnly": {
+                "throws": true
+              },
+              "concurrencySafe": {
+                "throws": true
+              },
+              "requiresUserInteraction": {
+                "throws": true
+              }
+            },
+            "capabilities": []
+          },
+          {
+            "fields": {
+              "name": "\ud800",
+              "description": "",
+              "kind": null
+            },
+            "flags": {
+              "readOnly": {
+                "value": null
+              },
+              "concurrencySafe": {},
+              "requiresUserInteraction": {
+                "value": null
+              }
+            }
+          },
+          {
+            "fields": {
+              "name": "undefined-interaction",
+              "inputSchema": []
+            },
+            "flags": {
+              "readOnly": {
+                "value": 0
+              },
+              "concurrencySafe": {
+                "value": "truthy"
+              },
+              "requiresUserInteraction": {}
+            }
+          }
+        ]
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-3",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "list_tools"
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "tools": [
+            {
+              "name": "read",
+              "description": "Read fixture",
+              "kind": "builtin",
+              "inputSchema": {
+                "type": "object"
+              },
+              "readOnly": false,
+              "concurrencySafe": false,
+              "requiresUserInteraction": false
+            },
+            {
+              "name": "full",
+              "description": null,
+              "kind": "mcp",
+              "inputSchema": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array"
+                  }
+                ]
+              },
+              "readOnly": true,
+              "concurrencySafe": true,
+              "requiresUserInteraction": true,
+              "requiredRuntimeCapabilities": [
+                "files",
+                "network"
+              ]
+            },
+            {
+              "name": "throwing",
+              "inputSchema": false,
+              "readOnly": false,
+              "concurrencySafe": false,
+              "requiresUserInteraction": false,
+              "requiredRuntimeCapabilities": []
+            },
+            {
+              "name": "\ud800",
+              "description": "",
+              "kind": null,
+              "readOnly": null,
+              "requiresUserInteraction": false
+            },
+            {
+              "name": "undefined-interaction",
+              "inputSchema": [],
+              "readOnly": 0,
+              "concurrencySafe": "truthy",
+              "requiresUserInteraction": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "refresh"
+        },
+        {
+          "event": "list"
+        },
+        {
+          "event": "predicate",
+          "name": "read",
+          "predicate": "readOnly",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "read",
+          "predicate": "concurrencySafe",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "full",
+          "predicate": "readOnly",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "full",
+          "predicate": "concurrencySafe",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "full",
+          "predicate": "requiresUserInteraction",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "throwing",
+          "predicate": "readOnly",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "throwing",
+          "predicate": "concurrencySafe",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "throwing",
+          "predicate": "requiresUserInteraction",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "\ud800",
+          "predicate": "readOnly",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "\ud800",
+          "predicate": "concurrencySafe",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "\ud800",
+          "predicate": "requiresUserInteraction",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "undefined-interaction",
+          "predicate": "readOnly",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "undefined-interaction",
+          "predicate": "concurrencySafe",
+          "input": {}
+        },
+        {
+          "event": "predicate",
+          "name": "undefined-interaction",
+          "predicate": "requiresUserInteraction",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "name": "list-fail-refresh",
+      "config": {
+        "failure": "refresh"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-4",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "list_tools"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture refresh failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "refresh"
+        }
+      ]
+    },
+    {
+      "name": "list-fail-list",
+      "config": {
+        "failure": "list"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-5",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "list_tools"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture list failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "refresh"
+        },
+        {
+          "event": "list"
+        }
+      ]
+    },
+    {
+      "name": "batch-empty",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-6",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": []
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": []
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-6",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": []
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": []
+        }
+      ]
+    },
+    {
+      "name": "batch-pair",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-7",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            },
+            {
+              "toolCallId": "tool-2",
+              "name": "unknown"
+            }
+          ],
+          "context": {
+            "cwd": "/fixture",
+            "custom": 4
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            },
+            {
+              "toolCallId": "tool-2",
+              "name": "unknown",
+              "result": {},
+              "isError": true
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "value": {
+            "cwd": "/fixture",
+            "custom": 4
+          },
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-7",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                },
+                {
+                  "toolCallId": "tool-2",
+                  "name": "unknown"
+                }
+              ],
+              "context": {
+                "cwd": "/fixture",
+                "custom": 4
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            },
+            {
+              "id": "tool-2",
+              "name": "unknown",
+              "input": {}
+            }
+          ],
+          "context": {
+            "value": {
+              "cwd": "/fixture",
+              "custom": 4
+            },
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            },
+            {
+              "toolCallId": "tool-2",
+              "name": "unknown",
+              "result": {},
+              "isError": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-length-0",
+      "config": {
+        "results": []
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-8",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability port returned an incomplete batch result."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-8",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-length-2",
+      "config": {
+        "results": [
+          {
+            "toolCallId": "first"
+          },
+          {
+            "toolCallId": "extra"
+          }
+        ]
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-9",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability port returned an incomplete batch result."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-9",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-empty-extra",
+      "config": {
+        "results": [
+          {}
+        ]
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-10",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": []
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability port returned an incomplete batch result."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-10",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": []
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-ok",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-11",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": 4
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "tool-1",
+          "name": "read",
+          "result": {
+            "path": "fixture"
+          },
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "value": {
+            "custom": 4
+          },
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-11",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              },
+              "context": {
+                "custom": 4
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "value": {
+              "custom": 4
+            },
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-first-only",
+      "config": {
+        "results": [
+          {
+            "first": 1
+          },
+          {
+            "second": 2
+          }
+        ]
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-12",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "first": 1
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-12",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "first": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-no-result",
+      "config": {
+        "results": []
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-13",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability port returned no result."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-13",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-empty-object-result",
+      "config": {
+        "results": [
+          {}
+        ]
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-14",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {}
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-14",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-unknown-tool",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-15",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "unknown",
+          "name": "unknown"
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "unknown",
+          "name": "unknown",
+          "result": {},
+          "isError": true
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-15",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "unknown",
+              "name": "unknown"
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "unknown",
+              "name": "unknown",
+              "input": {}
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "unknown",
+              "name": "unknown",
+              "result": {},
+              "isError": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-arguments-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-16",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "id",
+          "name": "read"
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "id",
+          "name": "read",
+          "result": {},
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-16",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "id",
+              "name": "read"
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": {}
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {},
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-arguments-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-17",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "id",
+              "name": "read"
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {},
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-17",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "id",
+                  "name": "read"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": {}
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {},
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-arguments-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-18",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "id",
+          "name": "read",
+          "arguments": null
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "id",
+          "name": "read",
+          "result": {},
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-18",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": null
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": {}
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {},
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-arguments-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-19",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": null
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {},
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-19",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "id",
+                  "name": "read",
+                  "arguments": null
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": {}
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {},
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-arguments-false",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-20",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "id",
+          "name": "read",
+          "arguments": false
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "id",
+          "name": "read",
+          "result": false,
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-20",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": false
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": false
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": false,
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-arguments-false",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-21",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": false
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": false,
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-21",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "id",
+                  "name": "read",
+                  "arguments": false
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": false
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": false,
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-arguments-zero",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-22",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "id",
+          "name": "read",
+          "arguments": 0
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "id",
+          "name": "read",
+          "result": 0,
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-22",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": 0
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": 0
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": 0,
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-arguments-zero",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-23",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": 0
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": 0,
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-23",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "id",
+                  "name": "read",
+                  "arguments": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": 0
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": 0,
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-arguments-empty-string",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-24",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "id",
+          "name": "read",
+          "arguments": ""
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "id",
+          "name": "read",
+          "result": "",
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-24",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": ""
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": ""
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": "",
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-arguments-empty-string",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-25",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": ""
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": "",
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-25",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "id",
+                  "name": "read",
+                  "arguments": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": ""
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": "",
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-arguments-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-26",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "id",
+          "name": "read",
+          "arguments": []
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "id",
+          "name": "read",
+          "result": [],
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-26",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": []
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": []
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": [],
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-arguments-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-27",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": []
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": [],
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-27",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "id",
+                  "name": "read",
+                  "arguments": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": []
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": [],
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-arguments-nested",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-28",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "id",
+          "name": "read",
+          "arguments": {
+            "nested": [
+              1,
+              null,
+              "中"
+            ]
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "id",
+          "name": "read",
+          "result": {
+            "nested": [
+              1,
+              null,
+              "中"
+            ]
+          },
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-28",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": {
+                "nested": [
+                  1,
+                  null,
+                  "中"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": {
+                "nested": [
+                  1,
+                  null,
+                  "中"
+                ]
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {
+                "nested": [
+                  1,
+                  null,
+                  "中"
+                ]
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-arguments-nested",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-29",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "arguments": {
+                "nested": [
+                  1,
+                  null,
+                  "中"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {
+                "nested": [
+                  1,
+                  null,
+                  "中"
+                ]
+              },
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-29",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "id",
+                  "name": "read",
+                  "arguments": {
+                    "nested": [
+                      1,
+                      null,
+                      "中"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "id",
+              "name": "read",
+              "input": {
+                "nested": [
+                  1,
+                  null,
+                  "中"
+                ]
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "id",
+              "name": "read",
+              "result": {
+                "nested": [
+                  1,
+                  null,
+                  "中"
+                ]
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-toolCallId-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-30",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-30",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-toolCallId-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-31",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": null,
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-31",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": null,
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-toolCallId-empty",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-32",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-32",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-toolCallId-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-33",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": 7,
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-33",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": 7,
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-toolCallId-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-34",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": [],
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-34",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": [],
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-toolCallId-space",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-35",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": " ",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": " ",
+          "name": "read",
+          "result": {
+            "path": "fixture"
+          },
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-35",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": " ",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": " ",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": " ",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-toolCallId-surrogate",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-36",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "\ud800",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "\ud800",
+          "name": "read",
+          "result": {
+            "path": "fixture"
+          },
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-36",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "\ud800",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "\ud800",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "\ud800",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-name-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-37",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-37",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-name-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-38",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": null,
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-38",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": null,
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-name-empty",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-39",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-39",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-name-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-40",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": 7,
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-40",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": 7,
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-name-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-41",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": [],
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-41",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": [],
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-name-space",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-42",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": " ",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "tool-1",
+          "name": " ",
+          "result": {
+            "path": "fixture"
+          },
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-42",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": " ",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": " ",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": " ",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-name-surrogate",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-43",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "\ud800",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "toolCallId": "tool-1",
+          "name": "\ud800",
+          "result": {
+            "path": "fixture"
+          },
+          "isError": false
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-43",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "\ud800",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "\ud800",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "\ud800",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute-fail-context",
+      "config": {
+        "failure": "context"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-44",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture context failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        }
+      ]
+    },
+    {
+      "name": "execute-fail-execute",
+      "config": {
+        "failure": "execute"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-45",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture execute failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-45",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-fail-observer",
+      "config": {
+        "failure": "observer"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-46",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute",
+          "toolCallId": "tool-1",
+          "name": "read",
+          "arguments": {
+            "path": "fixture"
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture observer failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-46",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute",
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-toolCallId-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-47",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-47",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-toolCallId-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-48",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": null,
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-48",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": null,
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-toolCallId-empty",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-49",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-49",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-toolCallId-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-50",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": 7,
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-50",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": 7,
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-toolCallId-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-51",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": [],
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-51",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": [],
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-toolCallId-space",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-52",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": " ",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": " ",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-52",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": " ",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": " ",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": " ",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-toolCallId-surrogate",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-53",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "\ud800",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "\ud800",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-53",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "\ud800",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "\ud800",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "\ud800",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-name-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-54",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-54",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-name-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-55",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": null,
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-55",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": null,
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-name-empty",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-56",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-56",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": "",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-name-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-57",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": 7,
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-57",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": 7,
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-name-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-58",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": [],
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-58",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": [],
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-name-space",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-59",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": " ",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": " ",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-59",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": " ",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": " ",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": " ",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-name-surrogate",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-60",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "\ud800",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "\ud800",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-60",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": "\ud800",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "\ud800",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "\ud800",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-fail-context",
+      "config": {
+        "failure": "context"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-61",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture context failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-fail-execute",
+      "config": {
+        "failure": "execute"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-62",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture execute failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-62",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute_batch-fail-observer",
+      "config": {
+        "failure": "observer"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-63",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "arguments": {
+                "path": "fixture"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture observer failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-63",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                {
+                  "toolCallId": "tool-1",
+                  "name": "read",
+                  "arguments": {
+                    "path": "fixture"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "event": "execute",
+          "calls": [
+            {
+              "id": "tool-1",
+              "name": "read",
+              "input": {
+                "path": "fixture"
+              }
+            }
+          ],
+          "context": {
+            "planTodo": {
+              "sessionId": "session"
+            },
+            "includeOneShotSubagent": true
+          },
+          "execution": {
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation"
+          }
+        },
+        {
+          "event": "observer",
+          "results": [
+            {
+              "toolCallId": "tool-1",
+              "name": "read",
+              "result": {
+                "path": "fixture"
+              },
+              "isError": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "batch-calls-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-64",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability batch call must contain calls."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-64",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-calls-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-65",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": null
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability batch call must contain calls."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-65",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-calls-object",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-66",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": {}
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability batch call must contain calls."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-66",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": {}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-calls-string",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-67",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": "bad"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Capability batch call must contain calls."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-67",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": "bad"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-entry-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-68",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            null
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-68",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                null
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-entry-[]",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-69",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            []
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-69",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                []
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-entry-\"bad\"",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-70",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            "bad"
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-70",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                "bad"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "batch-entry-2",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-71",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "execute_batch",
+          "calls": [
+            2
+          ]
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-71",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "execute_batch",
+              "calls": [
+                2
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "capability-operation-undefined",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-72",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {}
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-operation-undefined",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-73",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {}
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-operation-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-74",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": null
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-operation-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-75",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": null
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-operation-",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-76",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": ""
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-operation-",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-77",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": ""
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-operation-7",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-78",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": 7
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-operation-7",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-79",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": 7
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-operation-unknown",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-80",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "unknown"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Unsupported sidecar capability operation: unknown"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-80",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "unknown"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-operation-unknown",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-81",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "unknown"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Unsupported sidecar permission operation."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-operation- ",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-82",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": " "
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Unsupported sidecar capability operation:  "
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-82",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": " "
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-operation- ",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-83",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": " "
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Unsupported sidecar permission operation."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-operation-\ud800",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-84",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "\ud800"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Unsupported sidecar capability operation: \ud800"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        },
+        {
+          "event": "execution-context",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-84",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "\ud800"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-operation-\ud800",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-85",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "\ud800"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Unsupported sidecar permission operation."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "unknown-operation-context-first",
+      "config": {
+        "failure": "context"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-86",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "unknown"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture context failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan-session",
+          "sessionId": "session"
+        },
+        {
+          "event": "context",
+          "planTodo": {
+            "sessionId": "session"
+          },
+          "includeOneShotSubagent": true
+        }
+      ]
+    },
+    {
+      "name": "plan-forward",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-87",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "plan_todo",
+          "action": "custom",
+          "data": {
+            "arbitrary": true
+          },
+          "context": null
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "forwarded": {
+            "operation": "plan_todo",
+            "action": "custom",
+            "data": {
+              "arbitrary": true
+            },
+            "context": null
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "plan",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-87",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "plan_todo",
+              "action": "custom",
+              "data": {
+                "arbitrary": true
+              },
+              "context": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "plan-failure",
+      "config": {
+        "failure": "plan"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-88",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "plan_todo",
+          "action": "list"
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture plan failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "plan",
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "cap-88",
+            "requestId": "callback",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "capability",
+            "payload": {
+              "operation": "plan_todo",
+              "action": "list"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-ok",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-89",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": {
+              "path": "fixture"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "value": {
+              "custom": true
+            }
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-first-match",
+      "config": {
+        "tools": [
+          {
+            "fields": {
+              "name": "read",
+              "description": "Read fixture",
+              "kind": "builtin",
+              "inputSchema": {
+                "type": "object"
+              },
+              "private": "catalog-only"
+            }
+          },
+          {
+            "fields": {
+              "name": "read",
+              "description": "Read fixture",
+              "kind": "builtin",
+              "inputSchema": {
+                "type": "object"
+              },
+              "private": "second"
+            }
+          }
+        ]
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-90",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": {
+              "path": "fixture"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "value": {
+              "custom": true
+            }
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-unknown",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-91",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "unknown"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Permission request references unavailable tool: unknown"
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        }
+      ]
+    },
+    {
+      "name": "permission-unknown-surrogate",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-92",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "\ud800"
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Permission request references unavailable tool: \ud800"
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        }
+      ]
+    },
+    {
+      "name": "permission-toolCallId-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-93",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-name-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-94",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {},
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-toolCallId-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-95",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": null,
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-name-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-96",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": null
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-toolCallId-empty",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-97",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-name-empty",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-98",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": ""
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-toolCallId-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-99",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": 8,
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-name-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-100",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": 8
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-toolCallId-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-101",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": [],
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field toolCallId must be a non-empty string."
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-name-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-102",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": []
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-toolCallId-space",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-103",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": " ",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": {
+              "path": "fixture"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "value": {
+              "custom": true
+            }
+          },
+          "toolCallId": " "
+        }
+      ]
+    },
+    {
+      "name": "permission-name-space",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-104",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": " "
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Permission request references unavailable tool:  "
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        }
+      ]
+    },
+    {
+      "name": "permission-toolCallId-surrogate",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-105",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "\ud800",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": {
+              "path": "fixture"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "value": {
+              "custom": true
+            }
+          },
+          "toolCallId": "\ud800"
+        }
+      ]
+    },
+    {
+      "name": "permission-name-surrogate",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-106",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "\ud800"
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Permission request references unavailable tool: \ud800"
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        }
+      ]
+    },
+    {
+      "name": "permission-input-missing",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-107",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1"
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only"
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context"
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "context": {},
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-input-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-108",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": null,
+          "context": null
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": null
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": null
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": null,
+          "context": {
+            "value": null
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-input-false",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-109",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": false,
+          "context": false
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": false
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": false
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": false,
+          "context": {
+            "value": false
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-input-zero",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-110",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": 0,
+          "context": 0
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": 0
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": 0
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": 0,
+          "context": {
+            "value": 0
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-input-string",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-111",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": "",
+          "context": ""
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": ""
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": ""
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": "",
+          "context": {
+            "value": ""
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-input-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-112",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": [],
+          "context": []
+        }
+      },
+      "response": {
+        "ok": true,
+        "payload": {
+          "decision": {
+            "behavior": "allow",
+            "fixture": "catalog-only",
+            "input": []
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": []
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": [],
+          "context": {
+            "value": []
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-tool-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-113",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": null,
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-tool-[]",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-114",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": [],
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-tool-\"read\"",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-115",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": "read",
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-tool-undefined",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-116",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field name must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-fail-catalog",
+      "config": {
+        "failure": "catalog"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-117",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture catalog failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        }
+      ]
+    },
+    {
+      "name": "permission-fail-permission-context",
+      "config": {
+        "failure": "permission-context"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-118",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture permission-context failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission-fail-decide",
+      "config": {
+        "failure": "decide"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-119",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "toolCallId": "permission-1",
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture decide failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        },
+        {
+          "event": "decide",
+          "tool": {
+            "name": "read",
+            "description": "Read fixture",
+            "kind": "builtin",
+            "inputSchema": {
+              "type": "object"
+            },
+            "private": "catalog-only"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "value": {
+              "custom": true
+            }
+          },
+          "toolCallId": "permission-1"
+        }
+      ]
+    },
+    {
+      "name": "permission-context-before-id",
+      "config": {
+        "failure": "permission-context"
+      },
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-120",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "decide",
+          "tool": {
+            "name": "read",
+            "private": "untrusted",
+            "description": "spoof"
+          },
+          "input": {
+            "path": "fixture"
+          },
+          "context": {
+            "custom": true
+          }
+        }
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "fixture permission-context failed"
+        }
+      },
+      "trace": [
+        {
+          "event": "catalog"
+        },
+        {
+          "event": "permission-context",
+          "value": {
+            "custom": true
+          }
+        }
+      ]
+    }
+  ]
+}
