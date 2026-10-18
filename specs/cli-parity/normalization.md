@@ -21,7 +21,7 @@
 
    未声明时仍严格比较跨流顺序；`streamOrder` 唯一合法值是字符串 `per-stream`。缺 reason、空或纯空白 reason、非法值或类型（含 null），以及只有 reason 而没有声明，均为**装置错误**：比较器返回 `BLOCKED` / exit 2、规则 `apparatus.stream-order`；运行器在启动被测进程前拒绝。不能回退成默认值，也不能判 PASS。
 
-   当前仅 `legacy-skills-mixed` 登记此例外：真实 TS 迁移摘要写 stdout、配置报错写 stderr；按第 6 条去除启动警告后，`ts-1` 为 stdout→stderr，`ts-2` 为 stderr→stdout，两路分别为相同的 203 / 38 bytes。证据根是 worktree `/Users/da/ws/pilotdeck-rs/_build/wt-d1-cli/_tmp/20261018-d2-skills/`：`d0-final/ts-1/cases/legacy-skills-mixed/events.json` 与 `d0-final/ts-2/cases/legacy-skills-mixed/events.json`，各自同目录的 stdout.bin / stderr.bin 为原始字节；`stream-audit-third-round.json` 登记审计及原件 SHA-256。其余 14 个 D2 场景保持单流、不加声明；`legacy-skills-mixed` 的期望继续使用第二轮从 `d0-calib1/ts-1/` 提取的实录，不做函数探针拆分。
+   当前仅 `legacy-skills-mixed` 登记此例外：真实 TS 迁移摘要写 stdout、配置报错写 stderr；按第 6 条去除启动警告后，`ts-1` 为 stdout→stderr，`ts-2` 为 stderr→stdout，两路分别为相同的 203 / 38 bytes。证据根是 worktree `/Users/da/ws/pilotdeck-rs/_build/wt-d1-cli/_tmp/20261018-d2-skills/`：`d0-final/ts-1/cases/legacy-skills-mixed/events.json` 与 `d0-final/ts-2/cases/legacy-skills-mixed/events.json`，各自同目录的 stdout.bin / stderr.bin 为原始字节；`stream-audit-third-round.json` 登记审计及原件 SHA-256。原批次其余 14 个 D2 场景保持单流、不加声明；新增的 `legacy-skills-current` 在 `d0-final3/ts-1` 与 `ts-2` 中均为 stdout→stderr，保留默认严格顺序比较，不登记例外。`legacy-skills-mixed` 的期望继续使用第二轮从 `d0-calib1/ts-1/` 提取的实录，不做函数探针拆分。
 
 
 TS 自比必须先过场景独立预期及证据完整性检查，再比较两次原件。任一缺失场景、额外场景、缺失原件、模式不符或未运行都不能 PASS。运行器不提供放宽/忽略参数。

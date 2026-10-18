@@ -30,13 +30,14 @@ help 两场景的 755 字节 stdout 全文 SHA-256 从主仓 host5 两个原件�
 
 D1-pr2 新增三场景（共 13 个）。场景可带 `envPaths`：只许**新增**环境变量、值为 runtime 下的相对路径（不得为空、绝对或含 `..`，不得覆盖上表隔离变量），由 `common.environment` 校验。新场景的期望值一律由真实 TS 轮定标后填入；未定标的场景标 `"oracle": "PENDING-TS-CALIBRATION"`，TS 轮比较时恒报 `<id>.oracle.pending`，不可能 PASS。Rust 轮离线复验（compare.py）除核对 round.json 记录的哈希外，还读取 `rust-stage/bin/pilotdeck` 的盘上实际字节（须为普通单链接文件），不符即 `round.rust-stage-bytes`；staged skills 目录的身份记入 round.json 的 `stagedSkills`，离线复核盘上目录不符即 `round.rust-stage-skills` / `round.rust-stage-skills-bytes`（D1-pr3）。host5 旧定标已有真实证据；本次修改后的稳定性须以新 TS 两轮复算为准，不沿用旧 PASS。setup/update mock、信号、PTY、有效配置默认流和网关业务属于 D0 后续批次。
 
-## D2-pr1 新增批次（15 个，TS 实录期望已登记）
+## D2-pr1 新增批次（16 个已定标）
 
-注册正本仍是 `scripts/cli-parity/scenarios.json`；现共 28 例，其中既有 13 例保持原 oracle。以下 15 例的 exit、stdout、stderr、disk 均从协调者采集的 `_build/wt-d1-cli/_tmp/20261018-d2-skills/d0-calib1/ts-1/cases/<ID>/` 机械提取，TS 第二轮用于交叉核对；没有从 Rust 输出取值。具体取 `record.json.exitCode`、`stdout.bin` 全文、`stderr.bin`（只剥第 6 条 SQLite 前缀）、`initial.json` 与 `final.json` 的逐项差集，并核实际 `tree/`。12 个 stdout 按 [比较口径第 4 条](normalization.md) 绑定 runtime，反向展开须逐字等于实录。原件 SHA-256 清单和提取脚本见该任务目录 `oracle-provenance-r2.json`、`calibrate_r2.py`。本次改动会改变装置哈希，正式新轮由协调者运行；旧轮不冒充新装置 PASS。未定标的未来场景仍用 `PENDING-TS-CALIBRATION`，即使两轮一致也不能 PASS。
+注册正本仍是 `scripts/cli-parity/scenarios.json`；现共 29 例，全部已填期望。既有 13 例及第二轮定标的 15 例保持原 oracle；这 15 例的 exit、stdout、stderr、disk 均从协调者采集的 `_build/wt-d1-cli/_tmp/20261018-d2-skills/d0-calib1/ts-1/cases/<ID>/` 机械提取，TS 第二轮用于交叉核对；没有从 Rust 输出取值。具体取 `record.json.exitCode`、`stdout.bin` 全文、`stderr.bin`（只剥第 6 条 SQLite 前缀）、`initial.json` 与 `final.json` 的逐项差集，并核实际 `tree/`。其中 12 个 stdout 按 [比较口径第 4 条](normalization.md) 绑定 runtime，反向展开须逐字等于实录。原件 SHA-256 清单和提取脚本见该任务目录 `oracle-provenance-r2.json`、`calibrate_r2.py`。`legacy-skills-current` 的第六轮定标来源另见下文。本次改动会改变装置哈希，正式新轮由协调者运行；旧轮不冒充新装置 PASS。未定标的未来场景仍用 `PENDING-TS-CALIBRATION`，即使两轮一致也不能 PASS。
 
 | ID | 覆盖目的 | TS 出处 |
 |---|---|---|
 | legacy-skills-mixed | KNOWN_LEGACY 命中的 browser-use 被 rename 备份；自定义 docx 保留；完成标记 | migrateLegacyBundledSkills.ts:20–25,59–135 |
+| legacy-skills-current | 用户 docx 完整树与当前内置相同，覆盖 matchesCurrent；完整移入备份并写完成标记，输出迁移摘要后报空配置错误，exit 1 | migrateLegacyBundledSkills.ts:90–108 |
 | skills-usage / skills-unknown-leaf | 缺子命令、未知子命令 | pilotdeck.ts:426–433 |
 | skills-from-invalid | 未知来源保留原 raw 文案 | pilotdeck.ts:462–480 |
 | skills-missing-values | --from/source/project/pilot-home 缺值的回落 | pilotdeck.ts:527–543 |
@@ -48,6 +49,8 @@ D1-pr2 新增三场景（共 13 个）。场景可带 `envPaths`：只许**新�
 | skills-project-home-overrides | project 只影响来源，显式 pilot-home 决定目的地 | pilotdeck.ts:441–450；migrateSkills.ts:186–198 |
 
 历史副本的内容不进入本仓库。`fixtureBlobs` 固定读取基线 Git 的 `db77b86d09441c5fab6340a669598f8fbabe82c7:skills/browser-use/SKILL.md`（2702 bytes，文件 SHA-256 `d381166cfd54b5f86ff395c7faee4f36f6a67887bdf830f36ddaa4ec32f0a2df`）。这是单文件树，`SHA256("SKILL.md\0" + blob + "\0")` 为 TS 的历史指纹 `e955f4f0813e4735c8130c2ccab5725a35a9f5dcb9098159c35d5ecf895ab2f8`。读取不 checkout、不更改基线；原件缺失或身份不符立即报错。其余 `fixtureFiles` 为本项目自写内容，路径限制在 runtime 内，父目录 0700、文件 0600，初始树由注册内容独立复核。
+
+`legacy-skills-current` 的 14 个 `fixtureBlobs` 固定到基线 commit 下完整 `skills/docx/` 树，只登记路径、长度和 SHA-256，不将第三方文件内容入库。准备时逐个核对 Git blob 与只读当前内置文件字节相等；文件 mode 不参与 TS 树哈希。第六轮先核协调者 `d0-final3/ts-1` 与 `ts-2` 中该场景的退出码、输出、完整初末树及有效跨流顺序一致，再从 `ts-1/cases/legacy-skills-current/` 按上述方法机械提取期望并移除 PENDING：exit 1，stdout 为迁移摘要（按输入 runtime 绑定，批次共 13 个），stderr 仅去 SQLite 前缀后为配置错误；初末树 32→35 项，删除 18 项、增加 21 项。有效顺序两侧均为 stdout→stderr，保持默认严格比较，无 `streamOrder` 例外。该任务目录的 `calibrate_sixth_round.py` 和 `oracle-provenance-sixth-round.json` 保存提取过程与两侧原件 SHA-256。缺定标仍由既有 PENDING 守卫拒绝 PASS。
 
 新增场景会删除/移动初始文件，定标后可登记 `diskRemovals`（初始树已有路径，禁止根目录、重复和不存在路径）与 `diskAdditions`（不得覆盖保留下来的初始项）。最终仍逐项比较完整树，未登记的新增、删除和变化不获豁免。
 

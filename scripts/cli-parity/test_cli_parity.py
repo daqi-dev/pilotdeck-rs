@@ -38,6 +38,8 @@ REGISTERED_SCENARIOS = SCENARIOS
 CALIBRATED_SCENARIOS = [s for s in SCENARIOS if s.get('oracle') != 'PENDING-TS-CALIBRATION']
 CORE_SCENARIOS = REGISTERED_SCENARIOS[:13]
 SKILLS_SCENARIOS = REGISTERED_SCENARIOS[13:]
+CALIBRATED_SKILLS_SCENARIOS = [s for s in SKILLS_SCENARIOS if s in CALIBRATED_SCENARIOS]
+PENDING_SCENARIOS = [s for s in REGISTERED_SCENARIOS if s.get('oracle') == 'PENDING-TS-CALIBRATION']
 
 SYNTHETIC_RUST = b'synthetic rust candidate\n'
 
@@ -141,7 +143,7 @@ class ContractTests(unittest.TestCase):
         self.origin_patch = patch('compare.RECORDING_ORIGIN', 'synthetic-unit-fixture')
         self.origin_patch.start()
         # Legacy synthetic fixtures cover the original 13 cases; they do not
-        # recreate D2's real historical blob. Production always uses all 28.
+        # recreate D2's real Git blobs. Production always uses every registered case.
         for module in ('compare', 'run_round', __name__):
             patcher = patch.object(sys.modules[module], 'SCENARIOS', CORE_SCENARIOS)
             patcher.start()
@@ -654,13 +656,15 @@ class ContractTests(unittest.TestCase):
         self.assertIn('pending.oracle.pending', [r['rule'] for r in result['failures']])
 
     def test_registry_has_calibrated_core_and_skills_batch(self):
-        self.assertEqual(len(CALIBRATED_SCENARIOS), 28)
-        self.assertEqual(len(REGISTERED_SCENARIOS), 28)
+        self.assertEqual(len(CALIBRATED_SCENARIOS), 29)
+        self.assertEqual(len(REGISTERED_SCENARIOS), 29)
+        self.assertEqual(PENDING_SCENARIOS, [])
         for scenario in CALIBRATED_SCENARIOS:
             self.assertIn('exit', scenario)
             self.assertTrue('stderr' in scenario or 'stderrSha256' in scenario)
-        self.assertEqual(len(SKILLS_SCENARIOS), 15)
-        for scenario in SKILLS_SCENARIOS:
+        self.assertEqual(len(SKILLS_SCENARIOS), 16)
+        self.assertEqual(len(CALIBRATED_SKILLS_SCENARIOS), 16)
+        for scenario in CALIBRATED_SKILLS_SCENARIOS:
             self.assertNotIn('oracle', scenario)
             self.assertIn('stdout', scenario)
             before = initial_tree(scenario)
@@ -670,16 +674,58 @@ class ContractTests(unittest.TestCase):
             self.assertLessEqual(set(removals), before.keys())
             self.assertNotIn('.', removals)
             self.assertFalse((before.keys() - set(removals)) & additions.keys())
-        self.assertEqual(sum('stdoutRuntime' in s for s in SKILLS_SCENARIOS), 12)
+        self.assertEqual(sum('stdoutRuntime' in s for s in SKILLS_SCENARIOS), 13)
         self.assertEqual(per_stream_scenarios(REGISTERED_SCENARIOS), {'legacy-skills-mixed'})
-        for scenario in SKILLS_SCENARIOS:
+        for scenario in CALIBRATED_SKILLS_SCENARIOS:
             if scenario['id'] == 'legacy-skills-mixed':
                 self.assertIn('d0-final/ts-1/cases/legacy-skills-mixed/events.json', scenario['streamOrderReason'])
                 self.assertIn('d0-final/ts-2/cases/legacy-skills-mixed/events.json', scenario['streamOrderReason'])
             else:
                 self.assertNotIn('streamOrder', scenario)
                 self.assertNotIn('streamOrderReason', scenario)
-                self.assertEqual(sum(bool(scenario[channel]) for channel in ('stdout', 'stderr')), 1)
+                expected_streams = 2 if scenario['id'] == 'legacy-skills-current' else 1
+                self.assertEqual(sum(bool(scenario[channel]) for channel in ('stdout', 'stderr')), expected_streams)
+
+    def test_current_builtin_copy_pins_full_docx_tree_and_calibrated_migration(self):
+        scenario = next(s for s in REGISTERED_SCENARIOS if s['id'] == 'legacy-skills-current')
+        self.assertEqual(set(scenario), {'id', 'argv', 'stdinHex', 'token', 'fixtureBlobs',
+                                        'exit', 'stdout', 'stderr', 'stdoutRuntime',
+                                        'diskRemovals', 'diskAdditions'})
+        self.assertEqual(scenario['exit'], 1)
+        self.assertEqual(scenario['stdoutRuntime'], 'text')
+        self.assertEqual(scenario['stderr'], 'Config must contain an agent section.\n')
+        self.assertEqual(scenario['argv'], [])
+        self.assertEqual(scenario['stdinHex'], '')
+        self.assertFalse(scenario['token'])
+        paths = {
+            'LICENSE', 'SKILL.md', 'requirements.txt',
+            'references/optional-tools.md', 'references/word-specifics.md',
+            'scripts/docx.sh', 'scripts/docx_cli.py',
+            'scripts/docxlib/__init__.py', 'scripts/docxlib/annotations.py',
+            'scripts/docxlib/common.py', 'scripts/docxlib/core.py',
+            'scripts/docxlib/delivery.py', 'scripts/docxlib/render.py', 'scripts/docxlib/smoke.py',
+        }
+        blobs = scenario['fixtureBlobs']
+        self.assertEqual(set(blobs), {'pilot/skills/docx/' + name for name in paths})
+        for dest, blob in blobs.items():
+            self.assertEqual(blob['revision'], HEAD)
+            self.assertEqual('pilot/' + blob['path'], dest)
+            self.assertGreater(blob['size'], 0)
+            self.assertRegex(blob['sha256'], r'^[0-9a-f]{64}$')
+        tree = initial_tree(scenario)
+        for name in blobs:
+            self.assertEqual(tree[name]['sha256'], blobs[name]['sha256'])
+        moved = {name for name in tree if name == 'pilot/skills/docx' or name.startswith('pilot/skills/docx/')}
+        self.assertEqual(len(moved), 18)
+        self.assertEqual(set(scenario['diskRemovals']), moved)
+        additions = scenario['diskAdditions']
+        self.assertEqual(len(additions), 21)
+        for name in moved:
+            target = name.replace('pilot/skills/docx', 'pilot/skill-backups/legacy-bundled-v1/docx', 1)
+            self.assertEqual(additions[target], tree[name])
+        self.assertEqual(additions['pilot/.legacy-bundled-skills-migrated-v1'], {
+            'type': 'file', 'mode': 0o600, 'size': 10,
+            'sha256': hashlib.sha256(b'completed\n').hexdigest()})
 
     def test_scenario_files_have_independent_initial_inventory(self):
         scenario = next(s for s in REGISTERED_SCENARIOS if s['id'] == 'skills-custom-execute')
@@ -709,7 +755,7 @@ class ContractTests(unittest.TestCase):
         # guard must survive filling the registry, rather than become vacuous.
         cases = [{**{k: s[k] for k in ('id', 'argv', 'stdinHex', 'token')},
                   'oracle': compare_module.PENDING} for s in SKILLS_SCENARIOS]
-        self.assertEqual(len(cases), 15)
+        self.assertEqual(len(cases), 16)
         with patch.object(compare_module, 'SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
             source = self.root / 'pending-batch'
             synthetic_round(source, self.root / 'pending-runtime')
