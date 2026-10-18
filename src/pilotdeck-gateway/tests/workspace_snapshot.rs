@@ -24,9 +24,9 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     ffi::OsString,
-    fs,
+    fs, io,
     os::unix::{ffi::OsStringExt, fs::symlink},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -93,8 +93,66 @@ impl Scratch {
 }
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = remove_owned(&self.0, &self.0, true);
     }
+}
+
+/// Lexical ownership check: every delete may only target the per-run tree that
+/// owns it. The old fixed-path P0 removed `/tmp/pdrs-r9-*` while every sentinel
+/// lived inside a per-run tree, so those sentinels could not observe the
+/// regression (round-4 P1). This check runs before the filesystem is touched,
+/// which makes it independent of where a sentinel lives.
+fn outside_run_error(root: &Path, path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "remove refused: {} is outside the run directory {}",
+            path.display(),
+            root.display()
+        ),
+    )
+}
+
+fn owned_path<'a>(root: &Path, path: &'a Path) -> io::Result<&'a Path> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| outside_run_error(root, path))?;
+    let mut depth = 0usize;
+    for component in relative.components() {
+        match component {
+            Component::ParentDir => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| outside_run_error(root, path))?;
+            }
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(outside_run_error(root, path));
+            }
+        }
+    }
+    Ok(path)
+}
+
+/// The `remove` hook is injectable so the negative control can prove a refused
+/// delete never reaches the filesystem (`remove_owned_with` with a recorder).
+fn remove_owned_with<F>(root: &Path, path: &Path, recursive: bool, remove: F) -> io::Result<()>
+where
+    F: FnOnce(&Path, bool) -> io::Result<()>,
+{
+    owned_path(root, path)?;
+    remove(path, recursive)
+}
+
+fn remove_owned(root: &Path, path: &Path, recursive: bool) -> io::Result<()> {
+    remove_owned_with(root, path, recursive, |path, recursive| {
+        if recursive {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        }
+    })
 }
 
 // ------------------------------------------------------------- JsValue tools
@@ -302,7 +360,7 @@ fn utf16_cmp(left: &str, right: &str) -> std::cmp::Ordering {
 fn non_utf8_names_writable(dir: &Path) -> bool {
     let probe = dir.join(OsString::from_vec(b"probe-\xff".to_vec()));
     let writable = fs::write(&probe, b"").is_ok();
-    let _ = fs::remove_file(&probe);
+    let _ = remove_owned(dir, &probe, false);
     writable
 }
 
@@ -482,11 +540,13 @@ fn snapshot_path(step: &JsValue, root: &Path, marker_dirs: &HashMap<String, Stri
         .get("path")
         .map(s)
         .unwrap_or_else(|| s(field(step, "name")));
-    root.join(if base.is_empty() {
+    let path = root.join(if base.is_empty() {
         rel
     } else {
         format!("{base}/{rel}")
-    })
+    });
+    owned_path(root, &path).expect("snapshot step path stays under its root");
+    path
 }
 
 // ------------------------------------------------------------------- replay
@@ -494,10 +554,10 @@ fn snapshot_path(step: &JsValue, root: &Path, marker_dirs: &HashMap<String, Stri
 #[test]
 fn scenarios_match_ts_outcomes_and_trees() {
     let oracle = oracle();
-    // Negative control for the fixture's fixed-path P0: pre-place sentinels
-    // under the old fixed names in a per-run directory. Nothing the replay
-    // writes or removes may touch them, because every run owns only its own
-    // mkdtemp tree.
+    // Secondary sentinel check: pre-place the old fixed names in a per-run
+    // directory. On its own this cannot see the legacy `/tmp/pdrs-r9-*`
+    // delete (round-4 P1); `out_of_bounds_removal_is_refused_and_sentinel_survives`
+    // below is the load-bearing ownership negative control.
     let guard = Scratch::new();
     let sentinels: Vec<PathBuf> = [
         "pdrs-r9-linkout",
@@ -525,6 +585,56 @@ fn scenarios_match_ts_outcomes_and_trees() {
             sentinel.display()
         );
     }
+}
+
+/// Round-4 P1 negative control: injecting the legacy fixed-path delete must be
+/// refused before the filesystem is touched, and a sentinel that actually sits
+/// outside the guarded run tree must survive the attempt. The old sentinel
+/// test above could not see that regression because both it and the replay had
+/// their own per-run trees.
+#[test]
+fn out_of_bounds_removal_is_refused_and_sentinel_survives() {
+    let run = Scratch::new();
+    let outside = Scratch::new();
+    let sentinel = outside.0.join("pdrs-r9-linkout");
+    fs::write(&sentinel, b"keep\n").unwrap();
+
+    // 1. The exact historical target: a recording stub proves no removal call
+    //    is made; only the ownership check runs.
+    let mut reached = Vec::new();
+    let error = remove_owned_with(
+        &run.0,
+        Path::new("/tmp/pdrs-r9-linkout"),
+        true,
+        |path, _| {
+            reached.push(path.to_path_buf());
+            Ok(())
+        },
+    )
+    .expect_err("the legacy fixed path is outside this run's tree");
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(
+        error.to_string().contains("outside the run directory"),
+        "{error}"
+    );
+    assert!(
+        reached.is_empty(),
+        "a refused delete must never reach the filesystem: {reached:?}"
+    );
+
+    // 2. A real outside sentinel through the real remover: refused, and the
+    //    file is still readable afterwards.
+    let error = remove_owned(&run.0, &sentinel, false)
+        .expect_err("an out-of-tree sentinel must be refused");
+    assert!(
+        error.to_string().contains("outside the run directory"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(&sentinel).unwrap(),
+        b"keep\n",
+        "the out-of-tree sentinel survived the refused delete"
+    );
 }
 
 /// R19 host boundary for R9's first P1: Node keeps distinct weights for
@@ -638,11 +748,14 @@ fn replay_scenario(scenario: &JsValue) {
     };
     let resolve_step_path = |value: &str| -> PathBuf {
         let value = value.replace("<dir>", &dir_text);
-        if value.starts_with('/') {
+        let path = if value.starts_with('/') {
             PathBuf::from(value)
         } else {
             dir.join(value)
-        }
+        };
+        owned_path(&dir, &path)
+            .unwrap_or_else(|error| panic!("step path outside the run directory: {error}"));
+        path
     };
     let mut recorders = vec![ContentAddressedWorkspaceSnapshotRecorder::new(
         config.clone(),
@@ -672,11 +785,11 @@ fn replay_scenario(scenario: &JsValue) {
             }
             "remove" => {
                 let path = resolve_step_path(&s(field(step, "path")));
-                let removed = if field(step, "recursive").as_bool().unwrap_or(false) {
-                    fs::remove_dir_all(&path)
-                } else {
-                    fs::remove_file(&path)
-                };
+                let removed = remove_owned(
+                    &dir,
+                    &path,
+                    field(step, "recursive").as_bool().unwrap_or(false),
+                );
                 match removed {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -695,14 +808,14 @@ fn replay_scenario(scenario: &JsValue) {
                 let path = root.join(s(field(step, "path")));
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
                 if fs::symlink_metadata(&path).is_ok() {
-                    let _ = fs::remove_dir_all(&path);
-                    let _ = fs::remove_file(&path);
+                    let _ = remove_owned(&root, &path, true);
+                    let _ = remove_owned(&root, &path, false);
                 }
                 symlink(s(field(step, "target")), &path).unwrap();
             }
             "removeSnapshot" => {
                 let path = snapshot_path(step, &root, &marker_dirs);
-                match fs::remove_file(&path) {
+                match remove_owned(&root, &path, false) {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     Err(e) => panic!("{context}: {e}"),
