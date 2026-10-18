@@ -260,12 +260,16 @@ try {
       op('list', { projectKey: proj, limit: null }),
       op('list', { projectKey: proj, query: 'zzz-none' }),
       op('list', { query: 'x'.repeat(256) }),
+      // Non-string query reaches .trim(); an array cursor goes through Buffer.from(array).
+      op('list', { query: 5 }),
+      op('list', { cursor: [8, 109] }),
     ],
   });
   {
     const o = expectKinds([
       'list:17', 'list:10+', 'list:14', 'list:14', 'list:4', 'list:10', 'list:3', 'list:0', 'list:3',
       'list:5+', 'list:5+', 'list:5+', 'list:2', ...times(11, 'invalid_input'), 'list:17', 'list:10+', 'list:0', 'list:0',
+      'TypeError', 'invalid_input',
     ]);
     // The projectKey "" quirk: echoed, yet no project listing.
     assert.equal(o[3].result.projectPath, '');

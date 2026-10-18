@@ -5757,6 +5757,34 @@
               "items": []
             }
           }
+        },
+        {
+          "op": "list",
+          "input": {
+            "query": 5
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "code": null
+            }
+          }
+        },
+        {
+          "op": "list",
+          "input": {
+            "cursor": [
+              8,
+              109
+            ]
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_input",
+              "message": "cursor is invalid or does not match the query."
+            }
+          }
         }
       ],
       "tree": [
