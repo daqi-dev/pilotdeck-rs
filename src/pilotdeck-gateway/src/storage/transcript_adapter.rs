@@ -929,7 +929,7 @@ fn project_session_info(
                 title = Some(field(metadata, "title").clone());
             }
             for (key, value) in &mut spread {
-                if let Some(v) = metadata.get(*key) {
+                if let Some(v) = metadata.get(key) {
                     *value = Some(v.clone());
                 }
             }

@@ -794,7 +794,7 @@ fn concurrent_appends_commit_in_lock_order_and_failures_leave_no_gap() {
         if (i + 1) % 7 == 0 {
             assert_eq!(
                 field(field(call, "entry"), "sequence"),
-                field(field(&calls[i + 1], "entry"), "sequence"),
+                field(field(calls[i + 1], "entry"), "sequence"),
                 "call {} failed without publishing",
                 i + 1
             );
