@@ -174,16 +174,22 @@ def main() -> int:
         good = stale == {"codex", "glm"} and tip == {"codex"}
         print(f"{'PASS' if good else 'FAIL'} 冻结 base 会多算 {sorted(stale)}；按目标分支 tip 只算 PR 自己的 {sorted(tip)}")
         fails += not good
-    env = dict(os.environ, PR_BASE_REF="main", PR_HEAD="HEAD", PR_HEAD_REF="codex/x")
-    env.pop("PR_BASE_SHA", None)
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-        f.write(BASE + "<!-- reviewers: deepseek,glm -->")
-    cp = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "check-pr-gate.py"), "--body-file", f.name],
-                        capture_output=True, text=True, env=env, cwd=ROOT)
-    os.unlink(f.name)
-    good = "提交署名谱系" in cp.stdout
-    print(f"{'PASS' if good else 'FAIL'} 设了 PR_BASE_REF 时按 origin/<ref> 扫（rc={cp.returncode}）")
-    fails += not good
+    # 不依赖本仓的检出深度（CI 的 ci.yml 是浅检出、没有 origin/main）：自建临时仓
+    with tempfile.TemporaryDirectory() as td:
+        g = ["git", "-C", td, "-c", "user.email=t@t", "-c", "user.name=t"]
+        r = lambda *x: subprocess.run([*g, *x], check=True, capture_output=True, text=True).stdout.strip()
+        r("init", "-q", "-b", "main"); r("commit", "-q", "--allow-empty", "-m", "root")
+        r("update-ref", "refs/remotes/origin/main", "main")
+        r("switch", "-q", "-c", "codex/x"); r("commit", "-q", "--allow-empty", "-m", "pr\n\nCo-Authored-By: Codex <noreply@openai.com>")
+        bf = Path(td) / "body.md"
+        bf.write_text(BASE + "<!-- reviewers: deepseek,glm -->")
+        env = dict(os.environ, PR_BASE_REF="main", PR_HEAD="HEAD", PR_HEAD_REF="codex/x")
+        env.pop("PR_BASE_SHA", None)
+        cp = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "check-pr-gate.py"), "--body-file", str(bf)],
+                            capture_output=True, text=True, env=env, cwd=td)
+        good = cp.returncode == 0 and "提交署名谱系 ['codex']" in cp.stdout
+        print(f"{'PASS' if good else 'FAIL'} 设了 PR_BASE_REF 时按 origin/<ref> 扫（rc={cp.returncode}）")
+        fails += not good
     # 署名误识别负例：普通人的邮箱/缩写不算模型
     for line, want in [("David Smith <ds@example.org>", set()), ("Alex <alex@gpt.example.org>", set()),
                        ("Claude Opus 5.5 <noreply@anthropic.com>", {"claude"}), ("Bot <ci@openai.com>", {"codex"}),
