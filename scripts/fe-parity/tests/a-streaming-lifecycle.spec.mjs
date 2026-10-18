@@ -17,6 +17,19 @@ const turnOrder = page => surface(page).evaluate((node, labels) => {
   for (const label of labels) for (let at = text.indexOf(label); at >= 0; at = text.indexOf(label, at + 1)) hits.push([at, label]);
   return hits.sort((a, b) => a[0] - b[0]).map(([, label]) => label);
 }, TURN);
+// :31-32/:42 also fail on any extra store row; turnOrder alone cannot see a row
+// sharing no text with TURN. Count rows (the baseline's own row selector,
+// streaming-lifecycle.spec.mjs:128) outside and inside the expanded trace.
+// Old side, derived from source: the compact segment's previous host is the
+// thinking row (processGrouping.ts:377-389, :681-704), so it rides as that row's
+// after-attachment (:864-886); the fold keeps prior-user, prior-answer, user,
+// trace and answer (:944-969) and the trace holds only thinking
+// (MessagesPaneV2.tsx:1110-1122). No windowing below 160 items (:127).
+const ROWS = { rows: 5, traced: 1 };
+const rowCounts = page => surface(page).evaluate(node => ({
+  rows: [...node.querySelectorAll('[data-message-key]')].filter(row => !row.closest('[data-turn-trace]')).length,
+  traced: node.querySelectorAll('[data-turn-trace] [data-message-key]').length,
+}));
 // complete triggers refreshFromServer; wait until the mock served the new history.
 async function refreshed(page, after, persisted) {
   await expect.poll(async () => (await historyReads(page)).slice(after).some(read =>
@@ -44,6 +57,7 @@ test(aTitle(aEntry('streaming-lifecycle.spec.mjs', 'history refresh preserves th
   await refreshed(page, reads, 'persisted-answer');
   await expandTrace(page);
   await expect.poll(() => turnOrder(page)).toEqual(TURN); // :31-32
+  await expect.poll(() => rowCounts(page)).toEqual(ROWS); // :31-32 no extra row
   await page.getByRole('button', { name: 'Thought process' }).click(); // :33
   await expect(page.getByText('Inspect the screenshot carefully.', { exact: true })).toBeVisible(); // :34
   await expect(query).toHaveCount(1); // :35
@@ -56,6 +70,7 @@ test(aTitle(aEntry('streaming-lifecycle.spec.mjs', 'history refresh preserves th
   await refreshed(page, reads, 'persisted-compact');
   await expandTrace(page);
   await expect.poll(() => turnOrder(page)).toEqual(TURN); // :42
+  await expect.poll(() => rowCounts(page)).toEqual(ROWS); // :42 no extra row
   await expect(query).toHaveCount(1); // :43
   await expect(image).toHaveCount(1); // :44
 });
