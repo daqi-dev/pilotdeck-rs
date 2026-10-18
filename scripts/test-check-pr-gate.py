@@ -110,6 +110,40 @@ def main() -> int:
         fails += not good
         print(f"{'PASS' if bad_range_raised else 'FAIL'} 给了范围但读不到 → 抛错（fail-closed）")
         fails += not bad_range_raised
+    # 署名误识别负例：普通人的邮箱/缩写不算模型
+    for line, want in [("David Smith <ds@example.org>", set()), ("Alex <alex@gpt.example.org>", set()),
+                       ("Claude Opus 5.5 <noreply@anthropic.com>", {"claude"}), ("Bot <ci@openai.com>", {"codex"}),
+                       ("opencode <glm-5.3@opencode>", {"glm"}), ("GLM-5.3 <noreply@zhipu.com>", {"glm"})]:
+        got = gate.trailer_family_of(line)
+        good = got == want
+        print(f"{'PASS' if good else 'FAIL'} 署名识别「{line}」→ {sorted(got)}")
+        fails += not good
+    # --pr 时 --head 不能替换目标 PR 的署名范围
+    with tempfile.TemporaryDirectory() as td:
+        payload = Path(td) / "pr.json"
+        payload.write_text(json.dumps({"body": BASE + "<!-- reviewers: claude,deepseek -->", "headRefName": "codex/x",
+                                       "headRefOid": "1111111111111111111111111111111111111111", "baseRefOid": "2222222"}))
+        fake = Path(td) / "gh"
+        fake.write_text(f"#!/bin/sh\ncat '{payload}'\n")
+        fake.chmod(0o755)
+        env = dict(os.environ, PATH=f"{td}:{os.environ['PATH']}")
+        env.pop("GITHUB_ACTIONS", None)
+        cp = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "check-pr-gate.py"), "--pr", "1", "--head", ""],
+                            capture_output=True, text=True, env=env)
+        good = cp.returncode == 1 and "不一致" in cp.stdout
+        print(f"{'PASS' if good else 'FAIL'} --pr 配 --head '' 被拒（rc={cp.returncode}）")
+        fails += not good
+    # CI 缺范围守卫
+    env = dict(os.environ, GITHUB_ACTIONS="true", PR_HEAD_REF="codex/x")
+    env.pop("PR_BASE_SHA", None); env.pop("PR_HEAD", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(BASE + "<!-- reviewers: deepseek,glm -->")
+    cp = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "check-pr-gate.py"), "--body-file", f.name],
+                        capture_output=True, text=True, env=env)
+    os.unlink(f.name)
+    good = cp.returncode == 2
+    print(f"{'PASS' if good else 'FAIL'} CI 缺 PR_BASE_SHA/PR_HEAD 退 2（rc={cp.returncode}）")
+    fails += not good
     # --pr 模式用目标 PR 的分支，不继承环境 PR_HEAD_REF（codex 评审 P1 的复现）
     with tempfile.TemporaryDirectory() as td:
         fake = Path(td) / "gh"
@@ -118,6 +152,7 @@ def main() -> int:
         fake.write_text(f"#!/bin/sh\ncat '{payload}'\n")
         fake.chmod(0o755)
         env = dict(os.environ, PATH=f"{td}:{os.environ['PATH']}", PR_HEAD_REF="codex/other-pr")
+        env.pop("GITHUB_ACTIONS", None)  # 本用例测的是 --pr 取目标分支；CI 缺范围守卫另有用例
         cp = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "check-pr-gate.py"), "--pr", "1"], capture_output=True, text=True, env=env)
         good = cp.returncode == 1 and "谁写谁不审" in cp.stdout
         print(f"{'PASS' if good else 'FAIL'} --pr 用目标 PR 分支、不继承 PR_HEAD_REF（rc={cp.returncode}）")
@@ -127,7 +162,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 8} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 16} 例）")
     return 1 if fails else 0
 
 

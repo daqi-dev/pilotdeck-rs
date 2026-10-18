@@ -46,8 +46,27 @@ def family(name: str) -> str | None:
     return FAMILY.get(name.strip().lower())
 
 
-# 署名识别：FAMILY 的全部别名 + 只在署名里出现的名字（opencode 跑的是 GLM）；按单词匹配，含邮箱域名
-TRAILER_EXTRA = {"opencode": "glm", "openai": "codex", "zhipu": "glm"}
+# 署名识别分两处看：名字部分（< 之前）按模型名单词匹配；邮箱只认已知厂商域名。
+# 不拆整条邮箱：普通人的 ds@example.org、alex@gpt.example.org 不能算成模型作者。
+TRAILER_NAME_EXTRA = {"opencode": "glm"}
+NAME_SKIP = {"ds"}  # 太短，人名缩写常见
+VENDOR_DOMAINS = {"anthropic.com": "claude", "openai.com": "codex", "deepseek.com": "deepseek",
+                  "zhipu.com": "glm", "zhipuai.cn": "glm", "bigmodel.cn": "glm", "z.ai": "glm", "opencode": "glm"}
+
+
+def trailer_family_of(line: str) -> set[str]:
+    m = re.match(r"\s*([^<]*?)\s*(?:<([^>]*)>)?\s*$", line)
+    name, email = (m.group(1), m.group(2) or "") if m else (line, "")
+    out = set()
+    words = {k: v for k, v in {**FAMILY, **TRAILER_NAME_EXTRA}.items() if k not in NAME_SKIP}
+    for tok in re.findall(r"[a-z0-9]+", name.lower()):
+        if tok in words:
+            out.add(words[tok])
+    domain = email.lower().rsplit("@", 1)[-1] if "@" in email else ""
+    for d, f in VENDOR_DOMAINS.items():
+        if domain == d or domain.endswith("." + d):
+            out.add(f)
+    return out
 
 
 class TrailerScanError(Exception):
@@ -62,12 +81,10 @@ def trailer_families(base: str, head: str) -> set[str]:
                         capture_output=True, text=True)
     if cp.returncode != 0:
         raise TrailerScanError(cp.stderr.strip()[:200])
-    words = {**FAMILY, **TRAILER_EXTRA}
     out = set()
-    for line in cp.stdout.lower().splitlines():
-        for tok in re.findall(r"[a-z0-9]+", line):
-            if tok in words:
-                out.add(words[tok])
+    for line in cp.stdout.splitlines():
+        if line.strip():
+            out |= trailer_family_of(line)
     return out
 
 
@@ -198,7 +215,11 @@ def main() -> int:
         # --pr 一律用目标 PR 自己的分支，不继承环境里别的 PR 的 PR_HEAD_REF（防用他人分支判作者）
         a.head_ref = a.head_ref if a.head_ref is not None else pr.get("headRefName", "")
         # 署名范围也一律取目标 PR 的，不继承环境里别的 PR 的 PR_HEAD / PR_BASE_SHA
-        a.head = a.head if a.head_explicit else pr.get("headRefOid", "")
+        target = pr.get("headRefOid", "")
+        if a.head_explicit and target and not (a.head and (target.startswith(a.head) or a.head.startswith(target))):
+            print(f"check-pr-gate: FAIL --head={a.head!r} 与目标 PR 的 head {target[:12]} 不一致；--pr 模式一律按目标 PR 扫署名")
+            return 1
+        a.head = target or (a.head or "")
         base = pr.get("baseRefOid", "")
         subprocess.run(["git", "fetch", "-q", "origin", base, a.head], capture_output=True)
     elif "PR_BODY" in os.environ:
