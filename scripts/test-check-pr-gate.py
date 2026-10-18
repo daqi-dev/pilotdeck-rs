@@ -51,6 +51,8 @@ CASES = [
     ("chore 前缀 + author 标记：放行", BASE + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "chore/gate", True, ""),
     ("reviewers 正文含 > 不得被忽略（重复）", BASE + "<!-- reviewers: codex,deepseek -->\n<!-- reviewers: claude,glm > -->", "claude/x", False, "恰好一个"),
     ("author 正文含 > 不得被忽略（未知谱系）", BASE + "<!-- author: gemini > -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "未知谱系"),
+    ("空 author 标记", BASE + "<!-- author: -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "空的"),
+    ("只有逗号的 author 标记", BASE + "<!-- author: , , -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "空的"),
     ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
     ("GLM 写、四角色用 GLM 以外：放行", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
      + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", True, ""),
@@ -89,6 +91,25 @@ def main() -> int:
         good = got == {"codex", "claude"}
         print(f"{'PASS' if good else 'FAIL'} trailer_families 从真实提交读出 {sorted(got)}")
         fails += not good
+        # 别名：Sonnet / Anthropic 域名 / GPT / opencode / zhipu 都要识别
+        for msg in ["a\n\nCo-Authored-By: Sonnet <noreply@anthropic.com>", "b\n\nCo-Authored-By: GPT <x@openai.com>",
+                    "c\n\nCo-Authored-By: opencode <glm-5.3@opencode>", "d\n\nCo-Authored-By: DeepSeek <d@x>"]:
+            subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", msg], check=True)
+        os.chdir(td)
+        try:
+            got2 = gate.trailer_families("HEAD~4", "HEAD")
+            bad_range_raised = False
+            try:
+                gate.trailer_families("deadbeefdeadbeef", "HEAD")
+            except gate.TrailerScanError:
+                bad_range_raised = True
+        finally:
+            os.chdir(cwd)
+        good = got2 == {"claude", "codex", "glm", "deepseek"}
+        print(f"{'PASS' if good else 'FAIL'} 署名别名识别 {sorted(got2)}")
+        fails += not good
+        print(f"{'PASS' if bad_range_raised else 'FAIL'} 给了范围但读不到 → 抛错（fail-closed）")
+        fails += not bad_range_raised
     # --pr 模式用目标 PR 的分支，不继承环境 PR_HEAD_REF（codex 评审 P1 的复现）
     with tempfile.TemporaryDirectory() as td:
         fake = Path(td) / "gh"
@@ -106,7 +127,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 6} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 8} 例）")
     return 1 if fails else 0
 
 

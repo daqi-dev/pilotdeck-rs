@@ -37,7 +37,6 @@ NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 取完整注释正文再校验（不能用 [^>]：正文含 > 时整条会被静默忽略）
 REVIEWERS = re.compile(r"<!--\s*reviewers\s*:(.*?)-->", re.I | re.S)
 AUTHOR = re.compile(r"<!--\s*author\s*:(.*?)-->", re.I | re.S)
-TRAILER_FAMILY = (("claude", "claude"), ("codex", "codex"), ("opencode", "glm"), ("glm", "glm"), ("deepseek", "deepseek"))
 FAMILY = {"codex": "codex", "gpt": "codex", "glm": "glm", "zai": "glm", "deepseek": "deepseek", "dsh": "deepseek",
           "ds": "deepseek", "claude": "claude", "opus": "claude", "sonnet": "claude", "anthropic": "claude"}
 BRANCH_FAMILY = {"codex": "codex", "glm": "glm", "deepseek": "deepseek", "claude": "claude"}
@@ -47,18 +46,28 @@ def family(name: str) -> str | None:
     return FAMILY.get(name.strip().lower())
 
 
+# 署名识别：FAMILY 的全部别名 + 只在署名里出现的名字（opencode 跑的是 GLM）；按单词匹配，含邮箱域名
+TRAILER_EXTRA = {"opencode": "glm", "openai": "codex", "zhipu": "glm"}
+
+
+class TrailerScanError(Exception):
+    pass
+
+
 def trailer_families(base: str, head: str) -> set[str]:
-    """提交 Co-Authored-By 署名对应的谱系；拿不到 git 范围就返回空集（本地用法不强求）。"""
+    """base..head 提交的 Co-Authored-By 署名对应的谱系。给了范围却读不到 → 抛 TrailerScanError（fail-closed）。"""
     if not base or not head:
         return set()
     cp = subprocess.run(["git", "log", f"{base}..{head}", "--format=%(trailers:key=Co-Authored-By,valueonly)"],
                         capture_output=True, text=True)
     if cp.returncode != 0:
-        print(f"check-pr-gate: 警告：读不到提交署名（{cp.stderr.strip()[:120]}），只按前缀与声明判作者", file=sys.stderr)
-        return set()
+        raise TrailerScanError(cp.stderr.strip()[:200])
+    words = {**FAMILY, **TRAILER_EXTRA}
     out = set()
     for line in cp.stdout.lower().splitlines():
-        out.update(f for key, f in TRAILER_FAMILY if key in line)
+        for tok in re.findall(r"[a-z0-9]+", line):
+            if tok in words:
+                out.add(words[tok])
     return out
 
 
@@ -70,6 +79,8 @@ def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) 
     branch = BRANCH_FAMILY.get(head_ref.strip().split("/", 1)[0].lower()) if "/" in head_ref else None
     names = [x for x in re.split(r"[,\s]+", am[0]) if x] if am else []
     unknown = [x for x in names if family(x) is None]
+    if am and not names:
+        errs.append("author 标记是空的；写出至少一个谱系（codex/GLM/DeepSeek/Claude），或删掉标记")
     if unknown:
         errs.append(f"author 里有未知谱系 {unknown}（可选 codex/GLM/DeepSeek/Claude）")
     declared = {family(x) for x in names if family(x)}
@@ -169,13 +180,15 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--body-file")
     g.add_argument("--pr")
-    ap.add_argument("--head", default=os.environ.get("PR_HEAD", ""), help="PR 当前 head SHA；给定时与结果块 head= 比对")
+    ap.add_argument("--head", default=None, help="PR 当前 head SHA；给定时与结果块 head= 比对（默认：--pr 取目标 PR；否则环境 PR_HEAD）")
     ap.add_argument("--head-ref", default=None, help="PR 分支名，用来推断作者谱系（默认：--pr 取目标 PR 的分支；否则取环境变量 PR_HEAD_REF）")
     a = ap.parse_args()
+    a.head_explicit = a.head is not None
+    base = None
     if a.body_file:
         body = open(a.body_file, encoding="utf-8").read()
     elif a.pr:
-        cp = subprocess.run(["gh", "pr", "view", a.pr, "--json", "body,headRefName"], capture_output=True, text=True)
+        cp = subprocess.run(["gh", "pr", "view", a.pr, "--json", "body,headRefName,headRefOid,baseRefOid"], capture_output=True, text=True)
         if cp.returncode != 0:
             print(f"check-pr-gate: gh 失败：{cp.stderr.strip()}", file=sys.stderr)
             return 2
@@ -184,6 +197,10 @@ def main() -> int:
         body = pr.get("body") or ""
         # --pr 一律用目标 PR 自己的分支，不继承环境里别的 PR 的 PR_HEAD_REF（防用他人分支判作者）
         a.head_ref = a.head_ref if a.head_ref is not None else pr.get("headRefName", "")
+        # 署名范围也一律取目标 PR 的，不继承环境里别的 PR 的 PR_HEAD / PR_BASE_SHA
+        a.head = a.head if a.head_explicit else pr.get("headRefOid", "")
+        base = pr.get("baseRefOid", "")
+        subprocess.run(["git", "fetch", "-q", "origin", base, a.head], capture_output=True)
     elif "PR_BODY" in os.environ:
         body = os.environ["PR_BODY"]
     else:
@@ -191,9 +208,22 @@ def main() -> int:
         return 2
     if a.head_ref is None:
         a.head_ref = os.environ.get("PR_HEAD_REF", "")
-    trailers = trailer_families(os.environ.get("PR_BASE_SHA", ""), a.head)
-    if trailers:
-        print(f"check-pr-gate: 提交署名谱系 {sorted(trailers)}（计入作者）")
+    if a.head is None:
+        a.head = os.environ.get("PR_HEAD", "")
+    if base is None:
+        base = os.environ.get("PR_BASE_SHA", "")
+    if os.environ.get("GITHUB_ACTIONS") == "true" and not (base and a.head):
+        print("check-pr-gate: CI 缺 PR_BASE_SHA / PR_HEAD，无法扫提交署名（fail-closed）", file=sys.stderr)
+        return 2
+    try:
+        trailers = trailer_families(base, a.head)
+    except TrailerScanError as e:
+        print(f"check-pr-gate: FAIL 读不到提交署名 {base[:8]}..{a.head[:8]}（{e}）；给了范围就必须扫成功，不降级放行")
+        return 1
+    if base and a.head:
+        print(f"check-pr-gate: 提交署名谱系 {sorted(trailers) or '无'}（计入作者）")
+    else:
+        print("check-pr-gate: 本地未给提交范围，未扫署名（CI 会扫）", file=sys.stderr)
     errs = check(body, a.head, a.head_ref, trailers)
     for e in errs:
         print(f"check-pr-gate: FAIL {e}")
