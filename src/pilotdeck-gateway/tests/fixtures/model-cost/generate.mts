@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -21,6 +21,18 @@ const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], 
   encoding: 'utf8',
 }).trim();
 assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+// The checkout is mutable in place; a dirty tracked file would change the
+// numbers below while `rev-parse HEAD` still reports the pinned commit.
+const trackedChanges = execFileSync(
+  'git',
+  ['-C', baseline, 'status', '--porcelain', '--untracked-files=no'],
+  { encoding: 'utf8' },
+);
+assert.equal(
+  trackedChanges,
+  '',
+  `baseline has uncommitted changes to tracked files:\n${trackedChanges}`,
+);
 
 const importBaseline = (relative: string) => import(pathToFileURL(join(baseline, 'src', relative)).href);
 const pricingModule = await importBaseline('router/utils/modelPricing.ts');
@@ -42,7 +54,16 @@ const SOURCES = [
 ];
 const sourceSha256: Record<string, string> = {};
 for (const source of SOURCES) {
-  sourceSha256[`src/${source}`] = createHash('sha256').update(await readFile(join(baseline, 'src', source))).digest('hex');
+  const path = `src/${source}`;
+  const workingTreeHash = createHash('sha256').update(await readFile(join(baseline, path))).digest('hex');
+  const committed = execFileSync('git', ['-C', baseline, 'show', `${sourceCommit}:${path}`]);
+  const committedHash = createHash('sha256').update(committed).digest('hex');
+  assert.equal(
+    workingTreeHash,
+    committedHash,
+    `${path} differs from ${sourceCommit}; the baseline checkout is not clean`,
+  );
+  sourceSha256[path] = committedHash;
 }
 
 // `modelPricing.ts` documents the unit as display-only; it never enters arithmetic.
@@ -492,7 +513,15 @@ const oracle = JSON.stringify({
   requests,
 }, null, 2) + '\n';
 for (const path of [baseline, fixtureDir]) assert.ok(!oracle.includes(path), `oracle.json contains ${path}`);
-await writeFile(join(fixtureDir, 'oracle.json'), oracle);
+// Optional output directory (the ignored Rust regeneration test uses it); the
+// default keeps the historical "run in place" invocation working.
+const outputDir = process.argv[2] ? resolve(process.argv[2]) : fixtureDir;
+const target = join(outputDir, 'oracle.json');
+const temporary = `${target}.tmp`;
+// Write-then-rename: a killed or concurrent generator must never leave a
+// truncated oracle.json behind.
+await writeFile(temporary, oracle);
+await rename(temporary, target);
 console.log(
   `PASS: ${pricingLookups.length} pricing lookups, ${costs.length} cost cases, ` +
   `${usageCosts.length} usage-cost cases, ${requests.length} request shapes`,

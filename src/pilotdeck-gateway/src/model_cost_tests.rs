@@ -11,6 +11,8 @@ use pilotdeck_protocol::model::{
     ToolResultContent, ToolResultItem, ToolResultReference, ToolSchema, Usage,
 };
 use pilotdeck_protocol::{JsValue, parse_json};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const ORACLE: &str = include_str!("../tests/fixtures/model-cost/oracle.json");
@@ -307,34 +309,119 @@ fn parse_tool_result_item(value: &JsValue) -> ToolResultItem {
     }
 }
 
+const SOURCE_PATHS: [&str; 9] = [
+    "src/router/utils/modelPricing.ts",
+    "src/router/stats/TokenStatsCollector.ts",
+    "src/context/budget/TokenAccountingRuntime.ts",
+    "src/context/budget/TokenBudgetManager.ts",
+    "src/context/budget/tokenizer.ts",
+    "src/model/protocol/toolResultContent.ts",
+    "src/model/catalog/providers.ts",
+    "src/agent/loop/AgentLoop.ts",
+    "src/agent/loop/nativeAgentTurnCapabilitiesAdapter.ts",
+];
+
 #[test]
 fn oracle_comes_from_the_fixed_baseline() {
     assert_eq!(text(field(oracle(), "sourceCommit")), BASELINE_COMMIT);
     let hashes = field(oracle(), "sourceSha256");
-    for source in [
-        "src/router/utils/modelPricing.ts",
-        "src/router/stats/TokenStatsCollector.ts",
-        "src/context/budget/TokenAccountingRuntime.ts",
-        "src/context/budget/TokenBudgetManager.ts",
-        "src/context/budget/tokenizer.ts",
-        "src/model/protocol/toolResultContent.ts",
-        "src/model/catalog/providers.ts",
-        "src/agent/loop/AgentLoop.ts",
-        "src/agent/loop/nativeAgentTurnCapabilitiesAdapter.ts",
-    ] {
+    for source in SOURCE_PATHS {
         let hash = text(field(hashes, source));
-        // SHA-256 is checked structurally; the generator asserts the exact file
-        // contents at generation time, and the commit pins the tree.
         assert_eq!(hash.len(), 64, "missing or malformed hash for {source}");
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
     assert!(!ORACLE.contains(".generate-"));
+    checks_oracle_against_baseline_when_available(hashes);
+}
+
+/// With `PDRS_BASELINE` set, re-run the generator's provenance checks: the
+/// checkout must have no modifications to tracked files, and every recorded
+/// hash must equal the blob at the pinned commit (not just the working tree).
+fn checks_oracle_against_baseline_when_available(hashes: &JsValue) {
+    let Ok(baseline) = std::env::var("PDRS_BASELINE") else {
+        return;
+    };
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&baseline)
+            .args(args)
+            .output()
+            .expect("run git against PDRS_BASELINE");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    let head = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]))
+        .trim()
+        .to_string();
+    assert_eq!(
+        head, BASELINE_COMMIT,
+        "PDRS_BASELINE must be checked out at the fixed commit"
+    );
+    let tracked = String::from_utf8_lossy(&git(&["status", "--porcelain", "--untracked-files=no"]))
+        .into_owned();
+    assert!(
+        tracked.is_empty(),
+        "PDRS_BASELINE has uncommitted changes to tracked files:\n{tracked}"
+    );
+    for source in SOURCE_PATHS {
+        let spec = format!("{BASELINE_COMMIT}:{source}");
+        let committed = git(&["show", &spec]);
+        let actual = format!("{:x}", Sha256::digest(&committed));
+        assert_eq!(
+            actual,
+            text(field(hashes, source)),
+            "oracle hash for {source} does not match {BASELINE_COMMIT}"
+        );
+    }
+}
+
+/// Regenerates the oracle from the real TS modules and compares bytes.
+#[test]
+#[ignore = "requires PDRS_BASELINE (PilotDeck cc7c4e6 with node_modules)"]
+fn model_cost_fixtures_regenerate_identically_from_ts() {
+    let baseline = PathBuf::from(
+        std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
+    );
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/model-cost");
+    let scratch = std::env::temp_dir().join(format!("pdrs-model-cost-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    let output = std::process::Command::new("node")
+        .arg("--disable-warning=ExperimentalWarning")
+        .arg("--import")
+        .arg(baseline.join("node_modules/tsx/dist/loader.mjs"))
+        .arg(fixtures.join("generate.mts"))
+        .arg(&scratch)
+        .env("PDRS_BASELINE", &baseline)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated = std::fs::read(scratch.join("oracle.json")).unwrap();
+    let committed = std::fs::read(fixtures.join("oracle.json")).unwrap();
+    assert_eq!(generated, committed, "oracle.json");
+    assert!(
+        !scratch.join("oracle.json.tmp").exists(),
+        "generator left a temporary file behind"
+    );
+    let _ = std::fs::remove_dir_all(&scratch);
 }
 
 #[test]
 fn real_ts_pricing_lookups_match() {
     let lookups = items(field(oracle(), "pricingLookups"));
-    assert!(lookups.len() > 100);
+    // Floors pinned to the current real-TS output (273); a shrunken catalog or
+    // a truncated generation loop must fail instead of replaying a stale subset.
+    assert!(lookups.len() >= 273);
     for case in lookups {
         let provider = text(field(case, "provider"));
         let model = text(field(case, "model"));
@@ -365,7 +452,7 @@ fn real_ts_pricing_lookups_match() {
 #[test]
 fn real_ts_cost_helpers_match() {
     let costs = items(field(oracle(), "costs"));
-    assert!(costs.len() > 100);
+    assert!(costs.len() >= 885);
     for case in costs {
         let provider = text(field(case, "provider"));
         let model = text(field(case, "model"));
@@ -388,7 +475,7 @@ fn real_ts_cost_helpers_match() {
 #[test]
 fn real_ts_usage_costs_match() {
     let cases = items(field(oracle(), "usageCosts"));
-    assert!(cases.len() > 500);
+    assert!(cases.len() >= 1653);
     let mut saw_native = false;
     let mut saw_negative_router_estimate = false;
     for case in cases {
@@ -453,8 +540,8 @@ fn real_ts_usage_costs_match() {
 fn real_ts_local_input_estimates_match() {
     let requests = items(field(oracle(), "requests"));
     assert!(
-        requests.len() >= 20,
-        "at least 20 request shapes are required"
+        requests.len() >= 51,
+        "at least 51 request shapes are required"
     );
     for case in requests {
         let name = text(field(case, "name"));
