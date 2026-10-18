@@ -79,14 +79,17 @@ def trailer_families(base: str, head: str) -> set[str]:
     """base..head 提交的 Co-Authored-By 署名对应的谱系。给了范围却读不到 → 抛 TrailerScanError（fail-closed）。"""
     if not base or not head:
         return set()
-    cp = subprocess.run(["git", "log", f"{base}..{head}", "--format=%(trailers:key=Co-Authored-By,valueonly)"],
-                        capture_output=True, text=True)
+    # 从 merge-base 起算：PR rebase 过 main 时 base.sha 可能是旧点，直接 base..head 会把 main 上别家的提交算进来
+    mb = subprocess.run(["git", "merge-base", base, head], capture_output=True, text=True)
+    if mb.returncode != 0:
+        raise TrailerScanError(mb.stderr.strip()[:200] or "merge-base 失败")
+    # 扫完整提交消息里任意位置的 Co-Authored-By 行：git 的 trailer 解析只认末段，署名后再跟一段说明就会漏
+    cp = subprocess.run(["git", "log", f"{mb.stdout.strip()}..{head}", "--format=%B%x00"], capture_output=True, text=True)
     if cp.returncode != 0:
         raise TrailerScanError(cp.stderr.strip()[:200])
     out = set()
-    for line in cp.stdout.splitlines():
-        if line.strip():
-            out |= trailer_family_of(line)
+    for m in re.finditer(r"(?im)^\s*co-authored-by\s*:\s*(.+)$", cp.stdout):
+        out |= trailer_family_of(m.group(1))
     return out
 
 
@@ -100,7 +103,7 @@ def strip_code(body: str) -> str:
 
 def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
-    body = strip_code(body)
+    raw, body = body, strip_code(body)  # 标记声明去掉代码引用再看；结果块与 check() 同口径读原文
     am = [x.strip() for x in AUTHOR.findall(body)]
     if len(am) > 1:
         return [f"有 {len(am)} 个 author 标记；只许一个（多家写成 author: A,B）"]
@@ -133,7 +136,7 @@ def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) 
     if clash:
         src = "（含提交署名）" if trailers and set(clash) & trailers else ""
         errs.append(f"作者谱系 {clash}{src} 出现在评审里（谁写谁不审）")
-    for m in MARKER.finditer(body):
+    for m in MARKER.finditer(raw):
         rn = re.search(r"(?:^|\s)runner=(\S+)", m.group(1))
         if rn and family(rn.group(1)) in authors:
             errs.append(f"角色审计用的 runner={rn.group(1)} 与作者同谱系（{family(rn.group(1))}）；改用 --runner 另一家重跑")
