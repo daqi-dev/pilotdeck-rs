@@ -48,7 +48,12 @@ impl HostHandler for ResumeHandler {
         self.calls.fetch_add(1, Ordering::SeqCst);
         std::fs::write(self.receipt.with_extension("call-started"), "started").unwrap();
         let wait = self.mode == "reconnect-module-pending";
-        let large = self.mode == "reconnect-ack-coalesced";
+        // The write-failure fixture cuts this response after its first byte;
+        // it must exceed pipe capacity so the required write is still pending.
+        let large = matches!(
+            self.mode.as_str(),
+            "reconnect-ack-coalesced" | "reconnect-module-write-failure"
+        );
         let budget_cache = self.mode.starts_with("reconnect-budget");
         let release = self.release_call.clone();
         Box::pin(async move {

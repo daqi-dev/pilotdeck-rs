@@ -153,12 +153,15 @@ if generation == 1:
         wait_marker('event-started')
     elif mode in ('reconnect-budget', 'reconnect-budget-control', 'reconnect-module-pending', 'reconnect-module-cached',
                   'reconnect-module-conflict', 'reconnect-module-write-failure'):
-        if mode == 'reconnect-module-write-failure':
-            os.close(sys.stdin.fileno())
         send(call())
         if mode == 'reconnect-module-pending':
             wait_marker('call-started')
         elif mode == 'reconnect-module-write-failure':
+            # A small write can finish even after our stdin closes under spawn
+            # pressure (#230). Cut a response larger than the pipe only after
+            # its first byte arrives, so a required write is still in flight.
+            assert os.read(sys.stdin.fileno(), 1) == b'{'
+            os.close(sys.stdin.fileno())
             # Leave stdout open. Only the required response write EPIPE triggers recovery.
             time.sleep(60)
         else:
@@ -270,6 +273,8 @@ if mode.startswith('reconnect-module-'):
             state['acks'].append(1)
         else:
             assert frame['inReplyTo'] == 'call-1' and frame['ok']
+            if mode == 'reconnect-module-write-failure':
+                assert frame['payload']['padding'] == 'x' * (2 * 1024 * 1024)
             responses.append(frame)
     if 'response' in state:
         assert responses == [state['response']], 'cached response was changed'
