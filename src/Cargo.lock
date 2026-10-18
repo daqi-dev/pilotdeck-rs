@@ -674,6 +674,7 @@ dependencies = [
  "pilotdeck-protocol",
  "pilotdeck-yaml",
  "ryu-js",
+ "serde_json",
 ]
 
 [[package]]

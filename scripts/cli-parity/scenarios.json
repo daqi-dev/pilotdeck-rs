@@ -8,8 +8,11 @@
   {"id":"unknown-command","argv":["d0-unknown"],"stdinHex":"","token":false,"exit":1,"stdout":"","stderr":"Config must contain an agent section.\n",
    "diskAdditions":{"pilot/.legacy-bundled-skills-migrated-v1":{"type":"file","mode":384,"size":10,"sha256":"d3be030801b90ea8057d3997d9845c7f850cc7b784450645d5ec2811cc927d7a"}}},
   {"id":"flag-missing","argv":["run","--auth-token"],"stdinHex":"","token":false,"exit":1,"stdout":"","stderr":"Gateway auth token is required. Set PILOTDECK_TOKEN or pass --auth-token.\n"},
-  {"id":"invalid-json","argv":["settings","set","{"],"stdinHex":"","token":true,"exit":1,"stdout":"","stderrPrefix":"Invalid settings JSON: "},
+  {"id":"invalid-json","argv":["settings","set","{"],"stdinHex":"","token":true,"exit":1,"stdout":"","stderr":"Invalid settings JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)\n"},
   {"id":"json-flag-missing","argv":["settings","set","--json"],"stdinHex":"","token":true,"exit":1,"stdout":"","stderr":"Usage: pilotdeck settings set '<json>'\n"},
   {"id":"unknown-gateway-leaf","argv":["gateway","unknown"],"stdinHex":"","token":false,"exit":1,"stdout":"","stderr":"Usage: pilotdeck gateway setup [feishu|weixin|wecom]\n"},
-  {"id":"tui-nontty","argv":["tui"],"stdinHex":"","token":false,"exit":1,"stdout":"","stderr":"pilotdeck tui requires an interactive terminal.\n"}
+  {"id":"tui-nontty","argv":["tui"],"stdinHex":"","token":false,"exit":1,"stdout":"","stderr":"pilotdeck tui requires an interactive terminal.\n"},
+  {"id":"bundled-skills-missing","argv":[],"stdinHex":"","token":false,"envPaths":{"PILOTDECK_BUNDLED_SKILLS_DIR":"absent-skills"},"exit":1,"stdout":"","stderr":"[pilotdeck] Could not migrate legacy skill '__migration__': Bundled skills root is missing or contains no skills; legacy copies were left untouched.\nConfig must contain an agent section.\n"},
+  {"id":"sessions-bogus","argv":["sessions","bogus"],"stdinHex":"","token":true,"exit":1,"stdout":"","stderr":"Usage: pilotdeck sessions <list|messages> ...\n"},
+  {"id":"resume-missing","argv":["resume"],"stdinHex":"","token":true,"exit":1,"stdout":"","stderr":"Usage: pilotdeck resume <session-id> <prompt>\n"}
 ]

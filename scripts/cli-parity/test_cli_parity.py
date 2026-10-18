@@ -34,13 +34,21 @@ def bind_policy(run):
         Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts').encode()).hexdigest()
 
 
+SYNTHETIC_RUST = b'synthetic rust candidate\n'
+
+
 def as_rust(path):
     run = json.loads((path / 'round.json').read_text())
-    expected = {'side': 'rust', 'executable': {'path': '/synthetic/rust-candidate', 'sha256': '1' * 64},
+    staged = Path(run['runtime']).parent / 'rust-stage/bin/pilotdeck'
+    # compare reads the staged copy's bytes, so the synthetic copy must exist on disk.
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(SYNTHETIC_RUST)
+    staged = str(staged)
+    expected = {'side': 'rust', 'executable': {'path': '/synthetic/rust-candidate',
+                                               'sha256': hashlib.sha256(SYNTHETIC_RUST).hexdigest()},
                 'sourceHead': 'a' * 40, 'sourcePath': '/synthetic/rust-source'}
     run['side'] = 'rust'
     run['provenance'].update(expected)
-    staged = str(Path(run['runtime']).parent / 'rust-stage/bin/pilotdeck')
     run['provenance']['stagedExecutable'] = {'path': staged, 'sha256': expected['executable']['sha256']}
     run['isolation']['nodeExec'] = {'denied': True, 'status': 'DONE', 'timedOut': False, 'exitCode': 71, 'stdoutHex': '',
         'stderrHex': b'sandbox-exec: execvp(): Operation not permitted'.hex(),
@@ -90,7 +98,7 @@ def synthetic_round(path, runtime):
         folder.mkdir()
         fixture(folder / 'tree')
         save(folder / 'initial.json', initial_tree())
-        if scenario['id'] in ('version-default', 'empty-nontty', 'unknown-command'):
+        if 'pilot/.legacy-bundled-skills-migrated-v1' in scenario.get('diskAdditions', {}):
             marker = folder / 'tree/pilot/.legacy-bundled-skills-migrated-v1'
             marker.write_bytes(b'completed\n')
             marker.chmod(0o600)
@@ -104,7 +112,7 @@ def synthetic_round(path, runtime):
             if data:
                 events.append({'stream': stream, 'hex': data.hex()})
         save(folder / 'events.json', events)
-        save(folder / 'record.json', {'status': 'DONE', 'timedOut': False, 'exitCode': scenario['exit'],
+        save(folder / 'record.json', {'status': 'DONE', 'timedOut': False, 'exitCode': scenario.get('exit', 1),
              'argv': scenario['argv'], 'stdinHex': scenario['stdinHex'], 'cwd': str(runtime / 'project'),
              'executedArgv': ['/synthetic/unit-test-only', '/synthetic/baseline/dist/src/cli/pilotdeck.js'] + scenario['argv'],
              'sandboxArgv': ['/usr/bin/sandbox-exec', '-f', run['isolation']['profilePath'], '/synthetic/unit-test-only',
@@ -358,6 +366,62 @@ class ContractTests(unittest.TestCase):
         save(path, run)
         self.assertEqual(compare(source, target, expected)['status'], 'FAIL')
 
+    def test_offline_compare_reads_staged_copy_bytes(self):
+        source = self.source()
+        target = self.root / 'rust'
+        shutil.copytree(source, target)
+        expected = as_rust(target)
+        self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+        staged = self.root / 'rust-stage/bin/pilotdeck'
+        elsewhere = self.root / 'elsewhere'
+        elsewhere.write_bytes(SYNTHETIC_RUST)
+        for name in ('content', 'missing', 'symlink'):
+            with self.subTest(mutation=name):
+                staged.unlink(missing_ok=True)
+                if name == 'content':
+                    staged.write_bytes(b'tampered rust candidate\n')
+                elif name == 'symlink':
+                    staged.symlink_to(elsewhere)  # Same bytes behind a link still fail.
+                rules = [r['rule'] for r in compare(source, target, expected)['failures']]
+                self.assertIn('round.rust-stage-bytes', rules)
+
+    def test_pending_oracle_cannot_pass(self):
+        import compare as compare_module
+        pending = [{'id': 'pending', 'argv': [], 'stdinHex': '', 'token': False,
+                    'oracle': compare_module.PENDING}]
+        source = self.root / 'pending'
+        with patch.object(compare_module, 'SCENARIOS', pending), \
+             patch.object(sys.modules[__name__], 'SCENARIOS', pending):
+            synthetic_round(source, self.root / 'pending-runtime')
+            result = compare_module.compare(source, source)
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn('pending.oracle.pending', [r['rule'] for r in result['failures']])
+
+    def test_registered_scenarios_are_calibrated(self):
+        import compare as compare_module
+        self.assertEqual([s['id'] for s in SCENARIOS if s.get('oracle') == compare_module.PENDING], [])
+        self.assertGreaterEqual(len(SCENARIOS), 11)
+        for scenario in SCENARIOS:
+            with self.subTest(scenario=scenario['id']):
+                self.assertIn('exit', scenario)
+                # Every stderr is pinned exactly, not by prefix only.
+                self.assertTrue('stderr' in scenario or 'stderrSha256' in scenario)
+
+    def test_bundled_skills_missing_scenario_expects_no_marker(self):
+        scenario = next(s for s in SCENARIOS if s['id'] == 'bundled-skills-missing')
+        self.assertNotIn('diskAdditions', scenario)
+        env = environment(self.root, scenario)
+        self.assertEqual(env['PILOTDECK_BUNDLED_SKILLS_DIR'], str(self.root / 'absent-skills'))
+        self.assertNotIn('absent-skills', initial_tree())
+        self.assertIn('Bundled skills root is missing', scenario.get('stderr', ''))
+
+    def test_env_paths_cannot_override_isolation_or_escape_runtime(self):
+        for paths in ({'HOME': 'elsewhere'}, {'PILOTDECK_BUNDLED_SKILLS_DIR': '../outside'},
+                      {'PILOTDECK_BUNDLED_SKILLS_DIR': '/abs'}, {'PILOTDECK_BUNDLED_SKILLS_DIR': ''}):
+            with self.subTest(paths=paths):
+                with self.assertRaises(ValueError):
+                    environment(self.root, {'token': False, 'envPaths': paths})
+
     def test_probe_private_read_and_metadata_denials_required(self):
         source = self.source()
         path = source / 'round.json'
@@ -411,7 +475,9 @@ class ContractTests(unittest.TestCase):
         self.assertIn('round.profile-binding', [r['rule'] for r in compare(source, source)['failures']])
 
     def test_batch_budget_includes_three_rounds_and_rejects_overflow(self):
-        check_budget(60, True)  # Current 10 cases: 1800 seconds plus reserve.
+        check_budget(15, True)  # Default per-scenario timeout with the registered cases.
+        with self.assertRaises(Blocked):
+            check_budget(60, True)  # 13 cases x 60s x 3 rounds + reserve exceeds the lease.
         with patch('run_round.SCENARIOS', [None] * 30):
             with self.assertRaises(Blocked):
                 check_budget(60, True)

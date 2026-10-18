@@ -122,6 +122,8 @@ fn js_to_string(value: &JsValue) -> String {
 /// Ok(()) means the config passed the first fatal check.
 pub fn check(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
     let mut diagnostics = Diagnostics::default();
+    // resolvePilotConfigPath (loadPilotConfig.ts:57-61): the trimmed override is used
+    // as-is, so "" reaches existsSync("") (false) instead of path.resolve.
     let default_path = match env.string("PILOTDECK_CONFIG_PATH") {
         Some(value) => PathBuf::from(paths::js_trim(&value)),
         None => pilot_home.join("pilotdeck.yaml"),
@@ -284,15 +286,20 @@ mod tests {
 
     #[test]
     fn missing_config_file_is_not_a_read_error() {
-        let env = Env::from_pairs(&[("PILOTDECK_CONFIG_PATH", "  ")]);
-        assert_eq!(
-            message(check(
-                &env,
-                Path::new("/nonexistent-pdrs"),
-                Path::new("/nonexistent-pdrs")
-            )),
-            "Config must contain an agent section."
-        );
+        // An empty or blank override stays "" (not nullish, not resolved to cwd), and
+        // existsSync("") is false: no config source at all.
+        // Values as recorded by probes/p1-config-path-empty (Node v22.22.0).
+        for value in ["", "  ", "\t", "\u{feff}", "\u{3000} ", "\u{feff}\t"] {
+            let env = Env::from_pairs(&[("PILOTDECK_CONFIG_PATH", value)]);
+            assert_eq!(
+                message(check(
+                    &env,
+                    Path::new("/nonexistent-pdrs"),
+                    Path::new("/nonexistent-pdrs")
+                )),
+                "Config must contain an agent section."
+            );
+        }
     }
 
     #[test]

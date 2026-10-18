@@ -228,7 +228,8 @@ impl Scanner<'_> {
                 0x5c => {
                     self.i += 1;
                     match self.peek() {
-                        None => return self.fail(UNTERMINATED_STRING),
+                        // V8 reports EOS right after a backslash as the end token.
+                        None => return Err(self.report(Token::Eos, None)),
                         Some(0x22 | 0x5c | 0x2f | 0x62 | 0x66 | 0x6e | 0x72 | 0x74) => self.i += 1,
                         Some(0x75) => {
                             for _ in 0..4 {
@@ -323,6 +324,26 @@ mod tests {
         ] {
             assert_eq!(parse_error(text), None, "{text}");
         }
+    }
+
+    /// Host Node 22 JSON.parse messages recorded by tests/fixtures/json-syntax/generate.mjs.
+    #[test]
+    fn matches_recorded_node22_messages() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/json-syntax/cases.json")).unwrap();
+        assert!(fixture["node"].as_str().unwrap().starts_with("v22."));
+        let cases = fixture["cases"].as_array().unwrap();
+        assert!(cases.len() >= 100, "fixture has only {} cases", cases.len());
+        let mut failures = Vec::new();
+        for case in cases {
+            let input = case["input"].as_str().unwrap();
+            let expected = case["message"].as_str();
+            let actual = parse_error(input);
+            if actual.as_deref() != expected {
+                failures.push(format!("{input:?}: expected {expected:?}, got {actual:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]
