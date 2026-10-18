@@ -17,7 +17,11 @@ cd src
 cargo test --locked --offline -p pilotdeck-gateway --test session_overrides
 ```
 
-生成器先断言基线 HEAD、三个源文件无工作区改动，并记录源文件哈希。同一命令连跑两次应得到逐字节相同的 `oracle.json`（无时间戳、路径或随机值）。
+生成器先断言基线 HEAD、三个源文件无工作区改动，并记录源文件哈希。同一命令连跑两次应得到逐字节相同的 `oracle.json`（无时间戳、路径或随机值）；通过同目录临时文件与 rename 原子替换，避免回放读取半截 JSON。
+
+Rust 回放始终校验固定 commit 与三个固定源码哈希；设置 `PDRS_BASELINE` 时，还会逐文件读取该目录中的实际字节，断言 SHA-256 与 `oracle.json.sourceSha256` 一致。读取失败或哈希不符直接失败，不跳过校验。六个序列各自断言**精确步数**：`ruleSet=53`、`mode=31`、`overrides=39`、`combined=54`、`identity=61`、`sharing=81`，共 319 步；空序列、截断或多出步骤都会失败。
+
+`unattendedSessionExcludedTools` 直接记录真实 TS 模块导出的名单，Rust 另行核对 `UNATTENDED_SESSION_EXCLUDED_TOOLS` 的完整内容与顺序；这项常量正控不计入六组回放步数。
 
 ## 覆盖
 
@@ -57,7 +61,9 @@ JSON 没有 `undefined`/`NaN`/`Infinity`/`-0`，编码为单键对象 `{"$":"und
 
 `ConfiguredRuleSet` 指向配置对象；`RuleSetHandle` 指向 registry 每代新建的 rules 对象，同代 lease 共享它。首次 acquire 逐成员采用已有数组，对 missing / undefined / null 新建缺省数组；已有 entry 只按 sameRule 合并元素引用，不替换数组。规则对象、配置属性和 lease 属性各自的赋值/修改影响范围由真实对象身份决定。
 
-生产调用方用 `lease.rules().update_member("deny", |rules| ...)` 修改、删除或替换数组元素；通过 `lease.rules().value().set("allow", array)` 重新赋值成员。旧的 allow handle 在成员重新赋值后仍持原数组。回调不得重入同一个数组或使用该数组的 registry；快照逐节点读取，不同时持有多把数组锁，支持 allow/deny/ask 共用一个数组。
+生产调用方用 `lease.rules().update_member("deny", |rules| ...)` 修改、删除或替换数组元素；通过 `lease.rules().value().set("allow", array)` 重新赋值成员。旧的 allow handle 在成员重新赋值后仍持原数组。回调不得重入同一个数组或使用该数组的 registry；快照逐节点读取，不同时持有多把数组锁，支持 allow/deny/ask 共用一个数组；并发修改可能交错，快照不保证整张对象图的原子一致性。
+
+Rust 多线程单测用 Barrier 同步 8 个线程，验证同 key 的 acquire / grant 原子去重（不同 force 仍是同一规则）、并发 release / close 后清空，以及 dispose / 旧 lease release 竞态不删除新 generation。这是 Rust 线程安全回归，独立于单线程 TS 对拍。
 
 `runtimeBoundary` 另外保留 r1 评审的越类型 Node 探针：首次 grant(null) 成功，第二次报 TypeError 及原始文本。它明确不计入 Rust 类型域的回放通过数。
 

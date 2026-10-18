@@ -118,6 +118,7 @@ impl SessionValue {
 
     /// Detached boundary snapshot; never pass this back when retaining identity.
     /// Only one node is locked at a time, even when multiple fields alias it.
+    /// Concurrent mutations can interleave; this is not a graph-atomic snapshot.
     pub fn to_value(&self) -> JsValue {
         let node = self.lock().clone();
         match node {

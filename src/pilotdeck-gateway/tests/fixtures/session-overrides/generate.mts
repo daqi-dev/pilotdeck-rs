@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -35,7 +35,7 @@ const { GatewaySessionPermissionRuleSetRegistry } = await import(
 const { GatewaySessionPermissionModeRegistry } = await import(
   pathToFileURL(join(baseline, 'src/gateway/permission/GatewaySessionPermissionModeRegistry.ts')).href
 );
-const { SessionConfigOverrides } = await import(
+const { SessionConfigOverrides, UNATTENDED_SESSION_EXCLUDED_TOOLS } = await import(
   pathToFileURL(join(baseline, 'src/always-on/runtime/SessionConfigOverrides.ts')).href
 );
 
@@ -1058,6 +1058,7 @@ const runtimeBoundary = { firstGrant: malformedFirst, secondGrant: malformedSeco
 const oracle = {
   baselineCommit: commit,
   sourceSha256: sources,
+  unattendedSessionExcludedTools: UNATTENDED_SESSION_EXCLUDED_TOOLS,
   ruleSet: ruleSetSteps,
   mode: modeSteps,
   overrides: overrideSteps,
@@ -1072,7 +1073,14 @@ const text = JSON.stringify(oracle, null, 2) + '\n';
 assert.ok(!text.includes(baseline), 'oracle leaks the baseline path');
 assert.ok(!text.includes(output), 'oracle leaks the output path');
 await mkdir(output, { recursive: true });
-await writeFile(join(output, 'oracle.json'), text);
+const temporary = await mkdtemp(join(output, '.generate-'));
+try {
+  const file = join(temporary, 'oracle.json');
+  await writeFile(file, text);
+  await rename(file, join(output, 'oracle.json'));
+} finally {
+  await rm(temporary, { recursive: true, force: true });
+}
 console.log(
   `ruleSet=${ruleSetSteps.length} mode=${modeSteps.length} overrides=${overrideSteps.length} combined=${combinedSteps.length} identity=${identitySteps.length} sharing=${sharingSteps.length} lifetime=${JSON.stringify(lifetime)} bytes=${Buffer.byteLength(text)}`,
 );

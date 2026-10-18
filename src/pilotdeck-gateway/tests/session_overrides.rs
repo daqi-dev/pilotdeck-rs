@@ -6,12 +6,16 @@ use pilotdeck_gateway::config::permission::{
     AllowRulesHandle, ConfiguredRuleSet, GatewaySessionPermissionModeRegistry,
     GatewaySessionPermissionRuleSetRegistry, Lease, PermissionMode,
 };
-use pilotdeck_gateway::config::session_overrides::SessionConfigOverrides;
+use pilotdeck_gateway::config::session_overrides::{
+    SessionConfigOverrides, UNATTENDED_SESSION_EXCLUDED_TOOLS,
+};
 use pilotdeck_gateway::config::session_value::SessionValue;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    path::PathBuf,
 };
 
 const FIXTURES: &str = concat!(
@@ -134,9 +138,39 @@ fn oracle() -> JsValue {
 fn assert_sources(oracle: &JsValue) {
     assert_eq!(text(field(oracle, "baselineCommit")), SOURCE_COMMIT);
     let hashes = field(oracle, "sourceSha256");
-    assert_eq!(text(field(hashes, RULE_SET_SOURCE)), RULE_SET_SHA256);
-    assert_eq!(text(field(hashes, MODE_SOURCE)), MODE_SHA256);
-    assert_eq!(text(field(hashes, OVERRIDES_SOURCE)), OVERRIDES_SHA256);
+    let baseline = std::env::var_os("PDRS_BASELINE").map(PathBuf::from);
+    for (source, expected) in [
+        (RULE_SET_SOURCE, RULE_SET_SHA256),
+        (MODE_SOURCE, MODE_SHA256),
+        (OVERRIDES_SOURCE, OVERRIDES_SHA256),
+    ] {
+        let recorded = text(field(hashes, source));
+        assert_eq!(recorded, expected, "pinned source SHA-256 for {source}");
+        if let Some(baseline) = &baseline {
+            let path = baseline.join(source);
+            let bytes = fs::read(&path)
+                .unwrap_or_else(|error| panic!("read baseline source {}: {error}", path.display()));
+            assert_eq!(
+                recorded,
+                format!("{:x}", Sha256::digest(bytes)),
+                "oracle sourceSha256 must match PDRS_BASELINE for {source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn real_ts_unattended_session_excluded_tools_match() {
+    let oracle = oracle();
+    assert_sources(&oracle);
+    let tools: Vec<_> = array(
+        field(&oracle, "unattendedSessionExcludedTools"),
+        "unattendedSessionExcludedTools",
+    )
+    .iter()
+    .map(text)
+    .collect();
+    assert_eq!(tools, UNATTENDED_SESSION_EXCLUDED_TOOLS);
 }
 
 #[test]
@@ -144,7 +178,7 @@ fn real_ts_rule_set_registry_matches_outcomes_and_size() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "ruleSet"), "ruleSet");
-    assert!(steps.len() >= 40, "need the full real TS rule-set sequence");
+    assert_eq!(steps.len(), 53, "need the exact real TS ruleSet sequence");
 
     let registry = GatewaySessionPermissionRuleSetRegistry::new();
     let mut leases: HashMap<String, Lease> = HashMap::new();
@@ -278,7 +312,7 @@ fn real_ts_mode_registry_matches_transitions_and_state() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "mode"), "mode");
-    assert!(steps.len() >= 30, "need the full real TS mode sequence");
+    assert_eq!(steps.len(), 31, "need the exact real TS mode sequence");
 
     let mut registry = GatewaySessionPermissionModeRegistry::new();
     let mut keys: Vec<JsString> = vec![];
@@ -346,7 +380,7 @@ fn real_ts_session_config_overrides_match_spread_and_state() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "overrides"), "overrides");
-    assert!(steps.len() >= 35, "need the full real TS override sequence");
+    assert_eq!(steps.len(), 39, "need the exact real TS overrides sequence");
 
     let mut overrides = SessionConfigOverrides::new();
     let mut keys: Vec<JsString> = vec![];
@@ -437,7 +471,7 @@ fn real_ts_combined_overrides_and_live_rule_set_share_state() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "combined"), "combined");
-    assert!(steps.len() >= 40, "need the full real TS combined sequence");
+    assert_eq!(steps.len(), 54, "need the exact real TS combined sequence");
 
     let mut overrides = SessionConfigOverrides::new();
     let registry = GatewaySessionPermissionRuleSetRegistry::new();
@@ -490,7 +524,6 @@ fn real_ts_combined_overrides_and_live_rule_set_share_state() {
                 let lease = registry.acquire(&key, configured.as_ref());
                 let mut result = JsObject::new();
                 result.insert("rules".into(), lease.rules().to_value());
-                lease_labels.push(label.clone());
                 leases.insert(label, lease);
                 JsValue::Object(result)
             }
@@ -643,7 +676,7 @@ fn real_ts_permission_rules_views_keep_object_identity() {
     let oracle = oracle();
     assert_sources(&oracle);
     let steps = array(field(&oracle, "identity"), "identity");
-    assert!(steps.len() >= 55, "need the full real TS identity sequence");
+    assert_eq!(steps.len(), 61, "need the exact real TS identity sequence");
 
     let mut stores: HashMap<String, SessionConfigOverrides> = HashMap::new();
     let registry = GatewaySessionPermissionRuleSetRegistry::new();
@@ -899,6 +932,8 @@ fn real_ts_permission_rules_views_keep_object_identity() {
 fn real_ts_shared_object_graph_and_lease_mutation() {
     let oracle = oracle();
     assert_sources(&oracle);
+    let steps = array(field(&oracle, "sharing"), "sharing");
+    assert_eq!(steps.len(), 81, "need the exact real TS sharing sequence");
     let mut values: HashMap<String, SessionValue> = HashMap::new();
     let mut stores: HashMap<String, SessionConfigOverrides> = HashMap::new();
     let mut keys: HashMap<String, Vec<JsString>> = HashMap::new();
@@ -915,10 +950,7 @@ fn real_ts_shared_object_graph_and_lease_mutation() {
         }
         value
     }
-    for (index, entry) in array(field(&oracle, "sharing"), "sharing")
-        .iter()
-        .enumerate()
-    {
+    for (index, entry) in steps.iter().enumerate() {
         let step = field(entry, "step");
         let op = text(field(step, "op"));
         if let Some(name) = field(step, "name").as_string() {

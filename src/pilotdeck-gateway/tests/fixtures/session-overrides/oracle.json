@@ -5,6 +5,11 @@
     "src/gateway/permission/GatewaySessionPermissionModeRegistry.ts": "0ad34fcc5a0347dcc18dae3452d0fdb8cdfef9132e3f62849fe51232c46b9af0",
     "src/always-on/runtime/SessionConfigOverrides.ts": "a951cf48d225a7dd85cb2de8a36e6629ac43e2a9f288042ff13fb29f15f385b5"
   },
+  "unattendedSessionExcludedTools": [
+    "enter_plan_mode",
+    "exit_plan_mode",
+    "ask_user_question"
+  ],
   "ruleSet": [
     {
       "step": {
