@@ -118,6 +118,12 @@ function mask<T>(value: T, dir: string): T {
   return JSON.parse(JSON.stringify(value).split(dir).join('<dir>')) as T;
 }
 
+/** Node's mkdtemp error quotes the attempted random name, not the template. */
+function maskRestoreName(text: string): string {
+  return text.replace(/\.pilotdeck-restore-([A-Za-z0-9]{6})/g, (match, suffix: string) =>
+    suffix === 'XXXXXX' ? match : '.pilotdeck-restore-<random>');
+}
+
 async function recordTree(root: string, maskDir: string) {
   const rows: any[] = [];
   const walk = async (directory: string) => {
@@ -226,7 +232,7 @@ class Recorder {
         error: {
           name: error.name,
           ...(error.code === undefined ? {} : { code: error.code }),
-          message: String(error.message).split(this.dir).join('<dir>'),
+          message: maskRestoreName(String(error.message).split(this.dir).join('<dir>')),
         },
       };
       if (op === 'snapshotRestore') {
@@ -637,6 +643,137 @@ try {
     console.log(`unconfigured: operations=${recorder.operations.length}`);
   }
 
+  // ------------------------------------------------- restore, missing mkdtemp parent
+  {
+    const dir = join(scratch, 'restore-missing-target');
+    await mkdir(dir, { recursive: true });
+    const projectRoot = join(dir, 'project');
+    const pilotHome = join(dir, 'pilot-home');
+    const storageRoot = join(dir, 'storage');
+    const snapshotRoot = join(storageRoot, 'snapshots');
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(pilotHome, { recursive: true });
+    await mkdir(storageRoot, { recursive: true });
+    await writeFile(join(pilotHome, 'pilotdeck.yaml'), PIPELINE_YAML, 'utf8');
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      PILOTDECK_STORAGE_ROOT: storageRoot,
+      PILOTDECK_SNAPSHOT_ROOT: snapshotRoot,
+    };
+    const local = createLocalGateway({
+      projectRoot,
+      pilotHome,
+      fallbackProjectRoot: pilotHome,
+      env,
+    });
+    // The virtual General workspace is registered by construction and is
+    // resolved without a filesystem stat. Deleting pilotHome therefore leaves
+    // a registry key whose parent is missing, so the real mkdtemp fails ENOENT.
+    const workspaceId = resolveProjectStorageId(pilotHome, pilotHome);
+    const manifestDir = join(snapshotRoot, 'workspaces', workspaceId, 'sessions', 's', 'snapshots', 'id');
+    await mkdir(manifestDir, { recursive: true });
+    await writeFile(join(manifestDir, 'manifest.json'), JSON.stringify({
+      snapshotId: 'id',
+      workspaceId,
+      sessionId: 's',
+      turnId: 't',
+      runId: 'r',
+      phase: 'pre_user',
+      entries: [],
+    }, null, 2));
+    const recorder = new Recorder(dir);
+    (recorder as any).gateway = local.gateway;
+    await rm(pilotHome, { recursive: true, force: true });
+    const missing = await recorder.call('snapshotRestore', {
+      projectKey: pilotHome,
+      snapshotId: 'id',
+      targetProjectKey: pilotHome,
+    });
+    assert.equal(missing.outcome.error.name, 'Error');
+    assert.equal(missing.outcome.error.code, 'ENOENT');
+    assert.match(
+      missing.outcome.error.message,
+      /^ENOENT: no such file or directory, mkdtemp '<dir>\/pilot-home\/\.pilotdeck-restore-<random>'$/,
+      'the recorded message quotes the attempted random name, not the XXXXXX template',
+    );
+    assert.equal(missing.restoreDir, false);
+    // `workspaceId` is the slug of the per-run pilotHome, so it is not stable
+    // across runs. Mask it in both the manifest bytes and the storage paths;
+    // the Rust resolver maps the missing project key to the same placeholder.
+    const tree = await recordTree(storageRoot, dir);
+    for (const row of tree) {
+      row.path = row.path.split(workspaceId).join('<workspaceId>');
+      if (row.kind === 'file' && row.path.endsWith('manifest.json')) {
+        const bytes = Buffer.from(row.b64, 'base64').toString('utf8').split(workspaceId).join('<workspaceId>');
+        row.b64 = Buffer.from(bytes).toString('base64');
+      }
+    }
+    scenarios.push({
+      name: 'restore-missing-target',
+      tree,
+      snapshotRoot: '<dir>/storage/snapshots',
+      absoluteFile: null,
+      projects: [{ key: '<dir>/pilot-home', workspaceId: '<workspaceId>', missing: true }],
+      fallbackProjectRoot: '<dir>/pilot-home',
+      operations: recorder.operations,
+    });
+    local.dispose();
+    console.log(`restore-missing-target: operations=${recorder.operations.length}`);
+  }
+
+  // ----------------------------------- restore fails after an earlier entry wrote
+  {
+    const dir = join(scratch, 'restore-partial');
+    await mkdir(dir, { recursive: true });
+    const gateway = await makeGateway(dir, { configured: true });
+    const recorder = new Recorder(dir);
+    (recorder as any).gateway = gateway.local.gateway;
+    await mkdir(join(gateway.snapshotRoot, 'objects'), { recursive: true });
+    await writeFile(join(gateway.snapshotRoot, 'objects', 'partial.txt'), 'partial\n');
+    const manifestDir = join(gateway.snapshotRoot, 'workspaces', 'manual', 'sessions', 's', 'snapshots', 'partial');
+    await mkdir(manifestDir, { recursive: true });
+    await writeFile(join(manifestDir, 'manifest.json'), JSON.stringify({
+      snapshotId: 'partial',
+      workspaceId: gateway.mainWorkspaceId,
+      sessionId: 's',
+      turnId: 't',
+      runId: 'r',
+      phase: 'pre_user',
+      createdAt: '2025-12-28T23:59:59.000Z',
+      entries: [
+        { path: 'written.txt', entryType: 'file', size: 8, objectKey: 'objects/partial.txt' },
+        { path: '../escape.txt', entryType: 'file', size: 8, objectKey: 'objects/partial.txt' },
+      ],
+    }, null, 2));
+    const partial = await recorder.call('snapshotRestore', {
+      projectKey: gateway.projectRoot,
+      snapshotId: 'partial',
+      targetProjectKey: gateway.targetRoot,
+    });
+    assert.equal(partial.outcome.error.name, 'Error');
+    assert.equal(partial.outcome.error.message, 'Snapshot contains an unsafe relative path.');
+    assert.equal(partial.restoreDir, true, 'mkdtemp happens before the entry check');
+    assert.deepEqual(partial.targetTree!.map((row) => row.path), ['written.txt']);
+    assert.equal(
+      Buffer.from(partial.targetTree!.find((row) => row.path === 'written.txt')!.b64, 'base64').toString('utf8'),
+      'partial\n',
+    );
+    scenarios.push({
+      name: 'restore-partial',
+      tree: await recordTree(gateway.storageRoot, dir),
+      snapshotRoot: '<dir>/storage/snapshots',
+      absoluteFile: null,
+      projects: [
+        { key: '<dir>/project', workspaceId: gateway.mainWorkspaceId },
+        { key: '<dir>/target-project', workspaceId: gateway.targetWorkspaceId },
+      ],
+      fallbackProjectRoot: '<dir>/project',
+      operations: recorder.operations,
+    });
+    gateway.local.dispose();
+    console.log(`restore-partial: operations=${recorder.operations.length}`);
+  }
+
   const oracle = {
     sourceCommit: provenance.ref,
     sourceTreeSha256: provenance.sha256,
@@ -653,10 +790,17 @@ try {
   assert.ok(!text.includes(scratch), 'oracle must not contain the per-run scratch directory');
   assert.ok(!text.includes(baseline), 'oracle must not contain the baseline path');
   assert.ok(!text.includes('pdrs-a66p4-'), 'oracle must not contain the fixed scratch prefix');
-  for (const name of ['projection', 'provider-syntax', 'provider-null', 'unconfigured']) {
+  for (const name of [
+    'projection',
+    'provider-syntax',
+    'provider-null',
+    'unconfigured',
+    'restore-missing-target',
+    'restore-partial',
+  ]) {
     assert.ok(scenarios.some((scenario) => scenario.name === name), `missing scenario ${name}`);
   }
-  assert.equal(scenarios.length, 4);
+  assert.equal(scenarios.length, 6);
   assert.equal(scenarios[0].operations.length, 44, 'projection operation count is pinned');
   await mkdir(output, { recursive: true });
   await writeFile(join(output, 'oracle.json'), text);

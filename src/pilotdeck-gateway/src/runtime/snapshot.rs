@@ -16,7 +16,7 @@ use crate::storage::{
     WorkspaceSnapshotProvider,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use std::{fmt, fs, os::unix::fs::DirBuilderExt, path::Path};
+use std::{fmt, fs, os::unix::fs::DirBuilderExt};
 
 static UNDEFINED: JsValue = JsValue::Undefined;
 const MKDTEMP_TEMPLATE_SUFFIX: &str = ".pilotdeck-restore-XXXXXX";
@@ -36,6 +36,10 @@ pub struct SnapshotProjectionError {
     code: Option<String>,
     name: &'static str,
     message: JsString,
+    /// R19 host boundary: the native port cannot represent this input, so the
+    /// A8 entry must forward the whole request to the Node host instead of
+    /// treating the message as an ordinary projection error.
+    requires_host: bool,
 }
 
 impl SnapshotProjectionError {
@@ -44,6 +48,7 @@ impl SnapshotProjectionError {
             code: Some(code.to_owned()),
             name: "DialogGatewayError",
             message: JsString::from(message.into()),
+            requires_host: false,
         }
     }
     pub fn plain(name: &'static str, message: impl Into<String>) -> Self {
@@ -51,6 +56,7 @@ impl SnapshotProjectionError {
             code: None,
             name,
             message: JsString::from(message.into()),
+            requires_host: false,
         }
     }
     fn plain_code(name: &'static str, code: impl Into<String>, message: impl Into<String>) -> Self {
@@ -58,6 +64,7 @@ impl SnapshotProjectionError {
             code: Some(code.into()),
             name,
             message: JsString::from(message.into()),
+            requires_host: false,
         }
     }
     pub fn code(&self) -> Option<&str> {
@@ -68,6 +75,13 @@ impl SnapshotProjectionError {
     }
     pub fn message(&self) -> &JsString {
         &self.message
+    }
+    /// True when the native projection hit a measured host boundary (R19
+    /// collation): the A8 entry must forward the request, not surface this as a
+    /// TS-shaped error. The wire code is `JS_HOST_REQUIRED`, matching the other
+    /// host-boundary ports.
+    pub fn requires_host(&self) -> bool {
+        self.requires_host
     }
     /// Wire-shaped error used by the replay fixture and the future A8 entry.
     pub fn as_json(&self) -> JsValue {
@@ -112,8 +126,14 @@ impl From<WorkspaceSnapshotError> for SnapshotProjectionError {
                 code: Some("ERR_INVALID_ARG_VALUE".into()),
                 name: "TypeError",
                 message,
+                requires_host: false,
             },
-            WorkspaceSnapshotError::HostRequired(message) => Self::plain("Error", message),
+            WorkspaceSnapshotError::HostRequired(message) => Self {
+                code: Some("JS_HOST_REQUIRED".into()),
+                name: "Error",
+                message: JsString::from(message),
+                requires_host: true,
+            },
         }
     }
 }
@@ -216,7 +236,8 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
         let project_key = self.resolve_source_project(input)?;
         let workspace_id = self.resolver.workspace_id(&project_key);
         let snapshot_id = field(input, "snapshotId");
-        let manifest = provider.get(&string_text(snapshot_id))?;
+        let snapshot_units = id_units(snapshot_id);
+        let manifest = provider.get_units(&snapshot_units)?;
         let Some(manifest) = manifest.filter(|manifest| {
             field(manifest, "workspaceId")
                 .as_string()
@@ -235,8 +256,8 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
         let source_project = self.resolve_source_project(input)?;
         let workspace_id = self.resolver.workspace_id(&source_project);
         let snapshot_id = field(input, "snapshotId");
-        let snapshot_text = string_text(snapshot_id);
-        let manifest = provider.get(&snapshot_text)?;
+        let snapshot_units = id_units(snapshot_id);
+        let manifest = provider.get_units(&snapshot_units)?;
         if !manifest.is_some_and(|manifest| {
             field(&manifest, "workspaceId")
                 .as_string()
@@ -256,7 +277,7 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
         let RestoredSnapshot {
             restored,
             workspace_key,
-        } = provider.restore(&snapshot_text, &target_root)?;
+        } = provider.restore_units(&snapshot_units, &target_root)?;
         let mut result = JsObject::new();
         result.insert("restored".into(), JsValue::Bool(restored));
         result.insert("workspaceKey".into(), workspace_key.as_str().into());
@@ -302,6 +323,15 @@ fn string_text(value: &JsValue) -> String {
         _ => String::from_utf16_lossy(&crate::js_value::to_string_units(value).unwrap_or_default()),
     }
 }
+/// Snapshot ids are compared by JS `===`, i.e. code unit by code unit. Keep
+/// the raw units of a string instead of `from_utf16_lossy`: `"\ud800"` and
+/// `"\ufffd"` name different snapshots in TS.
+fn id_units(value: &JsValue) -> Vec<u16> {
+    match value {
+        JsValue::String(text) => text.units().to_vec(),
+        _ => string_text(value).encode_utf16().collect(),
+    }
+}
 fn truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
@@ -338,15 +368,20 @@ fn snapshot_not_found(snapshot_id: &JsValue) -> SnapshotProjectionError {
         code: Some("SNAPSHOT_NOT_FOUND".into()),
         name: "DialogGatewayError",
         message: JsString::from_utf16(units),
+        requires_host: false,
     }
 }
 /// `await mkdtemp(joinPath(targetProject, ".pilotdeck-restore-"))`
-/// (createLocalGateway.ts:1311). Node/libuv replaces the six `X` characters
-/// with `[A-Za-z0-9]` and creates the directory with mode 0700; the error text
-/// quotes the template, so a missing parent keeps the `XXXXXX` suffix.
+/// (createLocalGateway.ts:1311). `joinPath` is Node's `path.join`, which
+/// normalizes lexically (`.`, `..`, duplicate separators) before the syscall.
+/// A plain `Path::join` would leave `..` for the OS: when a segment is a
+/// symlink, `link/..` resolves through the link target and creates the
+/// directory somewhere other than `path.join` would. Node/libuv then replaces
+/// the six `X` characters with `[A-Za-z0-9]` and creates the directory with
+/// mode 0700. On failure Node quotes the attempted random candidate, not the
+/// `XXXXXX` template; the replay masks that suffix as `<random>`.
 fn make_temp_restore_dir(target_project: &str) -> Result<String, SnapshotProjectionError> {
-    let template_path = Path::new(target_project).join(MKDTEMP_TEMPLATE_SUFFIX);
-    let template = template_path.to_string_lossy().into_owned();
+    let template = join_path(target_project, MKDTEMP_TEMPLATE_SUFFIX);
     for _ in 0..10 {
         let candidate = replace_suffix(&template, &random_suffix());
         match fs::DirBuilder::new().mode(0o700).create(&candidate) {
@@ -354,7 +389,7 @@ fn make_temp_restore_dir(target_project: &str) -> Result<String, SnapshotProject
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(
-                    match crate::node_io::diagnostic(&error, "mkdtemp", Some(&template)) {
+                    match crate::node_io::diagnostic(&error, "mkdtemp", Some(&candidate)) {
                         Some((code, message)) => {
                             SnapshotProjectionError::plain_code("Error", code, message)
                         }
@@ -369,6 +404,43 @@ fn make_temp_restore_dir(target_project: &str) -> Result<String, SnapshotProject
         "EEXIST",
         format!("EEXIST: file already exists, mkdtemp '{template}'"),
     ))
+}
+/// Node `path.join(left, right)` for POSIX. A later absolute-looking argument
+/// is nested, not reset; `..` pops the previous lexical segment (and is kept
+/// at the start of a relative path). This mirrors `path.posix.join` for the
+/// registry-returned project paths, which are not guaranteed to be normalized.
+fn join_path(left: &str, right: &str) -> String {
+    let mut combined = String::with_capacity(left.len() + right.len() + 1);
+    combined.push_str(left);
+    if !combined.is_empty() && !combined.ends_with('/') {
+        combined.push('/');
+    }
+    combined.push_str(right);
+    let absolute = combined.starts_with('/');
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in combined.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if segments.last().is_some_and(|last| *last != "..") {
+                    segments.pop();
+                } else if !absolute {
+                    segments.push("..");
+                }
+            }
+            segment => segments.push(segment),
+        }
+    }
+    let mut output = String::with_capacity(combined.len());
+    if absolute {
+        output.push('/');
+    }
+    output.push_str(&segments.join("/"));
+    if output.is_empty() {
+        ".".into()
+    } else {
+        output
+    }
 }
 fn replace_suffix(template: &str, suffix: &str) -> String {
     let start = template.len() - 6;

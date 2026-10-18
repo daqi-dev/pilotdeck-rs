@@ -37,14 +37,21 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 4. 另三个场景：`provider-syntax`（坏 JSON → `SyntaxError`）、`provider-null`
    （manifest `null` → `TypeError`）、`unconfigured`（无 provider →
    `CAPABILITY_UNAVAILABLE`，且先于 project 解析）。
+5. `restore-missing-target`：登记一个 registry 认识、磁盘上已被删除的 General
+   workspace target，用真实 gateway 调 `snapshotRestore`，把 Node `mkdtemp` 的
+   `ENOENT` 原文（含实际随机名）录进 oracle。`workspaceId` 与 storage 路径里的
+   每次运行 slug 掩成 `<workspaceId>`，随机名掩成 `<random>`。
+6. `restore-partial`：一个条目的 manifest 先写 `written.txt`，后一个条目的
+   `../` 路径才失败；记录恢复目录里已写的文件、失败错误和 `restoreDir=true`，
+   让回放同时验证失败分支的 `targetTree` 与 0700。
 
 固定进程时钟（`2026-01-01T00:00:00Z`，`tick` 每次 +1 ms）让 recorder 的
 `createdAt` 跨运行不变。`mkdtemp` 的随机后缀不固定：`snapshotRestore` 的
-`workspaceKey` 与目标树分别投影成 `<restore>` 和“相对 restore 目录的树”。
-运行目录统一掩成 `<dir>`；`escape-object` 的绝对 `objectKey` 是唯一需要把
-`<dir>` 写进 manifest 字节的值，回放时再替换回本次 scratch。写 `oracle.json`
-前断言它不含本次 scratch、固定 `/tmp/pdrs-a66p4-*` 或基线路径。生成器连跑两次
-`oracle.json` 逐字节一致。
+`workspaceKey` 与目标树分别投影成 `<restore>` 和“相对 restore 目录的树”；
+失败错误里的实际随机名投影成 `<random>`。运行目录统一掩成 `<dir>`；
+`escape-object` 的绝对 `objectKey` 是唯一需要把 `<dir>` 写进 manifest 字节的值，
+回放时再替换回本次 scratch。写 `oracle.json` 前断言它不含本次 scratch、固定
+`/tmp/pdrs-a66p4-*` 或基线路径。生成器连跑两次 `oracle.json` 逐字节一致。
 
 ## 删除归属
 
@@ -68,20 +75,25 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 ## Rust 回放
 
 `tests/snapshot_projection.rs` 先 materialize 记录树，再用
-`runtime::snapshot::SnapshotProjection` 重放 53 个操作：
+`runtime::snapshot::SnapshotProjection` 重放 55 个操作：
 
-- 精确钉住 4 个场景名、每场景操作数 `44/3/3/3`、树行数 `60/8/8/0`，空/缩水
-  oracle 直接失败（#293 的零场景类 P2）。
-- 逐操作比较成功值或 `{name, code, message}`；恢复成功再比较相对 restore 目录的
-  完整树，并断言 mkdtemp 目录 mode 为 `0700`。
+- 精确钉住 6 个场景名、每场景操作数 `44/3/3/3/1/1`、树行数
+  `60/8/8/0/8/10`，空/缩水 oracle 直接失败（#293 的零场景类 P2）。
+- 逐操作比较成功值或 `{name, code, message}`；restore（成功和失败）都再比较相对
+  restore 目录的完整树，并断言 mkdtemp 目录 mode 为 `0700`。失败树尤其覆盖
+  “前面条目已写、后面条目才失败”的 `restore-partial`。
+- `restore-missing-target` 的 `ENOENT` 文案来自真实 TS/Node，不再手写；`<random>`
+  在回放侧按实际随机后缀掩码。
 - project 解析与 `resolveProjectStorageId` 是注入依赖（对应 A6.3 的项目 registry
   与 paths 尚未移植）；resolver 的 `PROJECT_NOT_FOUND` 文本与 TS 相同。
 - 回放之外另有单测覆盖 gateway 入口挡住的投影分支：省略 `projectKey` 走
-  `fallbackProjectRoot`、空 `sessionKey` 不过滤、provider 缺失先于 project 解析。
+  `fallbackProjectRoot`、空 `sessionKey` 不过滤、provider 缺失先于 project 解析；
+  以及孤立代理项 snapshotId 的原始 UTF-16 比较、mkdtemp 前的 `path.join` 词法
+  规范化、`HostRequired` 的 `JS_HOST_REQUIRED` 分流标记。
 
 ```sh
 cd src
-cargo test -p pilotdeck-gateway --locked --offline snapshot_projection
+cargo test -p pilotdeck-gateway --locked --offline --test snapshot_projection
 ```
 
 范围：只证明投影（过滤、排序、分页/cursor、limit、ownership、错误、restore
