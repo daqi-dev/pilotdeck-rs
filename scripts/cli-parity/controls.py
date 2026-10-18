@@ -8,7 +8,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import output_path, save, snapshot
+from common import output_path, read_plain, save, snapshot
 from compare import compare, plain
 
 
@@ -38,13 +38,13 @@ def run_controls(source, output):
             data = b'' if name == 'drop-stdout' else b'INJECTED STDERR\n'
             (case / f'{surface}.bin').write_bytes(data)
             # Keep event/raw coherence so semantic comparison, not stale cache, catches it.
-            events = json.loads((case / 'events.json').read_text())
+            events = json.loads(read_plain(case / 'events.json'))
             events = [row for row in events if row['stream'] != surface]
             if data:
                 events.append({'stream': surface, 'hex': data.hex()})
             save(case / 'events.json', events)
         elif surface == 'exit':
-            record = json.loads((case / 'record.json').read_text())
+            record = json.loads(read_plain(case / 'record.json'))
             record['exitCode'] = 73
             save(case / 'record.json', record)
         else:
