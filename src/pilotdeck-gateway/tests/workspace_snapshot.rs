@@ -26,7 +26,7 @@ use std::{
     ffi::OsString,
     fs,
     os::unix::{ffi::OsStringExt, fs::symlink},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -50,6 +50,13 @@ fn oracle() -> JsValue {
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
+    // Every scenario path is a per-run mkdtemp directory masked as `<dir>`.
+    for fixed in ["/tmp/pdrs-r9-", "/tmp/ws-snapshot-scenario", "/tmp/pdrs-"] {
+        assert!(
+            !text.contains(fixed),
+            "oracle.json keeps a fixed absolute path: {fixed}"
+        );
+    }
     parse_json(&text).unwrap()
 }
 
@@ -57,29 +64,31 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let raw = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../_tmp/20261018-a66-pr3/test-scratch")
-            .join(format!(
-                "{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-        // Lexically normalized (no `..`): the recorder resolves the snapshot
-        // root and workspace dir like Node's path.resolve, and the replay's
-        // masked-path comparisons assume the scenario directory is already in
-        // resolved form.
-        let mut dir = PathBuf::new();
-        for component in raw.components() {
-            match component {
-                Component::ParentDir => {
-                    dir.pop();
-                }
-                Component::CurDir => {}
-                other => dir.push(other.as_os_str()),
+        // mkdtemp semantics under the short /tmp prefix: create_dir is
+        // exclusive, so the directory this guard recursively removes on Drop
+        // is proven to be the one we made. The short path also keeps Node's
+        // ERR_INVALID_ARG_VALUE quoting (128 UTF-16 units) identical to the
+        // generator's masked `<dir>` text.
+        let base = PathBuf::from("/tmp");
+        fs::create_dir_all(&base).unwrap();
+        loop {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos();
+            let token = u64::from(nanos)
+                ^ (u64::from(std::process::id()) << 20)
+                ^ (NEXT.fetch_add(1, Ordering::Relaxed) as u64).wrapping_mul(0x9e37_79b9);
+            let token = format!("{token:06x}");
+            // Same 20-character shape as Node's `/tmp/pdrs-r10-` mkdtemp, so
+            // the masked `<dir>` path and Node's 128-unit quote limit agree.
+            let dir = base.join(format!("pdrs-r10-{}", &token[token.len() - 6..]));
+            match fs::create_dir(&dir) {
+                Ok(()) => return Self(dir),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create scratch {}: {error}", dir.display()),
             }
         }
-        fs::create_dir_all(&dir).unwrap();
-        Self(dir)
     }
 }
 impl Drop for Scratch {
@@ -370,8 +379,11 @@ fn result_json(
     }
     JsValue::Object(out)
 }
-fn thrown_json(error: &WorkspaceSnapshotError, mask: &dyn Fn(&str) -> String) -> JsValue {
-    let message = mask(&error.to_string());
+fn thrown_json(
+    error: &WorkspaceSnapshotError,
+    mask: &dyn Fn(&str) -> String,
+    dir: &str,
+) -> JsValue {
     let name = match error {
         WorkspaceSnapshotError::Syntax(_) => "SyntaxError",
         WorkspaceSnapshotError::TypeError(_) => "TypeError",
@@ -382,12 +394,15 @@ fn thrown_json(error: &WorkspaceSnapshotError, mask: &dyn Fn(&str) -> String) ->
         }
         _ => "Error",
     };
+    // A validatePath message quotes the raw argument: mask the run directory
+    // without decoding, or a lone surrogate next to the NUL turns into U+FFFD.
+    let message = match error {
+        WorkspaceSnapshotError::TypeError(message) => JsValue::String(mask_js_string(message, dir)),
+        _ => JsValue::from(mask(&error.to_string()).as_str()),
+    };
     object(&[(
         "error",
-        object(&[
-            ("name", JsValue::from(name)),
-            ("message", JsValue::from(message.as_str())),
-        ]),
+        object(&[("name", JsValue::from(name)), ("message", message)]),
     )])
 }
 /// The list outcome records descriptors with manifestPath relative to the
@@ -479,8 +494,36 @@ fn snapshot_path(step: &JsValue, root: &Path, marker_dirs: &HashMap<String, Stri
 #[test]
 fn scenarios_match_ts_outcomes_and_trees() {
     let oracle = oracle();
+    // Negative control for the fixture's fixed-path P0: pre-place sentinels
+    // under the old fixed names in a per-run directory. Nothing the replay
+    // writes or removes may touch them, because every run owns only its own
+    // mkdtemp tree.
+    let guard = Scratch::new();
+    let sentinels: Vec<PathBuf> = [
+        "pdrs-r9-linkout",
+        "pdrs-r9-path",
+        "pdrs-r9-target",
+        "ws-snapshot-scenario",
+    ]
+    .into_iter()
+    .map(|name| {
+        let dir = guard.0.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        let sentinel = dir.join("sentinel");
+        fs::write(&sentinel, b"keep\n").unwrap();
+        sentinel
+    })
+    .collect();
     for scenario in arr(field(&oracle, "scenarios")) {
         replay_scenario(scenario);
+    }
+    for sentinel in &sentinels {
+        assert_eq!(
+            fs::read(sentinel).unwrap(),
+            b"keep\n",
+            "run removed an unowned sentinel {}",
+            sentinel.display()
+        );
     }
 }
 
@@ -675,7 +718,7 @@ fn replay_scenario(scenario: &JsValue) {
                     .map(|number| number as usize)
                     .unwrap_or(recorders.len() - 1);
                 let captured = if field(step, "snapshotRoot").as_string().is_some() {
-                    let root = s(field(step, "snapshotRoot"));
+                    let root = s(field(step, "snapshotRoot")).replace("<dir>", &dir_text);
                     let config = WorkspaceSnapshotConfig {
                         root: root.clone(),
                         snapshot_root: root,
@@ -706,7 +749,7 @@ fn replay_scenario(scenario: &JsValue) {
                         }
                         result_json(&result, &mask, &dir_text)
                     }
-                    Err(error) => thrown_json(&error, &mask),
+                    Err(error) => thrown_json(&error, &mask, &dir_text),
                 });
             }
             "list" => {
@@ -718,7 +761,7 @@ fn replay_scenario(scenario: &JsValue) {
                                 .map(|descriptor| descriptor_json(descriptor, &root))
                                 .collect(),
                         ),
-                        Err(error) => thrown_json(&error, &mask),
+                        Err(error) => thrown_json(&error, &mask, &dir_text),
                     },
                 );
             }
@@ -728,7 +771,7 @@ fn replay_scenario(scenario: &JsValue) {
                     match create_workspace_snapshot_provider(config.clone()).get(&snapshot_id) {
                         Ok(Some(value)) => object(&[("value", value.clone())]),
                         Ok(None) => object(&[("value", JsValue::Null)]),
-                        Err(error) => thrown_json(&error, &mask),
+                        Err(error) => thrown_json(&error, &mask, &dir_text),
                     },
                 );
             }
@@ -746,7 +789,7 @@ fn replay_scenario(scenario: &JsValue) {
                                 JsValue::from(mask(&restored.workspace_key).as_str()),
                             ),
                         ]),
-                        Err(error) => thrown_json(&error, &mask),
+                        Err(error) => thrown_json(&error, &mask, &dir_text),
                     },
                 );
                 target_tree = Some(record_tree(&target, &dir_text, &HashSet::new()));
@@ -994,7 +1037,11 @@ fn real_ts_verifies_rust_written_snapshots() {
 /// the recorder did not write is never projected.
 #[test]
 fn tree_projection_only_masks_runtime_created_at() {
-    let dir = "/tmp/ws-snapshot-scenario";
+    // Per-run directory text: the projection rule replaces exactly the path it
+    // is given, so a fixed /tmp prefix would test a different string than the
+    // one the replay uses.
+    let scratch = Scratch::new();
+    let dir = scratch.0.to_string_lossy().into_owned();
     let dynamic: HashSet<String> = HashSet::from(["abc".to_string()]);
     let manifest = concat!(
         "{\n",
@@ -1010,7 +1057,7 @@ fn tree_projection_only_masks_runtime_created_at() {
         "}"
     );
     let rel = "workspaces/w/sessions/s/snapshots/abc/manifest.json";
-    let projected = tree_bytes(rel, manifest.as_bytes(), dir, &dynamic);
+    let projected = tree_bytes(rel, manifest.as_bytes(), &dir, &dynamic);
     let text = std::str::from_utf8(&projected).unwrap();
     assert!(text.contains("\"createdAt\": \"<ts>\""));
     for date in [
@@ -1022,20 +1069,23 @@ fn tree_projection_only_masks_runtime_created_at() {
     }
     let hand_planted = rel.replace("/abc/", "/manual/");
     assert_eq!(
-        tree_bytes(&hand_planted, manifest.as_bytes(), dir, &dynamic).as_ref(),
+        tree_bytes(&hand_planted, manifest.as_bytes(), &dir, &dynamic).as_ref(),
         manifest.as_bytes()
     );
 
-    let marker = concat!(
-        "{\n",
-        "  \"failureReason\": \"/tmp/ws-snapshot-scenario/keep\",\n",
-        "  \"error\": \"ENOENT: no such file or directory, scandir '/tmp/ws-snapshot-scenario/x'\",\n",
-        "  \"createdAt\": \"2026-01-01T00:00:00.000Z\"\n",
-        "}"
+    let marker = format!(
+        concat!(
+            "{{\n",
+            "  \"failureReason\": \"{dir}/keep\",\n",
+            "  \"error\": \"ENOENT: no such file or directory, scandir '{dir}/x'\",\n",
+            "  \"createdAt\": \"2026-01-01T00:00:00.000Z\"\n",
+            "}}"
+        ),
+        dir = dir
     );
     let marker_rel = "workspaces/w/sessions/s/snapshots/abc/_FAILED.json";
-    let projected = tree_bytes(marker_rel, marker.as_bytes(), dir, &dynamic);
+    let projected = tree_bytes(marker_rel, marker.as_bytes(), &dir, &dynamic);
     let text = std::str::from_utf8(&projected).unwrap();
-    assert!(text.contains("\"failureReason\": \"/tmp/ws-snapshot-scenario/keep\""));
+    assert!(text.contains(&format!("\"failureReason\": \"{dir}/keep\"")));
     assert!(text.contains("scandir '<dir>/x'"));
 }

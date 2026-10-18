@@ -2924,14 +2924,14 @@
             "sessionId": "s",
             "turnId": "t",
             "runId": "r",
-            "workspaceDir": "/nul\u0000"
+            "workspaceDir": "<dir>/nul-workspace\u0000"
           },
           "outcome": {
             "snapshotId": "884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225",
             "phase": "pre_user",
             "state": "failed",
             "failureMarkerPath": "<dir>/snapshots/workspaces/w/sessions/s/snapshots/884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225/_FAILED.json",
-            "error": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/nul\\x00'"
+            "error": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/nul-workspace\\x00'"
           }
         }
       ],
@@ -2966,8 +2966,8 @@
         {
           "path": "workspaces/w/sessions/s/snapshots/884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225/_FAILED.json",
           "kind": "file",
-          "size": 340,
-          "sha256": "8ebe729eb7b633cb24fcb536b417dc46bac7a612c45fc824f6f5e9a1324cf6a9"
+          "size": 355,
+          "sha256": "fe1dbc36e23e5a19e81d7c120191d2be130153672f2b0bd014d61ae8afe42cd9"
         }
       ]
     },
@@ -3157,11 +3157,11 @@
         {
           "op": "restore",
           "snapshotId": "2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4",
-          "target": "/tmp/pdrs-r9-target\u0000root",
+          "target": "<dir>/nul-target\u0000root",
           "outcome": {
             "error": {
               "name": "TypeError",
-              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-target\\x00root'"
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/nul-target\\x00root'"
             }
           }
         }
@@ -3243,7 +3243,7 @@
         {
           "op": "writeSnapshot",
           "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object/manifest.json",
-          "text": "{\n  \"snapshotId\": \"nul-object\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"out.txt\",\n      \"entryType\": \"file\",\n      \"objectKey\": \"/nul\\u0000object\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+          "text": "{\n  \"snapshotId\": \"nul-object\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"out.txt\",\n      \"entryType\": \"file\",\n      \"objectKey\": \"nul-object\\u0000key\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
         },
         {
           "op": "restore",
@@ -3252,7 +3252,7 @@
           "outcome": {
             "error": {
               "name": "TypeError",
-              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/nul\\x00object'"
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/snapshots/nul-object\\x00key'"
             }
           }
         }
@@ -3286,8 +3286,8 @@
         {
           "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object/manifest.json",
           "kind": "file",
-          "size": 295,
-          "sha256": "388a6501570c70f17137907d6f62fd068a4a30fb7be65f0c661296af41ca6f82"
+          "size": 298,
+          "sha256": "62ac0059231a9a18ab9eb6dab0d0391935c16a7f46afba71ea2ab5b429b758af"
         }
       ]
     },
@@ -3370,18 +3370,13 @@
         {
           "op": "restore",
           "snapshotId": "nul-link-out",
-          "target": "/tmp/pdrs-r9-linkout",
+          "target": "<dir>/nul-linkout",
           "outcome": {
             "error": {
               "name": "TypeError",
-              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-linkout/a\\x00b'"
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/nul-linkout/a\\x00b'"
             }
           }
-        },
-        {
-          "op": "remove",
-          "path": "/tmp/pdrs-r9-linkout",
-          "recursive": true
         }
       ],
       "dynamicIds": [],
@@ -3441,18 +3436,13 @@
         {
           "op": "restore",
           "snapshotId": "nul-path",
-          "target": "/tmp/pdrs-r9-path",
+          "target": "<dir>/nul-path",
           "outcome": {
             "error": {
               "name": "TypeError",
-              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-path/a\\x00b.txt'"
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/nul-path/a\\x00b.txt'"
             }
           }
-        },
-        {
-          "op": "remove",
-          "path": "/tmp/pdrs-r9-path",
-          "recursive": true
         }
       ],
       "dynamicIds": [],
@@ -3512,6 +3502,357 @@
       ]
     },
     {
+      "name": "nul-restore-link-existing",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeFile",
+          "path": "restore-link-existing/link",
+          "b64": "b2xkIGZpbGUK"
+        },
+        {
+          "op": "writeFile",
+          "path": "restore-link-existing/sentinel",
+          "b64": "a2VlcAo="
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-existing/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-link-existing\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"link\",\n      \"entryType\": \"symlink\",\n      \"linkTarget\": \"tar\\u0000get\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-link-existing",
+          "target": "restore-link-existing",
+          "targetTreeOnError": true,
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'target' must be a string, Uint8Array, or URL without null bytes. Received 'tar\\x00get'"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "sentinel",
+              "kind": "file",
+              "size": 5,
+              "sha256": "f660a7996deacfbc7560e4240054a8ad82eb02fe25a95064257e07084bcacb85"
+            }
+          ]
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-existing",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-existing/manifest.json",
+          "kind": "file",
+          "size": 299,
+          "sha256": "b79bb33196238075d54961f6430512cba2d1ad9a0cfd78b6d5384f03383b8439"
+        }
+      ]
+    },
+    {
+      "name": "nul-link-target-surrogate",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-surrogate/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-link-surrogate\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"link\",\n      \"entryType\": \"symlink\",\n      \"linkTarget\": \"tar\\ud800\\u0000get\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-link-surrogate",
+          "target": "restore-link-surrogate",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'target' must be a string, Uint8Array, or URL without null bytes. Received 'tar\\ud800\\x00get'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-surrogate",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-surrogate/manifest.json",
+          "kind": "file",
+          "size": 306,
+          "sha256": "8cbb3f430d2fa91033b23e5f142ebd980a86d0269ca633a360a54098e34b1572"
+        }
+      ]
+    },
+    {
+      "name": "nul-output-surrogate",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-output-surrogate/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-output-surrogate\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"a\\ud800\\u0000b\",\n      \"entryType\": \"symlink\",\n      \"linkTarget\": \"ok-target\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-output-surrogate",
+          "target": "restore-output-surrogate",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/restore-output-surrogate/a\\ud800\\x00b'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-output-surrogate",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-output-surrogate/manifest.json",
+          "kind": "file",
+          "size": 309,
+          "sha256": "cda3060ae39f2ad9f2725db590241f0e3263a7efb5981b337804934a9d7fdb72"
+        }
+      ]
+    },
+    {
+      "name": "nul-object-surrogate",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object-surrogate/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-object-surrogate\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"out.txt\",\n      \"entryType\": \"file\",\n      \"objectKey\": \"obj\\ud800\\u0000key\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-object-surrogate",
+          "target": "restore-object-surrogate",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/snapshots/obj\\ud800\\x00key'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object-surrogate",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object-surrogate/manifest.json",
+          "kind": "file",
+          "size": 307,
+          "sha256": "416cc9a2a84f71e31085aa34565b2cd481042a9c8e197a6103abb00847453ca0"
+        }
+      ]
+    },
+    {
+      "name": "nul-file-output-surrogate",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "objects/sha256/00/00/nul-file-surrogate-object",
+          "text": "ok\n"
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-file-surrogate/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-file-surrogate\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"a\\ud800\\u0000b.txt\",\n      \"entryType\": \"file\",\n      \"objectKey\": \"objects/sha256/00/00/nul-file-surrogate-object\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-file-surrogate",
+          "target": "restore-file-surrogate",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/restore-file-surrogate/a\\ud800\\x00b.txt'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "objects",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/00",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/00/00",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/00/00/nul-file-surrogate-object",
+          "kind": "file",
+          "size": 3,
+          "sha256": "dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22"
+        },
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-file-surrogate",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-file-surrogate/manifest.json",
+          "kind": "file",
+          "size": 344,
+          "sha256": "677ec7e90bd110019595ec4100bb5e5b7abe0849627eaa5e0db47b2e8a0d36a7"
+        }
+      ]
+    },
+    {
       "name": "nul-capture-root",
       "snapshotRoot": "<dir>/snapshots",
       "workspace": {
@@ -3531,19 +3872,19 @@
         },
         {
           "op": "capture",
-          "snapshotRoot": "/nul\u0000root",
+          "snapshotRoot": "<dir>/\u0000r",
           "phase": "pre_user",
           "input": {
             "workspaceId": "w",
-            "sessionId": "s-nul-root",
-            "turnId": "t-nul-root",
+            "sessionId": "s",
+            "turnId": "t",
             "runId": "r",
             "workspaceDir": "<dir>/workspace"
           },
           "outcome": {
             "error": {
               "name": "TypeError",
-              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/nul\\x00root/workspaces/w/sessions/s-nul-root/snapshots/3b6a8040ed344f95614a8833b151240b05f59320437a0132557ccdf659c7a26d'"
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/\\x00r/workspaces/w/sessions/s/snapshots/884f9881fde6689c036f9d911d1224826e8fb0cf4b55968d2848414853285225'"
             }
           }
         }
