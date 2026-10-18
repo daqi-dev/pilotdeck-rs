@@ -109,7 +109,11 @@ impl ToolDefinition for FakeTool {
         &self.fields
     }
     fn is_read_only(&self, _: &JsValue) -> Result<JsValue, HostError> {
-        Ok(JsValue::Bool(true))
+        Ok(self
+            .spec
+            .get("readOnly")
+            .cloned()
+            .unwrap_or(JsValue::Bool(true)))
     }
     fn is_concurrency_safe(&self, input: &JsValue) -> Result<JsValue, HostError> {
         if field(&self.spec, "predicateError") == &JsValue::Bool(true) {
@@ -410,17 +414,115 @@ fn calls(values: &JsValue) -> Vec<ToolCall> {
         .collect()
 }
 
+struct Replay {
+    result: Result<Vec<JsObject>, HostError>,
+    events: Vec<JsValue>,
+    settled_at: f64,
+    live: usize,
+}
+/// Run one recorded scenario through the Rust runtime on a paused clock.
+async fn replay(oracle: &JsValue, spec: &JsValue, signal: Signal) -> Replay {
+    let probe = Probe::new();
+    let cancel = signal;
+    if field(spec, "preCancel") == &JsValue::Bool(true) {
+        cancel.cancel();
+    }
+    let cancel_task = field(spec, "cancelAt").as_number().map(|at| {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs_f64(at / 1000.0)).await;
+            cancel.cancel();
+        })
+    });
+    let registry = ToolRegistry::default();
+    for def in array(
+        spec.get("definitions")
+            .unwrap_or(field(oracle, "definitions")),
+    ) {
+        register(&registry, def, &probe);
+    }
+    if let JsValue::Array(hidden) = field(spec, "hidden") {
+        for name in hidden {
+            registry.hide(name.as_string().unwrap());
+        }
+    }
+    if let JsValue::Array(unavailable) = field(spec, "unavailable") {
+        for v in unavailable {
+            registry
+                .mark_unavailable(
+                    UnavailableTool {
+                        name: field(v, "toolName").as_string().unwrap().clone(),
+                        code: field(v, "code").as_string().unwrap().clone(),
+                        reason: field(v, "reason").as_string().unwrap().clone(),
+                    },
+                    &array(field(v, "aliases"))
+                        .iter()
+                        .map(|v| v.as_string().unwrap().clone())
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+        }
+    }
+    let mode = if field(spec, "mode")
+        .as_string()
+        .is_some_and(|s| s.equals_str("sequential"))
+    {
+        SchedulerMode::Sequential
+    } else {
+        SchedulerMode::Concurrent
+    };
+    let runtime = ToolRuntime::new(registry, Arc::new(Permission), mode);
+    let mut execution = JsObject::new();
+    if let Some(ms) = field(spec, "deadline").as_number() {
+        execution.insert(
+            "operationDeadline".into(),
+            value(pilotdeck_transport::system_clock::format_epoch_iso(
+                (EPOCH + ms) as i64,
+            )),
+        );
+    }
+    let result = runtime
+        .execute_all(
+            calls(field(spec, "calls")),
+            ToolInvocationContext {
+                runtime: context_with(&probe, &cancel, field(spec, "context").as_object()),
+                execution: Arc::new(ExecutionContext {
+                    fields: execution,
+                    abort_signal: None,
+                }),
+            },
+        )
+        .await;
+    let settled_at = probe.ms();
+    if let Some(task) = cancel_task {
+        task.await.unwrap();
+    }
+    let events = probe.events.lock().unwrap().clone();
+    Replay {
+        result,
+        events,
+        settled_at,
+        live: probe.live.load(Ordering::SeqCst),
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 61);
-    for (spec, signal) in scenarios.iter().flat_map(|spec| {
-        [
-            (spec, Signal::Tool(ToolCancellation::default())),
-            (spec, Signal::Host(Cancellation::default())),
-        ]
-    }) {
+    assert_eq!(scenarios.len(), 64);
+    // Scenarios flagged rustSerializesNonReadOnly pin a deliberate deviation
+    // and are asserted explicitly in non_readonly_safe_tools_run_sequentially.
+    for (spec, signal) in scenarios
+        .iter()
+        .filter(|spec| field(spec, "rustSerializesNonReadOnly").is_undefined())
+        .flat_map(|spec| {
+            [
+                (spec, Signal::Tool(ToolCancellation::default())),
+                (spec, Signal::Host(Cancellation::default())),
+            ]
+        })
+    {
         let label = format!(
             "{} ({})",
             text(field(spec, "name")),
@@ -429,78 +531,12 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
                 Signal::Host(_) => "host Cancellation",
             }
         );
-        let probe = Probe::new();
-        let cancel = signal;
-        if field(spec, "preCancel") == &JsValue::Bool(true) {
-            cancel.cancel();
-        }
-        let cancel_task = field(spec, "cancelAt").as_number().map(|at| {
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs_f64(at / 1000.0)).await;
-                cancel.cancel();
-            })
-        });
-        let registry = ToolRegistry::default();
-        for def in array(
-            spec.get("definitions")
-                .unwrap_or(field(&oracle, "definitions")),
-        ) {
-            register(&registry, def, &probe);
-        }
-        if let JsValue::Array(hidden) = field(spec, "hidden") {
-            for name in hidden {
-                registry.hide(name.as_string().unwrap());
-            }
-        }
-        if let JsValue::Array(unavailable) = field(spec, "unavailable") {
-            for v in unavailable {
-                registry
-                    .mark_unavailable(
-                        UnavailableTool {
-                            name: field(v, "toolName").as_string().unwrap().clone(),
-                            code: field(v, "code").as_string().unwrap().clone(),
-                            reason: field(v, "reason").as_string().unwrap().clone(),
-                        },
-                        &array(field(v, "aliases"))
-                            .iter()
-                            .map(|v| v.as_string().unwrap().clone())
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap();
-            }
-        }
-        let mode = if field(spec, "mode")
-            .as_string()
-            .is_some_and(|s| s.equals_str("sequential"))
-        {
-            SchedulerMode::Sequential
-        } else {
-            SchedulerMode::Concurrent
-        };
-        let runtime = ToolRuntime::new(registry, Arc::new(Permission), mode);
-        let mut execution = JsObject::new();
-        if let Some(ms) = field(spec, "deadline").as_number() {
-            execution.insert(
-                "operationDeadline".into(),
-                value(pilotdeck_transport::system_clock::format_epoch_iso(
-                    (EPOCH + ms) as i64,
-                )),
-            );
-        }
-        let result = runtime
-            .execute_all(
-                calls(field(spec, "calls")),
-                ToolInvocationContext {
-                    runtime: context_with(&probe, &cancel, field(spec, "context").as_object()),
-                    execution: Arc::new(ExecutionContext {
-                        fields: execution,
-                        abort_signal: None,
-                    }),
-                },
-            )
-            .await;
-        let settled_at = probe.ms();
+        let Replay {
+            result,
+            events,
+            settled_at,
+            live,
+        } = replay(&oracle, spec, signal).await;
         match result {
             Ok(_) if !field(spec, "error").is_undefined() => panic!(
                 "{label}: TS rejected with {:?}, Rust resolved",
@@ -532,18 +568,106 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
             expected.retain(|e| array(e)[2].as_number().unwrap() <= ts_settled);
         }
         equal(
-            &JsValue::Array(probe.events.lock().unwrap().clone()),
+            &JsValue::Array(events),
             &JsValue::Array(expected),
             &format!("{label} events"),
         );
+        assert_eq!(live, 0, "{label}: leaked tool future");
+    }
+}
+
+fn strip_times(results: &JsValue) -> JsValue {
+    JsValue::Array(
+        array(results)
+            .iter()
+            .map(|r| {
+                let mut r = r.as_object().unwrap().clone();
+                r.insert("startedAt".into(), JsValue::Undefined);
+                r.insert("completedAt".into(), JsValue::Undefined);
+                JsValue::Object(r)
+            })
+            .collect(),
+    )
+}
+fn events(json: &str) -> JsValue {
+    parse_json(json).unwrap()
+}
+/// Deliberate deviation (fixtures/tool-runtime/README.md): a concurrencySafe
+/// tool that is not read-only (TS agent.ts:166-167) runs concurrently in TS
+/// but in the sequential phase here, so a concurrent error never drops it.
+#[tokio::test(start_paused = true)]
+async fn non_readonly_safe_tools_run_sequentially() {
+    let oracle = baseline::oracle(ORACLE);
+    let flagged: Vec<_> = array(field(&oracle, "scenarios"))
+        .iter()
+        .filter(|s| field(s, "rustSerializesNonReadOnly") == &JsValue::Bool(true))
+        .collect();
+    assert_eq!(flagged.len(), 2);
+    for signal in [
+        Signal::Tool(ToolCancellation::default()),
+        Signal::Host(Cancellation::default()),
+    ] {
+        // 1. No error: same results apart from timing; TS starts all four at
+        // t=0, Rust runs the read-only pair first, then each agent call.
+        let spec = flagged[0];
         assert_eq!(
-            probe.live.load(Ordering::SeqCst),
-            0,
-            "{label}: leaked tool future"
+            text(field(spec, "name")),
+            "non-readonly-safe-tools-run-concurrently-in-ts"
         );
-        if let Some(task) = cancel_task {
-            task.await.unwrap();
-        }
+        let ts_starts: Vec<_> = array(field(spec, "events"))
+            .iter()
+            .filter(|e| text(&array(e)[0]) == "start")
+            .map(|e| array(e)[2].as_number().unwrap())
+            .collect();
+        assert_eq!(ts_starts, [0.0; 4], "TS runs the agent calls concurrently");
+        let run = replay(&oracle, spec, signal.clone()).await;
+        let results = JsValue::Array(
+            run.result
+                .unwrap()
+                .into_iter()
+                .map(JsValue::Object)
+                .collect(),
+        );
+        equal(
+            &strip_times(&results),
+            &strip_times(field(spec, "results")),
+            "results apart from timing",
+        );
+        equal(
+            &JsValue::Array(run.events),
+            &events(
+                r#"[["start","b",0],["start","d",0],["end","d",1],["end","b",5],["start","a",5],["end","a",8],["start","c",8],["end","c",10]]"#,
+            ),
+            "Rust serializes the non-read-only safe calls",
+        );
+        assert_eq!(run.settled_at, 10.0);
+        assert_eq!(run.live, 0);
+
+        // 2. A read-only sibling errors: TS rejects at t=0 and the agent call
+        // still runs to completion; Rust rejects at t=0 too, and the agent
+        // call, being in the sequential phase, never starts (nothing cut short).
+        let spec = flagged[1];
+        assert_eq!(
+            text(field(spec, "name")),
+            "non-readonly-safe-tool-outlives-concurrent-error-in-ts"
+        );
+        equal(
+            field(spec, "events"),
+            &events(r#"[["start","a",0],["start","c",0],["end","c",2],["end","a",3]]"#),
+            "TS lets the agent call finish after rejecting",
+        );
+        let run = replay(&oracle, spec, signal).await;
+        assert_eq!(run.result.unwrap_err().message, text(field(spec, "error")));
+        assert_eq!(
+            run.settled_at,
+            field(spec, "settledAt").as_number().unwrap()
+        );
+        equal(
+            &JsValue::Array(run.events),
+            &events(r#"[["start","c",0]]"#),
+            "agent never started",
+        );
+        assert_eq!(run.live, 0);
     }
 }
 

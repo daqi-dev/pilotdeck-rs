@@ -129,6 +129,20 @@ const scenarios: any[] = [
     { id: 'b', name: 'fast', inputJson: '{"length":1,"map":2,"0":3,"x":4,"toString":5}' },
     call('c', 'slow', { b: 's', c: 1 }),
   ] },
+  // Round 4. Schema-node fields are normal property reads in TS, so they
+  // follow the schema's own explicit prototype chain as well.
+  { name: 'schema-node-fields-read-through-prototypes', definitions: [
+    tool('read_file', false, { schemaJson: '{"type":"object","properties":{"a":{"type":"string"}}}', schemaPrototypes: [{ path: [], prototype: { required: ['a', 'b'], additionalProperties: false } }] }),
+    tool('fast', false, { schemaJson: '{"type":"object","additionalProperties":false}', schemaPrototypes: [{ path: [], prototype: { properties: { k: { type: 'number' } } } }] }),
+    tool('slow', false, { schemaJson: '{"type":"object","properties":{"a":{}}}', schemaPrototypes: [{ path: ['properties', 'a'], prototype: { enum: [1] } }] }),
+    tool('write_file', false, { schemaJson: '{"properties":{"list":{"type":"array"}}}', schemaPrototypes: [{ path: ['properties', 'list'], prototype: { items: { type: 'string' } } }] }),
+  ], calls: [call('a', 'read_file', { x: 1 }), call('b', 'fast', { k: 's', z: 1 }), call('c', 'slow', { a: 2 }), call('d', 'write_file', { list: ['s', 1] })] },
+  // concurrencySafe but not read-only (TS agent.ts:166-167): TS runs these in
+  // the concurrent phase; Rust deliberately serializes them (README).
+  { name: 'non-readonly-safe-tools-run-concurrently-in-ts', rustSerializesNonReadOnly: true, definitions: [tool('agent', true, { readOnly: false }), tool('read_file', true), tool('fast', true)],
+    calls: [call('a', 'agent', { delay: 3 }), call('b', 'read_file', { delay: 5 }), call('c', 'agent', { delay: 2 }), call('d', 'fast', { delay: 1 })] },
+  { name: 'non-readonly-safe-tool-outlives-concurrent-error-in-ts', rustSerializesNonReadOnly: true, drain: true, definitions: [tool('agent', true, { readOnly: false }), tool('read_file', true), tool('fast', true)],
+    calls: [call('a', 'agent', { delay: 3 }), call('b', 'read_file', { decision: 'throw' }), call('c', 'fast', { delay: 2 })] },
 ];
 
 function withPrototypes(schema: any, prototypes: any[] = []) {
@@ -149,7 +163,7 @@ async function run(spec: any) {
     name: def.name, aliases: def.aliases, description: def.name, kind: 'builtin',
     inputSchema: def.schemaJson !== undefined ? withPrototypes(JSON.parse(def.schemaJson), def.schemaPrototypes) : def.schema ?? { type: 'object' },
     ...('maxResultBytes' in def ? { maxResultBytes: def.maxResultBytes } : {}),
-    isReadOnly: () => true,
+    isReadOnly: () => def.readOnly ?? true,
     isConcurrencySafe: (input: any) => { if (def.predicateError) throw Error('predicate failed'); return input.safe ?? def.safe; },
     requiresUserInteraction: () => def.interaction ?? false,
     validateInput: (input: any) => {

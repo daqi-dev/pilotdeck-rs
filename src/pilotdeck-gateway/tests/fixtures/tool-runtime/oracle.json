@@ -5608,6 +5608,505 @@
           "completedAt": "2026-01-01T00:00:00.000Z"
         }
       ]
+    },
+    {
+      "name": "schema-node-fields-read-through-prototypes",
+      "definitions": [
+        {
+          "name": "read_file",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}",
+          "schemaPrototypes": [
+            {
+              "path": [],
+              "prototype": {
+                "required": [
+                  "a",
+                  "b"
+                ],
+                "additionalProperties": false
+              }
+            }
+          ]
+        },
+        {
+          "name": "fast",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"additionalProperties\":false}",
+          "schemaPrototypes": [
+            {
+              "path": [],
+              "prototype": {
+                "properties": {
+                  "k": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "slow",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"properties\":{\"a\":{}}}",
+          "schemaPrototypes": [
+            {
+              "path": [
+                "properties",
+                "a"
+              ],
+              "prototype": {
+                "enum": [
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "write_file",
+          "safe": false,
+          "schemaJson": "{\"properties\":{\"list\":{\"type\":\"array\"}}}",
+          "schemaPrototypes": [
+            {
+              "path": [
+                "properties",
+                "list"
+              ],
+              "prototype": {
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "input": {
+            "x": 1
+          }
+        },
+        {
+          "id": "b",
+          "name": "fast",
+          "input": {
+            "k": "s",
+            "z": 1
+          }
+        },
+        {
+          "id": "c",
+          "name": "slow",
+          "input": {
+            "a": 2
+          }
+        },
+        {
+          "id": "d",
+          "name": "write_file",
+          "input": {
+            "list": [
+              "s",
+              1
+            ]
+          }
+        }
+      ],
+      "events": [],
+      "results": [
+        {
+          "type": "error",
+          "toolCallId": "a",
+          "toolName": "read_file",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "read_file failed due to the following issues:\nThe required parameter `a` is missing\nThe required parameter `b` is missing\nAn unexpected parameter `x` was provided",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.a",
+                  "code": "required",
+                  "message": "$.a is required."
+                },
+                {
+                  "path": "$.b",
+                  "code": "required",
+                  "message": "$.b is required."
+                },
+                {
+                  "path": "$.x",
+                  "code": "unknown_property",
+                  "message": "$.x is not allowed."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][read_file][fix_input]\nSummary: $.a is required.\nEvidence:\n- a: $.a is required.\n- b: $.b is required.\nOriginal error:\nread_file failed due to the following issues:\nThe required parameter `a` is missing\nThe required parameter `b` is missing\nAn unexpected parameter `x` was provided\nNext actions:\n1. Include the required parameter `a` in the next read_file call."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.a is required.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Include the required parameter `a` in the next read_file call."
+              ],
+              "salientEvidence": [
+                "a: $.a is required.",
+                "b: $.b is required."
+              ],
+              "originalError": "read_file failed due to the following issues:\nThe required parameter `a` is missing\nThe required parameter `b` is missing\nAn unexpected parameter `x` was provided"
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "b",
+          "toolName": "fast",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "fast failed due to the following issues:\nAn unexpected parameter `z` was provided\nThe parameter `k` has an invalid type: $.k must be number.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.z",
+                  "code": "unknown_property",
+                  "message": "$.z is not allowed."
+                },
+                {
+                  "path": "$.k",
+                  "code": "invalid_type",
+                  "message": "$.k must be number."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][fast][fix_input]\nSummary: $.z is not allowed.\nEvidence:\n- z: $.z is not allowed.\n- k: $.k must be number.\nOriginal error:\nfast failed due to the following issues:\nAn unexpected parameter `z` was provided\nThe parameter `k` has an invalid type: $.k must be number.\nNext actions:\n1. Change `k` to the expected type before retrying: $.k must be number.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.z is not allowed.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `k` to the expected type before retrying: $.k must be number.."
+              ],
+              "salientEvidence": [
+                "z: $.z is not allowed.",
+                "k: $.k must be number."
+              ],
+              "originalError": "fast failed due to the following issues:\nAn unexpected parameter `z` was provided\nThe parameter `k` has an invalid type: $.k must be number."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "c",
+          "toolName": "slow",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "slow failed due to the following issue:\nThe parameter `a` has an invalid value: $.a must be one of 1.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.a",
+                  "code": "invalid_enum",
+                  "message": "$.a must be one of 1."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][slow][fix_input]\nSummary: $.a must be one of 1.\nEvidence:\n- a: $.a must be one of 1.\n- slow failed due to the following issue:\nOriginal error:\nslow failed due to the following issue:\nThe parameter `a` has an invalid value: $.a must be one of 1.\nNext actions:\n1. Use one of the allowed values for `a`: $.a must be one of 1.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.a must be one of 1.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Use one of the allowed values for `a`: $.a must be one of 1.."
+              ],
+              "salientEvidence": [
+                "a: $.a must be one of 1.",
+                "slow failed due to the following issue:"
+              ],
+              "originalError": "slow failed due to the following issue:\nThe parameter `a` has an invalid value: $.a must be one of 1."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "d",
+          "toolName": "write_file",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "write_file failed due to the following issue:\nThe parameter `list[1]` has an invalid type: $.list[1] must be string.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.list[1]",
+                  "code": "invalid_type",
+                  "message": "$.list[1] must be string."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][write_file][fix_input]\nSummary: $.list[1] must be string.\nEvidence:\n- list[1]: $.list[1] must be string.\n- write_file failed due to the following issue:\nOriginal error:\nwrite_file failed due to the following issue:\nThe parameter `list[1]` has an invalid type: $.list[1] must be string.\nNext actions:\n1. Change `list[1]` to the expected type before retrying: $.list[1] must be string.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.list[1] must be string.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `list[1]` to the expected type before retrying: $.list[1] must be string.."
+              ],
+              "salientEvidence": [
+                "list[1]: $.list[1] must be string.",
+                "write_file failed due to the following issue:"
+              ],
+              "originalError": "write_file failed due to the following issue:\nThe parameter `list[1]` has an invalid type: $.list[1] must be string."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "non-readonly-safe-tools-run-concurrently-in-ts",
+      "rustSerializesNonReadOnly": true,
+      "definitions": [
+        {
+          "name": "agent",
+          "safe": true,
+          "readOnly": false
+        },
+        {
+          "name": "read_file",
+          "safe": true
+        },
+        {
+          "name": "fast",
+          "safe": true
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "agent",
+          "input": {
+            "delay": 3
+          }
+        },
+        {
+          "id": "b",
+          "name": "read_file",
+          "input": {
+            "delay": 5
+          }
+        },
+        {
+          "id": "c",
+          "name": "agent",
+          "input": {
+            "delay": 2
+          }
+        },
+        {
+          "id": "d",
+          "name": "fast",
+          "input": {
+            "delay": 1
+          }
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "start",
+          "b",
+          0
+        ],
+        [
+          "start",
+          "c",
+          0
+        ],
+        [
+          "start",
+          "d",
+          0
+        ],
+        [
+          "end",
+          "d",
+          1
+        ],
+        [
+          "end",
+          "c",
+          2
+        ],
+        [
+          "end",
+          "a",
+          3
+        ],
+        [
+          "end",
+          "b",
+          5
+        ]
+      ],
+      "results": [
+        {
+          "type": "success",
+          "toolCallId": "a",
+          "toolName": "agent",
+          "content": [
+            {
+              "type": "text",
+              "text": "a"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.003Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "b",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": "b"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.005Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "c",
+          "toolName": "agent",
+          "content": [
+            {
+              "type": "text",
+              "text": "c"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.002Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "d",
+          "toolName": "fast",
+          "content": [
+            {
+              "type": "text",
+              "text": "d"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.001Z"
+        }
+      ]
+    },
+    {
+      "name": "non-readonly-safe-tool-outlives-concurrent-error-in-ts",
+      "rustSerializesNonReadOnly": true,
+      "drain": true,
+      "definitions": [
+        {
+          "name": "agent",
+          "safe": true,
+          "readOnly": false
+        },
+        {
+          "name": "read_file",
+          "safe": true
+        },
+        {
+          "name": "fast",
+          "safe": true
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "agent",
+          "input": {
+            "delay": 3
+          }
+        },
+        {
+          "id": "b",
+          "name": "read_file",
+          "input": {
+            "decision": "throw"
+          }
+        },
+        {
+          "id": "c",
+          "name": "fast",
+          "input": {
+            "delay": 2
+          }
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "start",
+          "c",
+          0
+        ],
+        [
+          "end",
+          "c",
+          2
+        ],
+        [
+          "end",
+          "a",
+          3
+        ]
+      ],
+      "error": "permission failed",
+      "settledAt": 0
     }
   ]
 }
