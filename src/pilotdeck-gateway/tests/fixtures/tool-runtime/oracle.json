@@ -5407,6 +5407,207 @@
           "completedAt": "2026-01-01T00:00:00.000Z"
         }
       ]
+    },
+    {
+      "name": "schema-explicit-prototypes-follow-js-lookup",
+      "definitions": [
+        {
+          "name": "read_file",
+          "safe": true,
+          "schemaJson": "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"a\":{\"type\":\"string\"}}}",
+          "schemaPrototypes": [
+            {
+              "path": [
+                "properties"
+              ],
+              "prototype": null
+            }
+          ]
+        },
+        {
+          "name": "fast",
+          "safe": true,
+          "schemaJson": "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"a\":{}}}",
+          "schemaPrototypes": [
+            {
+              "path": [
+                "properties"
+              ],
+              "prototype": []
+            }
+          ]
+        },
+        {
+          "name": "slow",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"a\":{}}}",
+          "schemaPrototypes": [
+            {
+              "path": [
+                "properties"
+              ],
+              "prototype": {
+                "b": {
+                  "type": "number"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "inputJson": "{\"toString\":1,\"a\":\"x\",\"__proto__\":1}"
+        },
+        {
+          "id": "b",
+          "name": "fast",
+          "inputJson": "{\"length\":1,\"map\":2,\"0\":3,\"x\":4,\"toString\":5}"
+        },
+        {
+          "id": "c",
+          "name": "slow",
+          "input": {
+            "b": "s",
+            "c": 1
+          }
+        }
+      ],
+      "events": [],
+      "results": [
+        {
+          "type": "error",
+          "toolCallId": "a",
+          "toolName": "read_file",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "read_file failed due to the following issues:\nAn unexpected parameter `toString` was provided\nAn unexpected parameter `__proto__` was provided",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.toString",
+                  "code": "unknown_property",
+                  "message": "$.toString is not allowed."
+                },
+                {
+                  "path": "$.__proto__",
+                  "code": "unknown_property",
+                  "message": "$.__proto__ is not allowed."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][read_file][fix_input]\nSummary: $.toString is not allowed.\nEvidence:\n- toString: $.toString is not allowed.\n- __proto__: $.__proto__ is not allowed.\nOriginal error:\nread_file failed due to the following issues:\nAn unexpected parameter `toString` was provided\nAn unexpected parameter `__proto__` was provided\nNext actions:\n1. Remove or rename the unexpected parameter `toString`; use only parameters from the tool schema."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.toString is not allowed.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Remove or rename the unexpected parameter `toString`; use only parameters from the tool schema."
+              ],
+              "salientEvidence": [
+                "toString: $.toString is not allowed.",
+                "__proto__: $.__proto__ is not allowed."
+              ],
+              "originalError": "read_file failed due to the following issues:\nAn unexpected parameter `toString` was provided\nAn unexpected parameter `__proto__` was provided"
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "b",
+          "toolName": "fast",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "fast failed due to the following issues:\nAn unexpected parameter `0` was provided\nAn unexpected parameter `x` was provided",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.0",
+                  "code": "unknown_property",
+                  "message": "$.0 is not allowed."
+                },
+                {
+                  "path": "$.x",
+                  "code": "unknown_property",
+                  "message": "$.x is not allowed."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][fast][fix_input]\nSummary: $.0 is not allowed.\nEvidence:\n- 0: $.0 is not allowed.\n- x: $.x is not allowed.\nOriginal error:\nfast failed due to the following issues:\nAn unexpected parameter `0` was provided\nAn unexpected parameter `x` was provided\nNext actions:\n1. Remove or rename the unexpected parameter `0`; use only parameters from the tool schema."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.0 is not allowed.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Remove or rename the unexpected parameter `0`; use only parameters from the tool schema."
+              ],
+              "salientEvidence": [
+                "0: $.0 is not allowed.",
+                "x: $.x is not allowed."
+              ],
+              "originalError": "fast failed due to the following issues:\nAn unexpected parameter `0` was provided\nAn unexpected parameter `x` was provided"
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "c",
+          "toolName": "slow",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "slow failed due to the following issue:\nAn unexpected parameter `c` was provided",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.c",
+                  "code": "unknown_property",
+                  "message": "$.c is not allowed."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][slow][fix_input]\nSummary: $.c is not allowed.\nEvidence:\n- c: $.c is not allowed.\n- slow failed due to the following issue:\nOriginal error:\nslow failed due to the following issue:\nAn unexpected parameter `c` was provided\nNext actions:\n1. Remove or rename the unexpected parameter `c`; use only parameters from the tool schema."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.c is not allowed.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Remove or rename the unexpected parameter `c`; use only parameters from the tool schema."
+              ],
+              "salientEvidence": [
+                "c: $.c is not allowed.",
+                "slow failed due to the following issue:"
+              ],
+              "originalError": "slow failed due to the following issue:\nAn unexpected parameter `c` was provided"
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
     }
   ]
 }

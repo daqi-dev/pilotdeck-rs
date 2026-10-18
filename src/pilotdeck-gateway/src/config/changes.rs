@@ -308,7 +308,7 @@ pub(crate) fn get_property<'a>(operand: Operand<'a>, key: &JsString) -> Option<O
     }
 }
 
-fn object_property<'a>(receiver: &'a JsObject, key: &JsString) -> Option<Operand<'a>> {
+pub(crate) fn object_property<'a>(receiver: &'a JsObject, key: &JsString) -> Option<Operand<'a>> {
     let mut current = Some(receiver);
     let mut array_prototype = false;
     while let Some(object) = current {
@@ -350,7 +350,7 @@ fn object_property<'a>(receiver: &'a JsObject, key: &JsString) -> Option<Operand
 
 /// `Object.prototype` has no enumerable own keys; reading `__proto__` yields
 /// its own null prototype, and the named members are functions.
-fn object_prototype_property<'a>(key: &JsString) -> Option<Operand<'a>> {
+pub(crate) fn object_prototype_property<'a>(key: &JsString) -> Option<Operand<'a>> {
     if key.equals_str("__proto__") {
         return Some(Operand::Value(&NULL));
     }
