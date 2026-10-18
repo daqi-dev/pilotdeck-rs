@@ -9,9 +9,9 @@ fn oracle() -> JsValue {
         "../../../tests/fixtures/host-modules/oracle.json"
     ))
     .unwrap();
-    assert_eq!(array(&value, "routing").len(), 63);
+    assert_eq!(array(&value, "routing").len(), 81);
     assert_eq!(array(&value, "errors").len(), 11);
-    assert_eq!(array(&value, "fields").len(), 85);
+    assert_eq!(array(&value, "fields").len(), 90);
     value
 }
 fn array<'a>(value: &'a JsValue, key: &str) -> &'a [JsValue] {
@@ -35,15 +35,14 @@ fn nonfinite(value: &JsValue) -> Option<f64> {
     }
 }
 fn module_error(case: &JsValue) -> HostError {
-    let fields = case.get("fields").unwrap();
-    ModuleError {
-        message: case.get("message").unwrap().as_string().unwrap().clone(),
-        code: fields.get("code").and_then(JsValue::as_string).cloned(),
-        canonical: fields.get("error").and_then(JsValue::as_object).cloned(),
-        retryable: fields.get("retryable").and_then(JsValue::as_bool),
-        retry_after_ms: nonfinite(case)
-            .or_else(|| fields.get("retryAfterMs").and_then(JsValue::as_number)),
+    let mut fields = case.get("fields").unwrap().as_object().unwrap().clone();
+    if let Some(value) = nonfinite(case) {
+        fields.insert("retryAfterMs".into(), JsValue::Number(value));
     }
+    ModuleError::from_js_fields(
+        case.get("message").unwrap().as_string().unwrap().clone(),
+        &JsValue::Object(fields),
+    )
     .into()
 }
 #[tokio::test]
@@ -80,12 +79,15 @@ fn real_ts_payload_readers() {
             .map(JsValue::Number)
             .unwrap_or_else(|| input.get("value").cloned().unwrap_or(JsValue::Undefined));
         let mut object = JsObject::new();
-        object.insert("value".into(), value.clone());
+        if input.get("absent").is_none() {
+            object.insert("value".into(), value);
+        }
         let record = if input.get("missing").is_some() {
             None
         } else {
             Some(&object)
         };
+        let value = record.and_then(|object| object.get("value"));
         let helper = case
             .get("helper")
             .unwrap()
@@ -101,11 +103,10 @@ fn real_ts_payload_readers() {
                 .map(|v| v.map(|v| JsValue::String(v.clone()))),
             "booleanField" => wire::boolean_field(record, "value").map(|v| Some(JsValue::Bool(v))),
             "positiveFinite" => {
-                wire::positive_finite(Some(&value), "value").map(|v| Some(JsValue::Number(v)))
+                wire::positive_finite(value, "value").map(|v| Some(JsValue::Number(v)))
             }
             "optionalNonNegativeFinite" => {
-                wire::optional_non_negative_finite(Some(&value), "value")
-                    .map(|v| v.map(JsValue::Number))
+                wire::optional_non_negative_finite(value, "value").map(|v| v.map(JsValue::Number))
             }
             other => panic!("unknown helper {other}"),
         };

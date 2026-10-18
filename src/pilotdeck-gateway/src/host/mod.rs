@@ -211,6 +211,19 @@ impl ModuleError {
             retry_after_ms: None,
         }
     }
+
+    /// Read optional error details from JS fields, discarding wrong field types.
+    /// The caller supplies the message after resolving Error vs non-Error throws;
+    /// response projection still validates canonical contents and finite delays.
+    pub fn from_js_fields(message: impl Into<JsString>, fields: &JsValue) -> Self {
+        Self {
+            message: message.into(),
+            code: fields.get("code").and_then(JsValue::as_string).cloned(),
+            canonical: fields.get("error").and_then(JsValue::as_object).cloned(),
+            retryable: fields.get("retryable").and_then(JsValue::as_bool),
+            retry_after_ms: fields.get("retryAfterMs").and_then(JsValue::as_number),
+        }
+    }
 }
 impl From<ModuleError> for HostError {
     fn from(error: ModuleError) -> Self {

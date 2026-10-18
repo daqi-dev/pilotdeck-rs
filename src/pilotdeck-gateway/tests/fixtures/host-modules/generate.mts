@@ -68,7 +68,7 @@ async function response(call: any, handlers = dispatcher.handlers) {
   return JSON.parse(JSON.stringify(first.response));
 }
 const routing = [];
-for (const module of ['model', 'budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event', 'unknown', '\ud800']) {
+for (const module of ['model', 'budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event', 'checkpoint', 'skills', 'knowledge', 'unknown', '\ud800']) {
   for (const operation of ['unknown', '', null, 3, ' ', '\ud800']) {
     const request = call(module, { operation, preparationId: 'prepared', input: {} });
     const expected = await response(request);
@@ -107,22 +107,26 @@ for (const nonfinite of ['NaN', 'Infinity', '-Infinity']) {
 const fields = [];
 const values = [null, '', ' ', '\ud800', '3', false, true, 0, -0.25, 0.25, [], {}];
 for (const helper of ['stringField', 'optionalStringField', 'booleanField', 'positiveFinite', 'optionalNonNegativeFinite']) {
-  for (const input of [{ missing: true }, { undefined: true }, ...values.map(value => ({ value })), ...['NaN', 'Infinity', '-Infinity'].map(nonfinite => ({ nonfinite }))]) {
+  for (const input of [{ missing: true }, { absent: true }, { undefined: true }, ...values.map(value => ({ value })), ...['NaN', 'Infinity', '-Infinity'].map(nonfinite => ({ nonfinite }))]) {
     const value = input.nonfinite ? Number(input.nonfinite) : input.value;
     let expected;
     try {
-      const record = input.missing ? undefined : { value };
+      const record = input.missing ? undefined : input.absent ? {} : { value };
       const result = helper === 'positiveFinite' || helper === 'optionalNonNegativeFinite'
-        ? helpers[helper](value, 'value') : helpers[helper](record, 'value');
+        ? helpers[helper](record?.value, 'value') : helpers[helper](record, 'value');
       expected = result === undefined ? { missing: true } : { value: result };
     } catch (error) { expected = { error: (error as Error).message }; }
     fields.push({ helper, input, expected });
+    if ((helper === 'optionalStringField' || helper === 'optionalNonNegativeFinite')
+      && (input.absent || input.undefined || input.value === null)) {
+      console.log('OPTIONAL_FIELD_BOUNDARY ' + JSON.stringify({ helper, input, expected }));
+    }
   }
 }
 await dispatcher.dispose();
-assert.equal(routing.length, 63);
+assert.equal(routing.length, 81);
 assert.equal(errors.length, 11);
-assert.equal(fields.length, 85);
+assert.equal(fields.length, 90);
 await mkdir(output, { recursive: true });
 await writeFile(join(output, 'oracle.json'), JSON.stringify({ commit, sources, routing, errors, fields }, null, 2) + '\n');
 console.log(`HOST_MODULE_ORACLE_PASS routing=${routing.length} errors=${errors.length} fields=${fields.length}`);

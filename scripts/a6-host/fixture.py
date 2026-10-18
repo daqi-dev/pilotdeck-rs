@@ -280,7 +280,8 @@ if mode.startswith('cancel-'):
 if mode in ('module-routing', 'module-errors'):
     oracle = json.loads((Path(__file__).resolve().parents[2] /
                          'src/pilotdeck-gateway/tests/fixtures/host-modules/oracle.json').read_text())
-    modules = {'model', 'budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event'}
+    modules = {'model', 'budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event',
+               'checkpoint', 'skills', 'knowledge'}
     cases = oracle['routing' if mode == 'module-routing' else 'errors']
     cases = [case for case in cases if case['call']['module'] in modules]
     expected = {case['call']['messageId']: case['response'] for case in cases}
