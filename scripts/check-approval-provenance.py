@@ -20,6 +20,13 @@ EXPECTED = frozenset(
     for name in ('calibration-summary.json', 'review-glm.md', 'review-deepseek.md', 'driver.log')
 )
 PREFIX = 'Approval-Source-SHA256:'
+# Superseded or process originals kept for audit; each must stay hash-bound (fail-closed).
+ARCHIVE = frozenset(
+    'specs/ui-server-parity/approval/' + name
+    for name in ('2026-10-14/calibration-summary.json', '2026-10-14/review-glm.md',
+                 '2026-10-14/review-claude.md', '2026-10-14/driver.log', 'review-deepseek-r1.md')
+)
+ARCHIVE_PREFIX = 'Approval-Archive-SHA256:'
 
 
 def regular(path, root):
@@ -30,27 +37,31 @@ def regular(path, root):
 
 def check(root):
     root = Path(root).absolute()
-    errors, sources = [], {}
+    errors, sources, archived = [], {}, {}
     manifest = root / 'specs/ui-server-parity/FROZEN.md'
     try:
         if not regular(manifest, root):
             raise ValueError('manifest must be a regular file without symlink ancestors')
         for number, line in enumerate(manifest.read_text(encoding='utf-8').splitlines(), 1):
-            if not line.startswith(PREFIX):
-                continue
-            match = re.fullmatch(r'Approval-Source-SHA256: ([a-f0-9]{64})  (.+)', line)
-            if not match:
-                errors.append(f'invalid approval source registration at line {number}')
-                continue
-            digest, path = match.groups()
-            if path not in EXPECTED:
-                errors.append(f'unknown approval source at line {number}')
-            elif path in sources:
-                errors.append(f'duplicate approval source: {path}')
-            else:
-                sources[path] = digest
+            for prefix, allowed, table, kind in ((PREFIX, EXPECTED, sources, 'approval source'),
+                                                 (ARCHIVE_PREFIX, ARCHIVE, archived, 'archived approval original')):
+                if not line.startswith(prefix):
+                    continue
+                match = re.fullmatch(re.escape(prefix) + r' ([a-f0-9]{64})  (.+)', line)
+                if not match:
+                    errors.append(f'invalid {kind} registration at line {number}')
+                    continue
+                digest, path = match.groups()
+                if path not in allowed:
+                    errors.append(f'unknown {kind} at line {number}')
+                elif path in table:
+                    errors.append(f'duplicate {kind}: {path}')
+                else:
+                    table[path] = digest
         if set(sources) != EXPECTED:
             errors.append('approval source set must contain all four registered originals')
+        if set(archived) != ARCHIVE:
+            errors.append('archived approval set must contain all five registered originals')
         def references(field):
             rows = [line.split(':', 1)[1].strip() for line in manifest.read_text(encoding='utf-8').splitlines()
                     if line.startswith(field + ':')]
@@ -72,7 +83,7 @@ def check(root):
                              'specs/ui-server-parity/approval/driver.log'}
         if not required_evidence <= set(calibration) or len(calibration) != len(set(calibration)):
             errors.append('Calibration-Evidence must reference current summary/driver without duplicates')
-        for name, expected in sources.items():
+        for name, expected in [*sources.items(), *archived.items()]:
             path = root / name
             if not regular(path, root):
                 errors.append(f'missing/nonregular approval original: {name}')
@@ -80,7 +91,8 @@ def check(root):
                 errors.append(f'approval original SHA256 mismatch: {name}')
     except (OSError, UnicodeError, ValueError) as error:
         errors.append(str(error))
-    return {'verdict': 'FAIL' if errors else 'PASS', 'checkedSources': len(sources), 'errors': errors}
+    return {'verdict': 'FAIL' if errors else 'PASS', 'checkedSources': len(sources),
+            'checkedArchive': len(archived), 'errors': errors}
 
 
 if __name__ == '__main__':
