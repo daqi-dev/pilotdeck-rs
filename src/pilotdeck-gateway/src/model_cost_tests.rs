@@ -488,3 +488,145 @@ fn real_ts_local_input_estimates_match() {
         );
     }
 }
+
+#[test]
+fn pricing_map_iterates_like_object_entries() {
+    let property_order = field(oracle(), "propertyOrder");
+
+    let check = |section: &JsValue, lookup_model: Option<&str>| {
+        let entries = items(field(section, "entries"));
+        let mut map = PricingMap::new();
+        for key in items(field(section, "insertionOrder")) {
+            let key = text(key);
+            let entry = entries
+                .iter()
+                .find(|entry| text(field(entry, "key")) == key)
+                .unwrap_or_else(|| panic!("missing entry {key}"));
+            let pricing = field(entry, "pricing");
+            map.insert(
+                key,
+                ModelPricing {
+                    input: optional_number(field(pricing, "input")),
+                    output: optional_number(field(pricing, "output")),
+                    cache_read: optional_number(field(pricing, "cacheRead")),
+                },
+            );
+        }
+        let expected: Vec<String> = items(field(section, "objectEntries"))
+            .iter()
+            .map(text)
+            .collect();
+        let actual: Vec<String> = map.iter().map(|(key, _)| key.to_string()).collect();
+        assert_eq!(actual, expected, "enumeration order");
+        if let Some(model) = lookup_model {
+            let lookup = field(section, "lookup");
+            let (pricing, source) = lookup_model_pricing_with_source("custom", model, Some(&map));
+            let expected_pricing = field(lookup, "pricing");
+            check_optional_amount(
+                pricing.input,
+                optional_number(field(expected_pricing, "input")),
+                "integer-key input",
+            );
+            check_optional_amount(
+                pricing.output,
+                optional_number(field(expected_pricing, "output")),
+                "integer-key output",
+            );
+            assert_eq!(source.as_str(), text(field(lookup, "source")));
+        }
+        map
+    };
+
+    // Inserting "12" then "2" must still scan "2" first: JS array-index keys
+    // enumerate in ascending numeric order, so `model12` selects the 2/4 card.
+    check(field(property_order, "integerKeys"), Some("model12"));
+    // Non-index keys keep insertion order, after the numeric keys.
+    check(field(property_order, "mixedKeys"), None);
+}
+
+#[test]
+fn array_index_matches_ecmascript_boundaries() {
+    assert_eq!(array_index("0"), Some(0));
+    assert_eq!(array_index("12"), Some(12));
+    assert_eq!(array_index("4294967294"), Some(u32::MAX - 1));
+    assert_eq!(array_index("4294967295"), None);
+    for key in ["", "01", "-1", "+1", "1.0", "1e2", " 1", "0x10", "١"] {
+        assert_eq!(array_index(key), None, "{key:?}");
+    }
+}
+
+#[test]
+fn built_in_pricing_regex_matches_js_non_unicode_semantics() {
+    for (model, expected) in [
+        // JS `/i` without `u` never folds a non-ASCII code unit onto ASCII.
+        ("\u{212A}imi", PricingSource::FallbackEstimate),
+        ("mi\u{17F}stral-large", PricingSource::FallbackEstimate),
+        // JS `.` excludes exactly \n, \r, U+2028 and U+2029.
+        ("claude\rsonnet", PricingSource::FallbackEstimate),
+        ("claude\nsonnet", PricingSource::FallbackEstimate),
+        ("deepseek\u{2028}flash", PricingSource::FallbackEstimate),
+        ("deepseek\u{2029}flash", PricingSource::FallbackEstimate),
+        // Vertical tab, form feed and tab are not line terminators.
+        ("deepseek\u{0B}flash", PricingSource::BuiltInEstimate),
+        ("deepseek\tflash", PricingSource::BuiltInEstimate),
+        // A non-BMP or non-ASCII scalar between the literals is still one `.`.
+        ("deepseek中flash", PricingSource::BuiltInEstimate),
+    ] {
+        let (pricing, source) = lookup_model_pricing_with_source("unknown", model, None);
+        assert_eq!(source, expected, "{model:?}");
+        if expected == PricingSource::BuiltInEstimate {
+            assert_eq!(pricing.input, Some(0.20), "{model:?}");
+            assert_eq!(pricing.output, Some(0.60), "{model:?}");
+        }
+    }
+}
+
+#[test]
+fn pdf_pages_use_js_number_to_string() {
+    let text = |pages: f64| {
+        let result = ToolResult {
+            tool_call_id: JsString::from("call"),
+            content: vec![ToolResultItem {
+                timeline: None,
+                body: ToolResultContent::Pdf(PdfBlock {
+                    data: JsString::from("x"),
+                    bytes: 1.0,
+                    pages: Some(pages),
+                }),
+            }],
+            is_error: None,
+            raw: None,
+        };
+        flatten_tool_result_text(&result)
+            .to_utf8()
+            .expect("fixture text is UTF-8")
+    };
+    assert_eq!(
+        text(1e-7),
+        "[PDF: application/pdf, 1 base64 characters, 1e-7 pages]"
+    );
+    assert_eq!(
+        text(1e21),
+        "[PDF: application/pdf, 1 base64 characters, 1e+21 pages]"
+    );
+    assert_eq!(
+        text(2.5e21),
+        "[PDF: application/pdf, 1 base64 characters, 2.5e+21 pages]"
+    );
+    assert_eq!(
+        text(0.1 + 0.2),
+        "[PDF: application/pdf, 1 base64 characters, 0.30000000000000004 pages]"
+    );
+    assert_eq!(
+        text(f64::INFINITY),
+        "[PDF: application/pdf, 1 base64 characters, Infinity pages]"
+    );
+    // 0, -0 and NaN are falsy in the TS template guard: no pages suffix.
+    for falsy in [0.0, -0.0, f64::NAN] {
+        assert_eq!(
+            text(falsy),
+            "[PDF: application/pdf, 1 base64 characters]",
+            "{falsy:?}"
+        );
+    }
+}

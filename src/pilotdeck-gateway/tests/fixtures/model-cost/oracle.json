@@ -3575,6 +3575,404 @@
         "cacheRead": 0.3
       },
       "source": "built_in_estimate"
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 2,
+        "output": 4
+      },
+      "source": "configured_price"
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 2.5,
+        "output": 10,
+        "cacheRead": 1.25
+      },
+      "source": "built_in_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 3,
+        "output": 15,
+        "cacheRead": 0.3
+      },
+      "source": "built_in_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "source": "fallback_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.2,
+        "output": 0.6
+      },
+      "source": "built_in_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.2,
+        "output": 0.6
+      },
+      "source": "built_in_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "configuredName": "none",
+      "pricing": {
+        "input": 0.2,
+        "output": 0.6
+      },
+      "source": "built_in_estimate"
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "configuredName": "catalogOverride",
+      "configured": {
+        "gpt": {
+          "input": 11,
+          "output": 22,
+          "cacheRead": 3
+        }
+      },
+      "pricing": {
+        "input": 0.2,
+        "output": 0.6
+      },
+      "source": "built_in_estimate"
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "pricing": {
+        "input": 2,
+        "output": 4
+      },
+      "source": "configured_price"
     }
   ],
   "costs": [
@@ -11577,6 +11975,1096 @@
       "tokens": 0.5,
       "input": 0.0000015,
       "cacheRead": 1.5e-7
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 2,
+      "cacheRead": 2
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 2.469134,
+      "cacheRead": 2.469134
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 1999.999998,
+      "cacheRead": 1999.999998
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 0.000001,
+      "cacheRead": 0.000001
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 2.5,
+      "cacheRead": 1.25
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 3.0864175,
+      "cacheRead": 1.54320875
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 2499.9999975,
+      "cacheRead": 1249.99999875
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 0.0000012499999999999999,
+      "cacheRead": 6.249999999999999e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 3,
+      "cacheRead": 0.3
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 3.7037009999999997,
+      "cacheRead": 0.3703701
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 2999.999997,
+      "cacheRead": 299.9999997
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 0.0000015,
+      "cacheRead": 1.5e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 1000000,
+      "input": 0.5,
+      "cacheRead": 0.5
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 1234567,
+      "input": 0.6172835,
+      "cacheRead": 0.6172835
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 999999999,
+      "input": 499.9999995,
+      "cacheRead": 499.9999995
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "tokens": 0.5,
+      "input": 2.5e-7,
+      "cacheRead": 2.5e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "tokens": 1000000,
+      "input": 0.2,
+      "cacheRead": 0.2
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "tokens": 1234567,
+      "input": 0.2469134,
+      "cacheRead": 0.2469134
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "tokens": 999999999,
+      "input": 199.9999998,
+      "cacheRead": 199.9999998
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "tokens": 0.5,
+      "input": 1e-7,
+      "cacheRead": 1e-7
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "tokens": 1000000,
+      "input": 0.2,
+      "cacheRead": 0.2
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "tokens": 1234567,
+      "input": 0.2469134,
+      "cacheRead": 0.2469134
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "tokens": 999999999,
+      "input": 199.9999998,
+      "cacheRead": 199.9999998
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "tokens": 0.5,
+      "input": 1e-7,
+      "cacheRead": 1e-7
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0,
+      "input": 0,
+      "cacheRead": 0
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1000000,
+      "input": 2,
+      "cacheRead": 2
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 1234567,
+      "input": 2.469134,
+      "cacheRead": 2.469134
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 999999999,
+      "input": 1999.999998,
+      "cacheRead": 1999.999998
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "tokens": 0.5,
+      "input": 0.000001,
+      "cacheRead": 0.000001
     }
   ],
   "usageCosts": [
@@ -36355,8 +37843,2786 @@
       "breakdown": null,
       "routerEstimate": 0,
       "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "custom",
+      "model": "exact-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "custom",
+      "model": "partial-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "custom",
+      "model": "empty-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "custom",
+      "model": "unit-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.002,
+        "output": 0.002,
+        "cacheRead": 0,
+        "total": 0.004
+      },
+      "routerEstimate": 0.004,
+      "costUsd": 0.004
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.246912,
+        "output": 0.03156,
+        "cacheRead": 0,
+        "total": 0.280252
+      },
+      "routerEstimate": 0.280252,
+      "costUsd": 0.280252
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "zzz-model",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0025,
+        "output": 0.005,
+        "cacheRead": 0,
+        "total": 0.0075
+      },
+      "routerEstimate": 0.0075,
+      "costUsd": 0.0075
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.30863999999999997,
+        "output": 0.0789,
+        "cacheRead": 0.00570875,
+        "total": 0.39547374999999996
+      },
+      "routerEstimate": 0.39547374999999996,
+      "costUsd": 0.39547374999999996
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.003,
+        "output": 0.0075,
+        "cacheRead": 0,
+        "total": 0.010499999999999999
+      },
+      "routerEstimate": 0.010499999999999999,
+      "costUsd": 0.010499999999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.370368,
+        "output": 0.11835,
+        "cacheRead": 0.0013701,
+        "total": 0.4927581
+      },
+      "routerEstimate": 0.4927581,
+      "costUsd": 0.4927581
+    },
+    {
+      "provider": "unknown",
+      "model": "claude-sonnet-x",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 499.9999995,
+        "output": 1333.333332,
+        "cacheRead": 0,
+        "total": 2166.6666645
+      },
+      "routerEstimate": 2166.6666645,
+      "costUsd": 2166.6666645
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0271605
+      },
+      "routerEstimate": 0.0271605,
+      "costUsd": 0.0271605
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00005,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00005
+      },
+      "routerEstimate": 0.00005,
+      "costUsd": 0.00005
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.5,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.5
+      },
+      "routerEstimate": -0.5,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "Kimi",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 499.9999995,
+        "output": 1333.333332,
+        "cacheRead": 0,
+        "total": 2166.6666645
+      },
+      "routerEstimate": 2166.6666645,
+      "costUsd": 2166.6666645
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0271605
+      },
+      "routerEstimate": 0.0271605,
+      "costUsd": 0.0271605
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00005,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00005
+      },
+      "routerEstimate": 0.00005,
+      "costUsd": 0.00005
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.5,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.5
+      },
+      "routerEstimate": -0.5,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "miſstral-large",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 499.9999995,
+        "output": 1333.333332,
+        "cacheRead": 0,
+        "total": 2166.6666645
+      },
+      "routerEstimate": 2166.6666645,
+      "costUsd": 2166.6666645
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0271605
+      },
+      "routerEstimate": 0.0271605,
+      "costUsd": 0.0271605
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00005,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00005
+      },
+      "routerEstimate": 0.00005,
+      "costUsd": 0.00005
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.5,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.5
+      },
+      "routerEstimate": -0.5,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\rsonnet",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 499.9999995,
+        "output": 1333.333332,
+        "cacheRead": 0,
+        "total": 2166.6666645
+      },
+      "routerEstimate": 2166.6666645,
+      "costUsd": 2166.6666645
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0271605
+      },
+      "routerEstimate": 0.0271605,
+      "costUsd": 0.0271605
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00005,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00005
+      },
+      "routerEstimate": 0.00005,
+      "costUsd": 0.00005
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.5,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.5
+      },
+      "routerEstimate": -0.5,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "claude\nsonnet",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 499.9999995,
+        "output": 1333.333332,
+        "cacheRead": 0,
+        "total": 2166.6666645
+      },
+      "routerEstimate": 2166.6666645,
+      "costUsd": 2166.6666645
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0271605
+      },
+      "routerEstimate": 0.0271605,
+      "costUsd": 0.0271605
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00005,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00005
+      },
+      "routerEstimate": 0.00005,
+      "costUsd": 0.00005
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.5,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.5
+      },
+      "routerEstimate": -0.5,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0005,
+        "output": 0.00075,
+        "cacheRead": 0,
+        "total": 0.00125
+      },
+      "routerEstimate": 0.00125,
+      "costUsd": 0.00125
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.061728,
+        "output": 0.011834999999999998,
+        "cacheRead": 0,
+        "total": 0.07400799999999999
+      },
+      "routerEstimate": 0.07400799999999999,
+      "costUsd": 0.07400799999999999
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 499.9999995,
+        "output": 1333.333332,
+        "cacheRead": 0,
+        "total": 2166.6666645
+      },
+      "routerEstimate": 2166.6666645,
+      "costUsd": 2166.6666645
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0271605
+      },
+      "routerEstimate": 0.0271605,
+      "costUsd": 0.0271605
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00005,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00005
+      },
+      "routerEstimate": 0.00005,
+      "costUsd": 0.00005
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.5,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.5
+      },
+      "routerEstimate": -0.5,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek flash",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0002,
+        "output": 0.0003,
+        "cacheRead": 0,
+        "total": 0.0005
+      },
+      "routerEstimate": 0.0005,
+      "costUsd": 0.0005
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.0246912,
+        "output": 0.0047339999999999995,
+        "cacheRead": 0,
+        "total": 0.0296032
+      },
+      "routerEstimate": 0.0296032,
+      "costUsd": 0.0296032
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 199.9999998,
+        "output": 533.3333328,
+        "cacheRead": 0,
+        "total": 866.6666657999999
+      },
+      "routerEstimate": 866.6666657999999,
+      "costUsd": 866.6666657999999
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.010864200000000001
+      },
+      "routerEstimate": 0.010864200000000001,
+      "costUsd": 0.010864200000000001
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00002,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00002
+      },
+      "routerEstimate": 0.00002,
+      "costUsd": 0.00002
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.2,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.2
+      },
+      "routerEstimate": -0.2,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\u000bflash",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.0002,
+        "output": 0.0003,
+        "cacheRead": 0,
+        "total": 0.0005
+      },
+      "routerEstimate": 0.0005,
+      "costUsd": 0.0005
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.0246912,
+        "output": 0.0047339999999999995,
+        "cacheRead": 0,
+        "total": 0.0296032
+      },
+      "routerEstimate": 0.0296032,
+      "costUsd": 0.0296032
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": 999999999,
+        "outputTokens": 888888888,
+        "cacheReadTokens": 777777777,
+        "cacheWriteTokens": 666666666
+      },
+      "breakdown": {
+        "input": 199.9999998,
+        "output": 533.3333328,
+        "cacheRead": 0,
+        "total": 866.6666657999999
+      },
+      "routerEstimate": 866.6666657999999,
+      "costUsd": 866.6666657999999
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "cacheReadTokens": 12345
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "cacheWriteTokens": 54321
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.010864200000000001
+      },
+      "routerEstimate": 0.010864200000000001,
+      "costUsd": 0.010864200000000001
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0.0042
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.0042
+      },
+      "routerEstimate": 0.0042,
+      "costUsd": 0.0042
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": 100,
+        "nativeCost": -1
+      },
+      "breakdown": {
+        "input": 0.00002,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.00002
+      },
+      "routerEstimate": 0.00002,
+      "costUsd": 0.00002
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": -1000000
+      },
+      "breakdown": {
+        "input": -0.2,
+        "output": 0,
+        "cacheRead": 0,
+        "total": -0.2
+      },
+      "routerEstimate": -0.2,
+      "costUsd": null
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": {
+        "inputTokens": -1000000,
+        "nativeCost": 0.25
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0.25
+      },
+      "routerEstimate": 0.25,
+      "costUsd": 0.25
+    },
+    {
+      "provider": "unknown",
+      "model": "deepseek\tflash",
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {},
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 0
+      },
+      "breakdown": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "total": 0
+      },
+      "routerEstimate": 0,
+      "costUsd": 0
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 500
+      },
+      "breakdown": {
+        "input": 0.002,
+        "output": 0.002,
+        "cacheRead": 0,
+        "total": 0.004
+      },
+      "routerEstimate": 0.004,
+      "costUsd": 0.004
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": {
+        "inputTokens": 123456,
+        "outputTokens": 7890,
+        "cacheReadTokens": 4567,
+        "cacheWriteTokens": 890
+      },
+      "breakdown": {
+        "input": 0.246912,
+        "output": 0.03156,
+        "cacheRead": 0,
+        "total": 0.280252
+      },
+      "routerEstimate": 0.280252,
+      "costUsd": 0.280252
+    },
+    {
+      "provider": "custom",
+      "model": "model12",
+      "configuredName": "integerKeys",
+      "configured": {
+        "2": {
+          "input": 2,
+          "output": 4
+        },
+        "12": {
+          "input": 12,
+          "output": 24
+        }
+      },
+      "usage": null,
+      "breakdown": null,
+      "routerEstimate": 0,
+      "costUsd": 0
     }
   ],
+  "propertyOrder": {
+    "integerKeys": {
+      "insertionOrder": [
+        "12",
+        "2"
+      ],
+      "entries": [
+        {
+          "key": "12",
+          "pricing": {
+            "input": 12,
+            "output": 24
+          }
+        },
+        {
+          "key": "2",
+          "pricing": {
+            "input": 2,
+            "output": 4
+          }
+        }
+      ],
+      "objectEntries": [
+        "2",
+        "12"
+      ],
+      "lookup": {
+        "provider": "custom",
+        "model": "model12",
+        "pricing": {
+          "input": 2,
+          "output": 4
+        },
+        "source": "configured_price"
+      }
+    },
+    "mixedKeys": {
+      "insertionOrder": [
+        "gpt",
+        "100",
+        "zz",
+        "10"
+      ],
+      "entries": [
+        {
+          "key": "gpt",
+          "pricing": {
+            "input": 1
+          }
+        },
+        {
+          "key": "100",
+          "pricing": {
+            "input": 100
+          }
+        },
+        {
+          "key": "zz",
+          "pricing": {
+            "input": 3
+          }
+        },
+        {
+          "key": "10",
+          "pricing": {
+            "input": 10
+          }
+        }
+      ],
+      "objectEntries": [
+        "10",
+        "100",
+        "gpt",
+        "zz"
+      ]
+    }
+  },
   "requests": [
     {
       "name": "empty-messages",
@@ -37915,6 +42181,186 @@
         "system": 0,
         "tools": 0,
         "messages": 2004,
+        "mcp": 0,
+        "memory": 0
+      }
+    },
+    {
+      "name": "pdf-pages-tiny",
+      "request": {
+        "provider": "fixture",
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-12",
+                "content": [
+                  {
+                    "type": "pdf",
+                    "data": "jjj",
+                    "mimeType": "application/pdf",
+                    "bytes": 3,
+                    "pages": 1e-7
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "breakdown": {
+        "source": "local_estimate",
+        "total": 23,
+        "system": 0,
+        "tools": 0,
+        "messages": 23,
+        "mcp": 0,
+        "memory": 0
+      }
+    },
+    {
+      "name": "pdf-pages-large",
+      "request": {
+        "provider": "fixture",
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-13",
+                "content": [
+                  {
+                    "type": "pdf",
+                    "data": "kkk",
+                    "mimeType": "application/pdf",
+                    "bytes": 3,
+                    "pages": 1e+21
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "breakdown": {
+        "source": "local_estimate",
+        "total": 23,
+        "system": 0,
+        "tools": 0,
+        "messages": 23,
+        "mcp": 0,
+        "memory": 0
+      }
+    },
+    {
+      "name": "pdf-pages-2.5e21",
+      "request": {
+        "provider": "fixture",
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-14",
+                "content": [
+                  {
+                    "type": "pdf",
+                    "data": "lll",
+                    "mimeType": "application/pdf",
+                    "bytes": 3,
+                    "pages": 2.5e+21
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "breakdown": {
+        "source": "local_estimate",
+        "total": 25,
+        "system": 0,
+        "tools": 0,
+        "messages": 25,
+        "mcp": 0,
+        "memory": 0
+      }
+    },
+    {
+      "name": "pdf-pages-float",
+      "request": {
+        "provider": "fixture",
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-15",
+                "content": [
+                  {
+                    "type": "pdf",
+                    "data": "mmm",
+                    "mimeType": "application/pdf",
+                    "bytes": 3,
+                    "pages": 0.30000000000000004
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "breakdown": {
+        "source": "local_estimate",
+        "total": 27,
+        "system": 0,
+        "tools": 0,
+        "messages": 27,
+        "mcp": 0,
+        "memory": 0
+      }
+    },
+    {
+      "name": "pdf-pages-negative-zero",
+      "request": {
+        "provider": "fixture",
+        "model": "fixture-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-16",
+                "content": [
+                  {
+                    "type": "pdf",
+                    "data": "nnn",
+                    "mimeType": "application/pdf",
+                    "bytes": 3,
+                    "pages": 0
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "breakdown": {
+        "source": "local_estimate",
+        "total": 16,
+        "system": 0,
+        "tools": 0,
+        "messages": 16,
         "mcp": 0,
         "memory": 0
       }
