@@ -339,6 +339,31 @@ fn context_with(
         plan_directory: None,
     })
 }
+/// `schemaPrototypes: [{path, prototype}]` sets the prototype of the object at
+/// `path` (null for Object.create(null), an array or object otherwise), the
+/// same construction the TS generator applies.
+fn with_prototypes(mut schema: JsValue, prototypes: &JsValue) -> JsValue {
+    fn set(value: &mut JsValue, path: &[JsValue], prototype: &JsValue) {
+        let JsValue::Object(object) = value else {
+            panic!("prototype path must reach an object")
+        };
+        match path.split_first() {
+            None => object.set_prototype(prototype.clone()),
+            Some((key, rest)) => {
+                let key = key.as_string().unwrap().clone();
+                let mut child = object.get_key(&key).unwrap().clone();
+                set(&mut child, rest, prototype);
+                object.insert(key, child);
+            }
+        }
+    }
+    if let JsValue::Array(prototypes) = prototypes {
+        for p in prototypes {
+            set(&mut schema, array(field(p, "path")), field(p, "prototype"));
+        }
+    }
+    schema
+}
 fn register(registry: &ToolRegistry, spec: &JsValue, probe: &Probe) {
     let mut fields = obj([
         ("name", field(spec, "name").clone()),
@@ -348,7 +373,10 @@ fn register(registry: &ToolRegistry, spec: &JsValue, probe: &Probe) {
         (
             "inputSchema",
             match spec.get("schemaJson") {
-                Some(json) => parse_json(&text(json)).unwrap(),
+                Some(json) => with_prototypes(
+                    parse_json(&text(json)).unwrap(),
+                    field(spec, "schemaPrototypes"),
+                ),
                 None => spec
                     .get("schema")
                     .cloned()
@@ -386,7 +414,7 @@ fn calls(values: &JsValue) -> Vec<ToolCall> {
 async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 60);
+    assert_eq!(scenarios.len(), 61);
     for (spec, signal) in scenarios.iter().flat_map(|spec| {
         [
             (spec, Signal::Tool(ToolCancellation::default())),
@@ -485,22 +513,29 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
             ),
             Err(e) => assert_eq!(e.message, text(field(spec, "error")), "{label}"),
         }
+        let mut expected = array(field(spec, "events")).to_vec();
+        if field(spec, "drain") == &JsValue::Bool(true) {
+            // Deliberate deviation (fixtures/tool-runtime/README.md): the
+            // rejection time is TS's exactly, but the started siblings that
+            // TS lets finish detached after it are dropped by the batch.
+            let ts_settled = field(spec, "settledAt").as_number().unwrap();
+            assert_eq!(settled_at, ts_settled, "{label}: rejection time");
+            let after: Vec<_> = expected
+                .iter()
+                .filter(|e| array(e)[2].as_number().unwrap() > ts_settled)
+                .collect();
+            assert!(!after.is_empty(), "{label}: TS siblings ran on");
+            assert!(
+                after.iter().all(|e| text(&array(e)[0]) == "end"),
+                "{label}: only sibling completions follow the TS rejection"
+            );
+            expected.retain(|e| array(e)[2].as_number().unwrap() <= ts_settled);
+        }
         equal(
             &JsValue::Array(probe.events.lock().unwrap().clone()),
-            field(spec, "events"),
+            &JsValue::Array(expected),
             &format!("{label} events"),
         );
-        if field(spec, "drain") == &JsValue::Bool(true) {
-            // Documented deviation: TS rejects at settledAt while detached
-            // siblings keep running; the batch owns them, so it reports the
-            // error once the last started sibling settles.
-            let last = array(field(spec, "events"))
-                .iter()
-                .map(|e| array(e)[2].as_number().unwrap())
-                .fold(0.0, f64::max);
-            assert!(settled_at >= field(spec, "settledAt").as_number().unwrap());
-            assert_eq!(settled_at, last, "{label}: settles after the last sibling");
-        }
         assert_eq!(
             probe.live.load(Ordering::SeqCst),
             0,
@@ -569,6 +604,38 @@ async fn abort_and_outer_operation_deadline_leave_no_detached_futures() {
     let before = probe.events.lock().unwrap().len();
     tokio::time::advance(Duration::from_secs(60)).await;
     assert_eq!(probe.events.lock().unwrap().len(), before);
+}
+
+/// Deliberate deviation from Promise.all: the first concurrent error rejects
+/// at once (as in TS) and the batch drops the started siblings instead of
+/// leaving them running, so a non-cooperative sibling cannot delay or hang it.
+#[tokio::test(start_paused = true)]
+async fn concurrent_error_rejects_immediately_and_drops_started_siblings() {
+    let probe = Probe::new();
+    let cancel = ToolCancellation::default();
+    let (runtime, _) = hanging(&probe);
+    let calls = calls(&parse_json(r#"[{"id":"a","name":"read_file","input":{"decision":"throw"}},{"id":"b","name":"read_file","input":{"hang":true}},{"id":"c","name":"read_file","input":{"hang":true}}]"#).unwrap());
+    let mut batch =
+        Box::pin(runtime.execute_batch(calls, ToolRunContext::new(context(&probe, &cancel, None))));
+    let Poll::Ready(Err(error)) = poll_once(batch.as_mut()).await else {
+        panic!("first error must reject the batch on the same poll");
+    };
+    assert_eq!(error.message, "permission failed");
+    assert_eq!(probe.ms(), 0.0);
+    let started: Vec<_> = probe
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|e| text(&array(e)[1]))
+        .collect();
+    assert_eq!(started, ["b", "c"], "siblings had started");
+    drop(batch);
+    assert_eq!(
+        probe.live.load(Ordering::SeqCst),
+        0,
+        "started siblings dropped"
+    );
 }
 
 /// Tool destructors and visibility policies may query the same registry; the

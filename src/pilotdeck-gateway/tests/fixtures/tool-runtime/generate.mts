@@ -118,7 +118,23 @@ const scenarios: any[] = [
   { name: 'preview-binary-content-reports-original-bytes', context: { maxResultBytes: 1 }, calls: [call('a', 'read_file', { content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }, { type: 'text', text: '中文' }, { type: 'pdf', data: 'QUJD', mimeType: 'application/pdf', pages: 2 }] })] },
   { name: 'preview-head-tail-separator', context: { maxResultBytes: 122 }, calls: [call('a', 'read_file', { content: [{ type: 'text', text: 'é'.repeat(30) + 'x'.repeat(41) + '中'.repeat(20) }, { type: 'json', value: { a: [1, 'ü'] } }, { type: 'file', path: '/w/a.txt', mimeType: 'text/plain', description: 'notes' }, { type: 'file', path: '/w/b' }] })] },
   { name: 'preview-tool-level-limit-overrides-context', definitions: [tool('read_file', true, { maxResultBytes: 4 }), tool('fast', true, { maxResultBytes: null })], context: { maxResultBytes: 1000 }, calls: [call('a', 'read_file', { value: 'abcdefgh' }), call('b', 'fast', { value: 'abcdefgh' })] },
+  // Round 3. `schemaPrototypes` sets explicit prototypes after parsing, like a
+  // programmatic or merged inputSchema (Object.create(null) / ([]) / ({...})).
+  { name: 'schema-explicit-prototypes-follow-js-lookup', definitions: [
+    tool('read_file', true, { schemaJson: '{"type":"object","additionalProperties":false,"properties":{"a":{"type":"string"}}}', schemaPrototypes: [{ path: ['properties'], prototype: null }] }),
+    tool('fast', true, { schemaJson: '{"type":"object","additionalProperties":false,"properties":{"a":{}}}', schemaPrototypes: [{ path: ['properties'], prototype: [] }] }),
+    tool('slow', false, { schemaJson: '{"type":"object","additionalProperties":false,"properties":{"a":{}}}', schemaPrototypes: [{ path: ['properties'], prototype: { b: { type: 'number' } } }] }),
+  ], calls: [
+    { id: 'a', name: 'read_file', inputJson: '{"toString":1,"a":"x","__proto__":1}' },
+    { id: 'b', name: 'fast', inputJson: '{"length":1,"map":2,"0":3,"x":4,"toString":5}' },
+    call('c', 'slow', { b: 's', c: 1 }),
+  ] },
 ];
+
+function withPrototypes(schema: any, prototypes: any[] = []) {
+  for (const { path, prototype } of prototypes) Object.setPrototypeOf(path.reduce((o: any, k: string) => o[k], schema), prototype);
+  return schema;
+}
 
 async function run(spec: any) {
   let ms = 0;
@@ -131,7 +147,7 @@ async function run(spec: any) {
   const registry = new ToolRegistry();
   for (const def of spec.definitions ?? definitions) registry.register({
     name: def.name, aliases: def.aliases, description: def.name, kind: 'builtin',
-    inputSchema: def.schemaJson !== undefined ? JSON.parse(def.schemaJson) : def.schema ?? { type: 'object' },
+    inputSchema: def.schemaJson !== undefined ? withPrototypes(JSON.parse(def.schemaJson), def.schemaPrototypes) : def.schema ?? { type: 'object' },
     ...('maxResultBytes' in def ? { maxResultBytes: def.maxResultBytes } : {}),
     isReadOnly: () => true,
     isConcurrencySafe: (input: any) => { if (def.predicateError) throw Error('predicate failed'); return input.safe ?? def.safe; },
