@@ -606,6 +606,30 @@ fn utf16_paths_use_normalized_containment_and_preserve_response_string() {
 }
 
 #[test]
+fn deep_max_bytes_array_is_a_local_error_not_a_stack_overflow() {
+    let temp = Temp::new();
+    let metadata = native_metadata(&temp);
+    fs::write(temp.0.join("project/a.txt"), "inside").unwrap();
+    let mut max = JsValue::Number(7.0);
+    for _ in 0..1_000_000 {
+        max = JsValue::Array(vec![max]);
+    }
+    let params = object([
+        (
+            "projectKey",
+            metadata.cwd.join("project").to_str().unwrap().into(),
+        ),
+        ("path", "a.txt".into()),
+        ("maxBytes", max),
+    ]);
+    let (code, message) = execute(&metadata, "project_file_read", &params)
+        .expect("answered locally, never forwarded")
+        .unwrap_err();
+    assert_eq!(code, "gateway_request_failed");
+    assert_eq!(message, "Maximum call stack size exceeded");
+}
+
+#[test]
 fn unmeasured_io_diagnostics_are_not_fabricated_locally() {
     let error = fs_error(
         "project_file_read",

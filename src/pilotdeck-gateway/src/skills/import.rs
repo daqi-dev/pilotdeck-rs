@@ -131,6 +131,8 @@ impl SkillManager {
         // fs.promises.readdir is uv_fs_scandir, whose uv__fs_scandir_sort is
         // strcmp: the same byte order as OsString, so the stable sort below
         // breaks ties exactly as TS does (CLAUDE.md 问题分级, 2026-10-14).
+        // This holds only for scandir; fs.cp walks with opendir, which is
+        // unsorted (see copy_dir).
         entries.sort_by_key(|e| e.file_name());
         let current = scan_folder(&root, basename(&root));
         let collator = node_collator(&self.locale)
@@ -367,6 +369,13 @@ fn copy_entry(
 }
 
 /// cp.js copyDir: each entry passes checkPaths before it is copied.
+///
+/// No sort, on purpose: copyDir iterates `fs.opendir` (uv_fs_opendir/readdir),
+/// which yields the native directory order, and `fs::read_dir` yields the same.
+/// Measured (A6.8-pr4 gate 2, Node 22.22, `_tmp/20261018-a68-pr4/cp-order-probe.log`):
+/// with zz.txt, b.pipe, mm.txt, a.pipe created in that order, opendir returns
+/// that order and cp fails first on b.pipe, while sorted readdirSync puts
+/// a.pipe first.
 fn copy_dir(src: &str, dest: &str) -> Result<()> {
     let entries = fs::read_dir(src)
         .and_then(|r| r.collect::<io::Result<Vec<_>>>())

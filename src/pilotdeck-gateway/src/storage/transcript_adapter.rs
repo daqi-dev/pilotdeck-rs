@@ -15,6 +15,7 @@ use super::{
     ledger::field,
     transcript::{create_temporary, private_dirs, private_open, read_transcript_limited, uuid},
 };
+use crate::js_value;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     collections::HashSet,
@@ -37,6 +38,9 @@ pub enum AdapterError {
     Validation { code: &'static str, message: String },
     /// TS TypeError. Only the V8 messages listed at the construction sites are modelled.
     Type(String),
+    /// TS RangeError: V8's too-deep `Array.prototype.join` while building a
+    /// message (TS actual error shape pending measurement).
+    Range(String),
     /// A TS module this adapter does not port would decide this input.
     NodeHostRequired(String),
     /// Error from the host store, propagated unchanged (TS rethrows it).
@@ -45,7 +49,9 @@ pub enum AdapterError {
 impl fmt::Display for AdapterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Validation { message, .. } | Self::Type(message) => f.write_str(message),
+            Self::Validation { message, .. } | Self::Type(message) | Self::Range(message) => {
+                f.write_str(message)
+            }
             Self::NodeHostRequired(message) => f.write_str(message),
             Self::Store(error) => error.fmt(f),
         }
@@ -504,7 +510,7 @@ impl TranscriptWriter {
                 "invalid_sequence",
                 format!(
                     "Session event store sequence must be a non-negative safe integer: {}.",
-                    js_number(max_sequence)
+                    js_value::number_string(max_sequence)
                 ),
             ));
         }
@@ -664,7 +670,7 @@ impl TranscriptWriter {
                 "sequence_not_increasing",
                 format!(
                     "Recorded session event sequence {} must be greater than current sequence {}.",
-                    js_number(seq),
+                    js_value::number_string(seq),
                     inner.sequence
                 ),
             ));
@@ -780,8 +786,8 @@ pub(super) fn validate_event_log(
                 "sequence_not_increasing",
                 format!(
                     "Session event sequence must increase strictly: received {} after {}.",
-                    js_number(seq),
-                    js_number(sequence)
+                    js_value::number_string(seq),
+                    js_value::number_string(sequence)
                 ),
             ));
         }
@@ -813,7 +819,7 @@ fn validate_envelope(entry: &JsValue) -> AdapterResult<()> {
             "invalid_sequence",
             format!(
                 "Session event sequence must be a positive safe integer: {}.",
-                js_to_string(sequence)
+                js_to_string(sequence)?
             ),
         ));
     }
@@ -1156,42 +1162,10 @@ fn slice_index(value: f64, len: usize) -> usize {
 fn is_safe_integer(n: f64) -> bool {
     n.is_finite() && n.fract() == 0.0 && n.abs() <= MAX_SAFE_INTEGER
 }
-/// JS String(number).
-fn js_number(n: f64) -> String {
-    if n == 0.0 {
-        "0".into()
-    } else if n.is_nan() {
-        "NaN".into()
-    } else if n.is_infinite() {
-        (if n > 0.0 { "Infinity" } else { "-Infinity" }).into()
-    } else {
-        stringify_json(&JsValue::Number(n))
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-    }
-}
 /// JS String(value) for JSON values.
-fn js_to_string(value: &JsValue) -> String {
-    match value {
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Null => "null".into(),
-        JsValue::Bool(b) => b.to_string(),
-        JsValue::Number(n) => js_number(*n),
-        JsValue::String(s) => lossy(s),
-        JsValue::Array(items) => items
-            .iter()
-            .map(|item| {
-                if nullish(item) {
-                    String::new()
-                } else {
-                    js_to_string(item)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        JsValue::Object(_) => "[object Object]".into(),
-    }
+fn js_to_string(value: &JsValue) -> AdapterResult<String> {
+    js_value::display(value)
+        .map_err(|_| AdapterError::Range(js_value::StackOverflow::MESSAGE.into()))
 }
 fn lossy(value: &JsString) -> String {
     String::from_utf16_lossy(value.units())

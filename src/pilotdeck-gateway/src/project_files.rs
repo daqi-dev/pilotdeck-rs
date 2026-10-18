@@ -39,6 +39,14 @@ fn index_limit() -> Error {
         "Project file scan exceeded its resource limit.".into(),
     )
 }
+/// `Number(maxBytes)` on a too-deep array: V8's RangeError, which TS reports
+/// as a plain gateway error (TS actual error shape pending measurement).
+fn stack_overflow(_: crate::js_value::StackOverflow) -> Error {
+    (
+        "gateway_request_failed",
+        crate::js_value::StackOverflow::MESSAGE.into(),
+    )
+}
 fn encode(value: &JsValue) -> String {
     stringify_json(value).expect("JSON value").expect("defined")
 }
@@ -260,7 +268,13 @@ pub(crate) fn execute<F: Files>(
         // preserving the original JS string in the response.
         let path = params.get("path")?.as_string()?;
         let path = String::from_utf16_lossy(path.units());
-        return local_result(read(metadata, params, &project, &path));
+        let result = read(metadata, params, &project, &path);
+        // A too-deep maxBytes is answered here too: forwarding would hand the
+        // string path to TS's non-race-safe open.
+        if matches!(&result, Err((_, m)) if m == crate::js_value::StackOverflow::MESSAGE) {
+            return Some(result);
+        }
+        return local_result(result);
     }
     let query = match params.get("query") {
         None | Some(JsValue::Null | JsValue::Undefined) => String::new(),
@@ -354,7 +368,7 @@ fn read<F: Files>(
     }
     let number = match params.get("maxBytes") {
         None | Some(JsValue::Null | JsValue::Undefined) => 1_000_000.0,
-        Some(value) => js_number(value),
+        Some(value) => crate::js_value::to_number(value).map_err(stack_overflow)?,
     };
     let limit = if number.is_nan() {
         0
@@ -391,80 +405,6 @@ fn truthy(value: &JsValue) -> bool {
         JsValue::String(s) => !s.is_empty(),
         _ => true,
     }
-}
-fn js_number(value: &JsValue) -> f64 {
-    match value {
-        JsValue::Number(n) => *n,
-        JsValue::Null => 0.0,
-        JsValue::Bool(b) => {
-            if *b {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        JsValue::String(_) | JsValue::Array(_) => number_from_text(&js_coercion_text(value)),
-        _ => f64::NAN,
-    }
-}
-fn js_coercion_text(value: &JsValue) -> String {
-    match value {
-        JsValue::String(s) => String::from_utf16_lossy(s.units()),
-        JsValue::Array(items) => items
-            .iter()
-            .map(|item| {
-                if matches!(item, JsValue::Null | JsValue::Undefined) {
-                    String::new()
-                } else {
-                    js_coercion_text(item)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        JsValue::Object(_) => "[object Object]".into(),
-        JsValue::Undefined => "undefined".into(),
-        _ => encode(value),
-    }
-}
-fn number_from_text(text: &str) -> f64 {
-    let text = js_trim(text);
-    if text.is_empty() {
-        return 0.0;
-    }
-    match text {
-        "Infinity" | "+Infinity" => return f64::INFINITY,
-        "-Infinity" => return f64::NEG_INFINITY,
-        _ => {}
-    }
-    for (prefix, radix) in [
-        ("0x", 16),
-        ("0X", 16),
-        ("0o", 8),
-        ("0O", 8),
-        ("0b", 2),
-        ("0B", 2),
-    ] {
-        if let Some(digits) = text.strip_prefix(prefix) {
-            if digits.is_empty() {
-                return f64::NAN;
-            }
-            return digits
-                .chars()
-                .try_fold(0.0, |value, c| {
-                    c.to_digit(radix)
-                        .map(|digit| value * radix as f64 + digit as f64)
-                })
-                .unwrap_or(f64::NAN);
-        }
-    }
-    // Rust also accepts inf; JavaScript Number does not.
-    if text
-        .chars()
-        .any(|c| c.is_ascii_alphabetic() && c != 'e' && c != 'E')
-    {
-        return f64::NAN;
-    }
-    text.parse().unwrap_or(f64::NAN)
 }
 fn fs_error(method: &str, error: io::Error, operation: &str, path: &Path) -> Error {
     // NOFOLLOW detects a link installed after canonicalization. Never send that
