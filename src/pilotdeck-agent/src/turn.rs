@@ -7029,25 +7029,51 @@ mod pre_model_abort_tests {
     }
     fn assert_capture_deadline_then_hard_stop(path: AbortPath) {
         for hard_stop in [CancelCause::OwnerRetired, CancelCause::TransportClosed] {
-            let (result, log) = run_path_with_hard_stop(
-                path,
+            for capture_error in [
                 PortError::Cancelled {
                     cause: CancelCause::Deadline,
                 },
-                None,
-                Some(PortError::Cancelled {
-                    cause: CancelCause::Deadline,
-                }),
-                Some(hard_stop),
-            );
-            assert!(log.contains(&"capture_false"));
-            assert!(matches!(
-                result,
-                Err(PortError::Cancelled {
-                    cause: CancelCause::Deadline
-                })
-            ));
-            assert!(!log.contains(&"completed"));
+                PortError::Cancelled {
+                    cause: CancelCause::Requested("local cancel".into()),
+                },
+                unknown(),
+            ] {
+                let (result, log) = run_path_with_hard_stop(
+                    path,
+                    PortError::Cancelled {
+                        cause: CancelCause::Deadline,
+                    },
+                    None,
+                    Some(capture_error.clone()),
+                    Some(hard_stop.clone()),
+                );
+                assert!(log.contains(&"capture_false"));
+                match (result, capture_error) {
+                    (
+                        Err(PortError::Cancelled { cause }),
+                        PortError::Cancelled { cause: expected },
+                    ) => {
+                        assert_eq!(cause, expected);
+                    }
+                    (
+                        Err(PortError::AcceptedUnknown {
+                            identity,
+                            last_applied_sequence,
+                        }),
+                        PortError::AcceptedUnknown {
+                            identity: expected,
+                            last_applied_sequence: sequence,
+                        },
+                    ) => {
+                        assert_eq!(identity, expected);
+                        assert_eq!(last_applied_sequence, sequence);
+                    }
+                    (actual, expected) => {
+                        panic!("capture error changed: {actual:?}; expected {expected:?}")
+                    }
+                }
+                assert!(!log.contains(&"completed"));
+            }
         }
     }
     #[test]

@@ -1280,6 +1280,120 @@ mod reconciliation_tests {
         }
     }
 
+    #[test]
+    fn queued_abort_capture_rechecks_retirement_before_writer_dispatch() {
+        // A FIFO sentinel ends the real writer after it has examined the queued
+        // capture. No waiter can remove that packet before writer admission.
+        struct UntilSentinel<'a> {
+            owner: &'a ConnectionOwner,
+            bytes: &'a mut Vec<u8>,
+        }
+        const SENTINEL: &[u8] = b"\"writer-drained\"\n";
+        impl Write for UntilSentinel<'_> {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.bytes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                if self.bytes.ends_with(SENTINEL) {
+                    self.owner.close();
+                }
+                Ok(())
+            }
+        }
+        for module in ["model", "capability"] {
+            for hard_stop in [
+                None,
+                Some(CancelCause::OwnerRetired),
+                Some(CancelCause::TransportClosed),
+            ] {
+                let (owner, execution, mut exchange) = fixture();
+                let original = exchange
+                    .start(
+                        &execution,
+                        module,
+                        if module == "model" {
+                            "stream_next"
+                        } else {
+                            "execute_batch"
+                        },
+                        CallEffect::SideEffect,
+                        JsObject::new(),
+                    )
+                    .unwrap();
+                let original_id = original.message_id.clone();
+                let original_identity = owner.call_record(&original_id).unwrap().identity;
+                mark_sent(&original);
+                let mut reply = ack(&original_id).as_object().unwrap().clone();
+                reply.insert("ok".into(), JsValue::Bool(false));
+                reply.insert("outcome".into(), "result_unknown".into());
+                assert_eq!(
+                    owner.receive_response(&JsValue::Object(reply)),
+                    ResponseDisposition::Completed
+                );
+                assert!(matches!(
+                    original.wait(&execution),
+                    Err(PortError::AcceptedUnknown { .. })
+                ));
+                execution
+                    .cancellation
+                    .cancel(CancelCause::Requested("stop".into()));
+                let cleanup = CallControl {
+                    cancellation: execution.cancellation.cleanup_scope(),
+                    deadline: Some(Instant::now() + Duration::from_secs(5)),
+                };
+                let capture = exchange
+                    .start(
+                        &cleanup,
+                        "context",
+                        "capture_turn",
+                        CallEffect::SideEffect,
+                        abort_capture_payload(),
+                    )
+                    .unwrap();
+                let capture_id = capture.message_id.clone();
+                let queued = owner.call_record(&capture_id).unwrap();
+                assert_eq!(queued.phase, DispatchPhase::Queued);
+                assert!(queued.admission_rejected.is_none());
+                if let Some(cause) = &hard_stop {
+                    execution.cancellation.cancel(cause.clone());
+                }
+                owner
+                    .send_cached_stream(&JsValue::from("writer-drained"))
+                    .unwrap();
+                let mut written = Vec::new();
+                owner
+                    .drive_writer(UntilSentinel {
+                        owner: &owner,
+                        bytes: &mut written,
+                    })
+                    .unwrap();
+                let record = owner.call_record(&capture_id).unwrap();
+                if hard_stop.is_some() {
+                    assert_eq!(written, SENTINEL, "retired capture reached the wire");
+                    assert_eq!(record.phase, DispatchPhase::Queued);
+                    assert!(
+                        matches!(record.admission_rejected, Some(PortError::AcceptedUnknown { identity, .. }) if *identity == original_identity)
+                    );
+                    assert!(
+                        matches!(capture.wait(&cleanup), Err(PortError::AcceptedUnknown { identity, .. }) if *identity == original_identity)
+                    );
+                    assert!(owner.call_record(&capture_id).is_none());
+                } else {
+                    // Positive control: Requested alone still permits capture.
+                    assert_eq!(written, [queued.request_line.as_bytes(), SENTINEL].concat());
+                    assert_eq!(record.phase, DispatchPhase::Sent);
+                    assert!(record.admission_rejected.is_none());
+                }
+                assert_eq!(
+                    owner.call_record(&original_id).unwrap().identity,
+                    original_identity
+                );
+                assert!(owner.check_known_uncertainty(&original_identity).is_err());
+            }
+        }
+    }
+
     fn check_expired_wait(acknowledged: bool) {
         let owner = ConnectionOwner::new(
             SidecarBinding {
