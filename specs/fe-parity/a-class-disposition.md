@@ -91,7 +91,7 @@ fixture 把 Composer 和 hook 单独挂载（`fixtures/model-selection.jsx:23-66
 | 29 | model-selection:108 | settings/help commands work with model ready=true, via click and keyboard | 改写黑盒 | 同 #28，不含 L133-141 那段 |
 | 30 | model-selection:145 | accepted model choices synchronize across tabs while existing sessions retain their model | 改写黑盒 | 同一个 context 开两个页面属于测试侧。L161 的 localStorage 键 `composer-model-last-sent` 是双壳共享存储契约，保留断言；其余改为读选择器标签 |
 | 31 | model-selection:169 | response model appears before time only with the response hover actions | 改写黑盒 | 回答帧携带 model，由 mock 推送。L177、L183-184 是文案，L179、L181 的 opacity 是计算样式，L182 是 DOM 顺序。依赖定位契约 `assistant-message-actions`/`assistant-message-model`（第二节），不需要钩子 |
-| 32 | model-selection:194 | the mint model menu keeps white surfaces and follows the active accent | **放弃** | L197-201 直接 `import('/src/lib/appearanceRuntime.ts')` 来驱动。L204 断言固定 `rgb(255, 255, 255)`，L205-216 拿内部 CSS 变量名 `--pd-accent-*` 换算颜色，L218-220 断言的图标只是 fixture 拼进来的（`model-selection.jsx:55-58`）。这些都是视觉令牌层面的实现，pixel-perfect 已在范围外（004:145）。主题切换的功能面如果要对拍，由 F3 设置页另写黑盒，不从本例承接。**人复核重点** |
+| 32 | model-selection:194 | the mint model menu keeps white surfaces and follows the active accent | **放弃** | L197-201 直接 `import('/src/lib/appearanceRuntime.ts')` 来驱动。L204 断言固定 `rgb(255, 255, 255)`，L205-216 拿内部 CSS 变量名 `--pd-accent-*` 换算颜色，L218-220 断言的图标只是 fixture 拼进来的（`model-selection.jsx:55-58`）。这些都是视觉令牌层面的实现，pixel-perfect 已在范围外（004:145）。主题切换的功能面如果要对拍，由 F3 设置页另写黑盒，不从本例承接。本例另有两条产品可观察的行为：L202 点开模型菜单、L222-223 按 Escape 关闭菜单（菜单项计数为 0）。前者已由 #23-31 的驱动覆盖，后者在 A/B/D 现有身份里都没有断言，所以**并入 #23 的改写，补一条 Escape 关闭断言**，不随本例放弃。**人复核重点** |
 | 33 | model-selection:194 | the blue model menu keeps white surfaces and follows the active accent | **放弃** | 同 #32 |
 
 ### composition.spec.mjs（1）
@@ -105,7 +105,7 @@ fixture 把 Composer 和 hook 单独挂载（`fixtures/model-selection.jsx:23-66
 ## 四、替代分母（待人复核）
 
 - **替代分母 = 37 + 移植 0 + 改写 31 = 68**（B 9 + D 28 + A 改写 31）。之后 31 例中如果有降级为移植的，分母不变。
-- 防 skip 对账的注册分母仍是 72（`docs/plan/004_frontend.md:78`），不受影响。A 改写后的用例是新身份：每例标题里带源身份 `[A:<file>:<line>]`，循环展开出的实例各自独立，两边一一映射。3 例放弃的身份在对账报告里列为「放弃」并附本表理由，**不得静默消失**。C 类 1 例（history-fork）属于后端验收，不进前端分母。
+- 防 skip 对账的注册分母仍是 72（`docs/plan/004_frontend.md:78`），不受影响。A 改写后的用例是新身份：每例标题里带源身份 `[A:<file>:<title>]`，以 (file, title) 为键，与身份正本 `e2e-inventory.json` 的口径相同。不用行号，因为循环展开的多个实例共用一个 `test(` 注册行：#4/#5、#7/#8、#15-17、#18-21、#28/#29、#32/#33 共 13 例落在 6 个行号上，按行号编号会撞号。两边按这个键一一映射，pr2 落地时对 34 个 (file, title) 做唯一性断言。3 例放弃的身份在对账报告里列为「放弃」并附本表理由，**不得静默消失**。C 类 1 例（history-fork）属于后端验收，不进前端分母。
 - **哪些计入哪一期的主尺子**：
   - **F3 设置页**：A 类不贡献。F3 继续用 B（`real-auth-native` 等）和 D（`real/settings`）。#28、#29 虽然会打开设置，但它们测的是 composer 的命令通路，归 F5。
   - **F5 聊天面**：31 例全部计入，这与 `docs/plan/004_frontend.md:102`（composer 等以移植后的 A 类为尺）和 :104 的验收条件一致。其中 #1-22 是流式、滚动、搜索，#23-31 是 composer 的模型选择与命令。
