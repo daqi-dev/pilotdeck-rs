@@ -77,3 +77,16 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **建议 / 执行**：A。Claude 作为作者时不审自己；评审 = GLM（opencode plan）+ DeepSeek（review-deepseek.py，默认关思考）；四角色 run-review-roles --runner zai 照常。
 - **原则**：实现通道换人时，同步重排评审，保证两家非作者；通道不可用不降级为单评审。
 - **回切（10-18）**：10-18 用户告知 codex 额度恢复，已回切。守护会话 pilotdeck-rs-69 实测 `codex exec --sandbox read-only` 返回 CODEX-OK。新开的 impl 单改回由 codex 实现；已用 claude 开工的 A6.8-pr3、D1-pr2、A6.2-pr3 跑完当前这轮，不中途换手。评审照旧两家非作者：codex 实现的单由 Claude 与 GLM/DeepSeek 中任两家评审。
+
+## 卡 · 模型分工（2026-10-18，人定，经守护会话 pilotdeck-rs-69 转达）
+- **评审**：默认 GLM + DeepSeek。GLM 走 `run-review-roles.py --runner zai`，或 `claude -p` 接智谱；DeepSeek 走 `review-deepseek.py`，默认关思考。只有难单（并发、协议、冻结装置、安全边界）才请 Claude 当评审。
+- **实现**：codex、GLM、DeepSeek 轮换。
+  - GLM：`claude -p` 接智谱，给写权限，在 worktree 里跑。
+  - DeepSeek：没有工具通道，只出候选 patch，由持有人机械应用，适合小而明确的单。
+  - 难单仍优先 codex 或 Claude。
+- **约束不变**：谁写谁不审，必须两家非作者。
+  - GLM 实现时：评审 = DeepSeek + codex/Claude；
+  - DeepSeek 实现时：评审 = GLM + 另一家；
+  - codex 实现时：评审 = GLM + DeepSeek（难单可换 Claude）。
+- **试点**：GLM 和 DeepSeek 都还没真写过产品代码，先各拿一张小而明确的单试一次，看质量再决定要不要常态化。试点结论记回本卡。
+- **原则**：通道分工按难度和作者排除来定，每单开工时在 triage 或任务书里写明「作者 / 评审两家」。
