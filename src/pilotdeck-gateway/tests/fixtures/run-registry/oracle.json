@@ -3,7 +3,7 @@
   "sourceSha256": {
     "src/gateway/run/RunRegistry.ts": "99884343c4b8d13865d254e27e1db293f0c0387dae0075191e2431890bb6bc37"
   },
-  "generatorPid": 64768,
+  "generatorPid": 75867,
   "dead": 2147483647,
   "huge": 2147483648,
   "scenarios": [
@@ -633,7 +633,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-17T23:33:29.698Z",
+              "acceptedAt": "2026-10-18T00:01:02.224Z",
               "updatedAt": "<new>"
             }
           }
@@ -655,7 +655,7 @@
               "state": "interrupted",
               "revision": 3,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-17T23:33:29.699Z",
+              "acceptedAt": "2026-10-18T00:01:02.224Z",
               "updatedAt": "<new>"
             }
           }
@@ -676,7 +676,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-17T23:33:29.700Z",
+              "acceptedAt": "2026-10-18T00:01:02.225Z",
               "updatedAt": "<new>"
             }
           }
@@ -698,7 +698,7 @@
               "state": "interrupted",
               "revision": 3,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-17T23:33:29.700Z",
+              "acceptedAt": "2026-10-18T00:01:02.226Z",
               "updatedAt": "<new>"
             }
           }
@@ -720,7 +720,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-17T23:33:29.701Z",
+              "acceptedAt": "2026-10-18T00:01:02.227Z",
               "updatedAt": "<new>"
             }
           }
@@ -742,7 +742,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-17T23:33:29.702Z",
+              "acceptedAt": "2026-10-18T00:01:02.227Z",
               "updatedAt": "<new>"
             }
           }
@@ -764,7 +764,7 @@
               "state": "interrupted",
               "revision": 2,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-17T23:33:29.702Z",
+              "acceptedAt": "2026-10-18T00:01:02.228Z",
               "updatedAt": "<new>"
             }
           }
@@ -786,8 +786,8 @@
               "state": "running",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-17T23:33:29.703Z",
-              "updatedAt": "2026-10-17T23:33:29.703Z"
+              "acceptedAt": "2026-10-18T00:01:02.228Z",
+              "updatedAt": "2026-10-18T00:01:02.228Z"
             }
           }
         },
@@ -808,8 +808,8 @@
               "state": "accepted",
               "revision": 1,
               "lastSeq": 0,
-              "acceptedAt": "2026-10-17T23:33:29.704Z",
-              "updatedAt": "2026-10-17T23:33:29.704Z"
+              "acceptedAt": "2026-10-18T00:01:02.229Z",
+              "updatedAt": "2026-10-18T00:01:02.229Z"
             }
           }
         },
@@ -830,8 +830,8 @@
               "state": "completed",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-17T23:33:29.704Z",
-              "updatedAt": "2026-10-17T23:33:29.705Z",
+              "acceptedAt": "2026-10-18T00:01:02.229Z",
+              "updatedAt": "2026-10-18T00:01:02.230Z",
               "result": {
                 "type": "turn_completed",
                 "runId": "orphan-dead-completed",
@@ -858,8 +858,8 @@
               "state": "failed",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-17T23:33:29.705Z",
-              "updatedAt": "2026-10-17T23:33:29.706Z",
+              "acceptedAt": "2026-10-18T00:01:02.230Z",
+              "updatedAt": "2026-10-18T00:01:02.231Z",
               "result": {
                 "type": "error",
                 "runId": "orphan-dead-failed",
@@ -889,7 +889,7 @@
               "state": "interrupted",
               "revision": 3,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-17T23:33:29.699Z",
+              "acceptedAt": "2026-10-18T00:01:02.224Z",
               "updatedAt": "<new>"
             }
           }
@@ -953,8 +953,8 @@
               "state": "completed",
               "revision": 2,
               "lastSeq": 1,
-              "acceptedAt": "2026-10-17T23:33:29.704Z",
-              "updatedAt": "2026-10-17T23:33:29.705Z",
+              "acceptedAt": "2026-10-18T00:01:02.229Z",
+              "updatedAt": "2026-10-18T00:01:02.230Z",
               "result": {
                 "type": "turn_completed",
                 "runId": "orphan-dead-completed",
@@ -2091,6 +2091,46 @@
               "revision": 1,
               "lastSeq": 0
             }
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "s",
+            "runId": "nil"
+          },
+          "outcome": {
+            "events": []
+          }
+        },
+        {
+          "op": "append",
+          "input": {
+            "sessionKey": "s",
+            "runId": "nil"
+          },
+          "event": {
+            "type": "input_accepted"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "events",
+          "input": {
+            "sessionKey": "s",
+            "runId": "nil"
+          },
+          "outcome": {
+            "events": [
+              {
+                "seq": 1,
+                "event": {
+                  "type": "input_accepted"
+                }
+              }
+            ]
           }
         }
       ],

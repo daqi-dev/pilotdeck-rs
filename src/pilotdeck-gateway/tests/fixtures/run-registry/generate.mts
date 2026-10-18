@@ -147,6 +147,11 @@ function expectKinds(expected: string[]) {
   const last = scenarios.at(-1);
   assert.equal(last.openError, null, last.name);
   assert.deepEqual(last.steps.map((s: any) => kind(s.outcome)), expected, last.name);
+  // A 'record' step must have read the run it asked for, not a neighbour.
+  for (const s of last.steps) {
+    const r = s.outcome.record;
+    if (r && typeof r === 'object' && !Array.isArray(r) && 'runId' in r) assert.equal(String(r.runId), String(s.input.runId), `${last.name} read another run`);
+  }
   return last.steps.map((s: any) => s.outcome);
 }
 const afterSnapshot = async () => JSON.parse(await readFile(join(output, scenarios.at(-1).after), 'utf8'));
@@ -362,7 +367,8 @@ try {
       { sessionKey: 's', runId: 'str', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 0 },
       { sessionKey: 's', runId: 'nul', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 1 },
       { sessionKey: 's', runId: 'ok', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 0 },
-    ], events: { '\0s\0str': 'oops', '\0s\0nul': [null] } }),
+      { sessionKey: 's', runId: 'nil', requestMaterial: 'm', state: 'running', ownerPid: HUGE, revision: 1, lastSeq: 0 },
+    ], events: { '\0s\0str': 'oops', '\0s\0nul': [null], '\0s\0nil': null } }),
     steps: [
       append(bare('str', 's'), { type: 'input_accepted' }),
       append(bare('nul', 's'), { type: 'input_accepted' }),
@@ -370,10 +376,14 @@ try {
       { op: 'events', input: bare('nul', 's') },
       append(bare('ok', 's'), null),
       { op: 'get', input: bare('ok', 's') },
+      // A null event table reads as empty (eventMap.get(key) ?? []).
+      { op: 'events', input: bare('nil', 's') },
+      append(bare('nil', 's'), { type: 'input_accepted' }),
+      { op: 'events', input: bare('nil', 's') },
     ],
   });
   {
-    const o = expectKinds(['TypeError', 'ok', 'TypeError', 'TypeError', 'TypeError', 'record']);
+    const o = expectKinds(['TypeError', 'ok', 'TypeError', 'TypeError', 'TypeError', 'record', 'events:0', 'ok', 'events:1']);
     assert.equal(o[5].record.lastSeq, 0);
     assert.deepEqual((await afterSnapshot()).events['\0s\0nul'].map((e: any) => e?.seq ?? e), [null, 2]);
   }
