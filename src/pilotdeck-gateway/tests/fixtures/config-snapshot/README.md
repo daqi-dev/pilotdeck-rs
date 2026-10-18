@@ -7,10 +7,10 @@
 
 ## 目录与条数
 
-`oracle.json` 共 **175** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **180** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言：
 
-- 100 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
+- 105 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
   合并、provider/模型目录、credential、modules、SOP、proxy 迁移；其中 28 条为
   第二轮新增（第一轮评审反例：router 冲突、API key 字面量、清扫周期、tier 键序、
   深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖），1 条为既有错误
@@ -19,7 +19,10 @@ source 数量和每个 `sourceSha256` 长度做精确断言：
   `.inf`（嵌套报错、平铺保留 Infinity）、非串 `memory.model`、`gateway.port` 的
   0/越界/小数/负数、多斜杠 `agent.subagents.default` 引用与含斜杠 model id，
   第五轮新增 6 条：`$`/Unicode 名 `${}` 字面量、subagents 与 provider 的
-  `(0,1)` 取整差异、`headers`/`extraBody` 的 `__proto__` 语义；
+  `(0,1)` 取整差异、`headers`/`extraBody` 的 `__proto__` 语义；#310 新增 5 条：
+  三条键序分辨（`headers`、`adapters.*.extra`、`runPolicy.failureGuard.toolFailureLimits`
+  中大小写/标点/数字/非 ASCII 键对，钉住 `stableStringify` 的 en-US `localeCompare`
+  与码元序不同的相对顺序），以及 `anthropic`/`google` 协议在非目录 provider 上的默认能力；
 - 18 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
 - 57 条来自既有 `tests/fixtures/config/diagnostics.json` 中 `load.ok` 的确定性
   抽样（按成功用例顺序每 18 条取 1 条）。
@@ -51,6 +54,11 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   `load_snapshot(..., loaded_at)` 传入同一值。
 - 每次运行临时根目录记为 `<ROOT>`，生成器的进程 cwd 记为 `<CWD>`；Rust 测试
   用本次独占临时目录和仓根 cwd 做同样的替换。
+- 生成器在归一化**之前**先断言：按 14 节转录的哈希输入经基线 `redactConfig` +
+  `stableStringify` 复算，必须等于 `loadPilotConfig` 自己产出的 `contentHash`，且
+  `config` 不含转录清单之外的节（#310：防止转录清单与基线错得一致）。
+- `noGlobal` 用例（不写全局 YAML）会原样记入原件，回放端据此删除复用 home 里的
+  上一份 YAML（当前语料没有此类用例）。
 - `contentHash` 在路径归一化后，用基线自己的 `redactConfig` +
   `stableStringify` 重新计算；Rust 测试先断言生产 `contentHash` 与
   `snapshot::content_hash(config)` 自洽，再对归一化后的 config 复算并逐字段比较。

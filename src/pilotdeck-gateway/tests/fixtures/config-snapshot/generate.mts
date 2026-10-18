@@ -446,6 +446,20 @@ add('model-provider-extrabody-proto', BASE.replace(
   '      apiKey: mock-only',
   '      apiKey: mock-only\n      extraBody: {__proto__: {x: 1}, temperature: 0.7, keep: 1}',
 ));
+// #310: stableStringify sorts keys with localeCompare (en-US ICU). These maps
+// put case-, punctuation- and digit-sensitive key pairs into the hashed config
+// so the Rust collator is checked against V8 on pairs whose order differs from
+// a code-unit sort.
+add('hash-key-order-headers', BASE.replace(
+  '      apiKey: mock-only',
+  "      apiKey: mock-only\n      headers: {B: v1, a: v2, x_a: v3, x-a: v4, xA: v5, X-a: v6, xa: v7, 'x a': v8, x.a: v9, a10: v10, a9: v11, Ä: v12, _z: v13, '-z': v14}",
+));
+add('hash-key-order-extra', BASE + `adapters: {telegram: {enabled: true, extra: {Zeta: 1, alpha: 2, Alpha: 3, 'a-b': 4, a_b: 5, ab: 6, aB: 7, 'é': 8, e: 9, f: 10, '~x': 11, '!x': 12}}}\n`);
+add('hash-key-order-tool-limits', BASE + `runPolicy: {failureGuard: {toolFailureLimits: {Bash: 1, bash: 2, b_ash: 3, 'b-ash': 4}, toolLabels: {Bash: B, bash: b}}}\n`);
+// #310: protocol defaults for the anthropic/google branches, on provider ids
+// that are not in the bundled catalog so the protocol table itself is used.
+add('model-protocol-anthropic-defaults', BASE.replace('protocol: openai', 'protocol: anthropic'));
+add('model-protocol-google-defaults', BASE.replace('protocol: openai', 'protocol: google'));
 
 function encode(value: unknown): unknown {
   if (value === undefined) return { $: 'undefined' };
@@ -477,19 +491,27 @@ function normalize(value: unknown, root: string): unknown {
   }
   return value;
 }
+const HASH_SECTIONS = [
+  'agent', 'model', 'extension', 'memory', 'gateway', 'adapters', 'router',
+  'alwaysOn', 'cron', 'tools', 'telemetry', 'proxy', 'modules', 'runPolicy',
+];
+const hashOf = (config: any) =>
+  sha256(stableStringify(redactConfig(Object.fromEntries(HASH_SECTIONS.map((key) => [key, config[key]])))));
 function normalizedSnapshot(snapshot: any, root: string): any {
+  // #310: the transcribed section list must reproduce the hash loadPilotConfig
+  // itself produced before any path is rewritten; a missing or extra section
+  // would otherwise make the oracle and Rust agree with each other but not
+  // with the baseline.
+  assert.equal(hashOf(snapshot.config), snapshot.contentHash, 'transcribed contentHash input diverges from loadPilotConfig');
+  assert.deepEqual(Object.keys(snapshot.config).filter((key) => !HASH_SECTIONS.includes(key)), [],
+    'snapshot config has a section outside the transcribed hash input');
   const normalized = normalize(snapshot, root) as any;
   // Content hashes are recomputed after path normalization so the fixture is
   // independent of the per-run temporary root while still being produced by
   // the baseline's own stableStringify/redactConfig. loadPilotConfig hashes one
   // object literal containing every section key, so absent sections stay as
   // explicit undefined members here too.
-  const config = normalized.config;
-  const hashInput = Object.fromEntries([
-    'agent', 'model', 'extension', 'memory', 'gateway', 'adapters', 'router',
-    'alwaysOn', 'cron', 'tools', 'telemetry', 'proxy', 'modules', 'runPolicy',
-  ].map((key) => [key, config[key]]));
-  normalized.contentHash = sha256(stableStringify(redactConfig(hashInput)));
+  normalized.contentHash = hashOf(normalized.config);
   return normalized;
 }
 
@@ -531,6 +553,7 @@ try {
         ...(item.project ? { project: item.project } : {}),
         ...(item.version !== undefined ? { version: item.version } : {}),
         ...(item.noPilotHome ? { noPilotHome: true } : {}),
+        ...(item.noGlobal ? { noGlobal: true } : {}),
         ...(item.configPathViaEnv ? { configPathViaEnv: true } : {}),
         env: normalize({
           ...(item.env ?? {}),
@@ -554,6 +577,7 @@ try {
       ...(item.project ? { project: item.project } : {}),
       ...(item.version !== undefined ? { version: item.version } : {}),
       ...(item.noPilotHome ? { noPilotHome: true } : {}),
+      ...(item.noGlobal ? { noGlobal: true } : {}),
       ...(item.configPathViaEnv ? { configPathViaEnv: true } : {}),
       env: normalize({
         ...(item.env ?? {}),

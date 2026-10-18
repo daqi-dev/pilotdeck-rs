@@ -23,7 +23,7 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         oracle.get("count").and_then(JsValue::as_number),
         Some(cases.len() as f64)
     );
-    assert_eq!(cases.len(), 175, "fixture count changed");
+    assert_eq!(cases.len(), 180, "fixture count changed");
     let sources = oracle
         .get("sources")
         .and_then(JsValue::as_object)
@@ -52,7 +52,18 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         let home = root.join("home");
         fs::create_dir_all(&home).expect("home");
         let yaml = text(case.get("yaml")).expect("yaml");
-        fs::write(home.join("pilotdeck.yaml"), yaml).expect("global yaml");
+        // `home` is reused across cases, so a `noGlobal` case must also clear
+        // the previous case's file (the generator skips the write).
+        if case.get("noGlobal").and_then(JsValue::as_bool) == Some(true) {
+            match fs::remove_file(home.join("pilotdeck.yaml")) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    panic!("remove global yaml: {error}")
+                }
+                _ => {}
+            }
+        } else {
+            fs::write(home.join("pilotdeck.yaml"), yaml).expect("global yaml");
+        }
         let project = case
             .get("project")
             .and_then(JsValue::as_string)
@@ -259,6 +270,55 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         failures.len(),
         failures.into_iter().take(3).collect::<Vec<_>>().join("\n")
     );
+}
+
+#[test]
+fn relative_cwd_is_anchored_like_path_resolve() {
+    // #310: `cwd` stands for `process.cwd()`; Node's `path.resolve` anchors a
+    // relative argument at the process cwd, so a relative `cwd` must produce
+    // the same absolute `alwaysOn.projects` keys as the absolute directory.
+    let root = unique_root();
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("home");
+    fs::write(
+        home.join("pilotdeck.yaml"),
+        "schemaVersion: 1\nagent: {model: p/m}\nmodel: {providers: {p: {protocol: openai, url: http://127.0.0.1:1/v1, apiKey: k, models: {m: {}}}}}\nalwaysOn: {projects: {rel/x: {enabled: true}, ../y: {enabled: true}}}\n",
+    )
+    .expect("yaml");
+    let env = Env::from([("PILOT_HOME".to_owned(), home.to_string_lossy().into_owned())]);
+    let absolute = std::env::current_dir().expect("cwd");
+    let load = |cwd: &Path| {
+        load_snapshot(&home, cwd, &env, None, 1.0, "1970-01-01T00:00:00.000Z").expect("snapshot")
+    };
+    let relative = load(Path::new("."));
+    let expected = load(&absolute);
+    let projects = |snapshot: &JsValue| {
+        snapshot
+            .get("config")
+            .and_then(|c| c.get("alwaysOn"))
+            .and_then(|a| a.get("projects"))
+            .and_then(JsValue::as_object)
+            .expect("projects")
+            .entries()
+            .iter()
+            .map(|(k, _)| String::from_utf16_lossy(k.units()))
+            .collect::<Vec<_>>()
+    };
+    let keys = projects(&relative);
+    assert_eq!(keys, projects(&expected));
+    assert_eq!(
+        keys,
+        [
+            absolute.join("rel/x").to_string_lossy().into_owned(),
+            absolute
+                .parent()
+                .unwrap()
+                .join("y")
+                .to_string_lossy()
+                .into_owned(),
+        ]
+    );
+    fs::remove_dir_all(&root).expect("remove owned root");
 }
 
 /// Atomically create a root this process owns. Never delete a path before

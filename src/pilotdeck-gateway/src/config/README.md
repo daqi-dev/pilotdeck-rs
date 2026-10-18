@@ -29,7 +29,17 @@ credential env 保持各 provider 的解析与可用性判断。
 loaded_at)` 返回与 `loadPilotConfig` 输出同形的 `version`、`schemaVersion`、
 `loadedAt`、`contentHash`、`sources`、`diagnostics`、`config`。快照路径使用
 `graph::inspect_full` 物化完整 YAML 值；既有 catalog/诊断加载仍用原来的
-角色受限投影，解析顺序、诊断与错误语义不变。没有增加配置写入或热加载 API。
+角色受限投影，解析顺序、诊断与错误语义不变。没有增加配置写入 API。
+`load_snapshot` 的 `cwd` 代表基线的 `process.cwd()`：相对值先按 `path.resolve`
+锚定到进程当前目录。
+
+`store.rs` 是基线 `PilotConfigStore.ts` 的 `ConfigStore`：并发 `reload` 合并为
+一次（调用即占位，结果与错误共享同一 `Arc`）、成功才递增 version 并经
+`changes.rs` diff/classify 后按 JS `Set` 迭代语义发布给订阅者（订阅者 panic
+被隔离）、只有 `PilotConfigError` 替换保留的 reload 诊断、`start_watching` 以
+250 ms 去抖触发 `reload("watch")` 并吞掉失败。基线用 `fs.watch`，本 crate 无原生
+watcher 依赖，改为按 `WatchOptions::poll_interval` 轮询被监视路径；监视对象的
+选取与基线一致。真实 TS 原件与回放见 `tests/fixtures/config-store/README.md`。
 
 `load_project` / `load_project_with_files` 的公开行为不变；`snapshot.rs` 只投影
 已验证的值，不新增诊断或改变校验。完整快照的真实 TS 原件、生成器和回放见

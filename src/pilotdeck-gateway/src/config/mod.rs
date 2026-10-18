@@ -12,6 +12,7 @@ mod sections;
 pub mod session_overrides;
 pub mod session_value;
 pub mod snapshot;
+pub mod store;
 mod value;
 use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -126,7 +127,7 @@ pub fn load_snapshot(
 ) -> Result<JsValue, Error> {
     let metadata = Metadata {
         home: pilot_home.to_path_buf(),
-        cwd: cwd.to_path_buf(),
+        cwd: absolute_cwd(cwd),
         files: crate::metadata::NativeFiles,
     };
     Ok(load_project_with_files_inner(
@@ -138,6 +139,42 @@ pub fn load_snapshot(
     .snapshot
     .expect("snapshot loader always records a snapshot"))
 }
+/// `cwd` stands in for the baseline's `process.cwd()`, which is always
+/// absolute; `path.resolve` anchors a relative argument the same way.
+pub(crate) fn absolute_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
+    if cwd.is_absolute() {
+        cwd.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|dir| dir.join(cwd))
+            .unwrap_or_else(|_| cwd.to_path_buf())
+    }
+}
+
+/// `resolvePilotConfigPath` for an explicit PilotHome: a trimmed
+/// `PILOTDECK_CONFIG_PATH` wins (even when empty), else `<home>/pilotdeck.yaml`.
+pub(crate) fn global_config_path(pilot_home: &std::path::Path, env: &Env) -> String {
+    env.get("PILOTDECK_CONFIG_PATH")
+        .map(|s| crate::metadata::js_trim(s).to_owned())
+        .unwrap_or_else(|| {
+            pilot_home
+                .join("pilotdeck.yaml")
+                .to_string_lossy()
+                .into_owned()
+        })
+}
+
+/// `getPilotProjectConfigFilePath(projectRoot)` with `projectRoot` resolved
+/// against `cwd` as the loader does; `None` for an absent or empty project.
+pub(crate) fn project_config_path(
+    cwd: &std::path::Path,
+    project: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    project
+        .filter(|p| !p.is_empty())
+        .map(|project| crate::metadata::resolve(cwd, project).join(".pilotdeck/pilotdeck.yaml"))
+}
+
 /// Load and validate the global and optional project configuration using explicit
 /// paths and environment. This is the same loader used by gateway methods; it
 /// neither reads the process environment nor starts a gateway or a JS fallback.
@@ -170,16 +207,7 @@ fn load_project_with_files_inner<F: Files>(
     project: Option<&str>,
     snapshot_context: Option<(f64, JsString)>,
 ) -> Result<Config, Error> {
-    let path = env
-        .get("PILOTDECK_CONFIG_PATH")
-        .map(|s| crate::metadata::js_trim(s).to_owned())
-        .unwrap_or_else(|| {
-            metadata
-                .home
-                .join("pilotdeck.yaml")
-                .to_string_lossy()
-                .into_owned()
-        });
+    let path = global_config_path(&metadata.home, env);
     let mut d = Diagnostics(vec![]);
     let mut raw = object([]);
     let mut source_graphs = vec![];
@@ -199,9 +227,7 @@ fn load_project_with_files_inner<F: Files>(
         &mut sources,
         full_values,
     )?;
-    if let Some(project) = project.filter(|p| !p.is_empty()) {
-        let path =
-            crate::metadata::resolve(&metadata.cwd, project).join(".pilotdeck/pilotdeck.yaml");
+    if let Some(path) = project_config_path(&metadata.cwd, project) {
         read_source(
             metadata,
             &path.to_string_lossy(),
