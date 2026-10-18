@@ -380,17 +380,23 @@ impl<S: TranscriptSink> SessionOperationLedger<S> {
                 });
             return Ok(());
         }
+        let accepted = kind.unwrap().equals_str("agent_loop_operation_accepted");
         let record = self
             .records
             .get_mut(&identity.operation_id)
             .filter(|r| r.identity == identity)
             .ok_or_else(|| {
-                invalid(
-                    "Restored AgentLoop operation was accepted or terminated before it started.",
-                )
+                let action = if accepted {
+                    "was accepted"
+                } else {
+                    "terminated"
+                };
+                invalid(format!(
+                    "Restored AgentLoop operation {} {action} before it started.",
+                    String::from_utf16_lossy(identity.operation_id.units())
+                ))
             })?;
         let stream = field(entry, "streamId").as_string().cloned();
-        let accepted = kind.unwrap().equals_str("agent_loop_operation_accepted");
         if let Some(old) = record.stream_id.as_ref().filter(|s| !s.is_empty())
             && (accepted || stream.as_ref().is_some_and(|s| !s.is_empty()))
             && stream.as_ref() != Some(old)

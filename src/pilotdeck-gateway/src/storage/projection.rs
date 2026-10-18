@@ -47,9 +47,13 @@ pub(super) fn normalize_seed(value: Option<&JsValue>) -> Result<Option<JsValue>>
             .ok_or_else(|| invalid(format!("Invalid sidecar seedState.{key}.")))?;
         let mut projected = JsObject::new();
         for (path, value) in map.entries() {
-            let entry = value
-                .as_object()
-                .ok_or_else(|| invalid(format!("Invalid {key} entry.")))?;
+            let invalid_entry = || {
+                invalid(format!(
+                    "Invalid {key} entry: {}.",
+                    String::from_utf16_lossy(path.units())
+                ))
+            };
+            let entry = value.as_object().ok_or_else(invalid_entry)?;
             let mut fields = JsObject::new();
             let required: &[&str] = if key == "readFileState" {
                 &["mtimeMs", "kind"]
@@ -57,9 +61,7 @@ pub(super) fn normalize_seed(value: Option<&JsValue>) -> Result<Option<JsValue>>
                 &["absolutePath", "mtimeMs", "contentHash"]
             };
             for field in required {
-                let value = entry
-                    .get(field)
-                    .ok_or_else(|| invalid(format!("Invalid {key} entry.")))?;
+                let value = entry.get(field).ok_or_else(invalid_entry)?;
                 let valid = match *field {
                     "mtimeMs" => value.as_number().is_some(),
                     "kind" => value.as_string().is_some_and(|s| {
@@ -70,7 +72,7 @@ pub(super) fn normalize_seed(value: Option<&JsValue>) -> Result<Option<JsValue>>
                     _ => value.as_string().is_some(),
                 };
                 if !valid {
-                    return Err(invalid(format!("Invalid {key} entry.")));
+                    return Err(invalid_entry());
                 }
                 fields.insert((*field).into(), value.clone());
             }

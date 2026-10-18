@@ -554,13 +554,33 @@ fn seed_projection_preserves_duplicates_and_drops_unknown_fields() {
             .unwrap()
             .is_none()
     );
-    for bad in [
-        r#"{"allowedReadFiles":[1]}"#,
-        r#"{"readFileState":{"a":{"mtimeMs":1,"kind":"other"}}}"#,
-        r#"{"writeSnapshots":{"a":{"mtimeMs":1}}}"#,
-        "[]",
+    for (bad, expected) in [
+        (
+            r#"{"allowedReadFiles":[1]}"#,
+            "Invalid sidecar seedState.allowedReadFiles.",
+        ),
+        (
+            r#"{"readFileState":{"a":{"mtimeMs":1,"kind":"other"}}}"#,
+            "Invalid readFileState entry: a.",
+        ),
+        (
+            r#"{"writeSnapshots":{"a":{"mtimeMs":1}}}"#,
+            "Invalid writeSnapshots entry: a.",
+        ),
+        (
+            r#"{"readFileState":{"目录/📄.txt":null}}"#,
+            "Invalid readFileState entry: 目录/📄.txt.",
+        ),
+        (
+            r#"{"writeSnapshots":{"目录/📄.txt":false}}"#,
+            "Invalid writeSnapshots entry: 目录/📄.txt.",
+        ),
+        ("[]", "Invalid sidecar seedState: expected an object."),
     ] {
-        assert!(projection::normalize_seed(Some(&parse_json(bad).unwrap())).is_err());
+        match projection::normalize_seed(Some(&parse_json(bad).unwrap())) {
+            Err(LedgerError::Invalid(message)) => assert_eq!(message, expected, "{bad}"),
+            other => panic!("{bad}: {other:?}"),
+        }
     }
 }
 #[test]
@@ -962,10 +982,7 @@ fn real_ts_rejects_mismatched_accepted_and_terminal_identities() {
             Err(error) => error,
         };
         assert!(matches!(error, LedgerError::Invalid(_)), "{name}: {error}");
-        assert!(
-            error.to_string().contains("before it started"),
-            "{name}: {error}"
-        );
+        assert_eq!(error.to_string(), string(field(case, "error")), "{name}");
         assert_eq!(fs::read(scratch.path()).unwrap(), before, "{name}");
     }
 }
@@ -992,11 +1009,12 @@ fn real_ts_seed_admission_matches_on_disk_and_online() {
                 );
             }
             Err(error) => {
-                assert!(
-                    field(case, "restoreError").as_string().is_some(),
-                    "{name}: {error}"
-                );
                 assert!(matches!(error, LedgerError::Invalid(_)), "{name}: {error}");
+                assert_eq!(
+                    error.to_string(),
+                    string(field(case, "restoreError")),
+                    "{name}"
+                );
             }
         }
         assert_eq!(fs::read(scratch.path()).unwrap(), before, "{name}");
@@ -1026,7 +1044,13 @@ fn real_ts_seed_admission_matches_on_disk_and_online() {
                 "{name}"
             );
         } else {
-            assert!(matches!(result, Err(LedgerError::Invalid(_))), "{name}");
+            let error = result.unwrap_err();
+            assert!(matches!(error, LedgerError::Invalid(_)), "{name}: {error}");
+            assert_eq!(
+                error.to_string(),
+                string(field(case, "onlineError")),
+                "{name}"
+            );
             // #201: TS writes this invalid terminal before clone/parse fails;
             // Rust validates before publishing. Do not make disk corrupt for parity.
             assert_eq!(read_transcript(online.path()).unwrap().entries.len(), 2);
