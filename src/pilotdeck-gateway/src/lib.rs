@@ -3,6 +3,7 @@ mod acceptor;
 pub mod config;
 mod dispatch;
 mod frame;
+pub mod hooks;
 pub mod host;
 pub mod http_proxy;
 mod js_value;
