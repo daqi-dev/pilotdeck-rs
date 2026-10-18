@@ -135,6 +135,14 @@ def main() -> int:
         fails += not good
         print(f"{'PASS' if bad_range_raised else 'FAIL'} 给了范围但读不到 → 抛错（fail-closed）")
         fails += not bad_range_raised
+    for name, body, want in [
+        ("代码里引用的 waiver 不算豁免", "说明：写法是 `<!-- pr-gate:waiver 纯文档更新足够长 -->`\nRefs #1\n<!-- reviewers: codex,deepseek -->", "缺角色审计结果块"),
+        ("代码里引用的 Refs 不算 issue 关联", "<!-- pr-gate:waiver 纯文档更新足够长 -->\n```\nRefs #1\n```\n<!-- reviewers: codex,deepseek -->", "缺 issue 关联"),
+    ]:
+        e = gate.check(body, "", "claude/x")
+        good = any(want in x for x in e)
+        print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
+        fails += not good
     # 署名误识别负例：普通人的邮箱/缩写不算模型
     for line, want in [("David Smith <ds@example.org>", set()), ("Alex <alex@gpt.example.org>", set()),
                        ("Claude Opus 5.5 <noreply@anthropic.com>", {"claude"}), ("Bot <ci@openai.com>", {"codex"}),
@@ -189,7 +197,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 22} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 24} 例）")
     return 1 if fails else 0
 
 

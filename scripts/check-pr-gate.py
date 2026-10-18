@@ -220,8 +220,9 @@ def check_block(attrs: str, head: str) -> list[str]:
 
 def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
-    blocks = list(MARKER.finditer(body))
-    w = WAIVER.search(body)
+    blocks = list(MARKER.finditer(body))  # 结果块读原文（与 runner 检查同口径；贴进围栏也照样校验）
+    prose = strip_code(body)  # 豁免与 issue 关联这类「声明」不认代码里引用的写法，免得示例文字被当成真声明
+    w = WAIVER.search(prose)
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
         for n, m in enumerate(blocks, 1):
@@ -235,7 +236,7 @@ def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | No
             print(f"check-pr-gate: 豁免——{reason}")
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    if not ISSUE_LINK.search(body) and not NO_ISSUE.search(body):
+    if not ISSUE_LINK.search(prose) and not NO_ISSUE.search(prose):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     errs.extend(check_reviewers(body, head_ref, trailers))
     return errs
