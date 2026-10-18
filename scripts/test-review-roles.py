@@ -118,7 +118,7 @@ def _run(gate, rrr, out_base: Path) -> int:
             return cp.returncode, s
 
         def gate_errs(s: str) -> list[str]:
-            return gate.check(s + "\nRefs #1\n", head)
+            return gate.check(s + "\nRefs #1\n<!-- reviewers: deepseek,glm -->\n", head, "codex/test")
 
         rc, s = run("zai-ok", "ok")
         if rc != 0 or "simplify:PASS" not in s or "runner=zai model=glm-5.3 readonly=tools" not in s:
