@@ -905,6 +905,11 @@ PNPM_ACCEPTED = (
 )
 
 PNPM_REJECTED = (
+    # NBSP / U+3000 are scalar content in YAML, not separators (#94 review): refused, never misparsed.
+    'packages:\n  - ui\xa0\n',
+    'packages:\n  - ui\u3000\n',
+    'packages:\n  -\xa0ui\n',
+    'packages:\n  - ui\xa0# c\n',
     "packages: ['ui']\n",                    # flow sequence with content
     'packages: {packages: ["ui"]}\n',         # flow mapping
     'packages: [',                            # unterminated flow
