@@ -792,7 +792,7 @@ class B3DependencyBoundaries(unittest.TestCase):
                 package.mkdir(parents=True)
                 (package / 'package.json').write_text('{}')
                 (package / 'plain.js').write_text('one')
-            (root / 'pnpm-workspace.yaml').write_text("packages: ['pnpm/*', '!pnpm/excluded']\n")
+            (root / 'pnpm-workspace.yaml').write_text("packages:\n  - pnpm/*\n  - '!pnpm/excluded'\n")
             from common import dependency_roots
             self.assertEqual(dependency_roots(root)['workspace_packages'], ['pnpm/included'])
             original = node_modules_hash(root)
@@ -833,11 +833,17 @@ class B3DependencyBoundaries(unittest.TestCase):
             pnpm = root / 'pnpm-workspace.yaml'
             pnpm.write_text('catalog: {}\n')
             self.assertEqual(dependency_roots(root)['workspace_packages'], ['local/pkg'])
-            pnpm.write_text('packages: {packages: ["local/*"]}\n')
+            pnpm.write_text('packages:\n')
+            self.assertEqual(dependency_roots(root)['workspace_packages'], ['local/pkg'])
+            pnpm.write_text("packages:\n  - ''\n")
             with self.assertRaisesRegex(ValueError, 'workspaces declaration'):
                 dependency_roots(root)
-            pnpm.write_text('packages: [')
-            with self.assertRaisesRegex(ValueError, 'invalid pnpm workspace YAML'):
+            for text in ('packages: {packages: ["local/*"]}\n', 'packages: [', 'packages: local/*\n'):
+                pnpm.write_text(text)
+                with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'invalid pnpm workspace YAML'):
+                    dependency_roots(root)
+            pnpm.write_bytes(b'packages:\n  - \xff\n')
+            with self.assertRaisesRegex(ValueError, 'not UTF-8'):
                 dependency_roots(root)
 
     def test_over_budget_approximate_evidence_still_persists(self):
@@ -849,3 +855,118 @@ class B3DependencyBoundaries(unittest.TestCase):
                     self.assertRaises(calibrate.SpaceBudgetExceeded):
                 batch.record_space()
             self.assertEqual(json.loads((root / 'batch.json').read_text())['space_checks'], [estimate])
+
+
+# Verbatim copy of resources/PilotDeck/pnpm-workspace.yaml (baseline cc7c4e6).
+BASELINE_PNPM_WORKSPACE = """packages:
+  - 'apps/desktop'
+  - 'ui'
+  - 'packages/sdk'
+
+allowBuilds:
+  '@google/genai': true
+  bcrypt: true
+  better-sqlite3: true
+  electron-winstaller: true
+  esbuild: true
+  node-pty: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true
+
+# Native/build-time packages that are allowed to run lifecycle scripts during
+# pnpm install. Keeping this at the workspace root makes Docker/CI installs
+# deterministic and prevents ERR_PNPM_IGNORED_BUILDS failures.
+onlyBuiltDependencies:
+  - '@google/genai'
+  - bcrypt
+  - better-sqlite3
+  - electron-winstaller
+  - esbuild
+  - node-pty
+  - protobufjs
+  - sharp
+  - unrs-resolver
+"""
+
+# Accepted inputs with the value PyYAML safe_load(...).get('packages') returns.
+PNPM_ACCEPTED = (
+    (BASELINE_PNPM_WORKSPACE, ['apps/desktop', 'ui', 'packages/sdk']),
+    ('', None),
+    ('# only a comment\n\n', None),
+    ('packages:\n', None),
+    ('packages:   # none yet\ncatalog: {}\n', None),
+    ('packages: []\n', []),
+    ('catalog: {}\nallowBuilds:\n  esbuild: true\n', None),
+    ('packages:\n    - "a/*"   # deep indent, double quotes\n\n    # comment between items\n'
+     "    - '!a/skip'\n    - b/**  \n    - _x.y-z\n", ['a/*', '!a/skip', 'b/**', '_x.y-z']),
+    ("packages:\n  - 'true'\n  - 'a #b'\n  - ''\n", ['true', 'a #b', '']),
+    ('onlyBuiltDependencies:\n  - esbuild\npackages:\n  - ui\n', ['ui']),
+)
+
+PNPM_REJECTED = (
+    "packages: ['ui']\n",                    # flow sequence with content
+    'packages: {packages: ["ui"]}\n',         # flow mapping
+    'packages: [',                            # unterminated flow
+    'packages: ui\n',                         # scalar instead of a list
+    'packages: ~\n',                          # null spelled inline
+    'packages:\n- ui\n',                      # indentless sequence
+    'packages:\n  - ui\n    - sdk\n',         # inconsistent indentation
+    'packages:\n  - ui\npackages:\n  - sdk\n',  # duplicate key (PyYAML keeps the last)
+    'packages:\n\t- ui\n',                    # tab
+    'packages:\r\n  - ui\r\n',                # CRLF
+    '﻿packages:\n  - ui\n',              # BOM
+    'packages:\n  - true\n',                  # plain bool
+    'packages:\n  - Null\n',                  # plain null
+    'packages:\n  - 2024/*\n',                # digit-led plain word
+    'packages:\n  - .inf\n',                  # float spelling
+    'packages:\n  - !ui\n',                   # tag
+    'packages:\n  - *ui\n',                   # alias
+    'packages:\n  - &a ui\n',                 # anchor
+    'packages:\n  - @scope/ui\n',             # reserved indicator
+    'packages:\n  - ui#x\n',                  # '#' inside plain
+    'packages:\n  - ui: x\n',                 # mapping item
+    'packages:\n  -\n',                       # empty item
+    "packages:\n  - 'it''s'\n",               # escaped single quote
+    'packages:\n  - "a\\tb"\n',               # double-quote escape
+    'packages:\n  - |\n    ui\n',             # block scalar
+    "packages:\n  - 'ui\n    more'\n",        # multi-line quoted
+    '---\npackages:\n  - ui\n',               # document marker
+    '%YAML 1.2\n---\npackages: []\n',         # directive
+    '  - ui\n',                               # indented line without a key
+    "'packages':\n  - ui\n",                  # quoted top-level key
+    'packages :\n  - ui\n',                   # space before colon
+    '<<: *base\n',                            # merge key
+    'catalog: {}\n  react: x\n',              # child under inline value
+    'catalog:\n  react:\n    x: y\n',         # nested mapping
+    'allowBuilds:\n  - a\n  b: true\n',       # mixed list and mapping
+    'allowBuilds:\n  a: b c\n',               # plain with spaces
+    'catalog: &c {}\n',                       # anchor on another key
+    'catalog:\n  x: =\n',                     # PyYAML value tag (safe_load raises)
+)
+
+
+class PnpmWorkspaceParser(unittest.TestCase):
+    def test_accepted_subset_matches_recorded_pyyaml_values(self):
+        from common import pnpm_workspace_packages
+        for text, expected in PNPM_ACCEPTED:
+            with self.subTest(text=text):
+                self.assertEqual(pnpm_workspace_packages(text), expected)
+
+    def test_unsupported_syntax_fails_closed(self):
+        from apparatus import ApparatusUnsafe
+        from common import pnpm_workspace_packages
+        for text in PNPM_REJECTED:
+            with self.subTest(text=text), self.assertRaisesRegex(ApparatusUnsafe, 'unsupported syntax at line'):
+                pnpm_workspace_packages(text)
+
+    def test_matches_host_pyyaml_when_installed(self):
+        # Differential check only; the apparatus itself never imports yaml.
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest('host PyYAML absent; recorded values above still apply')
+        from common import pnpm_workspace_packages
+        for text, _ in PNPM_ACCEPTED:
+            with self.subTest(text=text):
+                self.assertEqual(pnpm_workspace_packages(text), (yaml.safe_load(text) or {}).get('packages'))

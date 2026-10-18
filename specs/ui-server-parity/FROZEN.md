@@ -1,4 +1,4 @@
-# B2 ui/server 尺子冻结登记
+# B2（待定标） ui/server 尺子冻结登记
 
 > **2026-10-14 重新冻结**（AI 代批，待人复核）。PR #93（#59 路由审批门与白名单、#80 反代 WS 四项、#88/#89 P2）改动装置后重新定标：main eb2f2c7，仓外 detached checkout，同一 UTC 日 20 遍 TS 参考池 + 5 遍 TS 计分 + 1 遍 proxy；TS 十对 10/10、proxy PASS（7 个 WS 握手无 Date、下行 close 各一）、26 遍时钟 PASS、无重采 / REFUSED / 近似测量。两家评审（GLM、Claude）均「无 P0/P1，可冻结」。上一版冻结（PR #90，批次 7d28f0de）随装置变更失效。Rust 路由豁免审批须为 human-approvers.txt 白名单身份（与本冻结记录的代批规则不同，见 acceptance.md）。
 > 定标命令及重采规则：`scripts/ui-server-parity/README.md`；不得借历史 replay 定标。
@@ -23,8 +23,8 @@ abde68d203a8c76330668554b3606a10a94c1e4a145effcb3cbfc856556aadce  ../../scripts/
 ed5d447d3ac2e4ba03def27645f355997be981e3d82012427f14b1f1a76870c1  ../../scripts/exp008/reconcile_routes.py
 a60f04b6ce5cccab4c40c75b0a6d8204344977bde85d4931dde213b18ddd126e  ../../scripts/exp008/run.py
 980130c241a926b0854c719210b8d1ccdbcf294f99bde3beb567a5bfda072d90  ../../scripts/exp008/vite.config.mjs
-a57f3d6b8a942b16ac17cebbac6b7564d236699b5f84fb9b17e6690f6805d5d8  ../../scripts/ui-server-parity/README.md
-34d08991149d39843bc6a2133359cc05a288a6e4e2a162737817b03928fadd2f  ../../scripts/ui-server-parity/apparatus.py
+c8c682a65af5b598c61b3cd83afd8637cd95032706020c38692c79d083ccdfc4  ../../scripts/ui-server-parity/README.md
+7bab891b7690b21c2442229e7406d8d0d9e4feb2352df267852f61ac9acd9cba  ../../scripts/ui-server-parity/apparatus.py
 985515952fd382a08c9766c6bd507baf0192a8499a975d4479f62fcb7dc39711  ../../scripts/ui-server-parity/benchmark_clock.py
 bc2a16f7c50431f1b6588c394184d87a0258e719c4605f4f0c000525839b421e  ../../scripts/ui-server-parity/calibrate.py
 58f1641047497c8076ea93ed2119ffd7aa62601ff2360a99b79f1e55a2a91194  ../../scripts/ui-server-parity/calibrate.sh
@@ -32,7 +32,7 @@ bc2a16f7c50431f1b6588c394184d87a0258e719c4605f4f0c000525839b421e  ../../scripts/
 88b788b631e956f9b4fd3219bbfd53a5e5fd52215c1d51233da9cb3fc0442200  ../../scripts/ui-server-parity/check_coverage.py
 517ef5940a65abcff8c193ba77b3bff11b92750ac7d0db86e63f3043e91bd48a  ../../scripts/ui-server-parity/check_frozen.py
 83a0026fd43d885e857015b826242fbe2ec68706e419e1ba150d8157e44a2125  ../../scripts/ui-server-parity/check_ruler.py
-84df4021c035a1af4426b175dc6634a7db1d31f2172d7d8c5f24991b8c3692f0  ../../scripts/ui-server-parity/common.py
+c6118df654f036e3f18ac4a8746c0e0a34d5b3915a22aaaa94c840955232ce0c  ../../scripts/ui-server-parity/common.py
 e09b8199597d3a4b9751a056b168d7e9272a5c3e1d18053e56590c10642e8ea7  ../../scripts/ui-server-parity/compare.py
 f785d81c732e18a4607eae11a845a1e7015db831150f0fc89a72f0580ebe89f9  ../../scripts/ui-server-parity/controls/README.md
 0399a28bae1fed9a52593d981959de8380996f5ebe4b3f4854bde5622a0506da  ../../scripts/ui-server-parity/controls/identity_paths.py
@@ -49,15 +49,15 @@ b45b2fff9623f7647adb14d9e1baa73c48da25a10fdbbba52f599313f728f06a  ../../scripts/
 bece605c49006c2f13f5de1a5550dc82616c5f469a0d172b164a765f5457cbd6  ../../scripts/ui-server-parity/scenarios.json
 f74dd7c3acfb8a3c44c750772f98b9af93662539ce65dbe9aea7297ce638d389  ../../scripts/ui-server-parity/snapshot.py
 03759b276dd861191b7372fb85ede5277677a6bc5db12901cb64e0d81d9f54ce  ../../scripts/ui-server-parity/summarize_ruler.py
-13fabe1a72f3e1c156005624532127abe3f878baaadf8a8ff9cb1ef34db093d0  ../../scripts/ui-server-parity/test_calibrate.py
+7572147c4cd111c95ab71c6c674328fa18b2aba85c0c270485918eacab2f202e  ../../scripts/ui-server-parity/test_calibrate.py
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
 bdd5bc5f85ac703a8fca8b4221f5c06f56efd94c02c47dd118854485e02f048b  ../../scripts/ui-server-parity/test_compare.py
-43d6a28e6c97ea525769b4faee0c03d934e887175813d97eadcad25f0b3cb1e0  ../../scripts/ui-server-parity/test_coverage.py
+cf77c2209bc64b566f4ed6ebc739cc34cdbe13a379475fd9519edb9d1eb2e73b  ../../scripts/ui-server-parity/test_coverage.py
 ac4cd82e1076e8e19ef35b6e65e93bf090eb3961b1022b9e50a672b6cd91a1a6  ../../scripts/ui-server-parity/test_frozen.py
 75d9418fa858c51ca9cd1bae960137be53edfe94d3e2b4f41413a6f4741a29ac  ../../scripts/ui-server-parity/test_multimodal.py
 8568dbaffd2b20c070a20a773ab4fe73110d01def63f6364f6a007985c0fcca9  ../../scripts/ui-server-parity/test_recording.py
 9ccf2a7fef528fdfecea33b8c9dc0c9cbd2982f09631b6fe2f3e377dca122d5e  ../../scripts/ui-server-parity/verify_auth.mjs
-1da2613ac4ac554550b0d46e4f05c2d71085595f807f9f46f6b6574a1755ac78  ../../specs/ui-server-parity/acceptance.md
+1dd44329badbd0b0676a4176b4adea998cc03ccfd9ec7ad4664d3e0899f780c3  ../../specs/ui-server-parity/acceptance.md
 f8d552dcebfc6bc702aaac6ecc546c7969a83fa7ea178e6a8ea8b1a5ce272484  ../../specs/ui-server-parity/accepted-diffs.md
 b2004ddf95e02c24b307a9c20905d76437c3eae1a251cff189dd6836e3be85bf  ../../specs/ui-server-parity/multimodal.md
 37cd7d5f8358cdac36cf0d2bd5d5c09a73fa0d429d5225583d61abe261441b02  ../../specs/ui-server-parity/normalization.md

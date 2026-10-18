@@ -158,6 +158,37 @@ class CoverageControls(unittest.TestCase):
                 allowlist.unlink()
                 self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
 
+    def test_allowlist_comments_blanks_and_padding(self):
+        from apparatus import human_approvers
+        commented = '# owner list\n\n  zhengdaqi  \n\t\n ​# indented\n＃ full-width\n#\n'
+        self.assertEqual(human_approvers(commented), {'zhengdaqi'})
+        self.assertEqual(human_approvers('# only comments\n\n'), set())
+        # An inline '#' leaves the identity ambiguous: the whole list fails closed.
+        self.assertEqual(human_approvers('zhengdaqi\nalice # contractor\n'), set())
+        takeover = {'schema': 1, 'routes': [{'method': 'POST', 'path': '/api/b/:id', 'handler': 'rust'}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            allowlist = root / 'specs/ui-server-parity/human-approvers.txt'
+            allowlist.parent.mkdir(parents=True)
+            allowlist.write_text(commented, encoding='utf-8')
+            basis = []
+            for name in ('report.json', 'review-one.md', 'review-two.md'):
+                (root / name).write_text('evidence')
+                basis.append(str(root / name))
+            matrix = copy.deepcopy(MATRIX)
+            waiver = matrix['routes'][1]['exemption']
+            waiver['Approval-Basis'] = '; '.join(basis)
+            with patch('check_coverage.ROOT', root):
+                for approver, verdict in (('zhengdaqi', 'PASS'), (' zhengdaqi\t', 'PASS'),
+                                          ('#ownerlist', 'FAIL'), ('# owner list', 'FAIL'),
+                                          ('#', 'FAIL'), ('＃full-width', 'FAIL'), ('#indented', 'FAIL')):
+                    waiver['Approved-By'] = approver
+                    with self.subTest(approver=approver):
+                        self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], verdict)
+                allowlist.write_text('zhengdaqi\nalice # contractor\n', encoding='utf-8')
+                waiver['Approved-By'] = 'zhengdaqi'
+                self.assertEqual(check(ENUM, matrix, SCENARIOS, takeover=takeover)['verdict'], 'FAIL')
+
     def test_invalid_and_unlisted_handlers_cannot_hide_takeover(self):
         for handler in ('Rust', 'rust-v2', 'AI', 'rust'):
             evidence = successful_evidence() + [{'kind': 'case_http', 'side': 'proxy',
