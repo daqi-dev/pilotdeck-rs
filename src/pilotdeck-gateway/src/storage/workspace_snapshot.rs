@@ -344,6 +344,10 @@ impl WorkspaceSnapshotProvider {
                 "Snapshot {snapshot_id} was not found."
             )));
         };
+        // workspaceSnapshot.ts:115: `Array.isArray(...) ? ... : []`. A
+        // non-array `entries` (5, {}, "x", null) is a deliberate empty list,
+        // not a TypeError; measured against the real provider, restore returns
+        // Ok(restored: true) and creates only the destination directory.
         let entries = match field(&manifest, "entries") {
             JsValue::Array(entries) => entries.clone(),
             _ => Vec::new(),

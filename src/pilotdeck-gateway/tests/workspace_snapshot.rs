@@ -12,13 +12,16 @@
 //! The reverse cross-check (`--verify-rust`) is an ignored test that spawns
 //! the real TS provider over a snapshot root this test writes; it needs
 //! PDRS_BASELINE and Node/tsx, like the run-registry fixture.
+#[path = "common/baseline.rs"]
+mod baseline;
+
 use base64::Engine as _;
 use pilotdeck_gateway::storage::{
     ContentAddressedWorkspaceSnapshotRecorder, SnapshotState, WorkspaceSnapshotConfig,
     WorkspaceSnapshotDescriptor, WorkspaceSnapshotError, WorkspaceSnapshotInput,
     WorkspaceSnapshotResult, create_workspace_snapshot_provider, resolve_workspace_snapshot_config,
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -57,7 +60,7 @@ fn oracle() -> JsValue {
             "oracle.json keeps a fixed absolute path: {fixed}"
         );
     }
-    parse_json(&text).unwrap()
+    baseline::oracle(&text)
 }
 
 struct Scratch(PathBuf);

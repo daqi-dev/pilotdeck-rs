@@ -1,6 +1,8 @@
 {
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
-  "sourceSha256": "e6364694245dc9f3f98378161b4de0f891d6efa022c1e7c5b018855f68931a93",
+  "sourceSha256": {
+    "src/storage/workspaceSnapshot.ts": "e6364694245dc9f3f98378161b4de0f891d6efa022c1e7c5b018855f68931a93"
+  },
   "configCases": [
     {
       "env": {},
@@ -2120,6 +2122,26 @@
         },
         {
           "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-number/manifest.json",
+          "text": "{\"snapshotId\":\"entries-5\",\"entries\":5}"
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-object/manifest.json",
+          "text": "{\"snapshotId\":\"entries-object\",\"entries\":{}}"
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-string/manifest.json",
+          "text": "{\"snapshotId\":\"entries-string\",\"entries\":\"x\"}"
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-null/manifest.json",
+          "text": "{\"snapshotId\":\"entries-null\",\"entries\":null}"
+        },
+        {
+          "op": "writeSnapshot",
           "path": "workspaces/quirk/sessions/quirk/snapshots/manual-abs/manifest.json",
           "text": "{\"snapshotId\":\"abs-1\",\"entries\":[{\"path\":\"/etc/passwd\",\"entryType\":\"file\"}]}"
         },
@@ -2318,6 +2340,56 @@
               "message": "EISDIR: illegal operation on a directory, read"
             }
           }
+        },
+        {
+          "op": "restore",
+          "snapshotId": "entries-5",
+          "target": "quirk-e5",
+          "outcome": {
+            "restored": true,
+            "workspaceKey": "<dir>/quirk-e5"
+          },
+          "targetTree": []
+        },
+        {
+          "op": "restore",
+          "snapshotId": "entries-object",
+          "target": "quirk-eobj",
+          "outcome": {
+            "restored": true,
+            "workspaceKey": "<dir>/quirk-eobj"
+          },
+          "targetTree": []
+        },
+        {
+          "op": "restore",
+          "snapshotId": "entries-string",
+          "target": "quirk-estr",
+          "outcome": {
+            "restored": true,
+            "workspaceKey": "<dir>/quirk-estr"
+          },
+          "targetTree": []
+        },
+        {
+          "op": "restore",
+          "snapshotId": "entries-null",
+          "target": "quirk-enull",
+          "outcome": {
+            "restored": true,
+            "workspaceKey": "<dir>/quirk-enull"
+          },
+          "targetTree": []
+        },
+        {
+          "op": "get",
+          "snapshotId": "entries-5",
+          "outcome": {
+            "value": {
+              "snapshotId": "entries-5",
+              "entries": 5
+            }
+          }
         }
       ],
       "dynamicIds": [],
@@ -2413,6 +2485,46 @@
           "kind": "file",
           "size": 67,
           "sha256": "749e80ee19946e83f655261b0614392b83e06202003616886a7daa2d88392b08"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-null",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-null/manifest.json",
+          "kind": "file",
+          "size": 44,
+          "sha256": "f9e1636da4d0d18a2564abccc064a37d4e50e8123143e60c09e0881bced1573e"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-number",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-number/manifest.json",
+          "kind": "file",
+          "size": 38,
+          "sha256": "bb598eb56bc253af4cf4e1b5beda66ccd575a4f4528127d724088fcc661f17eb"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-object",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-object/manifest.json",
+          "kind": "file",
+          "size": 44,
+          "sha256": "cd0ede3f96ec0a88d480c71584fca4a2c46cb073a9cbcc40e0876dbf0e8228a5"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-string",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-entries-string/manifest.json",
+          "kind": "file",
+          "size": 45,
+          "sha256": "51a8c6ae68c2c9a573a0e0b1b9cab6a9ac48217820cdb1f1829cfc07e4b30b33"
         },
         {
           "path": "workspaces/quirk/sessions/quirk/snapshots/manual-esc",

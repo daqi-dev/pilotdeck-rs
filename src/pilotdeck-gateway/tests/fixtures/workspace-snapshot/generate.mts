@@ -1,13 +1,16 @@
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { bindSourceTree } from '../../baseline_source_guard.mjs';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory or Rust snapshot root');
+const BASELINE_COMMIT = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 // Fixed clock: the only run-varying oracle field is `createdAt`, which the TS
@@ -26,8 +29,78 @@ class FixedDate extends RealDate {
   }
 }
 globalThis.Date = FixedDate as unknown as DateConstructor;
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+// #280's shared provenance guard: an explicit absolute Git executable (never a
+// workspace-local shim), the pinned HEAD, a fully clean tracked tree, and every
+// tracked `src` byte compared against the Git blob at the pinned commit. This
+// also catches assume-unchanged/skip-worktree edits that `status` alone misses.
+const gitExecutable = realpathSync(
+  process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim(),
+);
+const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+const git = (...args: string[]) =>
+  execFileSync(gitExecutable, ['--no-replace-objects', '-C', baseline, ...args], {
+    env: gitEnv,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+const sourceCommit = bindSourceTree(baseline, BASELINE_COMMIT, gitExecutable).ref;
+const trackedChanges = git('status', '--porcelain', '--untracked-files=no').toString();
+assert.equal(trackedChanges, '', `baseline has uncommitted changes to tracked files:\n${trackedChanges}`);
+
+// Every source reachable from workspaceSnapshot.ts through relative imports is
+// part of the calibrating implementation, so `sourceSha256` covers the closure
+// rather than the entry file alone. Bare/node: imports are external.
+async function resolveSource(absolute: string): Promise<string | undefined> {
+  // A compiled `.js` specifier in TS source usually points at a sibling `.ts`.
+  const stem = absolute.endsWith('.js') ? absolute.slice(0, -3) : undefined;
+  const candidates = [
+    absolute,
+    `${absolute}.ts`,
+    `${absolute}.tsx`,
+    `${absolute}.mts`,
+    join(absolute, 'index.ts'),
+    ...(stem ? [`${stem}.ts`, `${stem}.tsx`] : []),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if ((await lstat(candidate)).isFile()) return candidate;
+    } catch {
+      // try the next extension
+    }
+  }
+  return undefined;
+}
+async function sourceClosure(entry: string): Promise<string[]> {
+  const seen = new Set<string>([entry]);
+  const queue = [entry];
+  while (queue.length > 0) {
+    const relativePath = queue.shift()!;
+    const text = await readFile(join(baseline, relativePath), 'utf8');
+    const specifiers = [
+      ...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1/g),
+    ].map((match) => match[2]);
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
+      const resolved = await resolveSource(join(baseline, dirname(relativePath), specifier));
+      assert.ok(resolved, `unresolved baseline import ${specifier} in ${relativePath}`);
+      const path = relative(baseline, resolved).split(sep).join('/');
+      if (!seen.has(path)) {
+        seen.add(path);
+        queue.push(path);
+      }
+    }
+  }
+  return [...seen].sort();
+}
+const source = 'src/storage/workspaceSnapshot.ts';
+const closure = await sourceClosure(source);
+const sourceSha256: Record<string, string> = {};
+for (const path of closure) {
+  assert.ok(path.startsWith('src/'), `import closure escaped src/: ${path}`);
+  const working = await readFile(join(baseline, path));
+  const committed = git('show', `${BASELINE_COMMIT}:${path}`);
+  assert.deepEqual(working, committed, `${path} differs from ${BASELINE_COMMIT}; the baseline checkout is not clean`);
+  sourceSha256[path] = createHash('sha256').update(committed).digest('hex');
+}
 
 type RemoveImpl = (path: string | Buffer, options: { recursive: boolean; force: boolean }) => Promise<void>;
 
@@ -65,10 +138,8 @@ async function removeOwned(
   }
   await remove(path, { recursive: !!options.recursive, force: true });
 }
-const source = 'src/storage/workspaceSnapshot.ts';
 const { ContentAddressedWorkspaceSnapshotRecorder, createWorkspaceSnapshotProvider, resolveWorkspaceSnapshotConfig } =
   await import(pathToFileURL(join(baseline, source)).href);
-const sourceSha256 = createHash('sha256').update(await readFile(join(baseline, source))).digest('hex');
 
 if (process.argv[3] === '--verify-rust') {
   // Reverse cross: the real TS provider reads a snapshot root the Rust test
@@ -835,6 +906,14 @@ try {
         text: JSON.stringify({ snapshotId: 'nocreated-1', workspaceId: 'w2', sessionId: 's2', turnId: 't2', runId: 'r2', phase: 'post_agent', abnormal: true, entries: [], createdAt: 5 }),
       },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-badnull/manifest.json`, text: JSON.stringify({ snapshotId: 'badnull-1', entries: [null] }) },
+      // workspaceSnapshot.ts:115 tests Array.isArray first: a non-array
+      // `entries` is a deliberate empty list, not a TypeError. Measured against
+      // the real TS provider (probe-r11-entries.log): 5/{}/"x"/null all restore
+      // with `restored:true` and an empty target tree.
+      { op: 'writeSnapshot', path: `${quirkBase}/manual-entries-number/manifest.json`, text: JSON.stringify({ snapshotId: 'entries-5', entries: 5 }) },
+      { op: 'writeSnapshot', path: `${quirkBase}/manual-entries-object/manifest.json`, text: JSON.stringify({ snapshotId: 'entries-object', entries: {} }) },
+      { op: 'writeSnapshot', path: `${quirkBase}/manual-entries-string/manifest.json`, text: JSON.stringify({ snapshotId: 'entries-string', entries: 'x' }) },
+      { op: 'writeSnapshot', path: `${quirkBase}/manual-entries-null/manifest.json`, text: JSON.stringify({ snapshotId: 'entries-null', entries: null }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-abs/manifest.json`, text: JSON.stringify({ snapshotId: 'abs-1', entries: [{ path: '/etc/passwd', entryType: 'file' }] }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-esc/manifest.json`, text: JSON.stringify({ snapshotId: 'esc-1', entries: [{ path: 'a/../../esc.txt', entryType: 'file' }] }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-dupkey/manifest.json`, text: '{"snapshotId":"ignored","snapshotId":"dupkey-1","phase":"pre_user"}' },
@@ -864,6 +943,11 @@ try {
       { op: 'restore', snapshotId: 'abs-1', target: 'quirk-x2' },
       { op: 'restore', snapshotId: 'esc-1', target: 'quirk-x3' },
       { op: 'restore', snapshotId: 'objdir-1', target: 'quirk-x4' },
+      { op: 'restore', snapshotId: 'entries-5', target: 'quirk-e5' },
+      { op: 'restore', snapshotId: 'entries-object', target: 'quirk-eobj' },
+      { op: 'restore', snapshotId: 'entries-string', target: 'quirk-estr' },
+      { op: 'restore', snapshotId: 'entries-null', target: 'quirk-enull' },
+      { op: 'get', snapshotId: 'entries-5' },
     ],
   });
   {
@@ -880,6 +964,15 @@ try {
     assert.equal(restores[3].outcome.error.message, 'Snapshot contains an unsafe relative path.');
     // Node readFile opens a directory and fails on read: EISDIR without a path.
     assert.deepEqual(restores[4].outcome.error, { name: 'Error', message: 'EISDIR: illegal operation on a directory, read' });
+    // Non-array `entries` restores as an empty snapshot, exactly as the real TS
+    // provider does (workspaceSnapshot.ts:115).
+    for (const [index, target] of ['quirk-e5', 'quirk-eobj', 'quirk-estr', 'quirk-enull'].entries()) {
+      assert.equal(restores[5 + index].outcome.restored, true, `${target} restores`);
+      assert.equal(restores[5 + index].outcome.workspaceKey, `<dir>/${target}`);
+      assert.deepEqual(restores[5 + index].targetTree, [], `${target} has no entries to restore`);
+    }
+    const entriesNumber = providerQuirks.steps.filter((s: any) => s.op === 'get').at(-1)!.outcome.value;
+    assert.equal(entriesNumber.entries, 5, 'get returns the non-array entries value verbatim');
     const manualFullRel = `${quirkBase}/manual-full/manifest.json`;
     const manualFull = await readFile(join(providerQuirks.root, manualFullRel));
     assert.ok(manualFull.toString().includes('2020-01-01T00:00:00.000Z'), 'hand-planted fixed date is compared raw');
