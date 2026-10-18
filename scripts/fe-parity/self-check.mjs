@@ -281,6 +281,9 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       const lock = 'lockfileVersion: 9\n\nimporters:\n\n  ui:\n    dependencies:\n' + entry('@xterm/xterm', '5.5.0') + entry('ws', '8.21.0')
         + '    devDependencies:\n' + entry('@playwright/test', '1.60.0') + entry('vite', '7.3.3(aaa@1.0.0)') + '\npackages:\n';
       await writeFile(resolve(fixture, 'pnpm-lock.yaml'), lock);
+      const modulesYaml = max => writeFile(resolve(fixture, 'node_modules', '.modules.yaml'),
+        JSON.stringify({ nodeLinker: 'isolated', virtualStoreDir: '.pnpm', virtualStoreDirMaxLength: max }));
+      await mkdir(resolve(fixture, 'node_modules'), { recursive: true }); await modulesYaml(120);
       // Like the real baseline, installed modules are untracked.
       await writeFile(resolve(fixture, '.gitignore'), 'node_modules/\n');
       git(['init', '-q']); git(['add', 'ui', '.gitignore', 'pnpm-lock.yaml']); git(['add', 'pnpm-lock.yaml']);
@@ -302,6 +305,10 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       // The well-formed fixture passes and reports every package, @xterm included.
       const good = await verifyBaseline(ui, head);
       assert.deepEqual(good.nodeModules.packages.map(p => p.name), ['vite', 'ws', '@playwright/test', '@xterm/xterm']);
+      // A layout whose store names would be hashed is refused explicitly.
+      await modulesYaml(10);
+      await assert.rejects(() => verifyBaseline(ui, head), /hashed store directory for vite/);
+      await modulesYaml(120);
       // Lockfile unchanged, link moved to another valid version in the store.
       await rm(resolve(ui, 'node_modules', 'ws')); await link('ws', 'ws@8.18.0');
       await assert.rejects(() => verifyBaseline(ui, head), /ws resolves to ws@8\.18\.0, lockfile expects ws@8\.21\.0/);
