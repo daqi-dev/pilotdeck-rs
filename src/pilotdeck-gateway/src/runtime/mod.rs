@@ -5,3 +5,4 @@ pub mod model;
 pub mod project;
 pub mod snapshot;
 pub mod steer;
+pub mod tools;

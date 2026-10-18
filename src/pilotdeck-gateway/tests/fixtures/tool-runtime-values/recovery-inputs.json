@@ -1,0 +1,793 @@
+[
+  {
+    "id": "code-tool_not_found",
+    "code": "tool_not_found",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-tool_unavailable",
+    "code": "tool_unavailable",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-invalid_tool_input",
+    "code": "invalid_tool_input",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-permission_denied",
+    "code": "permission_denied",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-permission_cancelled",
+    "code": "permission_cancelled",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-permission_required",
+    "code": "permission_required",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-tool_execution_failed",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-tool_aborted",
+    "code": "tool_aborted",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-tool_timeout",
+    "code": "tool_timeout",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-result_too_large",
+    "code": "result_too_large",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-path_not_allowed",
+    "code": "path_not_allowed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-file_not_found",
+    "code": "file_not_found",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-file_conflict",
+    "code": "file_conflict",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-unsupported_tool",
+    "code": "unsupported_tool",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-setup_required",
+    "code": "setup_required",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-plan_mode_violation",
+    "code": "plan_mode_violation",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "code-ask_mode_violation",
+    "code": "ask_mode_violation",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "freshness-unread",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "File has not been read yet. Read it first.",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "freshness-stale",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "File has changed since the last read.",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "old-string-missing",
+    "code": "invalid_tool_input",
+    "toolName": "edit_file",
+    "message": "String to replace not found in file.",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "old-string-many",
+    "code": "invalid_tool_input",
+    "toolName": "edit_file",
+    "message": "Found 2 matches of old_string.",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "bash-timeout",
+    "code": "invalid_tool_input",
+    "toolName": "bash",
+    "message": "Foreground bash timeout 900000ms exceeds the maximum of 600000ms. Use task_create.",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "bash-background",
+    "code": "invalid_tool_input",
+    "toolName": "bash",
+    "message": "This command appears to start background work; use task_create.",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "required-command",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "wrapper\nThe required parameter command is missing.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.command",
+          "code": "required",
+          "message": "The required parameter command is missing."
+        }
+      ]
+    }
+  },
+  {
+    "id": "required-content",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "wrapper\nThe required parameter content is missing; output token limit.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.content",
+          "code": "required",
+          "message": "The required parameter content is missing; output token limit."
+        }
+      ]
+    }
+  },
+  {
+    "id": "invalid-type",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "wrapper\ntimeout must be a number",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.timeout",
+          "code": "invalid_type",
+          "message": "timeout must be a number"
+        }
+      ]
+    }
+  },
+  {
+    "id": "unknown-property",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "wrapper\nunexpected argument",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.extra",
+          "code": "unknown_property",
+          "message": "unexpected argument"
+        }
+      ]
+    }
+  },
+  {
+    "id": "invalid-enum",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "wrapper\nexpected raw or llm",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.mode",
+          "code": "invalid_enum",
+          "message": "expected raw or llm"
+        }
+      ]
+    }
+  },
+  {
+    "id": "invalid-schema",
+    "code": "invalid_tool_input",
+    "toolName": "write_file",
+    "message": "wrapper\noffset must be a 1-based line number (>= 1).",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.offset",
+          "code": "invalid_schema",
+          "message": "offset must be a 1-based line number (>= 1)."
+        }
+      ]
+    }
+  },
+  {
+    "id": "regex-permission-priority",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "ENOENT Permission denied ETIMEDOUT",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "regex-stderr-enoent",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stderr": "ENOENT"
+    }
+  },
+  {
+    "id": "regex-stdout-timeout",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stdout": "ETIMEDOUT"
+    }
+  },
+  {
+    "id": "regex-details-message",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "message": "EADDRINUSE"
+    }
+  },
+  {
+    "id": "regex-stdout-module",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stdout": "Cannot find module"
+    }
+  },
+  {
+    "id": "regex-bash-command-not-found",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "command not found",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "regex-code-priority",
+    "code": "unsupported_tool",
+    "toolName": "custom",
+    "message": "ENOENT",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "regex-dot-no-cr",
+    "code": "invalid_tool_input",
+    "toolName": "edit_file",
+    "message": "old_string\rnot found",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "regex-dot-no-ls",
+    "code": "invalid_tool_input",
+    "toolName": "edit_file",
+    "message": "old_string\u2028not found",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "web-http-401",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 401
+    }
+  },
+  {
+    "id": "web-http-403",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 403
+    }
+  },
+  {
+    "id": "web-http-404",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 404
+    }
+  },
+  {
+    "id": "web-http-410",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 410
+    }
+  },
+  {
+    "id": "web-http-408",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 408
+    }
+  },
+  {
+    "id": "web-http-429",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 429
+    }
+  },
+  {
+    "id": "web-http-500",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 500
+    }
+  },
+  {
+    "id": "web-http-400",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "Request rejected.",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 400
+    }
+  },
+  {
+    "id": "web-http-timeout",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "network timeout",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch"
+    }
+  },
+  {
+    "id": "web-secondary",
+    "code": "tool_execution_failed",
+    "toolName": "web_fetch",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "secondary_model"
+    }
+  },
+  {
+    "id": "web-invalid-before-stage",
+    "code": "invalid_tool_input",
+    "toolName": "web_fetch",
+    "message": "missing URL",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 403
+    }
+  },
+  {
+    "id": "web-class-overrides-code",
+    "code": "permission_denied",
+    "toolName": "web_fetch",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stage": "http_fetch",
+      "status": 500
+    }
+  },
+  {
+    "id": "empty-message",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "header-only",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "  TOOL_ERROR[legacy][x]\r\n\tToOl_ErRoR[again]  ",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "evidence-priority",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "first\r\nsecond\nthird",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.x",
+          "code": "required",
+          "message": "missing x"
+        },
+        {
+          "path": "$.y",
+          "code": "invalid_type",
+          "message": "wrong y"
+        }
+      ],
+      "status": 429,
+      "statusText": "Busy",
+      "retryAfterMs": 2000,
+      "bodyPreview": "bad page",
+      "userHint": "try later",
+      "stderr": "compiler failure"
+    }
+  },
+  {
+    "id": "issue-normalization",
+    "code": "invalid_tool_input",
+    "toolName": "custom",
+    "message": "raw error",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        null,
+        7,
+        "x",
+        [],
+        {},
+        {
+          "path": "$",
+          "code": "unknown",
+          "message": ""
+        },
+        {
+          "path": 5,
+          "message": false,
+          "code": null
+        }
+      ]
+    }
+  },
+  {
+    "id": "evidence-dedup",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "x: duplicate\nx: duplicate",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "issues": [
+        {
+          "path": "$.x",
+          "code": "invalid_schema",
+          "message": "duplicate"
+        }
+      ]
+    }
+  },
+  {
+    "id": "status-evidence",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "status": 429,
+      "statusText": "Slow",
+      "retryAfterMs": 1250,
+      "bodyPreview": "ignored"
+    }
+  },
+  {
+    "id": "retry-body-evidence",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "retryAfterMs": 0,
+      "bodyPreview": "  bad\nbody  ",
+      "userHint": "ignored"
+    }
+  },
+  {
+    "id": "hint-stderr-evidence",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "userHint": "  retry\nnow  ",
+      "stderr": "  detail\nsecond"
+    }
+  },
+  {
+    "id": "string-details-types",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "status": "500",
+      "retryAfterMs": null,
+      "bodyPreview": false,
+      "userHint": 7,
+      "stderr": []
+    }
+  },
+  {
+    "id": "summary-220",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "summary-221",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "original-2000",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "original-2001",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "utf16-cut-both",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83d\ude00bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ud83d\ude00tail",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "utf16-unpaired",
+    "code": "tool_execution_failed",
+    "toolName": "custom\ud800",
+    "message": "  \ufeffbad\udfff\tline\r\n\nnext\u2028text  ",
+    "cwd": "/workspace/\ud801",
+    "permissionMode": "mode\ud802"
+  },
+  {
+    "id": "whitespace-js",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "\ufeff\u00a0\u1680\u2000a\u202fb\u205fc\u3000\ufeff\u0085",
+    "cwd": "/workspace",
+    "permissionMode": "default"
+  },
+  {
+    "id": "raw-shell-details",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "command failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "command": "printf x\nexit 2",
+      "exitCode": 2,
+      "timedOut": false,
+      "durationMs": 1250,
+      "diagnostic": "  check cwd  \n",
+      "stdout": " output  \n",
+      "stderr": " bad  \n"
+    }
+  },
+  {
+    "id": "raw-null-and-zero",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "command": "",
+      "exitCode": null,
+      "timedOut": false,
+      "durationMs": 0,
+      "diagnostic": "   ",
+      "stdout": "\t",
+      "stderr": ""
+    }
+  },
+  {
+    "id": "raw-js-coercion",
+    "code": "tool_execution_failed",
+    "toolName": "bash",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "exitCode": [
+        1,
+        null,
+        false,
+        {},
+        [
+          "a",
+          null
+        ]
+      ],
+      "timedOut": {
+        "x": 1
+      },
+      "durationMs": 1e+21
+    }
+  },
+  {
+    "id": "raw-only-stream",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "stdout": "\ud800  \n"
+    }
+  },
+  {
+    "id": "raw-number-format",
+    "code": "tool_execution_failed",
+    "toolName": "custom",
+    "message": "failed",
+    "cwd": "/workspace",
+    "permissionMode": "default",
+    "details": {
+      "exitCode": -0.0,
+      "durationMs": 1e-07
+    }
+  }
+]
