@@ -89,7 +89,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 
 ### 合并闸门
 
-**仓库与合并方式（2026-10-18 人批）**：仓库在组织 `daqi-dev/pilotdeck-rs`（旧 `zhengdaqi/pilotdeck-rs` 永久重定向；**不得在 zhengdaqi 下再建同名仓库**，否则重定向断）。main 由 ruleset「main」保护：禁删除与强推；必需检查 `check`、`gateway-schema-baseline`（**不要求与 main 同步**）；**merge queue**（REBASE、ALLGREEN）。合并 = `gh pr merge <N>`（加入队列），队列在「最新 main + 前序 PR + 本 PR」的临时提交上重跑必需检查，全绿才合入；PR 自身 HEAD 不变，pr-gate 结果块的 `head=` 不因排队失效。**pr-gate 不设为必需检查**（它读 PR 描述，merge_group 上没有 PR 上下文），由协调者**入队前**核绿；入队后若 PR 有新推送，队列会把它移出，须重新核 pr-gate 再入队。落后 main 不用本地先 rebase，队列会处理。**队列是异步的**：`gh pr merge` 返回只代表已入队；以 `gh pr view <N> --json state` 为 `MERGED` 才算合入，之后再 `git fetch` 核邮箱（`git log origin/main --format='%h %ae %ce' -3`）和接后续工作。远端分支删除不借队列或自动删分支设置，仍按证据保护流程人工处理。旧 classic 保护快照见 `_tmp/20261018-org-transfer/classic-protection-before.json`。
+**仓库与合并方式（2026-10-18 人批）**：仓库在组织 `daqi-dev/pilotdeck-rs`（旧 `zhengdaqi/pilotdeck-rs` 永久重定向；**不得在 zhengdaqi 下再建同名仓库**，否则重定向断）。main 由 ruleset「main」保护：禁删除与强推；必需检查 `check`、`gateway-schema-baseline`（**不要求与 main 同步**）；**merge queue**（REBASE、ALLGREEN）。合并 = `gh pr merge <N>`（加入队列），队列在「最新 main + 前序 PR + 本 PR」的临时提交上重跑必需检查，全绿才合入；PR 自身 HEAD 不变，pr-gate 结果块的 `head=` 不因排队失效。**pr-gate 不设为必需检查**（它读 PR 描述，merge_group 上没有 PR 上下文），由协调者**入队前**核绿；入队后若 PR 有新推送，队列会把它移出，须重新核 pr-gate 再入队。落后 main 不用本地先 rebase，队列会处理。**队列是异步的**：`gh pr merge` 成功返回不代表已经合入（必需检查未齐时可能只是开了 auto-merge，齐了才入队）；以 `gh pr view <N> --json state` 为 `MERGED` 才算合入，之后再 `git fetch` 核邮箱（`git log origin/main --format='%h %ae %ce' -3`）和接后续工作。远端分支删除不借队列或自动删分支设置，仍按证据保护流程人工处理。旧 classic 保护快照见 `_tmp/20261018-org-transfer/classic-protection-before.json`。
 
 每条 PR 合并前依次过，**审的一律不是写的那家**：
 1. **规则层**：CI `check` 绿；worker 自证命令的原始输出贴进 PR 描述。
