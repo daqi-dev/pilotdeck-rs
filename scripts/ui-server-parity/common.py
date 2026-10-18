@@ -40,6 +40,7 @@ _boot_namespace['preflight'](_boot_dir)
 import hashlib
 import os
 from pathlib import Path
+import re
 import threading
 import time
 from apparatus import scan, SPEC_FILES, EXP008_FILES, toolchain_files, ApparatusUnsafe
@@ -55,6 +56,79 @@ def apparatus_hashes():
     files += [ROOT / 'specs/ui-server-parity' / name for name in SPEC_FILES]
     files += toolchain_files(ROOT)
     return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+
+
+# pnpm-workspace.yaml is read by a hand-written block subset, never a host YAML
+# library (its version is outside the apparatus hash). Every accepted input
+# yields what PyYAML safe_load would; anything else fails closed.
+_YAML_QUOTED = r"'[^']*'|\"[^\"\\]*\""
+# Letter-led words never resolve to int/float/timestamp; bool/null words are refused.
+_YAML_WORD = r'[A-Za-z_][A-Za-z0-9_./*-]*'
+_YAML_RESOLVED_WORDS = {'yes', 'no', 'true', 'false', 'on', 'off', 'null'}
+# Values of other sections only need to be single-line scalars; no indicators
+# ('=' alone resolves to PyYAML's unconstructible value tag).
+_YAML_OPAQUE = r"[^\s'\"#\[\]{}&*!|>%@`,?:=-][^\s#\[\]{},:]*"
+_YAML_END = r'(?:\s+#.*)?\s*$'
+_YAML_TOP = re.compile(r'([A-Za-z_][A-Za-z0-9_-]*):(?:\s+(\[\]|\{\}|' + _YAML_QUOTED + '|' + _YAML_OPAQUE + '))?' + _YAML_END)
+_YAML_PACKAGE = re.compile(r'-\s+(' + _YAML_QUOTED + '|' + _YAML_WORD + ')' + _YAML_END)
+_YAML_ITEM = re.compile(r'-\s+(?:' + _YAML_QUOTED + '|' + _YAML_OPAQUE + ')' + _YAML_END)
+_YAML_ENTRY = re.compile(r'(?:' + _YAML_QUOTED + '|' + _YAML_OPAQUE + r'):(?:\s+(?:'
+                         + _YAML_QUOTED + '|' + _YAML_OPAQUE + '))?' + _YAML_END)
+_YAML_FORBIDDEN = re.compile('[\x00-\x1f\x7f-\x9f\u2028\u2029\ufeff\ufffe\uffff]')
+
+
+def pnpm_workspace_packages(text):
+    """Return the `packages` value of pnpm-workspace.yaml (None when absent/empty).
+
+    Subset: unique plain top-level keys; under a key with no inline value, one
+    level of same-indent `- scalar` items or `key: scalar` entries; comments
+    and blank lines. `packages` takes only items (quoted, or a letter-led plain
+    word) or an inline `[]`. Tabs, control characters, BOM, flow collections
+    with content, anchors, aliases, tags, block scalars, multi-line or escaped
+    quoting, nesting and duplicate keys raise ApparatusUnsafe.
+    """
+    def unsupported(number, why):
+        return ApparatusUnsafe(f'invalid pnpm workspace YAML: unsupported syntax at line {number} ({why})')
+
+    keys, packages, key, kind, indent = set(), None, None, None, None
+    for number, line in enumerate(text.split('\n'), 1):
+        if _YAML_FORBIDDEN.search(line):
+            raise unsupported(number, 'tab, control character or BOM')
+        body = line.lstrip(' ')
+        if not body or body.startswith('#'):
+            continue
+        depth = len(line) - len(body)
+        if depth == 0:
+            match = _YAML_TOP.match(line)
+            if not match or match[1] in keys:
+                raise unsupported(number, 'top-level line is not a unique plain key')
+            key, value = match[1], match[2]
+            keys.add(key)
+            if key == 'packages':
+                if value not in (None, '[]'):
+                    raise unsupported(number, 'packages must be a block list or []')
+                packages = [] if value == '[]' else None
+            # An inline value closes the key: indented lines may not follow it.
+            kind, indent = ('closed' if value is not None else None), None
+            continue
+        if key is None or kind == 'closed':
+            raise unsupported(number, 'indented line without an open parent key')
+        if indent is None:
+            indent = depth
+        elif depth != indent:
+            raise unsupported(number, 'nesting or inconsistent indentation')
+        if key == 'packages':
+            match = _YAML_PACKAGE.match(body)
+            if not match or match[1].casefold() in _YAML_RESOLVED_WORDS:
+                raise unsupported(number, 'packages item is not a quoted or plain path string')
+            packages = (packages or []) + [match[1][1:-1] if match[1][0] in '\'"' else match[1]]
+            kind = 'item'
+            continue
+        found = 'item' if _YAML_ITEM.match(body) else 'entry' if _YAML_ENTRY.match(body) else None
+        if found is None or kind not in (None, found):
+            raise unsupported(number, 'not a single-line list item or mapping entry')
+        kind = found
+    return packages
 
 
 def dependency_roots(baseline):
@@ -92,18 +166,9 @@ def dependency_roots(baseline):
         # pnpm owns workspace membership when its manifest is present.
         if pnpm.exists():
             try:
-                import yaml
-            except ImportError as error:
-                raise ApparatusUnsafe('pnpm workspace parser requires host PyYAML') from error
-            try:
-                declaration = yaml.safe_load(pnpm.read_text())
-            except yaml.YAMLError as error:
-                raise ApparatusUnsafe('invalid pnpm workspace YAML: ' + str(error)) from error
-            if declaration is None:
-                declaration = {}
-            if not isinstance(declaration, dict):
-                raise ApparatusUnsafe('invalid pnpm workspace declaration')
-            workspaces = declaration.get('packages')
+                workspaces = pnpm_workspace_packages(pnpm.read_text(encoding='utf-8'))
+            except UnicodeError as error:
+                raise ApparatusUnsafe('invalid pnpm workspace YAML: not UTF-8') from error
             # Baseline pnpm 10.32.1 defaults omitted packages to all projects.
             if workspaces is None:
                 workspaces = ['**']

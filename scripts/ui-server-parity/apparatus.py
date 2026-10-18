@@ -361,9 +361,42 @@ def node_environment(values=None):
     return env
 
 
+def _visible(value):
+    import unicodedata
+    return all(char.isprintable() and unicodedata.category(char)[0] not in ('C', 'M')
+               and ord(char) not in (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800)
+               and not (0xFE00 <= ord(char) <= 0xFE0F or 0xE0100 <= ord(char) <= 0xE01EF)
+               and not (char.isspace() and char != ' ') for char in value)
+
+
+def approver_identity(value):
+    """NFKC + casefold, then drop all whitespace and invisible characters."""
+    import unicodedata
+    value = unicodedata.normalize('NFKC', value).casefold()
+    return ''.join(char for char in value if not char.isspace() and _visible(char))
+
+
+def human_approvers(text):
+    """Allowlist identities: blank and '#' comment lines are skipped.
+
+    A line is a comment when its normalized identity starts with '#', so leading
+    whitespace, zero-width characters or a full-width '＃' cannot turn a comment
+    into an identity. Any other '#' (an inline comment) makes the whole list
+    empty: fail closed rather than guess which part is the identity.
+    """
+    identities = set()
+    for line in text.splitlines():
+        identity = approver_identity(line)
+        if not identity or identity.startswith('#'):
+            continue
+        if '#' in identity:
+            return set()
+        identities.add(identity)
+    return identities
+
+
 def approval_valid(approver, basis, root, *, allow_ai_delegate=False):
     """Route allowlist + basis; FROZEN explicitly selects its unchanged R5 policy."""
-    import unicodedata
     approvals = [approver] if isinstance(approver, str) else []
     bases = [basis] if isinstance(basis, str) else []
     root = Path(root).resolve()
@@ -371,29 +404,19 @@ def approval_valid(approver, basis, root, *, allow_ai_delegate=False):
     def concrete(value):
         return bool(value.strip()) and not re.search(r'<|>|TODO|pending|null|待批准|待人批准|待定标', value, re.I)
 
-    def visible(value):
-        return all(char.isprintable() and unicodedata.category(char)[0] not in ('C', 'M')
-                   and ord(char) not in (0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800)
-                   and not (0xFE00 <= ord(char) <= 0xFE0F or 0xE0100 <= ord(char) <= 0xE01EF)
-                   and not (char.isspace() and char != ' ') for char in value)
-
     if allow_ai_delegate:
         # Preserve FROZEN's R5 named-human and exact AI-delegate rules.
-        approved = (len(approvals) == 1 and concrete(approvals[0]) and visible(approvals[0])
+        approved = (len(approvals) == 1 and concrete(approvals[0]) and _visible(approvals[0])
                     and not re.search(r'Claude|GPT|GLM|Gemini|DeepSeek|Qwen|Doubao|ChatGPT|模型', approvals[0], re.I))
         if approved and re.search(r'AI|代批|待人复核', approvals[0], re.I):
             approved = approvals[0].strip() == 'AI 代批，待人复核（协调者）'
     else:
-        def identity(value):
-            value = unicodedata.normalize('NFKC', value).casefold()
-            return ''.join(char for char in value if not char.isspace() and visible(char))
-
         try:
             names = (root / 'specs/ui-server-parity/human-approvers.txt').read_text(encoding='utf-8')
-            humans = {identity(name) for name in names.splitlines()} - {''}
+            humans = human_approvers(names)
         except (OSError, UnicodeError):
             humans = set()
-        approved = len(approvals) == 1 and identity(approvals[0]) in humans
+        approved = len(approvals) == 1 and approver_identity(approvals[0]) in humans
     # Both approval modes require one concrete basis: calibration report + two reviews.
     basis_paths = re.findall(r'(?:[^\s`+;,，；]+/)+[^\s`+;,，；]+\.(?:json|md|log|txt)', bases[0]) if len(bases) == 1 else []
     allowed = [root]
@@ -405,7 +428,7 @@ def approval_valid(approver, basis, root, *, allow_ai_delegate=False):
     except (OSError, subprocess.CalledProcessError):
         pass
     resolved_basis = [(root / name).resolve() for name in basis_paths]
-    valid_basis = (len(bases) == 1 and concrete(bases[0]) and visible(bases[0])
+    valid_basis = (len(bases) == 1 and concrete(bases[0]) and _visible(bases[0])
                    and len(set(resolved_basis)) >= 3
                    and all(path.is_file() and any(path.is_relative_to(base) for base in allowed)
                            for path in resolved_basis))
