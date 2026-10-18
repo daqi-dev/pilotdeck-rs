@@ -82,7 +82,7 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **评审**：默认 GLM + DeepSeek。GLM 走 `run-review-roles.py --runner zai`，或 `claude -p` 接智谱；DeepSeek 走 `review-deepseek.py`，默认关思考。只有难单（并发、协议、冻结装置、安全边界）才请 Claude 当评审。
 - **实现**：codex、GLM、DeepSeek 轮换。
   - GLM：`claude -p` 接智谱，给写权限，在 worktree 里跑。
-  - DeepSeek：没有工具通道，只出候选 patch，由持有人机械应用，适合小而明确的单。
+  - DeepSeek：实现走 dsh（workspace-write，有文件与命令工具，见下方更正）；评审仍用 review-deepseek.py（无工具，提示词须写明）。
   - 难单仍优先 codex 或 Claude。
 - **约束不变**：谁写谁不审，必须两家非作者。
   - GLM 实现时：评审 = DeepSeek + codex/Claude；
@@ -92,3 +92,4 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **原则**：通道分工按难度和作者排除来定，每单开工时在 triage 或任务书里写明「作者 / 评审两家」。
 - **试点结论 · GLM（10-18，#226 夹具三条，AI 代批，待人复核）**：能按任务书准确改文件、守格式，会主动列出自己没把握的期望并如实更正。但两次在没验证前提的情况下写夹具，同一处改了四轮（其中一轮是评审 P1 引出的）；最终 codex、DeepSeek 确认轮都是 0/0。建议：GLM 可以常态承接「小而明确、可由真实 TS 实测判定」的单；任务书里要先给出协调者实测过的运行时事实。不让它单独处理需要推运行时行为的单。DeepSeek 尚未试点。
 - **试点结论 · DeepSeek（10-18，F2-61b node_modules 完整性，AI 代批，待人复核）**：设计思路对（锁文件副本逐字节比对、realpath 落在 .pnpm 内），但没有工具，产出质量受限于附件：第一轮 hunk 头行数写错，要靠 `git apply --recount` 才能应用；对没附上的文件编造上下文，导致无法应用；有两个 fail-open 的 bug（取了 peer 后缀里的版本号；正则匹配不到 xterm，检查集合为空），都是协调者用真实基线复算时抓到的；第三轮仍有一个 hunk 应用失败、路径写错。同一处三轮未过，按规则挂起，由持有人收尾。建议：DeepSeek 不常态承接实现，只在「单文件、附件给全、可由真实数据一次复算判定」的极小单上用，评审照常用它。
+- **更正（10-18 14:50，经守护会话 pilotdeck-rs-69 转达人定）**：上条把失败归到模型是错的。根因是用了无工具通道：review-deepseek.py 只吐 patch 文本，hunk 行数和上下文只能靠猜。「DeepSeek 先只做评审」作废。改为经 dsh（DeepSeek Harness，`DSH_PERMISSION_MODE=workspace-write`，可读写文件、可跑命令；用法见 `_tmp/20261018-dsh-impl/README.md`）重启实现试点，第一单 A6.3-pr1（配置 diff/classify 纯函数，真实 TS 夹具），评审 GLM + codex。原则：**评一个模型能不能写代码，先保证它有文件与命令工具；无工具通道的失败只记为通道问题**。
