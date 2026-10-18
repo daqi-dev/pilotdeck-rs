@@ -109,3 +109,11 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **执行**：worktree 8→12；磁盘 80→100 GiB；新增「同时编译/测试的 cargo 进程 ≤ 4」——内存才是瓶颈，多出的线放评审与等待；全量对拍串行不变。
 - **原则**：并行上限按真实瓶颈设（这里是内存与编译并发），不按容器个数设。
 - **断言**：CLAUDE.md「资源上限」写 12 / 100 GiB / cargo ≤ 4；pdrs-loop.sh DISK_CAP_KIB=104857600。
+
+## 卡 · 模型分工 v2：DeepSeek 承担大头（2026-10-18 17:50，人定，经守护会话 pilotdeck-rs-69 转达）
+- **实现**：规格明确的单（对照 TS 基线的纯函数、存储层、夹具）→ DeepSeek（dsh，`DSH_PERMISSION_MODE=workspace-write`）；难单（并发、协议、X0 这类串行热点）→ codex / Claude。
+- **评审**：第一家 DeepSeek（dsh，`DSH_PERMISSION_MODE=read-only`，执行层拒写、能自读源码；`review-deepseek.py` 留作兜底）；第二家 codex（近两天它是唯一抓到 P0 的评审：P0×7、P1×13）；难单再加 Claude。四角色审查仍用 GLM。
+- **谁写谁不审**照旧：DeepSeek 写的单 → codex + GLM 或 Claude 评审。
+- **复核**：按此分工跑约 10 单后，看看板「按实现方」和「评审 ≥4 轮」：DeepSeek 实现的单评审轮数明显更高，或 codex 作第二家频繁抓到 P0/P1 → 把难度门槛往回调。
+- 通道与命令：`_tmp/20261018-dsh-impl/README.md`；记忆 `state/memory/20261018-dsh-channel.md`。本卡取代上面「模型分工」卡中的评审默认（GLM + DeepSeek）与实现轮换条款，其余条款不变。
+- **原则**：**量大的规格单给最便宜、有工具的通道；把抓 P0 最多的评审固定在第二家**。
