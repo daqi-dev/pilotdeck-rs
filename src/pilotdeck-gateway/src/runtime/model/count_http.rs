@@ -63,19 +63,22 @@ where
     F: FnMut(Request<Full<Bytes>>) -> Fut,
     Fut: Future<Output = Result<Response<B>, HostError>>,
 {
-    let mut url = Url::parse(&request.url).map_err(|_| failed())?;
+    let mut url = Url::parse(&request.url)
+        .map_err(|_| ModuleError::new(format!("Failed to parse URL from {}", request.url)))?;
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(failed());
+        return Err(ModuleError::new(format!(
+            "Request cannot be constructed from a URL that includes credentials: {}",
+            request.url
+        ))
+        .into());
     }
     let mut headers = HeaderMap::new();
     for (name, value) in request.headers.entries() {
         let name = name
             .to_utf8()
             .map_err(|_| ModuleError::new("fetch failed"))?;
-        let value = value
-            .as_string()
-            .and_then(|v| v.to_utf8().ok())
-            .ok_or_else(|| ModuleError::new("fetch failed"))?;
+        let value = crate::js_value::to_string_units(value).map_err(|_| failed())?;
+        let value = String::from_utf16(&value).map_err(|_| failed())?;
         headers.insert(
             hyper::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| failed())?,
             hyper::header::HeaderValue::from_str(&value).map_err(|_| failed())?,

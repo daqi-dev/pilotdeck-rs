@@ -97,6 +97,13 @@ for (const protocol of ['anthropic', 'openai-responses']) {
 }
 add('responses-schema-prototype', [step({ ...baseRequest, tools: [{ name: 'x', inputSchema: JSON.parse('{"__proto__":{"type":"array"},"enum":[1]}') }] })], { providers: { p: { ...provider, protocol: 'openai-responses', url: 'https://api.openai.com/v1' } } });
 add('custom-manager', [step(rich, { useProviderCount: false }), step({ ...baseRequest, messages: [] })], {}, { managerOptions: { multimediaTokens: 3.5, perMessageOverhead: 0.25, warningRatio: 0.1, blockingRatio: 0.2 } });
+for (const protocol of ['anthropic', 'openai-responses']) {
+  for (const [name, efforts] of [['string', 'high'], ['substring', 'xhigh'], ['null', null], ['missing', undefined], ['number', 5]] as const) {
+    add(`${protocol}-efforts-${name}`, ['high', 'max'].map(mode => step({ ...baseRequest, thinking: { mode } })),
+      { providers: { p: { ...provider, protocol, url: protocol === 'anthropic' ? '$MOCK' : 'https://api.openai.com/v1',
+        models: { m: { ...model, thinking: { state: 'enabled', format: 'provider', efforts } } } } } });
+  }
+}
 const cases: any[] = [];
 try {
   for (const sequence of sequences) {
@@ -124,6 +131,22 @@ try {
     }
     cases.push({ ...sequence, steps });
   }
+  // The public evaluator estimates locally first and rejects these inputs
+  // before provider projection. Call the real private provider-count entry
+  // directly so this corpus detects regressions in the Responses path too.
+  const providerErrors = [];
+  for (const [name, content] of [['null', null], ['missing', undefined], ['number', 5]] as const) {
+    const config = { providers: { p: { ...provider, protocol: 'openai-responses', url: 'https://api.openai.com/v1' } } };
+    const request = { ...baseRequest, messages: [{ role: 'user', content: [{ type: 'tool_result', toolCallId: 'call', content }] }] };
+    let calls = 0;
+    const runtime = new TokenAccountingRuntime({ modelConfig: config, fetch: async () => { calls++; throw new Error('unexpected transport'); } });
+    let result;
+    try { result = { ok: true, value: await (runtime as any).countWithProvider(request) }; }
+    catch (error: any) { result = { ok: false, message: error.message }; }
+    assert.equal(result.ok, false, `tool-result-${name}: provider projection must reject`);
+    assert.equal(calls, 0, `tool-result-${name}: reject before transport`);
+    providerErrors.push(json({ name: `openai-responses-tool-result-${name}`, config, request, result, calls }));
+  }
   const snapshots = [];
   for (const managerOptions of [{}, { warningRatio: 0.5, blockingRatio: 0.75 }]) {
     const manager = new TokenBudgetManager(managerOptions);
@@ -148,6 +171,6 @@ try {
   await dispatcher.dispose();
   assertBaseline(baseline);
   assert.deepEqual(await baselineSourceHashes(baseline, sources.map(p => `src/${p}`)), sourceSha256);
-  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, cases, snapshots, operations }, null, 2) + '\n');
-  console.log(JSON.stringify({ output, transport: captureTransport ? 'injected (HTTP not verified)' : 'loopback HTTP', sequences: cases.length, steps: cases.reduce((n, c) => n + c.steps.length, 0), snapshots: snapshots.length, operations: operations.length }));
+  await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, cases, snapshots, operations, providerErrors }, null, 2) + '\n');
+  console.log(JSON.stringify({ output, transport: captureTransport ? 'injected (HTTP not verified)' : 'loopback HTTP', sequences: cases.length, steps: cases.reduce((n, c) => n + c.steps.length, 0), snapshots: snapshots.length, operations: operations.length, providerErrors: providerErrors.length }));
 } finally { await new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()); }); }

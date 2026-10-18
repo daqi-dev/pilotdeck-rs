@@ -146,7 +146,7 @@ pub async fn replay(exchange: Arc<Mutex<Exchange>>, transport: Arc<dyn ProviderC
         &JsValue::from("12.4.254.21-node.33")
     );
     let origins = exchange.lock().unwrap().origins.clone();
-    let config = parse_json(&materialize(
+    let config: Value = serde_json::from_str(&materialize(
         &stringify_json(fixture.get("config").unwrap())
             .unwrap()
             .unwrap(),
@@ -156,7 +156,7 @@ pub async fn replay(exchange: Arc<Mutex<Exchange>>, transport: Arc<dyn ProviderC
     let JsValue::Array(cases) = fixture.get("cases").unwrap() else {
         panic!("cases")
     };
-    assert_eq!(cases.len(), 143);
+    assert_eq!(cases.len(), 149);
     let mut names = std::collections::HashSet::new();
     let mut request_count = 0;
     for case in cases {
@@ -178,6 +178,14 @@ pub async fn replay(exchange: Arc<Mutex<Exchange>>, transport: Arc<dyn ProviderC
             .unwrap();
             exchange.requests.clear();
         }
+        let mut config = config.clone();
+        if let Some(provider) = case.get("provider").and_then(JsValue::as_object) {
+            for (key, value) in provider.entries() {
+                config["providers"]["p"][key.to_utf8().unwrap()] =
+                    serde_json::from_str(&stringify_json(value).unwrap().unwrap()).unwrap();
+            }
+        }
+        let config = parse_json(&config.to_string()).unwrap();
         let runtime = TokenAccountingRuntime::new(config.as_object().unwrap().clone())
             .with_cache_size(0)
             .with_transport(transport.clone());
@@ -209,13 +217,21 @@ pub async fn replay(exchange: Arc<Mutex<Exchange>>, transport: Arc<dyn ProviderC
         assert_eq!(json!(exchange.requests), expected, "HTTP trace: {name}");
         request_count += exchange.requests.len();
     }
-    assert_eq!(request_count, 320);
+    assert_eq!(request_count, 324);
 }
 
 // Both callers import this trait, making runtime's public method available.
 use super::RequestBudgetEvaluator;
 
 pub fn guard(request: &CountHttpRequest, exchange: &Arc<Mutex<Exchange>>) {
+    if [
+        "invalid/v1/messages/count_tokens",
+        "http://fixture:fixture@127.0.0.1:1/v1/messages/count_tokens",
+    ]
+    .contains(&request.url.as_str())
+    {
+        return; // Node rejects these exact fixtures before any HTTP exchange.
+    }
     let origin = url::Url::parse(&request.url)
         .unwrap()
         .origin()

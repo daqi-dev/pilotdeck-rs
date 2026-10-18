@@ -497,7 +497,9 @@ fn accounting_result(block: &JsValue) -> Result<JsValue, HostError> {
     })
 }
 pub(crate) fn flatten_result(block: &JsValue) -> Result<JsValue, HostError> {
-    let Some(JsValue::Array(items)) = block.get("content") else {
+    let content = block.get("content");
+    property(content, "map")?; // Nullish receivers throw before the call.
+    let Some(JsValue::Array(items)) = content else {
         return Err(ModuleError::new("content.map is not a function").into());
     };
     let mapped = items
