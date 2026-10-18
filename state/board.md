@@ -1,15 +1,19 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 06:32 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.2-pr2 | review | ready | FileRunRegistry（wt-a62-run，分支 claude/a62-run）：真实 TS 夹具 22 场景，gateway 290/0、交叉对照 9/9；GLM+DeepSeek 首轮评审中（_tmp/20261018-a62-run/）
-- D1-pr1 | impl | ready | CLI 入口起步（wt-d1-cli，Refs #123）：首轮评审判断卡 1（Packaged）P0，改为真实探测 + D0 rust-stage 布局，Claude 修复中（_tmp/20261018-d1-cli/fix-r1.md）；配置双份待开 P2-跟进（前置于 D1 有效配置默认流）
+updated: 2026-10-18 08:30 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
+- A6.8-pr3 | impl | ready | 原生 SkillManager list/read/write/create/delete/validate（wt-a68-skills，分支 claude/a68-skills）：Claude 实现中（_tmp/20261018-a68-skills/task.md），完成后协调者跑真实 TS 夹具与 cargo；import/scan/binding 留 pr4
+- D1-pr2 | impl | ready | CLI 第二批 = 清 #214/#215/#218/#219（wt-d1-cli，分支 claude/d1-pr2）：Claude 实现中（_tmp/20261018-d1-pr2/task.md），含 Node 探针与 D0 新场景（协调者用真实 TS 定标）
+- A6.2-pr3 | impl | ready | 历史事务（plan 005:98 第三个 PR）；先 triage 范围，可与上两条并行
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
 - #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 08:30 · /loop 两小时交接（自 06:32 起）
+> 合并：#212（board）、#217（A6.2-pr2 RunRegistry，真实 TS 夹具 25 场景）、#220（D1-pr1 CLI 首批，D0 Rust 轮 10/10）。D1 首轮两家判「内置技能 Packaged 恒真」P0，改为真实探测 + D0 rust-stage 布局；A6.2 生成器默认参数让 quirk 场景没打到目标（GLM P1），加命中断言后重生成。新 P2-跟进：#213 #214 #215 #218 #219（D1）、#216（RunRegistry 抢陈旧锁竞态，与 TS 一致，前置于 A7）。worktree：主仓 + wt-a62-run（已合并，证据在其 _tmp，待清）+ wt-d1-cli（复用为 D1-pr2）+ wt-a68-skills；磁盘 38.6/80 GiB。后台：Claude 实现 A6.8-pr3 与 D1-pr2（各自 claude.status 写 exit= 即结束）。**下一步**：两路实现回来后协调者跑测试/定标→两家评审→闸门→串行合并；空档 triage A6.2-pr3。
 
 > ## 2026-10-18 04:28 · /loop 交接（00:31 后漏写，守护会话提醒后补）
 > 合并：#203（A6.1-pr2）、#200（编排提速：GLM 经 claude -p、闸门 readonly=tools、上限 8 worktree / 80 GiB）、#202（DeepSeek 默认关思考）、#204（run-review-roles 容忍非 UTF-8 diff，挡 A6.2 闸门的最小修复）、#205（A6.2-pr1 ledger）。**codex 额度用尽至 10-22**：实现改 claude -p（opus），评审 GLM + DeepSeek（决策卡 state/decisions-20261017.md 末节）。在途：A6.8 两条与 D0 已收敛待开 PR；A6.1-pr3 等 Claude 修复（03:19 因任务书相对路径未启动，04:27 重启，空等约 1 小时）。worktree：主仓 + wt-a61 + wt-d0 + wt-a68-dialog + wt-a68-upload + wt-board；磁盘 42.1/80 GiB。**下一步**：A6.8 两条与 D0 开 PR 合并 → A6.1-pr3 确认 → A6.2-pr2 / D0-pr2。
