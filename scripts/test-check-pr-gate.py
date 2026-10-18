@@ -6,7 +6,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,8 +24,8 @@ GLM_BLOCK = ("<!-- pr-gate:v1 head=abc1234 roles=sibling:PASS,concurrency:PASS,b
              "p0=0 p1=0 diff_lines=1 scope=full runner=zai model=glm-5.3 readonly=tools -->\nRefs #1\n")
 
 
-def errs(body: str, ref: str) -> list[str]:
-    return gate.check_reviewers(body, ref)
+def errs(body: str, ref: str, trailers=None) -> list[str]:
+    return gate.check_reviewers(body, ref, trailers)
 
 
 CASES = [
@@ -37,14 +41,16 @@ CASES = [
     ("缺 reviewers 标记", BASE, "deepseek/x", False, "reviewers"),
     ("两个 reviewers 标记", BASE + "<!-- reviewers: codex,glm -->\n<!-- reviewers: deepseek,glm -->", "claude/x", False, "恰好一个"),
     ("无前缀且无 author", BASE + "<!-- reviewers: codex,glm -->", "chore/x", False, "无法确定作者"),
-    ("未知 author", BASE + "<!-- author: gemini -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "不是已知谱系"),
+    ("未知 author", BASE + "<!-- author: gemini -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "未知谱系"),
     ("两个 author 标记", BASE + "<!-- author: codex -->\n<!-- author: glm -->\n<!-- reviewers: deepseek,claude -->", "chore/x", False, "只许一个"),
     ("GLM 写、四角色也用 GLM（zai）", GLM_BLOCK + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", False, "runner=zai"),
-    ("author 与已知前缀冲突（#234 式改写自述）", GLM_BLOCK + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "glm/a68-p2", False, "冲突"),
+    ("author 声明丢掉前缀谱系（#234 式改写自述）", GLM_BLOCK + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "glm/a68-p2", False, "只能加不能减"),
+    ("codex/ 分支 Claude 也改过：claude 不得评审", BASE + "<!-- author: codex,claude -->\n<!-- reviewers: claude,deepseek -->", "codex/a64-pr11", False, "谁写谁不审"),
+    ("codex/ 分支 Claude 也改过：DeepSeek+GLM 放行", BASE + "<!-- author: codex,claude -->\n<!-- reviewers: deepseek,glm -->", "codex/a64-pr11", True, ""),
     ("author 与前缀一致：放行", BASE + "<!-- author: DeepSeek -->\n<!-- reviewers: codex,glm -->", "deepseek/x", True, ""),
     ("chore 前缀 + author 标记：放行", BASE + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "chore/gate", True, ""),
     ("reviewers 正文含 > 不得被忽略（重复）", BASE + "<!-- reviewers: codex,deepseek -->\n<!-- reviewers: claude,glm > -->", "claude/x", False, "恰好一个"),
-    ("author 正文含 > 不得被忽略（未知谱系）", BASE + "<!-- author: gemini > -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "不是已知谱系"),
+    ("author 正文含 > 不得被忽略（未知谱系）", BASE + "<!-- author: gemini > -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "未知谱系"),
     ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
     ("GLM 写、四角色用 GLM 以外：放行", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
      + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", True, ""),
@@ -58,8 +64,32 @@ def main() -> int:
         good = (not e) if ok else (bool(e) and any(want in x for x in e))
         print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
         fails += not good
+    for name, body, ok, want in [
+        ("署名 Claude 未声明：Claude 评审被拒", BASE + "<!-- reviewers: claude,deepseek -->", False, "含提交署名"),
+        ("署名 Claude：anthropic 四角色被拒", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
+         + "<!-- reviewers: deepseek,glm -->", False, "runner=anthropic"),
+        ("署名 Claude：DeepSeek+GLM 评审放行", BASE + "<!-- reviewers: deepseek,glm -->", True, ""),
+    ]:
+        e = errs(body, "codex/a64-pr11", {"codex", "claude"})
+        good = (not e) if ok else (bool(e) and any(want in x for x in e))
+        print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
+        fails += not good
+    with tempfile.TemporaryDirectory() as td:
+        g = ["git", "-C", td, "-c", "user.email=t@t", "-c", "user.name=t"]
+        subprocess.run([*g, "init", "-q"], check=True)
+        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "x\n\nCo-Authored-By: Codex <noreply@openai.com>"], check=True)
+        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "y\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"], check=True)
+        cwd = os.getcwd()
+        os.chdir(td)
+        try:
+            got = gate.trailer_families("HEAD~2", "HEAD")
+        finally:
+            os.chdir(cwd)
+        good = got == {"codex", "claude"}
+        print(f"{'PASS' if good else 'FAIL'} trailer_families 从真实提交读出 {sorted(got)}")
+        fails += not good
     # --pr 模式用目标 PR 的分支，不继承环境 PR_HEAD_REF（codex 评审 P1 的复现）
-    import json, os, subprocess, tempfile
     with tempfile.TemporaryDirectory() as td:
         fake = Path(td) / "gh"
         payload = Path(td) / "pr.json"  # 不经 shell echo：macOS sh 的 echo 会把 JSON 里的 \\n 转义成真换行
@@ -76,7 +106,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 2} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 6} 例）")
     return 1 if fails else 0
 
 

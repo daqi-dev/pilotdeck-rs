@@ -82,7 +82,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 - 每次提交前：`cd specs/parity && shasum -a 256 README.md` 与 `FROZEN.md` 对得上。
 
 ### 当前协作与持续推进
-- 谁写谁不审：合并前须有**两家非作者评审**收敛到无 P0/P1（**机器校验**：PR 描述写 `<!-- reviewers: A,B -->`；作者谱系取分支前缀 codex/ glm/ deepseek/ claude/，其它前缀须另写 `<!-- author: X -->`；`check-pr-gate.py` 拒绝作者自审、少于两家、四角色 runner 与作者同谱系）；曾审后成为该范围作者的结论不计独立终审。模型分工与通道见 `state/memory/20261015-model-runners.md`；无工具通道的模型只生成候选文本，由持有人机械应用。
+- 谁写谁不审：合并前须有**两家非作者评审**收敛到无 P0/P1（**机器校验**：PR 描述写 `<!-- reviewers: A,B -->`；作者谱系 = 分支前缀（codex/ glm/ deepseek/ claude/）∪ `<!-- author: A,B -->` 声明 ∪ 提交 Co-Authored-By 署名；声明只能加不能减，其它前缀须写 author；**协调者用 Claude 提交别家产物时 Claude 也算作者**；`check-pr-gate.py` 拒绝作者自审、少于两家、四角色 runner 与作者同谱系）；曾审后成为该范围作者的结论不计独立终审。模型分工与通道见 `state/memory/20261015-model-runners.md`；无工具通道的模型只生成候选文本，由持有人机械应用。
 - 任务文件写入 `_tmp/<日期>-<名字>/task.md`。命令参数以当前工具为准，提示词经文件/stdin；写入工作区与证据绑定明确，避免同一工作区并发修改。
 - 已授权的重构判断与阶段推进由 AI 承担；判断性代拍写入 `state/decisions-*.md`，标「AI 代批，待人复核」，随后继续工作。当前停点由最新用户指令和 board 确定；2026-10-14 夜跑的 08:30 截止及首 Issue 专属期限不重复生效，历史见当日晨报和 Git。
 - 红线：不下载预编译二进制；冻结变更按上节；不碰 `~/.pilotdeck`、用户运行中的 PilotDeck、`~/ws/PilotDeck-rust-program-20261009/`；推送前 gitleaks，不强推 main。同一失败 3 次挂起该项；磁盘超上限停止新增写入。全量对拍串行，保留现有锁协议（`mkdir /tmp/pdrs-parity.lock`）。

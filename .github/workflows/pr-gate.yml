@@ -12,9 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 扫 base..head 的 Co-Authored-By 署名，判作者谱系
       - name: 角色审计结果块与 issue 关联
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 -I scripts/check-pr-gate.py

@@ -10,8 +10,10 @@
   2. 有 issue 关联：`Closes|Fixes|Resolves #N`（合并即关单，GitHub 定顺序）或 `Refs #N`（一单多 PR，单保持开），
      或 `<!-- no-issue <理由> -->`。
   3. 谁写谁不审（CLAUDE.md「当前协作与持续推进」）：PR 描述有 `<!-- reviewers: A,B -->`，列出双谱系评审的两家；
-     作者谱系：分支前缀是 codex/ glm/ deepseek/ claude/ 时以前缀为准（`<!-- author: X -->` 可写但必须一致，冲突即 FAIL）；
-     其它前缀（docs/ chore/ fix/ dev/）必须写 `<!-- author: X -->`，否则 FAIL。
+     作者谱系（可以多家）＝ 分支前缀谱系 ∪ `<!-- author: A,B -->` 声明 ∪ 提交 Co-Authored-By 署名（CI 给了 PR_BASE_SHA 时扫描）：
+       - 前缀是 codex/ glm/ deepseek/ claude/ 时，author 声明必须包含它（只能加不能减，防改写自述）；
+       - 其它前缀（docs/ chore/ fix/ dev/）必须写 author，否则 FAIL；
+       - 署名扫描是非自述信号：协调者用 Claude 提交 codex 的产物也会带 Claude 署名，此时 Claude 同样不得评审。
      评审至少两家不同谱系、都不是作者；角色审计结果块的 runner 谱系（zai→GLM、anthropic→Claude）也不得是作者。
      谱系名不区分大小写，dsh/ds→deepseek，gpt→codex，opus/sonnet→claude，zai→glm。
 
@@ -35,6 +37,7 @@ NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 取完整注释正文再校验（不能用 [^>]：正文含 > 时整条会被静默忽略）
 REVIEWERS = re.compile(r"<!--\s*reviewers\s*:(.*?)-->", re.I | re.S)
 AUTHOR = re.compile(r"<!--\s*author\s*:(.*?)-->", re.I | re.S)
+TRAILER_FAMILY = (("claude", "claude"), ("codex", "codex"), ("opencode", "glm"), ("glm", "glm"), ("deepseek", "deepseek"))
 FAMILY = {"codex": "codex", "gpt": "codex", "glm": "glm", "zai": "glm", "deepseek": "deepseek", "dsh": "deepseek",
           "ds": "deepseek", "claude": "claude", "opus": "claude", "sonnet": "claude", "anthropic": "claude"}
 BRANCH_FAMILY = {"codex": "codex", "glm": "glm", "deepseek": "deepseek", "claude": "claude"}
@@ -44,38 +47,57 @@ def family(name: str) -> str | None:
     return FAMILY.get(name.strip().lower())
 
 
-def check_reviewers(body: str, head_ref: str) -> list[str]:
+def trailer_families(base: str, head: str) -> set[str]:
+    """提交 Co-Authored-By 署名对应的谱系；拿不到 git 范围就返回空集（本地用法不强求）。"""
+    if not base or not head:
+        return set()
+    cp = subprocess.run(["git", "log", f"{base}..{head}", "--format=%(trailers:key=Co-Authored-By,valueonly)"],
+                        capture_output=True, text=True)
+    if cp.returncode != 0:
+        print(f"check-pr-gate: 警告：读不到提交署名（{cp.stderr.strip()[:120]}），只按前缀与声明判作者", file=sys.stderr)
+        return set()
+    out = set()
+    for line in cp.stdout.lower().splitlines():
+        out.update(f for key, f in TRAILER_FAMILY if key in line)
+    return out
+
+
+def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
     am = [x.strip() for x in AUTHOR.findall(body)]
     if len(am) > 1:
-        return [f"有 {len(am)} 个 author 标记；只许一个"]
+        return [f"有 {len(am)} 个 author 标记；只许一个（多家写成 author: A,B）"]
     branch = BRANCH_FAMILY.get(head_ref.strip().split("/", 1)[0].lower()) if "/" in head_ref else None
-    declared = family(am[0]) if am else None
-    if am and declared is None:
-        errs.append(f"author「{am[0]}」不是已知谱系（codex/GLM/DeepSeek/Claude）")
-    if branch and declared and branch != declared:
-        errs.append(f"author 标记（{declared}）与分支前缀（{branch}）冲突；分支前缀是唯一非自述信号，以它为准")
-    author = branch or declared
-    if author is None and not am:
+    names = [x for x in re.split(r"[,\s]+", am[0]) if x] if am else []
+    unknown = [x for x in names if family(x) is None]
+    if unknown:
+        errs.append(f"author 里有未知谱系 {unknown}（可选 codex/GLM/DeepSeek/Claude）")
+    declared = {family(x) for x in names if family(x)}
+    if branch and am and branch not in declared:
+        errs.append(f"author 声明 {sorted(declared)} 没包含分支前缀谱系（{branch}）；只能加不能减")
+    authors = declared | ({branch} if branch else set()) | (trailers or set())
+    if not branch and not am:
         errs.append(f"无法确定作者谱系：分支「{head_ref or '未知'}」前缀不是 codex/glm/deepseek/claude，须写 <!-- author: X -->")
     rm = REVIEWERS.findall(body)
     if len(rm) != 1:
         errs.append(f"须恰好一个 <!-- reviewers: A,B --> 标记（现 {len(rm)} 个），列出双谱系评审的两家")
         return errs
-    names = [x for x in re.split(r"[,\s]+", rm[0].strip()) if x]
-    fams = [family(x) for x in names]
-    bad = [n for n, f in zip(names, fams) if f is None]
+    rnames = [x for x in re.split(r"[,\s]+", rm[0].strip()) if x]
+    fams = [family(x) for x in rnames]
+    bad = [n for n, f in zip(rnames, fams) if f is None]
     if bad:
         errs.append(f"reviewers 里有未知谱系 {bad}（可选 codex/GLM/DeepSeek/Claude）")
     known = {f for f in fams if f}
     if len(known) < 2:
         errs.append(f"评审须至少两家不同谱系，现为 {sorted(known) or '无'}")
-    if author and author in known:
-        errs.append(f"作者谱系 {author} 出现在评审里（谁写谁不审）")
+    clash = sorted(authors & known)
+    if clash:
+        src = "（含提交署名）" if trailers and set(clash) & trailers else ""
+        errs.append(f"作者谱系 {clash}{src} 出现在评审里（谁写谁不审）")
     for m in MARKER.finditer(body):
         rn = re.search(r"(?:^|\s)runner=(\S+)", m.group(1))
-        if author and rn and family(rn.group(1)) == author:
-            errs.append(f"角色审计用的 runner={rn.group(1)} 与作者同谱系（{author}）；改用 --runner 另一家重跑")
+        if rn and family(rn.group(1)) in authors:
+            errs.append(f"角色审计用的 runner={rn.group(1)} 与作者同谱系（{family(rn.group(1))}）；改用 --runner 另一家重跑")
     return errs
 
 
@@ -119,7 +141,7 @@ def check_block(attrs: str, head: str) -> list[str]:
     return errs
 
 
-def check(body: str, head: str = "", head_ref: str = "") -> list[str]:
+def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
     blocks = list(MARKER.finditer(body))
     w = WAIVER.search(body)
@@ -138,7 +160,7 @@ def check(body: str, head: str = "", head_ref: str = "") -> list[str]:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
     if not ISSUE_LINK.search(body) and not NO_ISSUE.search(body):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
-    errs.extend(check_reviewers(body, head_ref))
+    errs.extend(check_reviewers(body, head_ref, trailers))
     return errs
 
 
@@ -169,7 +191,10 @@ def main() -> int:
         return 2
     if a.head_ref is None:
         a.head_ref = os.environ.get("PR_HEAD_REF", "")
-    errs = check(body, a.head, a.head_ref)
+    trailers = trailer_families(os.environ.get("PR_BASE_SHA", ""), a.head)
+    if trailers:
+        print(f"check-pr-gate: 提交署名谱系 {sorted(trailers)}（计入作者）")
+    errs = check(body, a.head, a.head_ref, trailers)
     for e in errs:
         print(f"check-pr-gate: FAIL {e}")
     if not errs:
