@@ -10,7 +10,8 @@ import { readFile, readdir, stat, mkdtemp, writeFile, symlink, link, rm, mkdir }
 import { Readable } from 'node:stream';
 import { resolve, dirname } from 'node:path';
 import { createMock, TOKEN } from './mock.mjs';
-import { reconcile, reconcilePair, loadReportPair, SKIP_ALLOWLIST, caseId, checkInventory } from './accounting.mjs';
+import { reconcile, reconcilePair, loadReportPair, SKIP_ALLOWLIST, caseId, checkInventory, checkAIdentities, A_IDENTITIES, aTitle } from './accounting.mjs';
+import { A_SCRIPTS } from './stream.mjs';
 import { oldDist, newDist, requireUI, ports, ownedPath, root, baseline, historicalInventory, origin } from './env.mjs';
 import { assetPath } from './serve.mjs';
 import { checkMessageMap } from './message-map.mjs';
@@ -62,6 +63,50 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     assert.equal(sent[0].type, 'input-queue-state'); assert.equal(sent[0].sessionId, 's');
     socket.path = '/shell'; mock.handleMessage(socket, JSON.stringify({ type: 'input', input: '你好' }));
     assert.deepEqual(sent[1], { type: 'output', data: '你好' }); assert.equal(mock.stats.errors.length, 2);
+  });
+  await check('A scripts replay fixed frames in order; unknown, skipped, repeated or unwatched steps must FAIL', async () => {
+    const mock = createMock(), sent = [], socket = { path: '/ws', readyState: 1, send: raw => sent.push(JSON.parse(raw)) };
+    const request = async path => {
+      const reply = { status: 0, writeHead(status) { this.status = status; }, end(data) { this.body = JSON.parse(data); } };
+      await mock.handleHTTP(Object.assign(Readable.from(['']), { url: path, method: 'POST', headers: {} }), reply); return reply;
+    };
+    try {
+      assert.equal((await request('/__parity/stream?action=reset&script=toString')).status, 400);
+      for (const [name, script] of Object.entries(A_SCRIPTS)) {
+        assert.equal((await request(`/__parity/stream?action=reset&script=${name}`)).status, 200);
+        assert.deepEqual(mock.stream.messages, script.history());
+        assert.equal((await request(`/__parity/stream?action=step&script=${name}&step=0`)).status, 409);
+        mock.handleMessage(socket, JSON.stringify({ type: 'watch-session', sessionId: 's' }));
+        assert.equal((await request('/__parity/stream?action=start&scenario=reading')).status, 400);
+        for (const bad of ['', '-1', '1.0', String(script.steps.length)]) assert.equal((await request(`/__parity/stream?action=step&script=${name}&step=${bad}`)).status, 400);
+        assert.equal((await request(`/__parity/stream?action=step&script=other&step=0`)).status, 400);
+        let history = script.history();
+        for (const [index, entry] of script.steps.entries()) {
+          const before = sent.length, reply = await request(`/__parity/stream?action=step&script=${name}&step=${index}`);
+          assert.equal(reply.status, 202); assert.equal(reply.body.status, entry.status);
+          assert.deepEqual(sent.slice(before).filter(frame => frame.kind), entry.frames());
+          if (entry.history) history = entry.history();
+          assert.deepEqual(mock.stream.messages, history);
+          assert.equal((await request(`/__parity/stream?action=step&script=${name}&step=${index}`)).status, 400);
+        }
+        assert(mock.stream.state.recipients.every(count => count === 1));
+        mock.detach(socket);
+      }
+      assert.equal((await request('/__parity/stream?action=reset')).status, 200);
+      assert.equal(mock.stream.messages.length, 48); assert.equal(mock.stream.state.script, undefined);
+    } finally { mock.close(); }
+  });
+  await check('A identities: 3 unique (file, title) rewrites; missing, duplicate, misplaced, unknown or line-keyed registrations must FAIL', async () => {
+    const historical = JSON.parse(await readFile(historicalInventory, 'utf8'));
+    const rows = A_IDENTITIES.map(entry => ({ file: entry.spec, title: aTitle(entry) }));
+    assert.deepEqual(checkAIdentities(rows, historical), []);
+    assert.equal(new Set(A_IDENTITIES.map(caseId)).size, 3);
+    for (const bad of [rows.slice(1), [...rows, rows[0]], [{ ...rows[0], file: 'other.spec.mjs' }, ...rows.slice(1)],
+      [...rows, { file: rows[0].file, title: '[A:streaming-lifecycle.spec.mjs:unknown]' }],
+      [{ ...rows[0], title: `[A:${A_IDENTITIES[0].file}:${A_IDENTITIES[0].line}]` }, ...rows.slice(1)]]) {
+      assert(checkAIdentities(bad, historical).length);
+    }
+    assert(checkAIdentities(rows, { ...historical, tests: historical.tests.filter(row => caseId(row) !== caseId(A_IDENTITIES[0])) }).length);
   });
   await check('reconciliation positive and adversarial controls', () => {
     const inventory = [{ file: 'a.spec.mjs', title: 'one' }, SKIP_ALLOWLIST[0]];

@@ -1,0 +1,10 @@
+{
+  "baselineCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "disposition": "specs/fe-parity/a-class-disposition.md",
+  "scope": "F2-A34-pr2 样板三例；A 类独立账，不并入现行主尺子 37（B 9 + D 28），替代分母 68 待人复核",
+  "tests": [
+    { "number": 1, "file": "streaming-lifecycle.spec.mjs", "line": 10, "title": "history refresh preserves thinking and compaction order and a single image query", "disposition": "rewrite", "spec": "a-streaming-lifecycle.spec.mjs" },
+    { "number": 5, "file": "streaming-lifecycle.spec.mjs", "line": 95, "title": "stream search waits for the visible match and respects cancellation", "disposition": "rewrite", "spec": "a-streaming-lifecycle.spec.mjs" },
+    { "number": 15, "file": "streaming-search.spec.mjs", "line": 21, "title": "search locates a phrase spanning text and a link", "disposition": "rewrite", "spec": "a-streaming-search.spec.mjs" }
+  ]
+}

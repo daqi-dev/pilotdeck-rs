@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { baseline, root, requireUI, historicalInventory, ownedPath, origin, realOrigin } from './env.mjs';
-import { reportCases, checkInventory, reconcile, reconcilePair, reconcileRealPair, loadReportPair, PENDING_STATUS, CASCADE_STATUS } from './accounting.mjs';
+import { reportCases, checkInventory, checkAIdentities, A_IDENTITIES, reconcile, reconcilePair, reconcileRealPair, loadReportPair, PENDING_STATUS, CASCADE_STATUS } from './accounting.mjs';
 import { executionEnv, realExecutionEnv, assertRealExecutionEnv, prepareRealOSDirectories, PROFILES } from './execution-env.mjs';
 import { BASELINE_STALE } from './baseline-stale.mjs';
 import { verifyBaseline } from './baseline.mjs';
@@ -27,6 +27,7 @@ if (values.help) {
   node scripts/fe-parity/run.mjs --network-self-check
   node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old
   node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old,new
+  node scripts/fe-parity/run.mjs --suite a-class --frontends old
   node scripts/fe-parity/run.mjs --suite baseline --profiles staffdeck,minimal,replacement --frontends old,new
   node scripts/fe-parity/run.mjs --suite real --real-mode all --frontends old
   node scripts/fe-parity/run.mjs --suite real --real-mode onboarding --frontends old
@@ -39,6 +40,7 @@ All configs/spec selection are repository-owned. Real uses native supervisor + o
 Baseline profiles produce complete original 72-case JSONs; repeated report flags merge profiles.
 B/D have source-bound deployment partitions and separate execution accounting.
 Streaming and skeleton have separate denominators; they never credit the baseline 72.
+A-class rewrites are bound to a-identities.json (file, title); never credited to the 72 or the 37 ruler.
 Single-side PASS means calibration only. The probe's missing chat is FAIL, never skipped.
 --rules-only omits build-artifact checks (self-check only), never used by browser preflight.
 Mock-UI suites: 28376/28377/28378. Real: 3010/5180/18798, onboarding 3011/5181/18799, LLM 28379.
@@ -50,7 +52,7 @@ See README.md for known incomplete mock deployment coverage and coordinator comm
 }
 const frontends = values.frontends.split(','), profiles = values.profiles.split(',');
 if (!['old', 'new', 'old,new'].includes(values.frontends)) throw new Error('frontends must be old, new or old,new');
-if (!['skeleton', 'streaming-scroll', 'baseline', 'real', 'blackbox-deploy'].includes(values.suite)) throw new Error('Unknown suite');
+if (!['skeleton', 'streaming-scroll', 'a-class', 'baseline', 'real', 'blackbox-deploy'].includes(values.suite)) throw new Error('Unknown suite');
 const isolatedSuite = ['real', 'blackbox-deploy'].includes(values.suite);
 if (values.suite === 'blackbox-deploy' && (values.frontends !== 'old' || values.reconcile || values['network-self-check'])) throw new Error('B deployment currently supports old execution/offline self-check only; new starts at F3');
 if (!['all', 'ready', 'onboarding'].includes(values['real-mode'])) throw new Error('Invalid real mode');
@@ -277,6 +279,10 @@ try {
           if (baselineSuite) {
             const errors = checkInventory(rows, historical);
             if (errors.length) throw new Error(JSON.stringify(errors));
+          } else if (values.suite === 'a-class') {
+            const errors = checkAIdentities(rows, historical);
+            if (errors.length) throw new Error(JSON.stringify(errors));
+            if (registered && JSON.stringify(rows.map(({ file, title }) => ({ file, title }))) !== JSON.stringify(registered.map(({ file, title }) => ({ file, title })))) throw new Error('Frontend registration differs');
           } else {
             const expected = values.suite === 'skeleton' ? 3 : 8;
             if (rows.length !== expected) throw new Error(`${values.suite} registration drift ${rows.length} != ${expected}`);
@@ -302,6 +308,10 @@ try {
         console.log(comparison);
         await writeFile(resolve(output, `${values.suite}.md`), comparison + '\n');
         result.baselineExecution = { expected: inventory.length, actual: 0, status: 'NOT_RUN', reason: `${values.suite} has a separate denominator` };
+        if (values.suite === 'a-class') {
+          result.aClass = { identities: A_IDENTITIES.length, mainRuler: 37, creditedToMainRuler: false, catalog: 'scripts/fe-parity/a-identities.json' };
+          console.log(`A 类样板 ${A_IDENTITIES.length} 身份 (file, title) 唯一；独立账，不并入现行分母 37`);
+        }
         result.status = result[values.suite].status === 'PASS' ? (frontends.length === 1 ? 'PASS_SINGLE_FRONTEND_ONLY' : 'PASS_SUITE_ONLY') : 'FAIL';
         // Keep skeleton's historical full-baseline gate, streaming is an explicit standalone F5 gate.
         if (values.suite === 'skeleton') {

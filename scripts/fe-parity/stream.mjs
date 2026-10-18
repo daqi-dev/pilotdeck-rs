@@ -21,11 +21,82 @@ export function history() {
     frame('text', { id: `answer-${index}`, role: 'assistant', content: `Answer ${index}: historical reading paragraph.\n\nSecond paragraph for stable scrolling.${index === 21 ? '\n\nF2 searchable lighthouse. [F2 reference](https://example.invalid/f2-hidden-reference)' : ''}` }),
   ]).flat();
 }
+// A-class rewrites (specs/fe-parity/a-class-disposition.md): each original
+// store/fixture call becomes a fixed, repository-owned wire frame batch. Tests
+// only select a script and advance its steps in order; they never send content.
+// Wire routing of these kinds: useChatRealtimeHandlers.ts:757-925 (text/user and
+// compact_boundary -> appendRealtime, thinking -> updateStreamingThinking,
+// complete -> refreshFromServer after 150 ms, :1009-1033).
+const searchHistory = count => Array.from({ length: count }, (_, index) => frame('text', {
+  id: `history-${index}`, role: index % 2 ? 'assistant' : 'user', content: `Historical message ${index}.\n\nAnother paragraph for reading.`,
+  ...(index % 2 ? {} : { entryId: `history-entry-${index}` }) }));
+// streaming-lifecycle.spec.mjs:11-16 objects, field for field.
+const lifecycle = { runId: 'run', timestamp: '2026-09-11T00:00:00Z' };
+const lifecycleUser = frame('text', { ...lifecycle, id: 'persisted-user', role: 'user', content: 'Review this image' });
+const lifecycleThinking = frame('thinking', { ...lifecycle, id: 'persisted-thinking', content: 'Inspect the screenshot' });
+const lifecycleAnswer = frame('text', { ...lifecycle, id: 'persisted-answer', role: 'assistant', content: 'The platform is too high.' });
+const lifecycleCompact = frame('compact_boundary', { ...lifecycle, id: 'live-compact', compactionId: 'c1', preTokens: 120, postTokens: 40 });
+// An earlier turn only gives the session a rendered conversation before the live turn.
+const lifecyclePrior = [
+  frame('text', { id: 'prior-user', role: 'user', entryId: 'prior-entry', content: 'Earlier question', timestamp: '2026-09-10T00:00:00Z' }),
+  frame('text', { id: 'prior-answer', role: 'assistant', content: 'Earlier answer.', timestamp: '2026-09-10T00:00:01Z' }),
+];
+// streaming-search.spec.mjs:6-9, :17, :34.
+const searchTarget = () => [...searchHistory(30),
+  frame('text', { id: 'target', role: 'assistant', content: 'Visit https://example.com/unique-guide now.' })];
+const searchLater = () => frame('text', { id: 'later', role: 'assistant', content: 'Another response.\n\n'.repeat(20) });
+const complete = (runId, id) => frame('complete', { runId, id, exitCode: 0, success: true });
+export const A_SCRIPTS = Object.freeze({
+  // #1 streaming-lifecycle.spec.mjs:10
+  'lifecycle-history-refresh': { runId: 'run', history: () => [...lifecyclePrior], steps: [
+    // L22-27: optimistic image query, its echo, thinking, compaction, answer.
+    { status: 'running', frames: () => [frame('status', { ...lifecycle, id: 'run-started', text: 'started' }),
+      { ...lifecycleUser, id: 'local_user', images: ['data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'] },
+      { ...lifecycleUser, id: 'local_ws_echo' },
+      frame('thinking', { ...lifecycle, id: 'live-thinking', content: 'Inspect the screenshot carefully.' }),
+      lifecycleCompact, { ...lifecycleAnswer, id: 'live-answer' }] },
+    // L16-17, L30: history without the compaction, shorter thinking, no image.
+    { status: 'completed', history: () => [...lifecyclePrior, lifecycleUser, lifecycleThinking, lifecycleAnswer],
+      frames: () => [complete('run', 'run-complete-1')] },
+    // L40-41: persisted compaction and full thinking.
+    { status: 'completed', history: () => [...lifecyclePrior, lifecycleUser, { ...lifecycleThinking, content: 'Inspect the screenshot carefully.' },
+      { ...lifecycleCompact, id: 'persisted-compact' }, lifecycleAnswer], frames: () => [complete('run', 'run-complete-2')] },
+  ] },
+  // #5 streaming-lifecycle.spec.mjs:95 (cancel=true). The answer stays open (isStreaming).
+  'lifecycle-search-cancel': { runId: 'a5-run', history: () => [...searchHistory(24),
+    frame('text', { id: 'question', role: 'user', entryId: 'question-entry', content: 'Read a long response' })], steps: [
+    { status: 'running', frames: () => [frame('status', { runId: 'a5-run', id: 'a5-started', text: 'started' }),
+      frame('stream_delta', { runId: 'a5-run', id: 'a5-delta-0', content: 'Starting.' })] },
+    { status: 'running', frames: () => [frame('stream_delta', { runId: 'a5-run', id: 'a5-delta-1',
+      content: '\n\n' + 'A paragraph to read.\n\n'.repeat(240) + 'TAIL_NEEDLE' })] },
+  ] },
+  // #15 streaming-search.spec.mjs:21 (first scenario). L33-35 appends one static answer.
+  'search-text-link': { history: () => searchTarget(), steps: [
+    { status: 'idle', history: () => [...searchTarget(), searchLater()], frames: () => [searchLater()] },
+  ] },
+});
 export function createStream({ send, now = () => performance.now(), schedule = setTimeout, cancel = clearTimeout }) {
-  let timer, generation = 0, nextIndex = 0, state = { status: 'idle' }, transcript = history();
+  let timer, generation = 0, nextIndex = 0, state = { status: 'idle' }, transcript = history(), script;
   const stop = () => { generation++; if (timer !== undefined) cancel(timer); timer = undefined; if (state.status === 'running') state.status = 'cancelled'; };
-  const reset = () => { stop(); nextIndex = 0; transcript = history(); state = { status: 'idle' }; };
+  const reset = name => {
+    if (name !== undefined && !Object.hasOwn(A_SCRIPTS, name)) throw new Error('Unknown A script');
+    stop(); nextIndex = 0; script = name;
+    transcript = name ? A_SCRIPTS[name].history() : history();
+    state = name ? { status: 'idle', script: name, step: 0, recipients: [] } : { status: 'idle' };
+  };
+  function step(name, index) {
+    if (!script || name !== script) throw new Error('A script not selected by reset');
+    if (index !== state.step) throw new Error('A script steps advance in order');
+    const entry = A_SCRIPTS[script].steps[index];
+    if (!entry) throw new Error('A script exhausted');
+    // Replace history before sending, so a complete-triggered refresh reads it.
+    if (entry.history) transcript = entry.history();
+    const recipients = entry.frames().map(send);
+    state = { status: entry.status, script, step: index + 1, runId: A_SCRIPTS[script].runId, recipients: [...state.recipients, ...recipients] };
+    return state;
+  }
   function start(scenario, protocol = 'legacy') {
+    if (script) throw new Error('A script selected; reset without one first');
     if (!STREAM_PROTOCOLS.includes(protocol)) throw new Error('Unknown stream protocol');
     if (!Object.hasOwn(STREAM_SCENARIOS, scenario)) throw new Error('Unknown stream scenario');
     if (state.status === 'running') throw new Error('Stream already running');
@@ -77,7 +148,7 @@ export function createStream({ send, now = () => performance.now(), schedule = s
     timer = schedule(tick, 1000 / STREAM_HZ);
     return state;
   }
-  return { start, stop, reset, get state() { return state; }, get messages() { return transcript; } };
+  return { start, step, stop, reset, get state() { return state; }, get messages() { return transcript; } };
 }
 export function streamErrors(state) {
   const errors = [];
