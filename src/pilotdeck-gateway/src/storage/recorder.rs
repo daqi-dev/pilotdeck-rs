@@ -11,15 +11,14 @@
 //! (an aborted turn skips the result record). Those wrappers never own
 //! transcript state, so this module ports the recorder surface they call.
 //!
-//! Entries are appended through the A6.2 [`TranscriptStore`] with the exact TS
+//! Entries are appended through the A6.2 [`TranscriptWriter`] with the exact TS
 //! JSONL shape: one `JSON.stringify(entry) + "\n"` per record, sequence starts
 //! at 1, `entryId` is a v4 UUID, `parentEntryId` is the previous entry id, and
-//! `createdAt` is the injected clock's ISO text. The A6.2 `TranscriptWriter`
-//! deliberately refuses turn-scoped events (`NodeHostRequired`) until domain
-//! validation is ported, so the recorder appends to the same store directly;
-//! it does not change or bypass any existing adapter behaviour. `raw` fields are recursively
-//! stripped from stream events, tool calls and tool results (never from a model
-//! request), matching `stripRawFields`.
+//! `createdAt` is the injected clock's ISO text. A recorder takes the same writer
+//! as the rest of its session, sharing its commit lock, sequence, parent chain,
+//! entry ids and domain validation state. `raw` and `__proto__` properties are
+//! recursively stripped from stream events, tool calls and tool results (never
+//! from a model request), matching `stripRawFields`.
 //!
 //! Not ported (unreachable through the two durable ports, and they stay closed
 //! rather than guessed): compaction/question/permission/inbox lifecycle,
@@ -34,9 +33,11 @@
 use super::{
     ledger::field,
     transcript::uuid,
-    transcript_adapter::{AdapterError, TranscriptKey, TranscriptStore, validate_event_log},
+    transcript_adapter::{
+        AdapterError, TranscriptKey, TranscriptStore, TranscriptWriter, domain_supported,
+    },
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
     fmt,
@@ -54,11 +55,20 @@ pub enum RecorderError {
     /// TS `Error` from recorder state (`Durable turn ...`).
     State(String),
     /// TS `SessionDomainValidationError`; code and wording match TS.
-    Domain { code: &'static str, message: String },
-    /// TS `SessionEventValidationError` from restoring a log.
-    Envelope { code: &'static str, message: String },
+    Domain {
+        code: &'static str,
+        message: String,
+    },
+    /// TS `SessionEventValidationError` from an append or restored log.
+    Envelope {
+        code: &'static str,
+        message: String,
+    },
     /// TS `TypeError` from a malformed value at a recorder call site.
     Type(String),
+    /// Unsupported lifecycle requires the Node host; it is never silently replayed.
+    NodeHostRequired(String),
+    Range(String),
     /// Host store failure, propagated unchanged.
     Store(super::LedgerError),
 }
@@ -67,6 +77,8 @@ impl fmt::Display for RecorderError {
         match self {
             Self::State(message)
             | Self::Type(message)
+            | Self::NodeHostRequired(message)
+            | Self::Range(message)
             | Self::Domain { message, .. }
             | Self::Envelope { message, .. } => f.write_str(message),
             Self::Store(error) => error.fmt(f),
@@ -91,50 +103,48 @@ fn domain(code: &'static str, message: impl Into<String>) -> RecorderError {
     }
 }
 
-/// One turn's TS `TurnRecordingState` plus the domain-validation projection
-/// (SessionDomainValidation.ts StepState/TurnState) that a TS transcript writer
-/// would keep while committing these entries.
-#[derive(Clone, Debug)]
-struct Turn {
-    /// The current recorder instance started this turn (`turns` in TS). A
-    /// turn rebuilt by [`Recorder::restore`] is domain state only.
-    recording: bool,
-    next_step: u64,
-    last_step: u64,
-    open_step: Option<u64>,
-    model_requested: bool,
-    open_tool_calls: Vec<Option<JsString>>,
-}
-impl Turn {
-    fn started() -> Self {
-        Self {
-            recording: false,
-            next_step: 1,
-            last_step: 0,
-            open_step: None,
-            model_requested: false,
-            open_tool_calls: Vec::new(),
+impl From<AdapterError> for RecorderError {
+    fn from(error: AdapterError) -> Self {
+        match error {
+            AdapterError::Validation { code, message } => Self::Envelope { code, message },
+            AdapterError::Type(message) => Self::Type(message),
+            AdapterError::Range(message) => Self::Range(message),
+            AdapterError::NodeHostRequired(message) => Self::NodeHostRequired(message),
+            AdapterError::Store(error) => Self::Store(error),
         }
     }
 }
 
+/// Local TurnRecordingState; validation state belongs to the shared writer.
+struct Turn {
+    next_step: u64,
+    open_step: Option<u64>,
+    model_requested: bool,
+}
+impl Turn {
+    fn started() -> Self {
+        Self {
+            next_step: 1,
+            open_step: None,
+            model_requested: false,
+        }
+    }
+}
 struct Inner {
-    sequence: u64,
-    last_entry_id: Option<JsString>,
     turns: HashMap<JsString, Turn>,
 }
 
-/// Durable recorder over a host-owned transcript store.
+/// Durable recorder over a session's shared transcript writer.
 pub struct Recorder {
-    store: Arc<dyn TranscriptStore>,
-    key: TranscriptKey,
-    clock: RecorderClock,
-    uuid: RecorderUuid,
+    writer: Arc<TranscriptWriter>,
+    sources: Option<(RecorderClock, RecorderUuid)>,
     inner: Mutex<Inner>,
 }
 
 impl Recorder {
     /// Production clock (`Date#toISOString` equivalent) and v4 UUID source.
+    /// Creates a standalone writer. A session with an existing writer must use
+    /// [`Self::from_writer`] so every producer shares the same commit state.
     pub fn new(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
         Self::with_sources(
             store,
@@ -162,17 +172,24 @@ impl Recorder {
         clock: RecorderClock,
         uuid: RecorderUuid,
     ) -> Self {
+        let writer = Arc::new(TranscriptWriter::for_store(store, key));
+        let mut recorder = Self::from_writer(writer);
+        recorder.sources = Some((clock, uuid));
+        recorder
+    }
+    /// Inject the same writer used for accepted input and session metadata.
+    pub fn from_writer(writer: Arc<TranscriptWriter>) -> Self {
         Self {
-            store,
-            key,
-            clock,
-            uuid,
+            writer,
+            sources: None,
             inner: Mutex::new(Inner {
-                sequence: 0,
-                last_entry_id: None,
                 turns: HashMap::new(),
             }),
         }
+    }
+    /// Access the authoritative writer, for other session transcript producers.
+    pub fn writer(&self) -> &Arc<TranscriptWriter> {
+        &self.writer
     }
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
@@ -180,17 +197,9 @@ impl Recorder {
     /// TS `startTurn`: `turn_started`, then `{nextStep: 1}`.
     pub fn start_turn(&self, session_id: &JsString, turn_id: &JsString) -> RecorderResult<()> {
         let mut inner = self.lock();
-        if inner.turns.contains_key(turn_id) {
-            return Err(domain(
-                "duplicate_turn_start",
-                format!("Turn {} has already started.", lossy(turn_id)),
-            ));
-        }
         let draft = draft("turn_started");
-        self.append(&mut inner, session_id, turn_id, draft)?;
-        let mut turn = Turn::started();
-        turn.recording = true;
-        inner.turns.insert(turn_id.clone(), turn);
+        self.append(session_id, turn_id, draft)?;
+        inner.turns.insert(turn_id.clone(), Turn::started());
         Ok(())
     }
     /// TS `recordModelRequest`: open a step if needed, append the request, and
@@ -214,7 +223,7 @@ impl Recorder {
         let mut draft = draft("model_request");
         draft.insert("step".into(), JsValue::Number(step as f64));
         draft.insert("request".into(), request);
-        self.append(&mut inner, session_id, turn_id, draft)?;
+        self.append(session_id, turn_id, draft)?;
         if let Some(turn) = inner.turns.get_mut(turn_id) {
             turn.model_requested = true;
         }
@@ -227,19 +236,13 @@ impl Recorder {
         turn_id: &JsString,
         event: &JsValue,
     ) -> RecorderResult<()> {
-        let mut inner = self.lock();
+        let inner = self.lock();
         self.require_recording(&inner, turn_id)?;
         let step = self.require_open_step(&inner, turn_id)?;
-        if !inner.turns[turn_id].model_requested {
-            return Err(domain(
-                "model_request_missing",
-                format!("Step {} emitted a model event before its request.", step),
-            ));
-        }
         let mut draft = draft("model_stream_event");
         draft.insert("step".into(), JsValue::Number(step as f64));
         draft.insert("event".into(), strip_raw_fields(event));
-        self.append(&mut inner, session_id, turn_id, draft)
+        self.append(session_id, turn_id, draft)
     }
     /// TS `recordToolCalls`: one `tool_call` per call, all at the open step.
     pub fn record_tool_calls(
@@ -248,36 +251,15 @@ impl Recorder {
         turn_id: &JsString,
         calls: &[JsValue],
     ) -> RecorderResult<()> {
-        let mut inner = self.lock();
+        let inner = self.lock();
         self.require_recording(&inner, turn_id)?;
         let step = self.require_open_step(&inner, turn_id)?;
         for call in calls {
             let call = strip_raw_fields(call);
-            let id = call_id(&call, "id")?;
-            let requested = inner.turns[turn_id].model_requested;
-            if !requested {
-                return Err(domain(
-                    "model_request_missing",
-                    format!(
-                        "Step {} emitted tool call {} before its request.",
-                        step,
-                        show_id(id.as_ref())
-                    ),
-                ));
-            }
-            if inner.turns[turn_id].open_tool_calls.contains(&id) {
-                return Err(domain(
-                    "duplicate_tool_call",
-                    format!("Tool call {} is already open.", show_id(id.as_ref())),
-                ));
-            }
             let mut draft = draft("tool_call");
             draft.insert("step".into(), JsValue::Number(step as f64));
             draft.insert("call".into(), call);
-            self.append(&mut inner, session_id, turn_id, draft)?;
-            if let Some(turn) = inner.turns.get_mut(turn_id) {
-                turn.open_tool_calls.push(id);
-            }
+            self.append(session_id, turn_id, draft)?;
         }
         Ok(())
     }
@@ -294,30 +276,10 @@ impl Recorder {
         let step = self.require_open_step(&inner, turn_id)?;
         for result in results {
             let result = strip_raw_fields(result);
-            let id = call_id(&result, "toolCallId")?;
-            let position = inner.turns[turn_id]
-                .open_tool_calls
-                .iter()
-                .position(|open| *open == id);
-            if position.is_none() {
-                return Err(domain(
-                    "tool_result_without_call",
-                    format!(
-                        "Tool result {} has no open call in step {}.",
-                        show_id(id.as_ref()),
-                        step
-                    ),
-                ));
-            }
             let mut draft = draft("tool_result");
             draft.insert("step".into(), JsValue::Number(step as f64));
             draft.insert("result".into(), result);
-            self.append(&mut inner, session_id, turn_id, draft)?;
-            if let Some(position) = position
-                && let Some(turn) = inner.turns.get_mut(turn_id)
-            {
-                turn.open_tool_calls.remove(position);
-            }
+            self.append(session_id, turn_id, draft)?;
         }
         self.complete_step(&mut inner, session_id, turn_id, "completed")
     }
@@ -327,28 +289,20 @@ impl Recorder {
     /// domain projection (what a resumed `SessionRuntime` keeps), so a reused
     /// turn id still reports `duplicate_turn_start`.
     pub fn restore(&self, entries: &[JsValue]) -> RecorderResult<()> {
-        let (writer, _ids) = validate_event_log(entries).map_err(|error| match error {
-            AdapterError::Validation { code, message } => RecorderError::Envelope { code, message },
-            other => state(other.to_string()),
-        })?;
         let mut inner = self.lock();
-        inner.sequence = writer.sequence;
-        inner.last_entry_id = writer.last_entry_id;
+        self.writer.restore_recorder_entries(entries)?;
         inner.turns.clear();
-        for entry in entries {
-            replay_domain(&mut inner.turns, entry);
-        }
         Ok(())
     }
-    /// TS `snapshotState` equivalent, for resume callers.
+    /// TS snapshotState, shared with every caller of the injected writer.
     pub fn snapshot_state(&self) -> (u64, Option<JsString>) {
-        let inner = self.lock();
-        (inner.sequence, inner.last_entry_id.clone())
+        let state = self.writer.snapshot_state();
+        (state.sequence, state.last_entry_id)
     }
 
     fn require_recording(&self, inner: &Inner, turn_id: &JsString) -> RecorderResult<()> {
         match inner.turns.get(turn_id) {
-            Some(turn) if turn.recording => Ok(()),
+            Some(_) => Ok(()),
             _ => Err(state(format!(
                 "Durable turn {} has not started.",
                 lossy(turn_id)
@@ -377,23 +331,12 @@ impl Recorder {
             self.complete_step(inner, session_id, turn_id, "completed")?;
         }
         let step = inner.turns[turn_id].next_step;
-        if step <= inner.turns[turn_id].last_step {
-            return Err(domain(
-                "invalid_step",
-                format!(
-                    "Step {} must increase within turn {}.",
-                    step,
-                    lossy(turn_id)
-                ),
-            ));
-        }
         let mut draft = draft("step_started");
         draft.insert("step".into(), JsValue::Number(step as f64));
-        self.append(inner, session_id, turn_id, draft)?;
+        self.append(session_id, turn_id, draft)?;
         if let Some(turn) = inner.turns.get_mut(turn_id) {
             turn.open_step = Some(step);
             turn.model_requested = false;
-            turn.last_step = step;
             turn.next_step = step + 1;
         }
         Ok(step)
@@ -408,59 +351,24 @@ impl Recorder {
         let Some(step) = inner.turns.get(turn_id).and_then(|turn| turn.open_step) else {
             return Ok(());
         };
-        if outcome == "completed" && !inner.turns[turn_id].open_tool_calls.is_empty() {
-            return Err(domain(
-                "step_has_open_tool_calls",
-                format!("Step {} completed with unresolved tool calls.", step),
-            ));
-        }
         let mut draft = draft("step_completed");
         draft.insert("step".into(), JsValue::Number(step as f64));
         draft.insert("outcome".into(), outcome.into());
-        self.append(inner, session_id, turn_id, draft)?;
+        self.append(session_id, turn_id, draft)?;
         if let Some(turn) = inner.turns.get_mut(turn_id) {
             turn.open_step = None;
             turn.model_requested = false;
         }
         Ok(())
     }
-    /// SessionRuntime.commit: materialize the draft, add the envelope, append
-    /// once, then publish sequence/parent. A failed append publishes nothing.
     fn append(
         &self,
-        inner: &mut Inner,
         session_id: &JsString,
         turn_id: &JsString,
         draft: JsObject,
     ) -> RecorderResult<()> {
-        let mut stable = materialize(&JsValue::Object(draft))?;
-        let JsValue::Object(fields) = &mut stable else {
-            return Err(RecorderError::Type(
-                "Session event must be an object.".into(),
-            ));
-        };
-        let created_at = (self.clock)()?;
-        let entry_id = (self.uuid)()?;
-        let sequence = inner.sequence + 1;
-        fields.insert("sessionId".into(), JsValue::String(session_id.clone()));
-        fields.insert("turnId".into(), JsValue::String(turn_id.clone()));
-        fields.insert("sequence".into(), JsValue::Number(sequence as f64));
-        fields.insert("createdAt".into(), created_at.as_str().into());
-        fields.insert("entryId".into(), entry_id.as_str().into());
-        fields.insert(
-            "parentEntryId".into(),
-            inner
-                .last_entry_id
-                .clone()
-                .map_or(JsValue::Null, JsValue::String),
-        );
-        let entry = materialize(&stable)?;
-        self.store
-            .append(&self.key, &entry)
-            .map_err(RecorderError::Store)?;
-        inner.sequence = sequence;
-        inner.last_entry_id = Some(entry_id.as_str().into());
-        Ok(())
+        self.writer
+            .append_recorder_event(session_id, turn_id, draft, self.sources.as_ref())
     }
 }
 
@@ -472,12 +380,8 @@ fn draft(kind: &str) -> JsObject {
 fn lossy(value: &JsString) -> String {
     String::from_utf16_lossy(value.units())
 }
-fn show_id(id: Option<&JsString>) -> String {
-    id.map_or_else(|| "undefined".into(), lossy)
-}
-/// `entry.call.id` / `entry.result.toolCallId` in TS: a nullish owner throws a
-/// TypeError before the property lookup; a missing property is `undefined`.
-fn call_id(value: &JsValue, key: &str) -> RecorderResult<Option<JsString>> {
+/// Property access happens only after the entry's JSON round trips.
+fn call_id<'a>(value: &'a JsValue, key: &str) -> RecorderResult<&'a JsValue> {
     match value {
         JsValue::Undefined | JsValue::Null => Err(RecorderError::Type(format!(
             "Cannot read properties of {} (reading '{}')",
@@ -488,15 +392,31 @@ fn call_id(value: &JsValue, key: &str) -> RecorderResult<Option<JsString>> {
             },
             key
         ))),
-        _ => Ok(field(value, key).as_string().cloned()),
+        _ => Ok(field(value, key)),
     }
 }
-/// SessionRuntime.materializeJsonValue: JSON round trip.
-fn materialize(value: &JsValue) -> RecorderResult<JsValue> {
-    let text = stringify_json(value)
-        .map_err(|e| RecorderError::Type(e.to_string()))?
-        .ok_or_else(|| RecorderError::Type("Session event must be JSON serializable.".into()))?;
-    parse_json(&text).map_err(|e| RecorderError::Type(e.to_string()))
+fn display(value: &JsValue) -> RecorderResult<String> {
+    // JSON cannot contain callable own properties. Shadowing Object#toString
+    // therefore makes String(id) fail; arrays coerce each non-null element.
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match value {
+            JsValue::Object(object) if object.get("toString").is_some() => {
+                return Err(RecorderError::Type(
+                    "Cannot convert object to primitive value".into(),
+                ));
+            }
+            JsValue::Array(items) => pending.extend(items.iter().rev()),
+            _ => {}
+        }
+    }
+    crate::js_value::display(value)
+        .map_err(|_| RecorderError::Range(crate::js_value::StackOverflow::MESSAGE.into()))
+}
+/// JS Set uses SameValueZero, not deep equality. Each materialized entry owns
+/// fresh objects/arrays, so a new entry can never match a prior reference id.
+fn same_id(left: &JsValue, right: &JsValue) -> bool {
+    !matches!(left, JsValue::Object(_) | JsValue::Array(_)) && left == right
 }
 /// `stripRawFields` (AgentSessionEventRecorder.ts:568-577).
 fn strip_raw_fields(value: &JsValue) -> JsValue {
@@ -505,7 +425,7 @@ fn strip_raw_fields(value: &JsValue) -> JsValue {
         JsValue::Object(object) => {
             let mut sanitized = JsObject::new();
             for (key, child) in object.entries() {
-                if !key.equals_str("raw") {
+                if !key.equals_str("raw") && !key.equals_str("__proto__") {
                     sanitized.insert(key.clone(), strip_raw_fields(child));
                 }
             }
@@ -515,47 +435,207 @@ fn strip_raw_fields(value: &JsValue) -> JsValue {
     }
 }
 
-/// SessionDomainValidation.ts for the subset these recorder methods emit.
-fn replay_domain(turns: &mut HashMap<JsString, Turn>, entry: &JsValue) {
-    let Some(turn_id) = field(entry, "turnId").as_string() else {
-        return;
-    };
-    let kind = field(entry, "type").as_string();
-    if kind.is_some_and(|k| k.equals_str("turn_started")) {
-        turns.insert(turn_id.clone(), Turn::started());
-        return;
+/// SessionDomainValidation subset used by the durable model/tool ports.
+/// Owned by TranscriptWriter so two recorders also share validation state.
+#[derive(Clone, Default)]
+pub(super) struct DomainState {
+    turns: HashMap<JsString, DomainTurn>,
+}
+#[derive(Clone, Default)]
+struct DomainTurn {
+    last_step: u64,
+    open_step: Option<u64>,
+    model_requested: bool,
+    open_tool_calls: Vec<JsValue>,
+}
+impl DomainState {
+    /// The old adapter's domain-free entries remain available. Once a durable
+    /// turn exists, messages claiming inbox work and turn closure need the
+    /// unported lifecycle; accepting them would invalidate this projection.
+    pub(super) fn validate_adapter_entry(&self, entry: &JsValue) -> Result<(), AdapterError> {
+        domain_supported(entry)?;
+        let active = field(entry, "turnId")
+            .as_string()
+            .is_some_and(|id| self.turns.contains_key(id));
+        let kind = field(entry, "type")
+            .as_string()
+            .map(lossy)
+            .unwrap_or_default();
+        let queued_message = matches!(
+            kind.as_str(),
+            "durable_message" | "assistant_message" | "tool_result_message"
+        ) && field(field(field(entry, "message"), "metadata"), "queueItemId")
+            .as_string()
+            .is_some_and(|id| !id.is_empty());
+        if active && (kind == "turn_result" || queued_message) {
+            return Err(AdapterError::NodeHostRequired(format!(
+                "Session domain validation for {kind} in an active turn requires the Node host."
+            )));
+        }
+        Ok(())
     }
-    let Some(turn) = turns.get_mut(turn_id) else {
-        return;
-    };
-    let step = field(entry, "step").as_number().map(|n| n as u64);
-    match kind.map(lossy).as_deref() {
-        Some("step_started") => {
-            if let Some(step) = step {
-                turn.last_step = step;
-                turn.open_step = Some(step);
+
+    pub(super) fn next(&self, entry: &JsValue) -> RecorderResult<Self> {
+        let kind = field(entry, "type")
+            .as_string()
+            .map(lossy)
+            .unwrap_or_default();
+        if !matches!(
+            kind.as_str(),
+            "turn_started"
+                | "step_started"
+                | "step_completed"
+                | "model_request"
+                | "model_stream_event"
+                | "tool_call"
+                | "tool_result"
+        ) {
+            // Other domain lifecycles are not part of this recorder port.
+            self.validate_adapter_entry(entry)?;
+            if kind == "turn_result" {
+                return Err(RecorderError::NodeHostRequired(
+                    "Session domain validation for turn_result entries requires the Node host."
+                        .into(),
+                ));
             }
+            return Ok(self.clone());
+        }
+        let turn_id = field(entry, "turnId").as_string().ok_or_else(|| {
+            RecorderError::NodeHostRequired("Non-string turn ids require the Node host.".into())
+        })?;
+        let mut next = self.clone();
+        if kind == "turn_started" {
+            if next.turns.contains_key(turn_id) {
+                return Err(domain(
+                    "duplicate_turn_start",
+                    format!("Turn {} has already started.", lossy(turn_id)),
+                ));
+            }
+            if entry.get("inboxItemId").is_some() {
+                return Err(RecorderError::NodeHostRequired(
+                    "Queued turn starts require the Node host.".into(),
+                ));
+            }
+            next.turns.insert(turn_id.clone(), DomainTurn::default());
+            return Ok(next);
+        }
+        let turn = next.turns.get_mut(turn_id).ok_or_else(|| {
+            domain(
+                "event_outside_turn",
+                format!("{kind} requires an active turn {}.", lossy(turn_id)),
+            )
+        })?;
+        let step_value = field(entry, "step");
+        let step = step_value.as_number();
+        if kind == "step_started" {
+            if !step.is_some_and(|n| {
+                n.is_finite()
+                    && n.fract() == 0.0
+                    && n <= 9_007_199_254_740_991.0
+                    && n > turn.last_step as f64
+            }) {
+                return Err(domain(
+                    "invalid_step",
+                    format!(
+                        "Step {} must increase within turn {}.",
+                        display(step_value)?,
+                        lossy(turn_id)
+                    ),
+                ));
+            }
+            if let Some(open) = turn.open_step {
+                return Err(domain(
+                    "step_already_open",
+                    format!("Turn {} already has open step {open}.", lossy(turn_id)),
+                ));
+            }
+            let step = step.unwrap() as u64;
+            turn.last_step = step;
+            turn.open_step = Some(step);
             turn.model_requested = false;
             turn.open_tool_calls.clear();
+            return Ok(next);
         }
-        Some("model_request") => turn.model_requested = true,
-        Some("tool_call") => {
-            turn.open_tool_calls
-                .push(field(field(entry, "call"), "id").as_string().cloned());
+        if turn.open_step.is_none() || step != turn.open_step.map(|n| n as f64) {
+            return Err(domain(
+                "step_not_open",
+                format!(
+                    "{kind} requires open step {} in turn {}.",
+                    display(step_value)?,
+                    lossy(turn_id)
+                ),
+            ));
         }
-        Some("tool_result") => {
-            let id = field(field(entry, "result"), "toolCallId")
-                .as_string()
-                .cloned();
-            if let Some(position) = turn.open_tool_calls.iter().position(|open| *open == id) {
+        let step = turn.open_step.unwrap();
+        match kind.as_str() {
+            "model_request" => {
+                if turn.model_requested {
+                    return Err(domain(
+                        "duplicate_model_request",
+                        format!("Step {step} already has a model request."),
+                    ));
+                }
+                turn.model_requested = true;
+            }
+            "model_stream_event" if !turn.model_requested => {
+                return Err(domain(
+                    "model_request_missing",
+                    format!("Step {step} emitted a model event before its request."),
+                ));
+            }
+            "tool_call" => {
+                let id = call_id(field(entry, "call"), "id")?;
+                if !turn.model_requested {
+                    return Err(domain(
+                        "model_request_missing",
+                        format!(
+                            "Step {step} emitted tool call {} before its request.",
+                            display(id)?
+                        ),
+                    ));
+                }
+                if turn.open_tool_calls.iter().any(|open| same_id(open, id)) {
+                    return Err(domain(
+                        "duplicate_tool_call",
+                        format!("Tool call {} is already open.", display(id)?),
+                    ));
+                }
+                turn.open_tool_calls.push(id.clone());
+            }
+            "tool_result" => {
+                let id = call_id(field(entry, "result"), "toolCallId")?;
+                let position = turn
+                    .open_tool_calls
+                    .iter()
+                    .position(|open| same_id(open, id));
+                let Some(position) = position else {
+                    return Err(domain(
+                        "tool_result_without_call",
+                        format!(
+                            "Tool result {} has no open call in step {step}.",
+                            display(id)?
+                        ),
+                    ));
+                };
                 turn.open_tool_calls.remove(position);
             }
+            "step_completed" => {
+                if field(entry, "outcome")
+                    .as_string()
+                    .is_some_and(|s| s.equals_str("completed"))
+                    && !turn.open_tool_calls.is_empty()
+                {
+                    return Err(domain(
+                        "step_has_open_tool_calls",
+                        format!("Step {step} completed with unresolved tool calls."),
+                    ));
+                }
+                turn.open_step = None;
+                turn.model_requested = false;
+                turn.open_tool_calls.clear();
+            }
+            _ => {}
         }
-        Some("step_completed") => {
-            turn.open_step = None;
-            turn.model_requested = false;
-            turn.open_tool_calls.clear();
-        }
-        _ => {}
+        Ok(next)
     }
 }

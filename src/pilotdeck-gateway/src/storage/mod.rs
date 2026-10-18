@@ -1,7 +1,7 @@
 //! Session-owned operation persistence. No gateway route or host is wired here.
 //! The wire format remains the TS transcript JSONL format (no extra revision field).
-//! 恢复校验仅覆盖事件日志层（validateSessionEventLog）；SessionRuntime.ts:109
-//! 的 validateSessionDomainLog 领域校验留给接入 host/runtime 的后续 PR。
+//! 基础恢复校验覆盖事件日志层；recorder 额外验证 model/tool 的 turn/step 域，
+//! 其余 SessionDomainValidation 生命周期留给后续 PR。
 //! `run_registry` is the TS RunRegistry snapshot store; it is not wired into
 //! the host or gateway methods either.
 mod ledger;

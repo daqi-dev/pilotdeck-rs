@@ -7,12 +7,14 @@
 //! Not wired into the host, ProjectRuntimeRegistry or gateway methods.
 //!
 //! Not ported here (fail closed, never silently accepted): SessionDomainValidation
-//! state for turn/step/inbox entries, the session projection reducers beyond
+//! state for arbitrary turn/step/inbox entries (the recorder has a private
+//! validated model/tool path sharing this writer), the session projection reducers beyond
 //! the shapes checked by `projection_supported`, the replacement transaction,
 //! fork-copy, file-history and tool-result artifact capabilities (pr4).
 use super::{
     LedgerError, TranscriptRead, WriterState, invalid,
     ledger::field,
+    recorder::{DomainState, RecorderClock, RecorderError, RecorderResult, RecorderUuid},
     transcript::{create_temporary, private_dirs, private_open, read_transcript_limited, uuid},
 };
 use crate::js_value;
@@ -460,6 +462,7 @@ struct WriterInner {
     last_entry_id: Option<JsString>,
     entry_ids: HashSet<JsString>,
     closed: bool,
+    recorder_domain: DomainState,
 }
 /// TS JsonlTranscriptWriter + SessionRuntime with an external append sink.
 /// The mutex is the TS writeTail/commitTail: appends commit one at a time in
@@ -486,8 +489,58 @@ impl TranscriptWriter {
                 last_entry_id: None,
                 entry_ids: HashSet::new(),
                 closed: false,
+                recorder_domain: DomainState::default(),
             }),
         }
+    }
+    /// Standalone recorder convenience constructor; integrations inject their
+    /// existing session writer instead of creating another writer for the key.
+    pub(super) fn for_store(store: Arc<dyn TranscriptStore>, key: TranscriptKey) -> Self {
+        let base = Arc::new(KeyBase {
+            project: ProjectKey {
+                project_root: key.project_root,
+                pilot_home: key.pilot_home,
+            },
+            session_id: key.session_id,
+            store,
+            now: Arc::new(|| super::transcript::timestamp().unwrap_or_default()),
+        });
+        Self::new(base, key.transcript_path, SubagentLayout::Default)
+    }
+    pub(super) fn restore_recorder_entries(&self, entries: &[JsValue]) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        let entries = entries
+            .iter()
+            .map(materialize)
+            .collect::<AdapterResult<Vec<_>>>()?;
+        let (state, ids) = validate_event_log(&entries)?;
+        let mut domain = DomainState::default();
+        for entry in &entries {
+            domain = domain.next(entry)?;
+        }
+        inner.sequence = state.sequence;
+        inner.last_entry_id = state.last_entry_id;
+        inner.entry_ids = ids;
+        inner.recorder_domain = domain;
+        Ok(())
+    }
+    pub(super) fn append_recorder_event(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: JsObject,
+        sources: Option<&(RecorderClock, RecorderUuid)>,
+    ) -> RecorderResult<()> {
+        self.append_with(
+            session_id,
+            turn_id,
+            draft,
+            || match sources {
+                Some((clock, uuid)) => Ok((clock()?, uuid()?)),
+                None => self.sources().map_err(RecorderError::from),
+            },
+            DomainState::next,
+        )
     }
     fn lock(&self) -> MutexGuard<'_, WriterInner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
@@ -526,6 +579,7 @@ impl TranscriptWriter {
         let mut inner = self.lock();
         inner.sequence = max_sequence as u64;
         inner.last_entry_id = last;
+        inner.recorder_domain = DomainState::default();
         Ok(())
     }
     fn restore_entries(&self, entries: &[JsValue]) -> AdapterResult<()> {
@@ -542,6 +596,7 @@ impl TranscriptWriter {
         inner.sequence = state.sequence;
         inner.last_entry_id = state.last_entry_id;
         inner.entry_ids = ids;
+        inner.recorder_domain = DomainState::default();
         Ok(())
     }
     /// JsonlTranscriptWriter.close: later appends resolve without writing.
@@ -628,6 +683,30 @@ impl TranscriptWriter {
         turn_id: &JsString,
         draft: JsObject,
     ) -> AdapterResult<()> {
+        self.append_with(
+            session_id,
+            turn_id,
+            draft,
+            || self.sources(),
+            Self::adapter_domain,
+        )
+    }
+    fn sources(&self) -> AdapterResult<(String, String)> {
+        let now = (self.base.now)();
+        Ok((now, uuid().map_err(|e| AdapterError::Store(e.into()))?))
+    }
+    fn adapter_domain(domain: &DomainState, entry: &JsValue) -> AdapterResult<DomainState> {
+        domain.validate_adapter_entry(entry)?;
+        Ok(domain.clone())
+    }
+    fn append_with<E: From<AdapterError>>(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: JsObject,
+        sources: impl FnOnce() -> Result<(String, String), E>,
+        validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
+    ) -> Result<(), E> {
         let mut inner = self.lock();
         if inner.closed {
             return Ok(());
@@ -635,12 +714,9 @@ impl TranscriptWriter {
         // JsValue has a Drop impl, so the object is filled in place, not moved out.
         let mut entry = materialize(&JsValue::Object(draft))?;
         let JsValue::Object(fields) = &mut entry else {
-            return Err(AdapterError::Type(
-                "Session event must be an object.".into(),
-            ));
+            return Err(AdapterError::Type("Session event must be an object.".into()).into());
         };
-        let created_at = (self.base.now)();
-        let entry_id: JsString = uuid().map_err(|e| AdapterError::Store(e.into()))?.into();
+        let (created_at, entry_id) = sources()?;
         fields.insert("sessionId".into(), JsValue::String(session_id.clone()));
         fields.insert("turnId".into(), JsValue::String(turn_id.clone()));
         fields.insert(
@@ -648,7 +724,7 @@ impl TranscriptWriter {
             JsValue::Number((inner.sequence + 1) as f64),
         );
         fields.insert("createdAt".into(), created_at.as_str().into());
-        fields.insert("entryId".into(), JsValue::String(entry_id));
+        fields.insert("entryId".into(), entry_id.as_str().into());
         fields.insert(
             "parentEntryId".into(),
             inner
@@ -657,12 +733,20 @@ impl TranscriptWriter {
                 .map_or(JsValue::Null, JsValue::String),
         );
         let entry = materialize(&entry)?;
-        self.commit(&mut inner, entry)
+        self.commit_with(&mut inner, entry, validate)
     }
     /// SessionRuntime.commit: nothing is published until the store accepted it.
     /// Projection reducers are not consulted: in TS they subscribe after the
     /// propagating persistence binding, so their failures cannot undo a commit.
     fn commit(&self, inner: &mut WriterInner, entry: JsValue) -> AdapterResult<()> {
+        self.commit_with(inner, entry, Self::adapter_domain)
+    }
+    fn commit_with<E: From<AdapterError>>(
+        &self,
+        inner: &mut WriterInner,
+        entry: JsValue,
+        validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
+    ) -> Result<(), E> {
         validate_envelope(&entry)?;
         let seq = field(&entry, "sequence").as_number().unwrap();
         if seq <= inner.sequence as f64 {
@@ -673,7 +757,8 @@ impl TranscriptWriter {
                     js_value::number_string(seq),
                     inner.sequence
                 ),
-            ));
+            )
+            .into());
         }
         let id = present(&entry, "entryId")
             .and_then(JsValue::as_string)
@@ -684,13 +769,15 @@ impl TranscriptWriter {
             return Err(validation(
                 "duplicate_entry_id",
                 format!("Session event entryId must be unique: {}.", lossy(id)),
-            ));
+            )
+            .into());
         }
-        domain_supported(&entry)?;
+        let domain = validate(&inner.recorder_domain, &entry)?;
         self.base
             .store
             .append(&self.base.key(&self.path), &entry)
             .map_err(AdapterError::Store)?;
+        inner.recorder_domain = domain;
         inner.sequence = seq as u64;
         if let Some(id) = id {
             inner.last_entry_id = Some(id.clone());
@@ -881,7 +968,7 @@ const DOMAIN_TYPES: &[&str] = &[
 /// SessionDomainValidation.ts:84-112 for a state that never saw turn_started:
 /// turn-scoped entries are rejected (not ported), legacy turn_result passes,
 /// and durable messages only dereference `message.metadata`.
-fn domain_supported(entry: &JsValue) -> AdapterResult<()> {
+pub(super) fn domain_supported(entry: &JsValue) -> AdapterResult<()> {
     let kind = lossy_value(field(entry, "type"));
     if DOMAIN_TYPES.contains(&kind.as_str()) {
         return Err(node_only(format!(
