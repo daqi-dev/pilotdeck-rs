@@ -25,7 +25,7 @@
 
 期限、delivered 保留、expired 保留均覆盖到点前 1 ms、恰好到点、到点后；另测回调未调度、默认/零/负数/小数 timeout、同轮重登不延期、保留 timer 替换、跨会话 unknown、并发 duplicate、失败共享与重试、旧 run（提交前/持久化中）、关闭 mailbox、按轮过期、事件开关、payload 错误优先级及 UTF-16 字符串。
 
-生成前后调用共享 `bindSourceTree`，校验固定 commit 和整个 tracked src 的实际字节，oracle 同时记执行入口文件的 SHA-256。回放经 `common/baseline.rs::oracle`，设置 `PDRS_BASELINE` 时再核本地 checkout。每次生成用 `mkdtemp` 独占目录并切入其中，finally 恢复 cwd/clock/timer；删除前核对临时父目录及所有权前缀。无固定路径清理，也不读用户配置。
+生成前后调用共享 `bindSourceTree`，校验固定 commit 和整个 tracked src 的实际字节，并断言整棵 tracked 树干净（`git status --porcelain --untracked-files=no` 为空，同 `workspace-snapshot/generate.mts`）；`sourceSha256` 记三个入口的相对 import 传递闭包（650 个文件，均取固定 commit 的 blob 并核工作区字节）。回放经 `common/baseline.rs::oracle`，设置 `PDRS_BASELINE` 时再核本地 checkout。每次生成用 `mkdtemp` 独占目录并切入其中，finally 恢复 cwd/clock/timer；删除前核对临时父目录及所有权前缀。无固定路径清理，也不读用户配置。
 
 ## 复现
 
@@ -41,6 +41,8 @@ cmp "$scratch/first/oracle.json" src/pilotdeck-gateway/tests/fixtures/async-hook
 cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gateway --test async_hooks
 ```
 
-测试另将真实 TS `concurrent-empty` 的双返回值和事件流用两条 Rust 线程重放 64 次；生产 Tokio timer 用 paused time 验证登记时就固定 deadline 及 drop 取消。真实运行时不会等待 hook timer 保活，timer 与 registry 之间用弱引用，registry 释放时取消剩余 timer。
+测试另将真实 TS `concurrent-empty` 的双返回值和事件流用两条 Rust 线程重放 64 次；生产 Tokio timer 用 paused time 验证登记时就固定 deadline 及 drop 取消。真实运行时不会等待 hook timer 保活，timer 与 registry 之间用弱引用，registry 释放时取消剩余 timer（`dropping_registry_cancels_pending_and_retention_timers`：释放后 pending 期限与 outcome 保留两个 timer 任务均被 abort，推进时钟无回调、无事件）。
+
+TS 的 submit 同步前缀（outcome → pending → deadline → expire）不可打断；Rust 的过期分支在状态锁下返回实际结算结果（自己结算为 expired，否则按已存 outcome 映射 delivered→duplicate），旧 run 分支持有 admission 锁直到过期完成。两条多线程测试分别复现期限分支与旧 run 分支的竞态。
 
 本轮负控与完整自证原始输出在任务交接 `RESULT.md` 所引目录中；负控只改 Rust 实现，不改 oracle。
