@@ -145,9 +145,10 @@ def strip_code(body: str) -> str:
             continue
         if re.match(r"^(?: {4}|\t)", line):
             continue  # 缩进代码块（≥4 空格或 tab）：其中的标记写法不算标记
-        lines.append(_strip_inline(line))
-        last = line.rfind("<!--")
-        comment = last >= 0 and "-->" not in line[last:]
+        kept = _strip_inline(line)
+        lines.append(kept)
+        last = kept.rfind("<!--")  # 按剥掉行内代码后的文本判注释状态：反引号里的 <!-- 不开启注释
+        comment = last >= 0 and "-->" not in kept[last:]
     return "\n".join(lines)
 
 
