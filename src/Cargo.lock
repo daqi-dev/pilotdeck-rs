@@ -690,6 +690,7 @@ dependencies = [
  "icu_locale_core",
  "libc",
  "pilotdeck-protocol",
+ "pilotdeck-tokenizer",
  "pilotdeck-transport",
  "pilotdeck-yaml",
  "regex",

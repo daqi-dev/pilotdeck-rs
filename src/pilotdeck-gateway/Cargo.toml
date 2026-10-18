@@ -19,6 +19,7 @@ icu_locale_core = "=2.3.0"
 rustix = { version = "=1.1.5", features = ["fs", "process"] }
 serde_json.workspace = true
 pilotdeck-protocol.workspace = true
+pilotdeck-tokenizer = { path = "../pilotdeck-tokenizer" }
 pilotdeck-transport = { path = "../pilotdeck-transport" }
 uuid = { version = "=1.27.0", features = ["v4"] }
 pilotdeck-yaml = { path = "../pilotdeck-yaml" }

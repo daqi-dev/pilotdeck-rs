@@ -1,0 +1,490 @@
+//! Golden replay of `tests/fixtures/model-cost/oracle.json`.
+//!
+//! The oracle is produced by the fixed TypeScript baseline; the generator is
+//! `tests/fixtures/model-cost/generate.mts`. Numbers are compared exactly (no
+//! epsilon), including the order of the floating-point additions.
+
+use super::*;
+use pilotdeck_protocol::model::{
+    AudioBlock, CanonicalModelRequest, ContentBlock, ContentBody, ImageBlock, MediaSource,
+    MediaType, Message, PdfBlock, Role, TextBlock, ThinkingBlock, ToolCall, ToolResult,
+    ToolResultContent, ToolResultItem, ToolResultReference, ToolSchema, Usage,
+};
+use pilotdeck_protocol::{JsValue, parse_json};
+use std::sync::OnceLock;
+
+const ORACLE: &str = include_str!("../tests/fixtures/model-cost/oracle.json");
+const BASELINE_COMMIT: &str = "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85";
+
+static UNDEFINED: JsValue = JsValue::Undefined;
+static PARSED_ORACLE: OnceLock<JsValue> = OnceLock::new();
+
+fn oracle() -> &'static JsValue {
+    PARSED_ORACLE.get_or_init(|| parse_json(ORACLE).expect("oracle.json must be valid JSON"))
+}
+
+fn field<'a>(value: &'a JsValue, name: &str) -> &'a JsValue {
+    value.get(name).unwrap_or(&UNDEFINED)
+}
+
+fn items(value: &JsValue) -> &[JsValue] {
+    match value {
+        JsValue::Array(items) => items,
+        other => panic!("expected array, got {other:?}"),
+    }
+}
+
+fn text(value: &JsValue) -> String {
+    value
+        .as_string()
+        .unwrap_or_else(|| panic!("expected string, got {value:?}"))
+        .to_utf8()
+        .expect("fixture strings are valid UTF-8")
+}
+
+fn optional_text(value: &JsValue) -> Option<JsString> {
+    match value {
+        JsValue::Undefined | JsValue::Null => None,
+        JsValue::String(value) => Some(value.clone()),
+        other => panic!("expected optional string, got {other:?}"),
+    }
+}
+
+fn number(value: &JsValue) -> f64 {
+    match value {
+        JsValue::Number(value) => *value,
+        other => panic!("expected number, got {other:?}"),
+    }
+}
+
+fn optional_number(value: &JsValue) -> Option<f64> {
+    match value {
+        JsValue::Undefined | JsValue::Null => None,
+        JsValue::Number(value) => Some(*value),
+        other => panic!("expected optional number, got {other:?}"),
+    }
+}
+
+fn boolean(value: &JsValue) -> bool {
+    match value {
+        JsValue::Bool(value) => *value,
+        other => panic!("expected boolean, got {other:?}"),
+    }
+}
+
+/// Exact equality: every rate/cost pair must agree bit-for-bit, not within an
+/// epsilon. `-0.0 == 0.0` is intentional because JSON has no signed zero.
+fn check_amount(actual: f64, expected: f64, context: &str) {
+    assert!(
+        actual == expected,
+        "{context}: expected {expected:?}, got {actual:?}"
+    );
+}
+
+fn check_optional_amount(actual: Option<f64>, expected: Option<f64>, context: &str) {
+    match (actual, expected) {
+        (None, None) => {}
+        (Some(actual), Some(expected)) => check_amount(actual, expected, context),
+        other => panic!("{context}: expected {expected:?}, got {other:?}"),
+    }
+}
+
+fn pricing_map(value: &JsValue) -> Option<PricingMap> {
+    match value {
+        JsValue::Undefined | JsValue::Null => None,
+        JsValue::Object(object) => {
+            let mut map = PricingMap::new();
+            for (key, body) in object.entries() {
+                map.insert(
+                    key.to_utf8().expect("pricing key is UTF-8"),
+                    ModelPricing {
+                        input: optional_number(field(body, "input")),
+                        output: optional_number(field(body, "output")),
+                        cache_read: optional_number(field(body, "cacheRead")),
+                    },
+                );
+            }
+            Some(map)
+        }
+        other => panic!("expected configured pricing object, got {other:?}"),
+    }
+}
+
+fn usage(value: &JsValue) -> Option<Usage> {
+    match value {
+        JsValue::Undefined | JsValue::Null => None,
+        JsValue::Object(_) => Some(Usage {
+            input_tokens: optional_number(field(value, "inputTokens")),
+            output_tokens: optional_number(field(value, "outputTokens")),
+            cache_read_tokens: optional_number(field(value, "cacheReadTokens")),
+            cache_write_tokens: optional_number(field(value, "cacheWriteTokens")),
+            total_tokens: optional_number(field(value, "totalTokens")),
+            native_cost: optional_number(field(value, "nativeCost")),
+        }),
+        other => panic!("expected usage object, got {other:?}"),
+    }
+}
+
+fn parse_request(value: &JsValue) -> CanonicalModelRequest {
+    let tools = match field(value, "tools") {
+        JsValue::Undefined | JsValue::Null => None,
+        JsValue::Array(_) => Some(
+            items(field(value, "tools"))
+                .iter()
+                .map(parse_tool)
+                .collect(),
+        ),
+        other => panic!("expected tools array, got {other:?}"),
+    };
+    CanonicalModelRequest {
+        model: JsString::from(text(field(value, "model"))),
+        provider: JsString::from(text(field(value, "provider"))),
+        messages: items(field(value, "messages"))
+            .iter()
+            .map(parse_message)
+            .collect(),
+        system_prompt: optional_text(field(value, "systemPrompt")),
+        tools,
+        tool_choice: None,
+        max_output_tokens: None,
+        temperature: None,
+        speed: None,
+        thinking: None,
+        stream: None,
+        metadata: None,
+        output_schema: None,
+        cache_breakpoints: None,
+        cache_plan: None,
+    }
+}
+
+fn parse_message(value: &JsValue) -> Message {
+    let role = match text(field(value, "role")).as_str() {
+        "user" => Role::User,
+        "assistant" => Role::Assistant,
+        other => panic!("unknown role {other}"),
+    };
+    Message {
+        role,
+        content: items(field(value, "content"))
+            .iter()
+            .map(parse_block)
+            .collect(),
+        metadata: None,
+    }
+}
+
+fn parse_tool(value: &JsValue) -> ToolSchema {
+    ToolSchema {
+        name: JsString::from(text(field(value, "name"))),
+        description: optional_text(field(value, "description")),
+        input_schema: field(value, "inputSchema")
+            .as_object()
+            .expect("tool inputSchema must be an object")
+            .clone(),
+    }
+}
+
+fn parse_block(value: &JsValue) -> ContentBlock {
+    let kind = text(field(value, "type"));
+    let body = match kind.as_str() {
+        "text" => ContentBody::Text(TextBlock {
+            text: text_block(value),
+            block_id: None,
+        }),
+        "thinking" => ContentBody::Thinking(ThinkingBlock {
+            text: text_block(value),
+            block_id: None,
+            signature: None,
+            reasoning_content: optional_text(field(value, "reasoningContent")),
+        }),
+        "image" => ContentBody::Image(image_block(value)),
+        "pdf" => ContentBody::Pdf(PdfBlock {
+            data: JsString::from(text(field(value, "data"))),
+            bytes: number(field(value, "bytes")),
+            pages: optional_number(field(value, "pages")),
+        }),
+        "audio" => ContentBody::Audio(AudioBlock {
+            source: media_source(field(value, "source")),
+            data: JsString::from(text(field(value, "data"))),
+            mime_type: JsString::from(text(field(value, "mimeType"))),
+            bytes: optional_number(field(value, "bytes")),
+            duration_seconds: None,
+        }),
+        "tool_call" => ContentBody::ToolCall(ToolCall {
+            timeline: None,
+            id: JsString::from(text(field(value, "id"))),
+            name: JsString::from(text(field(value, "name"))),
+            input: field(value, "input").clone(),
+            raw: None,
+        }),
+        "tool_result" => ContentBody::ToolResult(ToolResult {
+            tool_call_id: JsString::from(text(field(value, "toolCallId"))),
+            content: items(field(value, "content"))
+                .iter()
+                .map(parse_tool_result_item)
+                .collect(),
+            is_error: None,
+            raw: None,
+        }),
+        "tool_result_reference" => ContentBody::ToolResultReference(ToolResultReference {
+            tool_call_id: JsString::from(text(field(value, "toolCallId"))),
+            is_error: None,
+            path: JsString::from(text(field(value, "path"))),
+            read_file_path: None,
+            original_bytes: number(field(value, "originalBytes")),
+            preview: JsString::from(text(field(value, "preview"))),
+            has_more: boolean(field(value, "hasMore")),
+            mime_type: optional_text(field(value, "mimeType")),
+            reason: None,
+        }),
+        "media_reference" => {
+            ContentBody::MediaReference(pilotdeck_protocol::model::MediaReference {
+                tool_call_id: None,
+                path: JsString::from(text(field(value, "path"))),
+                original_bytes: number(field(value, "originalBytes")),
+                preview: JsString::from(text(field(value, "preview"))),
+                has_more: boolean(field(value, "hasMore")),
+                mime_type: JsString::from(text(field(value, "mimeType"))),
+                media_type: match text(field(value, "mediaType")).as_str() {
+                    "image" => MediaType::Image,
+                    "pdf" => MediaType::Pdf,
+                    "audio" => MediaType::Audio,
+                    other => panic!("unknown media type {other}"),
+                },
+                pages: optional_number(field(value, "pages")),
+                detail: None,
+                reason: None,
+            })
+        }
+        other => panic!("unknown content block {other}"),
+    };
+    ContentBlock {
+        timeline: None,
+        body,
+    }
+}
+
+fn text_block(value: &JsValue) -> JsString {
+    JsString::from(text(field(value, "text")))
+}
+
+fn image_block(value: &JsValue) -> ImageBlock {
+    ImageBlock {
+        source: media_source(field(value, "source")),
+        data: JsString::from(text(field(value, "data"))),
+        mime_type: JsString::from(text(field(value, "mimeType"))),
+        bytes: optional_number(field(value, "bytes")),
+        detail: None,
+    }
+}
+
+fn media_source(value: &JsValue) -> MediaSource {
+    match text(value).as_str() {
+        "base64" => MediaSource::Base64,
+        "url" => MediaSource::Url,
+        other => panic!("unknown media source {other}"),
+    }
+}
+
+fn parse_tool_result_item(value: &JsValue) -> ToolResultItem {
+    let body = match text(field(value, "type")).as_str() {
+        "text" => ToolResultContent::Text(TextBlock {
+            text: text_block(value),
+            block_id: None,
+        }),
+        "image" => ToolResultContent::Image(image_block(value)),
+        "pdf" => ToolResultContent::Pdf(PdfBlock {
+            data: JsString::from(text(field(value, "data"))),
+            bytes: number(field(value, "bytes")),
+            pages: optional_number(field(value, "pages")),
+        }),
+        other => panic!("unknown tool-result content {other}"),
+    };
+    ToolResultItem {
+        timeline: None,
+        body,
+    }
+}
+
+#[test]
+fn oracle_comes_from_the_fixed_baseline() {
+    assert_eq!(text(field(oracle(), "sourceCommit")), BASELINE_COMMIT);
+    let hashes = field(oracle(), "sourceSha256");
+    for source in [
+        "src/router/utils/modelPricing.ts",
+        "src/router/stats/TokenStatsCollector.ts",
+        "src/context/budget/TokenAccountingRuntime.ts",
+        "src/context/budget/TokenBudgetManager.ts",
+        "src/context/budget/tokenizer.ts",
+        "src/model/protocol/toolResultContent.ts",
+        "src/model/catalog/providers.ts",
+        "src/agent/loop/AgentLoop.ts",
+        "src/agent/loop/nativeAgentTurnCapabilitiesAdapter.ts",
+    ] {
+        let hash = text(field(hashes, source));
+        // SHA-256 is checked structurally; the generator asserts the exact file
+        // contents at generation time, and the commit pins the tree.
+        assert_eq!(hash.len(), 64, "missing or malformed hash for {source}");
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+    assert!(!ORACLE.contains(".generate-"));
+}
+
+#[test]
+fn real_ts_pricing_lookups_match() {
+    let lookups = items(field(oracle(), "pricingLookups"));
+    assert!(lookups.len() > 100);
+    for case in lookups {
+        let provider = text(field(case, "provider"));
+        let model = text(field(case, "model"));
+        let configured = pricing_map(field(case, "configured"));
+        let (pricing, source) =
+            lookup_model_pricing_with_source(&provider, &model, configured.as_ref());
+        let expected = field(case, "pricing");
+        let context = format!("{provider}/{model}");
+        check_optional_amount(
+            pricing.input,
+            optional_number(field(expected, "input")),
+            &format!("{context} input"),
+        );
+        check_optional_amount(
+            pricing.output,
+            optional_number(field(expected, "output")),
+            &format!("{context} output"),
+        );
+        check_optional_amount(
+            pricing.cache_read,
+            optional_number(field(expected, "cacheRead")),
+            &format!("{context} cacheRead"),
+        );
+        assert_eq!(source.as_str(), text(field(case, "source")), "{context}");
+    }
+}
+
+#[test]
+fn real_ts_cost_helpers_match() {
+    let costs = items(field(oracle(), "costs"));
+    assert!(costs.len() > 100);
+    for case in costs {
+        let provider = text(field(case, "provider"));
+        let model = text(field(case, "model"));
+        let configured = pricing_map(field(case, "configured"));
+        let tokens = number(field(case, "tokens"));
+        let context = format!("{provider}/{model} tokens={tokens}");
+        check_amount(
+            calculate_input_cost(tokens, &provider, &model, configured.as_ref()),
+            number(field(case, "input")),
+            &format!("{context} input"),
+        );
+        check_amount(
+            calculate_cache_read_cost(tokens, &provider, &model, configured.as_ref()),
+            number(field(case, "cacheRead")),
+            &format!("{context} cacheRead"),
+        );
+    }
+}
+
+#[test]
+fn real_ts_usage_costs_match() {
+    let cases = items(field(oracle(), "usageCosts"));
+    assert!(cases.len() > 500);
+    let mut saw_native = false;
+    let mut saw_negative_router_estimate = false;
+    for case in cases {
+        let provider = text(field(case, "provider"));
+        let model = text(field(case, "model"));
+        let configured = pricing_map(field(case, "configured"));
+        let usage = usage(field(case, "usage"));
+        let context = format!("{provider}/{model} usage={:?}", field(case, "usage"));
+        if usage.as_ref().is_some_and(|usage| {
+            usage
+                .native_cost
+                .is_some_and(|native| native.is_finite() && native >= 0.0)
+        }) {
+            saw_native = true;
+        }
+        let expected_cost = optional_number(field(case, "costUsd"));
+        let actual_cost =
+            estimate_usage_cost(usage.as_ref(), &provider, &model, configured.as_ref());
+        if expected_cost.is_none() {
+            saw_negative_router_estimate = true;
+        }
+        check_optional_amount(actual_cost, expected_cost, &format!("{context} costUsd"));
+        check_amount(
+            estimate_cost(usage.as_ref(), &provider, &model, configured.as_ref()),
+            number(field(case, "routerEstimate")),
+            &format!("{context} routerEstimate"),
+        );
+        let Some(usage) = usage.as_ref() else {
+            continue;
+        };
+        let breakdown = estimate_cost_breakdown(usage, &provider, &model, configured.as_ref());
+        let expected = field(case, "breakdown");
+        check_amount(
+            breakdown.input,
+            number(field(expected, "input")),
+            &format!("{context} breakdown.input"),
+        );
+        check_amount(
+            breakdown.output,
+            number(field(expected, "output")),
+            &format!("{context} breakdown.output"),
+        );
+        check_amount(
+            breakdown.cache_read,
+            number(field(expected, "cacheRead")),
+            &format!("{context} breakdown.cacheRead"),
+        );
+        check_amount(
+            breakdown.total,
+            number(field(expected, "total")),
+            &format!("{context} breakdown.total"),
+        );
+    }
+    assert!(saw_native, "oracle must cover provider-reported nativeCost");
+    assert!(
+        saw_negative_router_estimate,
+        "oracle must cover the nativeCost fallback after an invalid router estimate"
+    );
+}
+
+#[test]
+fn real_ts_local_input_estimates_match() {
+    let requests = items(field(oracle(), "requests"));
+    assert!(
+        requests.len() >= 20,
+        "at least 20 request shapes are required"
+    );
+    for case in requests {
+        let name = text(field(case, "name"));
+        let request = parse_request(field(case, "request"));
+        let breakdown =
+            estimate_request_breakdown(&request).expect("local tokenizer must initialize");
+        let expected = field(case, "breakdown");
+        for (key, actual) in [
+            ("total", breakdown.total),
+            ("system", breakdown.system),
+            ("tools", breakdown.tools),
+            ("messages", breakdown.messages),
+            ("mcp", breakdown.mcp),
+            ("memory", breakdown.memory),
+        ] {
+            assert_eq!(actual as f64, number(field(expected, key)), "{name} {key}");
+        }
+        assert_eq!(
+            breakdown.system
+                + breakdown.tools
+                + breakdown.messages
+                + breakdown.mcp
+                + breakdown.memory,
+            breakdown.total,
+            "{name} additive invariant"
+        );
+        assert_eq!(
+            estimate_request_input(&request).expect("local tokenizer must initialize"),
+            breakdown.total,
+            "{name} estimate_request_input"
+        );
+    }
+}

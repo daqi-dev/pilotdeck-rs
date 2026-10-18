@@ -7,3 +7,13 @@ useDefault = true
 description = "A6.8 upload 夹具的 idempotencyKeyHash = sha256(\"once\")（generate.mts 固定幂等键生成），不是凭据"
 regexTarget = "match"
 regexes = ['''200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e''']
+
+[[allowlists]]
+description = "A6.4-pr2a model-cost 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件的 SHA-256（键名含 Token 触发 generic-api-key），可用 shasum -a 256 resources/PilotDeck/<path> 复算，不是凭据"
+regexTarget = "match"
+regexes = [
+  '''886914cd342433be20c2ba58f832a3f59c91b88a69767fb459484d7b20475ad1''',
+  '''ed0bf548742f52f8f309b405301b50b8b6ed735bd19ff87a29111d1cc8878a02''',
+  '''539e7a0473b88138321f27979ecc21a6410dc4b7f0ff382f06e81ee4a2d0777d''',
+  '''2497f0dd388c88452c98091e6a9f29260fb620d66b599c9207d2d163be5d74fa''',
+]
