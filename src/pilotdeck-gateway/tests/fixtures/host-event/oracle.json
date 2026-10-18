@@ -1800,6 +1800,141 @@
         }
       ],
       "drainAfter": []
+    },
+    {
+      "name": "sink-throws-error",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-47",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-47",
+            "inReplyTo": "call-47",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "sink failed"
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": [],
+      "sink": {
+        "kind": "error",
+        "message": "sink failed"
+      }
+    },
+    {
+      "name": "sink-throws-error-code",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-48",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-48",
+            "inReplyTo": "call-48",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "SINK_CODE",
+            "error": {
+              "message": "sink failed"
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": [],
+      "sink": {
+        "kind": "error",
+        "message": "sink failed",
+        "fields": {
+          "code": "SINK_CODE"
+        }
+      }
+    },
+    {
+      "name": "sink-throws-non-error",
+      "steps": [
+        {
+          "call": {
+            "kind": "request",
+            "method": "module_call",
+            "messageId": "call-49",
+            "requestId": "callback-request",
+            "runId": "run",
+            "operationId": "operation",
+            "module": "event",
+            "payload": {
+              "operation": "emit",
+              "event": {
+                "type": "tool_progress",
+                "sessionId": "session",
+                "turnId": "turn",
+                "toolCallId": "tool-1",
+                "toolName": "read",
+                "message": "half"
+              }
+            }
+          },
+          "response": {
+            "kind": "response",
+            "messageId": "host-module-call-49",
+            "inReplyTo": "call-49",
+            "requestId": "callback-request",
+            "ok": false,
+            "code": "HOST_MODULE_FAILED",
+            "error": {
+              "message": "sink failed"
+            }
+          },
+          "drained": []
+        }
+      ],
+      "drainAfter": [],
+      "sink": {
+        "kind": "string",
+        "value": "sink failed"
+      }
     }
   ]
 }

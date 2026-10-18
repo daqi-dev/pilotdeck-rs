@@ -143,8 +143,22 @@ const protocolFor = (handlers: any, call: any) => new SidecarTurnProtocol({
 const cases: any[] = [];
 // Each step may drain after the call. The final drain is always recorded, so a
 // sequence can prove emission order plus the clear-on-drain semantics.
-function eventCase(name: string, steps: any[]) {
-  cases.push({ name, steps });
+// A case may also declare a throwing event port. The descriptor is fixture
+// input, not TS output: the generator uses it to throw and Rust uses it to
+// rebuild the same `ModuleError::from_js_fields` projection.
+type ThrowingPort =
+  | { kind: 'error'; message: string; fields?: Record<string, unknown> }
+  | { kind: 'string'; value: string };
+function eventCase(name: string, steps: any[], sink?: ThrowingPort) {
+  cases.push({ name, steps, ...(sink ? { sink } : {}) });
+}
+function throwingPort(sink: ThrowingPort) {
+  return {
+    emit() {
+      if (sink.kind === 'string') throw sink.value;
+      throw Object.assign(new Error(sink.message), sink.fields ?? {});
+    },
+  };
 }
 const event = (extra: Record<string, unknown> = {}) => ({
   type: 'tool_progress',
@@ -218,11 +232,19 @@ eventCase('payload-event-without-operation', [step({ event: event() }, { drain: 
 eventCase('payload-array', [step([], { drain: true })]);
 eventCase('payload-string', [step('emit', { drain: true })]);
 eventCase('payload-number', [step(7, { drain: true })]);
+// A throwing emitter is an ordinary module failure in TS (`moduleResponse`):
+// an Error keeps its message, a non-Error is String()-coerced, and a string
+// `code` is projected onto the response.
+eventCase('sink-throws-error', [step({ operation: 'emit', event: event() }, { drain: true })], { kind: 'error', message: 'sink failed' });
+eventCase('sink-throws-error-code', [step({ operation: 'emit', event: event() }, { drain: true })], { kind: 'error', message: 'sink failed', fields: { code: 'SINK_CODE' } });
+eventCase('sink-throws-non-error', [step({ operation: 'emit', event: event() }, { drain: true })], { kind: 'string', value: 'sink failed' });
 
 const recorded = [];
 for (const item of cases) {
-  const buffer = createAgentEventBuffer();
-  const dispatcher = dispatcherWith({ emit: buffer.emitter, drain: buffer.drain });
+  const buffer = item.sink ? undefined : createAgentEventBuffer();
+  const dispatcher = dispatcherWith(item.sink
+    ? throwingPort(item.sink)
+    : { emit: buffer.emitter, drain: buffer.drain });
   const steps = [];
   for (const current of item.steps) {
     const call = request(current.payload);
@@ -230,11 +252,11 @@ for (const item of cases) {
     const protocol = protocolFor(dispatcher.handlers, call);
     const expected = await response(protocol, actualCall);
     const stepRecord: any = { call, response: expected };
-    if (current.drain) stepRecord.drained = clone(buffer.drain());
+    if (current.drain) stepRecord.drained = buffer ? clone(buffer.drain()) : [];
     steps.push(stepRecord);
   }
-  const drainAfter = clone(buffer.drain());
-  recorded.push({ name: item.name, steps, drainAfter });
+  const drainAfter = buffer ? clone(buffer.drain()) : [];
+  recorded.push({ name: item.name, steps, drainAfter, ...(item.sink ? { sink: item.sink } : {}) });
   await dispatcher.dispose();
 }
 

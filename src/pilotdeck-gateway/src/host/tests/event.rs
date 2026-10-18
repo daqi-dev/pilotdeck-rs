@@ -57,9 +57,49 @@ fn drained(handler: &Handler) -> JsValue {
 struct FakeSink {
     emitted: Mutex<Vec<JsObject>>,
     buffer: Mutex<Vec<JsObject>>,
+    attempted: Mutex<usize>,
+    /// `(message, fields)` for a port whose emitter throws. The fields are fed
+    /// to `ModuleError::from_js_fields` exactly like a host port that projects
+    /// a thrown JS error.
+    failure: Option<(JsString, JsValue)>,
+}
+impl FakeSink {
+    fn throwing(spec: &JsValue) -> Self {
+        let kind = spec
+            .get("kind")
+            .and_then(JsValue::as_string)
+            .expect("sink kind")
+            .to_utf8()
+            .unwrap();
+        let (message, fields) = match kind.as_str() {
+            "error" => (
+                spec.get("message")
+                    .and_then(JsValue::as_string)
+                    .expect("sink message")
+                    .clone(),
+                spec.get("fields").cloned().unwrap_or(JsValue::Undefined),
+            ),
+            "string" => (
+                spec.get("value")
+                    .and_then(JsValue::as_string)
+                    .expect("sink value")
+                    .clone(),
+                JsValue::Undefined,
+            ),
+            other => panic!("unknown sink kind {other}"),
+        };
+        Self {
+            failure: Some((message, fields)),
+            ..Self::default()
+        }
+    }
 }
 impl EventSink for FakeSink {
     fn emit(&self, event: JsObject) -> Result<(), HostError> {
+        *self.attempted.lock().unwrap() += 1;
+        if let Some((message, fields)) = &self.failure {
+            return Err(ModuleError::from_js_fields(message.clone(), fields).into());
+        }
         self.emitted.lock().unwrap().push(event.clone());
         self.buffer.lock().unwrap().push(event);
         Ok(())
@@ -73,7 +113,7 @@ impl EventSink for FakeSink {
 async fn real_ts_event_identity_and_drain() {
     let oracle = oracle();
     let cases = array(oracle, "cases");
-    assert_eq!(cases.len(), 43);
+    assert_eq!(cases.len(), 46);
     let turn = oracle.get("turn").unwrap();
     let identity = TurnIdentity::new(
         text(turn.get("sessionId").unwrap()),
@@ -82,7 +122,11 @@ async fn real_ts_event_identity_and_drain() {
     let mut calls = 0;
     for case in cases {
         let name = text(case.get("name").unwrap());
-        let sink = Arc::new(FakeSink::default());
+        let failure = case.get("sink");
+        let sink = Arc::new(match failure {
+            Some(spec) => FakeSink::throwing(spec),
+            None => FakeSink::default(),
+        });
         let handler = Handler::new(identity.clone(), sink.clone());
         for step in array(case, "steps") {
             calls += 1;
@@ -112,14 +156,26 @@ async fn real_ts_event_identity_and_drain() {
                     == Some(true)
             })
             .count();
+        // A throwing sink receives every validated event and then rejects the
+        // call, so its expected delivery count is the step count.
+        let delivered = if failure.is_some() {
+            array(case, "steps").len()
+        } else {
+            accepted
+        };
+        assert_eq!(
+            *sink.attempted.lock().unwrap(),
+            delivered,
+            "{name} only validated events reach the sink"
+        );
         assert_eq!(
             sink.emitted.lock().unwrap().len(),
-            accepted,
-            "{name} rejected events never reach the sink"
+            if failure.is_some() { 0 } else { accepted },
+            "{name} throwing sinks never record events"
         );
         handler.dispose().await.unwrap();
     }
-    assert_eq!(calls, 46);
+    assert_eq!(calls, 49);
 }
 
 /// `turnId` is optional by key presence: absent is accepted for session-level
