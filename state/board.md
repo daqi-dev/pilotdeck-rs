@@ -1,17 +1,15 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 18:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.4-pr1 | impl | ready | model module 适配（wt-a6-x0 复用，deepseek/a64-pr1）：X0 合入后当轮放出，DeepSeek dsh 实现中；评审 codex + GLM
-- A6.5-pr1 | impl | ready | capability + permission 适配（wt-a63-pr1 复用，codex/a65-pr1）：X0 合入后当轮放出，codex 实现中；评审 DeepSeek dsh + GLM
-- A6.3-pr6 | impl | ready | 会话权限 registry（wt-a63-pr6，DeepSeek）：codex P1（clone 切断共享规则数组）修复中
-- A6.7-pr3 | impl | ready | hooks 配置（wt-a67-pr3，codex）：两家撞上同一类 P1（V8 栈溢出边界），按卡 B（确定成功区上界 + TS 同结果失败）修复中，卡见 _tmp/20261018-a67-pr3/card.md，随 PR 入决策文件
-- A6.4-pr11 | gate | ready | task budget 账本（wt-a64-pr11，codex）：复跑 318/0，四角色闸门中 → PR
-- A6.4-pr2a | review | ready | 定价 + 本地 token 估算（wt-a64-pr2a @81d03e7，DeepSeek）：复跑 318/0、生成器确定；gitleaks 误报（公开源文件哈希）按精确值放行；codex + GLM 评审中
-- D2-pr1 | review | ready | skills migrate（wt-d1-cli @306c746，codex）：D0 正式轮 29 场景三项全 PASS；增量确认 DeepSeek dsh + GLM
-- F2-A34-pr2 | impl | ready | A 类样板（wt-f34b，Claude）：只数最外层 keyed row（防假 FAIL）已改，旧侧 r5 实跑排队中
-- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：回放 4/4 全过；第六轮修生成器 createdAt 不确定 + clippy 两条 + fmt
-- p2-sweep-4 | gate | ready | P2 清账 #235、#251（wt-p2-sweep-4，codex）：两家 0/0；闸门中 → PR
+updated: 2026-10-18 19:55 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.5-pr1 | gate | ready | capability + permission 适配（wt-a63-pr1 @2566dae，codex）：两家 0/0；闸门 GLM 角色超时，排进串行队列重跑（去掉 oracle.json 路径）
+- A6.7-pr3 | gate | ready | hooks 配置（wt-a67-pr3 @c958c21，codex）：二轮 DeepSeek 0/0/1、GLM 0/0/0；闸门串行队列中
+- D2-pr1 | gate | ready | skills migrate（wt-d1-cli @306c746，codex）：两家 0/0（P2 登记 #273）；闸门串行队列中
+- F2-A34-pr2 | gate | ready | A 类样板（wt-f34b @2e776a6，Claude）：两家 0/0（P2 登记 #274）；闸门重跑中（GLM，去 oracle）
+- A6.4-pr2a | gate | ready | 定价 + 本地 token 估算（wt-a64-pr2a @84b9e0c，DeepSeek）：二轮 codex 0/0/1、Claude 0/0/1；等串行闸门
+- A6.4-pr1 | impl | ready | model module 适配（wt-a6-x0，DeepSeek 初版 → codex 接手）：二轮两家撞上 P1（close_requested 吞掉在途 next 的事件），codex 修复中
+- A6.3-pr6 | impl | ready | 会话权限 registry（wt-a63-pr6，DeepSeek）：二轮 codex P1×2 已修，复跑中 → codex + Claude 确认
+- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：第六轮（生成器 createdAt 确定性 + clippy + fmt）
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -19,6 +17,9 @@ updated: 2026-10-18 18:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 19:55 · /loop
+> 合并：#268（board）、#269（p2-sweep-4：#235、#251 修复，#251 留一条未对齐）、#272（A6.4-pr11）。A6.4-pr1 原由 DeepSeek 写，codex 评审报了 7 条并发 P1，按 v2「并发归 codex」改由 codex 接手（看板 redispatch+1）。GLM 两类超时：作为第二家评审时大 diff 跑满 40 分钟，改由 Claude 顶上（`_tmp/20261018-a6-split/glm-timeout-note.md`）；四个闸门并行时 GLM 角色超时，改成串行队列，且不审 oracle.json（`gate-serial.sh`）。anthropic 闸门通道在 .env.local 里没有密钥，不可用。新 P2-跟进 #270（A6.4-pr11 闸门）、#271（project_files 负载假红）、#273（D2）、#274（F2）。worktree 12/12。
 
 > ## 2026-10-18 18:30 · /loop
 > 合并：#264（board + 模型分工 v2）、**#266（A6-X0）**、**#267（A6.3-pr1，DeepSeek 第一单）**。X0 合入后当轮放出 A6.4-pr1（DeepSeek）和 A6.5-pr1（codex），复用已合并的两个 worktree，证据先归档到 `_tmp/archive/`。新 P2-跟进 #265（X0 遗留，前置于 A6.4-pr1 / A6.5-pr1，已写进两单任务书）。A6.7-pr3 两家撞上「V8 资源耗尽边界」P1，按卡 B 处理（AI 代批，待人复核）。A6.4-pr2a 的 gitleaks 误报按 `.gitleaks.toml` 现行做法以精确值放行。worktree 12/12。
