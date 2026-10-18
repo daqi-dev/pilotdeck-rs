@@ -508,7 +508,10 @@ class ContractTests(unittest.TestCase):
     def test_expected_disk_additions_require_exact_complete_tree(self):
         source = self.source()
         self.assertEqual(compare(source, source)['status'], 'PASS')
-        for name in ('version-default', 'empty-nontty', 'unknown-command'):
+        marked = [s['id'] for s in SCENARIOS
+                  if 'pilot/.legacy-bundled-skills-migrated-v1' in s.get('diskAdditions', {})]
+        self.assertTrue(marked)
+        for name in marked:
             for mutation in ('extra', 'missing', 'content', 'size', 'mode', 'type',
                              'missing-fixture', 'changed-fixture'):
                 with self.subTest(scenario=name, mutation=mutation):
