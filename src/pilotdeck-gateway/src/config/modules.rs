@@ -1,7 +1,9 @@
 use super::{Diagnostics, Env, model::credential, value::*};
 use pilotdeck_protocol::JsValue;
 use std::{collections::HashSet, sync::OnceLock};
-const CORE: &[&str] = &[
+/// Core module slots, in the baseline order. The snapshot projection
+/// (`snapshot::modules`) iterates the same list.
+pub(super) const CORE: &[&str] = &[
     "agentLoop",
     "skills",
     "modelProvider",
@@ -9,7 +11,8 @@ const CORE: &[&str] = &[
     "context",
     "knowledge",
 ];
-fn data() -> &'static JsValue {
+/// Module contract table shared by validation and the snapshot projection.
+pub(super) fn data() -> &'static JsValue {
     static DATA: OnceLock<JsValue> = OnceLock::new();
     DATA.get_or_init(|| pilotdeck_protocol::parse_json(include_str!("contracts.json")).unwrap())
 }

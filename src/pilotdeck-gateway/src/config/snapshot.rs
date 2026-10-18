@@ -2257,27 +2257,14 @@ fn resolve_api_key(value: &JsValue, env: &Env) -> Option<JsString> {
         .map(Into::into)
 }
 
-const CORE_MODULES: &[&str] = &[
-    "agentLoop",
-    "skills",
-    "modelProvider",
-    "tools",
-    "context",
-    "knowledge",
-];
-
-fn contracts() -> &'static JsValue {
-    static DATA: OnceLock<JsValue> = OnceLock::new();
-    DATA.get_or_init(|| pilotdeck_protocol::parse_json(include_str!("contracts.json")).unwrap())
-}
 fn supported_methods(slot: &str) -> JsValue {
-    field(contracts(), slot)
+    field(super::modules::data(), slot)
         .get("methods")
         .cloned()
         .unwrap_or_else(|| JsValue::Array(vec![]))
 }
 fn supported_contract(slot: &str) -> Option<String> {
-    field(contracts(), slot)
+    field(super::modules::data(), slot)
         .get("contract")
         .and_then(|v| v.as_string())
         .and_then(|s| s.to_utf8().ok())
@@ -2289,7 +2276,7 @@ fn modules(raw: &JsValue, home: &Path, env: &Env) -> Option<JsValue> {
     }
     let m = field(raw, "modules").as_object()?;
     let mut core = Vec::new();
-    for slot in CORE_MODULES {
+    for slot in super::modules::CORE {
         core.push((*slot, core_module(slot, m.get(slot))));
     }
     let external_agent_loop = core[0]
