@@ -418,7 +418,9 @@ class ContractTests(unittest.TestCase):
 
     def test_env_paths_cannot_override_isolation_or_escape_runtime(self):
         for paths in ({'HOME': 'elsewhere'}, {'PILOTDECK_BUNDLED_SKILLS_DIR': '../outside'},
-                      {'PILOTDECK_BUNDLED_SKILLS_DIR': '/abs'}, {'PILOTDECK_BUNDLED_SKILLS_DIR': ''}):
+                      {'PILOTDECK_BUNDLED_SKILLS_DIR': '/abs'}, {'PILOTDECK_BUNDLED_SKILLS_DIR': ''},
+                      # token:false leaves these unset; they still must not be injectable.
+                      {'PILOTDECK_TOKEN': 'x'}, {'PILOTDECK_SDK_AUTH_TOKEN': 'x'}):
             with self.subTest(paths=paths):
                 with self.assertRaises(ValueError):
                     environment(self.root, {'token': False, 'envPaths': paths})

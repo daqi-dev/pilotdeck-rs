@@ -20,7 +20,7 @@
 | sessions-bogus | `sessions bogus` | `src/cli/sdkCli.ts:135–155,180–195`; `packages/sdk/src/client.ts:130–135,3238–3260` | 固定虚构 token；建 client 不建连，子命令不认识即 sessions Usage，exit 1（D1-pr2，#218） |
 | resume-missing | `resume` | `src/cli/sdkCli.ts:43–56,204–216` | 固定虚构 token；缺 session-id 在 `sessions.resume` 之前报 resume Usage，exit 1；prompt 检查（:58–59）在建连之后，不在本场景（D1-pr2，#218） |
 
-环境由装置白名单构造，绝不继承宿主环境：HOME/USERPROFILE/CFFIXED_USER_HOME 指向独立 home，PILOT_HOME 与 PILOTDECK_CONFIG_PATH 指向 fixture，四个 XDG 目录、TMPDIR/TMP/TEMP、PWD、空 PATH、OPENSSL_CONF 指向 runtime/openssl.cnf、LANG/LC_ALL=C、TZ=UTC、TERM=dumb、NO_COLOR=1。ANALYTICS_ENABLED=0、DOCKER_CONTAINER=1、COMMIT_HASH=固定源 HEAD（`src/telemetry/context.ts:94–103,136–149`，避免 Git 探测），网关两个 URL 均固定 `127.0.0.1:28999`，内核禁止所有网络，包括 loopback、监听及 Unix socket。仅两个 settings 场景设虚构 `PILOTDECK_SDK_AUTH_TOKEN=d0-fixture-not-a-secret`。运行证据对 token 只存长度与哈希。
+环境由装置白名单构造，绝不继承宿主环境：HOME/USERPROFILE/CFFIXED_USER_HOME 指向独立 home，PILOT_HOME 与 PILOTDECK_CONFIG_PATH 指向 fixture，四个 XDG 目录、TMPDIR/TMP/TEMP、PWD、空 PATH、OPENSSL_CONF 指向 runtime/openssl.cnf、LANG/LC_ALL=C、TZ=UTC、TERM=dumb、NO_COLOR=1。ANALYTICS_ENABLED=0、DOCKER_CONTAINER=1、COMMIT_HASH=固定源 HEAD（`src/telemetry/context.ts:94–103,136–149`，避免 Git 探测），网关两个 URL 均固定 `127.0.0.1:28999`，内核禁止所有网络，包括 loopback、监听及 Unix socket。仅 `token:true` 的场景（两个 settings 场景、sessions-bogus、resume-missing）设虚构 `PILOTDECK_SDK_AUTH_TOKEN=d0-fixture-not-a-secret`；envPaths 不得注入任何 `*TOKEN` 变量。运行证据对 token 只存长度与哈希。
 
 首批都在联网调用前退出；内核网络隔离仍是前置，因为有效配置下默认路径探测固定 18789，不能靠端口变量保护用户运行中的 PilotDeck。`version-default`、`empty-nontty`、`unknown-command` 的落盘预期按真实 TS 原件登记为初始树加 `diskAdditions`；其余场景仍要求无落盘变更。比较完整最终树，新增项不得覆盖初始树路径；任何额外写入、缺失、内容、类型或 mode 不符均失败。负控移除保留文件验证完整树漏落盘，另增文件验证越界于预期文件清单的写入。
 
