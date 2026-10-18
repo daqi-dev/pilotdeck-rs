@@ -1743,6 +1743,942 @@
         "next-runtime"
       ],
       "runPolicyOnly": false
+    },
+    {
+      "name": "proto-own-empty-vs-missing",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proto-own-empty-vs-missing-reversed",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": {}
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proto-own-x-vs-missing",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": {
+            "x": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [
+        "__proto__.x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proto-own-x-vs-missing-reversed",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": {
+            "x": 1
+          }
+        }
+      },
+      "changedPaths": [
+        "__proto__.x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proto-own-null-vs-missing",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": {
+            "__proto__": null
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proto-own-toString-null",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": {
+            "toString": null
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [
+        "__proto__.toString"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "toString-undefined-vs-empty",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "toString": {
+            "$": "undefined"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [
+        "toString"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "toString-undefined-vs-empty-reversed",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "toString": {
+            "$": "undefined"
+          }
+        }
+      },
+      "changedPaths": [
+        "toString"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "constructor-undefined-vs-empty",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "constructor": {
+            "$": "undefined"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [
+        "constructor"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "hasOwnProperty-undefined-vs-empty",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "hasOwnProperty": {
+            "$": "undefined"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [
+        "hasOwnProperty"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-array-prototype-index",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": [
+            7
+          ],
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "0": 7
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-array-prototype-length",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": [
+            7
+          ],
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "length": 1
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-array-prototype-method",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": [
+            7
+          ],
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "push": {
+            "$": "undefined"
+          }
+        }
+      },
+      "changedPaths": [
+        "push"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-object-prototype-child",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": {
+            "x": 1
+          },
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "x": 2
+        }
+      },
+      "changedPaths": [
+        "x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-object-prototype-vs-own-proto",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": {
+            "x": 1
+          },
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": {
+            "x": 1
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-proto-null-toString",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": null,
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "toString": {
+            "$": "undefined"
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-proto-nested-chain",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": {
+            "$": "prototype",
+            "prototype": {
+              "x": 1
+            },
+            "value": {}
+          },
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "x": 2
+        }
+      },
+      "changedPaths": [
+        "x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "own-key-shadows-explicit-proto",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": {
+            "x": 1
+          },
+          "value": {
+            "x": 2
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "x": 1
+        }
+      },
+      "changedPaths": [
+        "x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "explicit-array-proto-proto",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": [
+            7
+          ],
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "__proto__": [
+            7
+          ]
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "negative-infinity-vs-zero",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "-Infinity"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": 0
+        }
+      },
+      "changedPaths": [
+        "n"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "negative-infinity-same",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "-Infinity"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "-Infinity"
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "negative-infinity-vs-null",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "-Infinity"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": null
+        }
+      },
+      "changedPaths": [
+        "n"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "object-prototype-members-all-undefined",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "constructor": {
+            "$": "undefined"
+          },
+          "hasOwnProperty": {
+            "$": "undefined"
+          },
+          "isPrototypeOf": {
+            "$": "undefined"
+          },
+          "propertyIsEnumerable": {
+            "$": "undefined"
+          },
+          "toLocaleString": {
+            "$": "undefined"
+          },
+          "toString": {
+            "$": "undefined"
+          },
+          "valueOf": {
+            "$": "undefined"
+          },
+          "__proto__": {
+            "$": "undefined"
+          },
+          "__defineGetter__": {
+            "$": "undefined"
+          },
+          "__defineSetter__": {
+            "$": "undefined"
+          },
+          "__lookupGetter__": {
+            "$": "undefined"
+          },
+          "__lookupSetter__": {
+            "$": "undefined"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {}
+      },
+      "changedPaths": [
+        "__defineGetter__",
+        "__defineSetter__",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "__proto__",
+        "constructor",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toLocaleString",
+        "toString",
+        "valueOf"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "array-prototype-methods-all-undefined",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "prototype",
+          "prototype": [
+            7
+          ],
+          "value": {}
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "constructor": {
+            "$": "undefined"
+          },
+          "at": {
+            "$": "undefined"
+          },
+          "concat": {
+            "$": "undefined"
+          },
+          "copyWithin": {
+            "$": "undefined"
+          },
+          "fill": {
+            "$": "undefined"
+          },
+          "find": {
+            "$": "undefined"
+          },
+          "findIndex": {
+            "$": "undefined"
+          },
+          "findLast": {
+            "$": "undefined"
+          },
+          "findLastIndex": {
+            "$": "undefined"
+          },
+          "lastIndexOf": {
+            "$": "undefined"
+          },
+          "pop": {
+            "$": "undefined"
+          },
+          "push": {
+            "$": "undefined"
+          },
+          "reverse": {
+            "$": "undefined"
+          },
+          "shift": {
+            "$": "undefined"
+          },
+          "unshift": {
+            "$": "undefined"
+          },
+          "slice": {
+            "$": "undefined"
+          },
+          "sort": {
+            "$": "undefined"
+          },
+          "splice": {
+            "$": "undefined"
+          },
+          "includes": {
+            "$": "undefined"
+          },
+          "indexOf": {
+            "$": "undefined"
+          },
+          "join": {
+            "$": "undefined"
+          },
+          "keys": {
+            "$": "undefined"
+          },
+          "entries": {
+            "$": "undefined"
+          },
+          "values": {
+            "$": "undefined"
+          },
+          "forEach": {
+            "$": "undefined"
+          },
+          "filter": {
+            "$": "undefined"
+          },
+          "flat": {
+            "$": "undefined"
+          },
+          "flatMap": {
+            "$": "undefined"
+          },
+          "map": {
+            "$": "undefined"
+          },
+          "every": {
+            "$": "undefined"
+          },
+          "some": {
+            "$": "undefined"
+          },
+          "reduce": {
+            "$": "undefined"
+          },
+          "reduceRight": {
+            "$": "undefined"
+          },
+          "toReversed": {
+            "$": "undefined"
+          },
+          "toSorted": {
+            "$": "undefined"
+          },
+          "toSpliced": {
+            "$": "undefined"
+          },
+          "with": {
+            "$": "undefined"
+          },
+          "toLocaleString": {
+            "$": "undefined"
+          },
+          "toString": {
+            "$": "undefined"
+          }
+        }
+      },
+      "changedPaths": [
+        "at",
+        "concat",
+        "constructor",
+        "copyWithin",
+        "entries",
+        "every",
+        "fill",
+        "filter",
+        "find",
+        "findIndex",
+        "findLast",
+        "findLastIndex",
+        "flat",
+        "flatMap",
+        "forEach",
+        "includes",
+        "indexOf",
+        "join",
+        "keys",
+        "lastIndexOf",
+        "map",
+        "pop",
+        "push",
+        "reduce",
+        "reduceRight",
+        "reverse",
+        "shift",
+        "slice",
+        "some",
+        "sort",
+        "splice",
+        "toLocaleString",
+        "toReversed",
+        "toSorted",
+        "toSpliced",
+        "toString",
+        "unshift",
+        "values",
+        "with"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "inputSchema-own-proto-empty",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": {
+            "tools": {
+              "enabled": true,
+              "implementationId": "acme.tools",
+              "contract": "pilotdeck.tools/v1",
+              "transport": "module-http-v2",
+              "endpoint": "https://example.com",
+              "manifestPath": "/module-manifest",
+              "callPath": "/v2/module/call",
+              "methods": [
+                "execute",
+                "execute_batch",
+                "list_tools",
+                "plan_todo"
+              ],
+              "tools": [
+                {
+                  "name": "t",
+                  "description": "d",
+                  "inputSchema": {
+                    "__proto__": {}
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": {
+            "tools": {
+              "enabled": true,
+              "implementationId": "acme.tools",
+              "contract": "pilotdeck.tools/v1",
+              "transport": "module-http-v2",
+              "endpoint": "https://example.com",
+              "manifestPath": "/module-manifest",
+              "callPath": "/v2/module/call",
+              "methods": [
+                "execute",
+                "execute_batch",
+                "list_tools",
+                "plan_todo"
+              ],
+              "tools": [
+                {
+                  "name": "t",
+                  "description": "d",
+                  "inputSchema": {}
+                }
+              ]
+            }
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "inputSchema-own-proto-x",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": {
+            "tools": {
+              "enabled": true,
+              "implementationId": "acme.tools",
+              "contract": "pilotdeck.tools/v1",
+              "transport": "module-http-v2",
+              "endpoint": "https://example.com",
+              "manifestPath": "/module-manifest",
+              "callPath": "/v2/module/call",
+              "methods": [
+                "execute",
+                "execute_batch",
+                "list_tools",
+                "plan_todo"
+              ],
+              "tools": [
+                {
+                  "name": "t",
+                  "description": "d",
+                  "inputSchema": {
+                    "__proto__": {
+                      "x": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": {
+            "tools": {
+              "enabled": true,
+              "implementationId": "acme.tools",
+              "contract": "pilotdeck.tools/v1",
+              "transport": "module-http-v2",
+              "endpoint": "https://example.com",
+              "manifestPath": "/module-manifest",
+              "callPath": "/v2/module/call",
+              "methods": [
+                "execute",
+                "execute_batch",
+                "list_tools",
+                "plan_todo"
+              ],
+              "tools": [
+                {
+                  "name": "t",
+                  "description": "d",
+                  "inputSchema": {}
+                }
+              ]
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "modules.tools.tools[0].inputSchema.__proto__.x"
+      ],
+      "changeClasses": [
+        "restart-required"
+      ],
+      "runPolicyOnly": false
     }
   ],
   "classify": [

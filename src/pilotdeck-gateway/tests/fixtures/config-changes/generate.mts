@@ -17,10 +17,14 @@ assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline
 const source = 'src/pilot/config/classifyChanges.ts';
 const { diffConfigSnapshots, classifyConfigChanges, isRunPolicyOnlyChange } =
   await import(pathToFileURL(join(baseline, source)).href);
+const { mergeConfigSources } = await import(pathToFileURL(join(baseline, 'src/pilot/config/merge.ts')).href);
+const { parseModulesConfig } = await import(pathToFileURL(join(baseline, 'src/pilot/config/parseModulesConfig.ts')).href);
 
-// JSON has no undefined/NaN/Infinity/-0. Encode exactly those as {"$":tag};
-// every other value is plain JSON. The generator rejects a real object using
-// the reserved "$" key, so decoding is unambiguous.
+// JSON has no undefined/NaN/Infinity/-0, and no explicit [[Prototype]]. Encode
+// those special values as {"$":tag}; an object whose prototype is not
+// Object.prototype becomes {"$":"prototype","prototype":...,"value":...}. Every
+// other value is plain JSON. The generator rejects a real object using the
+// reserved "$" key, so decoding is unambiguous.
 function encode(value: unknown): unknown {
   if (value === undefined) return { $: 'undefined' };
   if (typeof value === 'number') {
@@ -36,6 +40,9 @@ function encode(value: unknown): unknown {
     for (const key of Object.keys(value)) {
       assert.notEqual(key, '$', 'fixture object uses the reserved "$" key');
       encoded[key] = encode((value as Record<string, unknown>)[key]);
+    }
+    if (Object.getPrototypeOf(value) !== Object.prototype) {
+      return { $: 'prototype', prototype: encode(Object.getPrototypeOf(value)), value: encoded };
     }
     return encoded;
   }
@@ -56,6 +63,29 @@ function classify(name: string, paths: string[]) {
   const classes = classifyConfigChanges(paths);
   const runPolicyOnly = isRunPolicyOnlyChange(paths);
   cases.push({ name, paths, classes, runPolicyOnly });
+}
+
+// The real product path: mergeConfigSources -> parseModulesConfig keeps the
+// tool `inputSchema` object verbatim, including a JSON.parse-created own
+// "__proto__" key.
+function modulesSnapshot(inputSchema: unknown) {
+  const raw = {
+    modules: {
+      tools: {
+        enabled: true,
+        implementationId: 'acme.tools',
+        contract: 'pilotdeck.tools/v1',
+        transport: 'module-http-v2',
+        endpoint: 'https://example.com',
+        catalog: [{ name: 't', description: 'd', inputSchema }],
+      },
+    },
+  };
+  const merged = mergeConfigSources(raw);
+  const diagnostics: unknown[] = [];
+  const modules = parseModulesConfig(merged.modules, '/pilot-home', diagnostics as any, {});
+  assert.equal(diagnostics.length, 0, 'inputSchema fixture must parse without diagnostics');
+  return snapshot({ modules });
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +170,52 @@ pair('mixed-classes', snapshot({
 }));
 
 // ---------------------------------------------------------------------------
+// JavaScript prototype lookup: implicit Object.prototype builtins, literal
+// `__proto__` own keys, explicit prototypes (Object.create) and -Infinity.
+// ---------------------------------------------------------------------------
+const ownProto = (json: string) => JSON.parse(json);
+function ownUndefined(names: string[]) {
+  const value: Record<string, unknown> = {};
+  for (const name of names) {
+    Object.defineProperty(value, name, { value: undefined, enumerable: true, configurable: true, writable: true });
+  }
+  return value;
+}
+const OBJECT_PROTOTYPE_MEMBERS = [
+  'constructor', 'hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable',
+  'toLocaleString', 'toString', 'valueOf', '__proto__',
+  '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
+];
+const ARRAY_PROTOTYPE_METHODS = Object.getOwnPropertyNames(Array.prototype)
+  .filter((name) => name !== 'length' && name !== '__proto__');
+pair('proto-own-empty-vs-missing', snapshot(ownProto('{"__proto__":{}}')), snapshot({}));
+pair('proto-own-empty-vs-missing-reversed', snapshot({}), snapshot(ownProto('{"__proto__":{}}')));
+pair('proto-own-x-vs-missing', snapshot(ownProto('{"__proto__":{"x":1}}')), snapshot({}));
+pair('proto-own-x-vs-missing-reversed', snapshot({}), snapshot(ownProto('{"__proto__":{"x":1}}')));
+pair('proto-own-null-vs-missing', snapshot(ownProto('{"__proto__":{"__proto__":null}}')), snapshot({}));
+pair('proto-own-toString-null', snapshot(ownProto('{"__proto__":{"toString":null}}')), snapshot({}));
+pair('toString-undefined-vs-empty', snapshot({ toString: undefined }), snapshot({}));
+pair('toString-undefined-vs-empty-reversed', snapshot({}), snapshot({ toString: undefined }));
+pair('constructor-undefined-vs-empty', snapshot({ constructor: undefined }), snapshot({}));
+pair('hasOwnProperty-undefined-vs-empty', snapshot({ hasOwnProperty: undefined }), snapshot({}));
+pair('explicit-array-prototype-index', snapshot(Object.create([7])), snapshot({ 0: 7 }));
+pair('explicit-array-prototype-length', snapshot(Object.create([7])), snapshot({ length: 1 }));
+pair('explicit-array-prototype-method', snapshot(Object.create([7])), snapshot({ push: undefined }));
+pair('explicit-object-prototype-child', snapshot(Object.create({ x: 1 })), snapshot({ x: 2 }));
+pair('explicit-object-prototype-vs-own-proto', snapshot(Object.create({ x: 1 })), snapshot(ownProto('{"__proto__":{"x":1}}')));
+pair('explicit-proto-null-toString', snapshot(Object.create(null)), snapshot({ toString: undefined }));
+pair('explicit-proto-nested-chain', snapshot(Object.create(Object.create({ x: 1 }))), snapshot({ x: 2 }));
+pair('own-key-shadows-explicit-proto', snapshot(Object.assign(Object.create({ x: 1 }), { x: 2 })), snapshot({ x: 1 }));
+pair('explicit-array-proto-proto', snapshot(Object.create([7])), snapshot(ownProto('{"__proto__":[7]}')));
+pair('negative-infinity-vs-zero', snapshot({ n: -Infinity }), snapshot({ n: 0 }));
+pair('negative-infinity-same', snapshot({ n: -Infinity }), snapshot({ n: -Infinity }));
+pair('negative-infinity-vs-null', snapshot({ n: -Infinity }), snapshot({ n: null }));
+pair('object-prototype-members-all-undefined', snapshot(ownUndefined(OBJECT_PROTOTYPE_MEMBERS)), snapshot({}));
+pair('array-prototype-methods-all-undefined', snapshot(Object.create([7])), snapshot(ownUndefined(ARRAY_PROTOTYPE_METHODS)));
+pair('inputSchema-own-proto-empty', modulesSnapshot(ownProto('{"__proto__":{}}')), modulesSnapshot({}));
+pair('inputSchema-own-proto-x', modulesSnapshot(ownProto('{"__proto__":{"x":1}}')), modulesSnapshot({}));
+
+// ---------------------------------------------------------------------------
 // Direct classify inputs: exact/prefix edges, first-seen order and dedupe.
 // ---------------------------------------------------------------------------
 classify('empty', []);
@@ -190,6 +266,33 @@ assert.equal(byName.get('mixed-classes').runPolicyOnly, false);
 assert.deepEqual(byName.get('mixed-classes').changeClasses, ['next-request', 'runtime-live', 'restart-required', 'next-runtime']);
 assert.equal(cases.find(c => c.name === 'run-policy-prefix-only').runPolicyOnly, false);
 assert.equal(cases.find(c => c.name === 'empty').runPolicyOnly, false);
+assert.deepEqual(byName.get('proto-own-empty-vs-missing').changedPaths, []);
+assert.deepEqual(byName.get('proto-own-empty-vs-missing-reversed').changedPaths, []);
+assert.deepEqual(byName.get('proto-own-x-vs-missing').changedPaths, ['__proto__.x']);
+assert.deepEqual(byName.get('proto-own-x-vs-missing-reversed').changedPaths, ['__proto__.x']);
+assert.deepEqual(byName.get('proto-own-null-vs-missing').changedPaths, []);
+assert.deepEqual(byName.get('proto-own-toString-null').changedPaths, ['__proto__.toString']);
+assert.deepEqual(byName.get('toString-undefined-vs-empty').changedPaths, ['toString']);
+assert.deepEqual(byName.get('toString-undefined-vs-empty-reversed').changedPaths, ['toString']);
+assert.deepEqual(byName.get('constructor-undefined-vs-empty').changedPaths, ['constructor']);
+assert.deepEqual(byName.get('hasOwnProperty-undefined-vs-empty').changedPaths, ['hasOwnProperty']);
+assert.deepEqual(byName.get('explicit-array-prototype-index').changedPaths, []);
+assert.deepEqual(byName.get('explicit-array-prototype-length').changedPaths, []);
+assert.deepEqual(byName.get('explicit-array-prototype-method').changedPaths, ['push']);
+assert.deepEqual(byName.get('explicit-object-prototype-child').changedPaths, ['x']);
+assert.deepEqual(byName.get('explicit-object-prototype-vs-own-proto').changedPaths, []);
+assert.deepEqual(byName.get('explicit-proto-null-toString').changedPaths, []);
+assert.deepEqual(byName.get('explicit-proto-nested-chain').changedPaths, ['x']);
+assert.deepEqual(byName.get('own-key-shadows-explicit-proto').changedPaths, ['x']);
+assert.deepEqual(byName.get('explicit-array-proto-proto').changedPaths, []);
+assert.deepEqual(byName.get('object-prototype-members-all-undefined').changedPaths, [...OBJECT_PROTOTYPE_MEMBERS].sort());
+assert.deepEqual(byName.get('array-prototype-methods-all-undefined').changedPaths, [...ARRAY_PROTOTYPE_METHODS].sort());
+assert.deepEqual(byName.get('negative-infinity-vs-zero').changedPaths, ['n']);
+assert.deepEqual(byName.get('negative-infinity-same').changedPaths, []);
+assert.deepEqual(byName.get('negative-infinity-vs-null').changedPaths, ['n']);
+assert.deepEqual(byName.get('inputSchema-own-proto-empty').changedPaths, []);
+assert.deepEqual(byName.get('inputSchema-own-proto-x').changedPaths, ['modules.tools.tools[0].inputSchema.__proto__.x']);
+assert.deepEqual(byName.get('inputSchema-own-proto-x').changeClasses, ['restart-required']);
 
 const sourceSha256 = { [source]: createHash('sha256').update(await readFile(join(baseline, source))).digest('hex') };
 const oracle = JSON.stringify({ sourceCommit, sourceSha256, pairs, classify: cases }, null, 2) + '\n';

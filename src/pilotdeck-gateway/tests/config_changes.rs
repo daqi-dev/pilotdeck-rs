@@ -54,8 +54,9 @@ fn class_names(classes: Vec<ChangeClass>) -> Vec<String> {
 }
 
 /// `oracle.json` is JSON, so the generator encodes the JavaScript-only values
-/// (`undefined`, `NaN`, `Infinity`, `-0`) as a single-key `{"$": tag}` object.
-/// A real fixture object carrying a `$` key is rejected by the generator.
+/// (`undefined`, `NaN`, `Infinity`, `-0`) as a single-key `{"$": tag}` object,
+/// and an explicit `[[Prototype]]` as `{"$": "prototype", ...}`. A real fixture
+/// object carrying a `$` key is rejected by the generator.
 fn decode(value: &JsValue) -> JsValue {
     let JsValue::Object(object) = value else {
         return match value {
@@ -63,17 +64,39 @@ fn decode(value: &JsValue) -> JsValue {
             other => other.clone(),
         };
     };
-    if object.len() == 1
-        && let Some(tag) = object.get("$").and_then(JsValue::as_string)
-    {
-        return match tag.to_utf8().expect("tag").as_str() {
-            "undefined" => JsValue::Undefined,
-            "NaN" => JsValue::Number(f64::NAN),
-            "Infinity" => JsValue::Number(f64::INFINITY),
-            "-Infinity" => JsValue::Number(f64::NEG_INFINITY),
-            "-0" => JsValue::Number(-0.0),
+    if let Some(tag) = object.get("$").and_then(JsValue::as_string) {
+        match tag.to_utf8().expect("tag").as_str() {
+            "prototype" => {
+                let prototype = decode(
+                    object
+                        .get("prototype")
+                        .expect("prototype tag carries a prototype"),
+                );
+                let JsValue::Object(entries) = object
+                    .get("value")
+                    .expect("prototype tag carries own entries")
+                else {
+                    panic!("prototype tag value must be an object");
+                };
+                let mut decoded = JsObject::new();
+                for (key, value) in entries.entries() {
+                    decoded.insert(key.clone(), decode(value));
+                }
+                decoded.set_prototype(prototype);
+                return JsValue::Object(decoded);
+            }
+            other if object.len() == 1 => {
+                return match other {
+                    "undefined" => JsValue::Undefined,
+                    "NaN" => JsValue::Number(f64::NAN),
+                    "Infinity" => JsValue::Number(f64::INFINITY),
+                    "-Infinity" => JsValue::Number(f64::NEG_INFINITY),
+                    "-0" => JsValue::Number(-0.0),
+                    other => panic!("unknown value tag {other}"),
+                };
+            }
             other => panic!("unknown value tag {other}"),
-        };
+        }
     }
     let mut decoded = JsObject::new();
     for (key, value) in object.entries() {
