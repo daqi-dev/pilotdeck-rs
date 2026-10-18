@@ -176,7 +176,20 @@ impl TranscriptStore for JsonlTranscriptStore {
         }
         // appendFile(path, line, { mode: 0o600, flush }): flush only for compact boundaries.
         let boundary = field(entry, "boundary");
-        let flush = is_str(field(entry, "type"), "control_boundary")
+        let control = is_str(field(entry, "type"), "control_boundary");
+        // JsonlSessionPersistence.ts:24-25 reads entry.boundary.kind after prepareTail:
+        // a missing or null boundary throws TypeError there, so nothing is appended.
+        if control && matches!(boundary, JsValue::Undefined | JsValue::Null) {
+            let shown = if matches!(boundary, JsValue::Null) {
+                "null"
+            } else {
+                "undefined"
+            };
+            return Err(invalid(format!(
+                "Cannot read properties of {shown} (reading 'kind')"
+            )));
+        }
+        let flush = control
             && is_str(field(boundary, "kind"), "compact")
             && is_str(field(boundary, "subtype"), "compact_boundary");
         let mut file = private_open().append(true).create(true).open(path)?;

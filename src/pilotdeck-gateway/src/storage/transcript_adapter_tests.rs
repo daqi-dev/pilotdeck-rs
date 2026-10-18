@@ -1030,3 +1030,37 @@ fn real_ts_and_rust_continue_each_others_transcripts() {
         &JsValue::from("TS after Rust")
     );
 }
+
+#[test]
+fn jsonl_store_control_boundary_without_boundary_throws_like_ts_and_appends_nothing() {
+    let scratch = Scratch::new();
+    let key = TranscriptKey {
+        project_root: PROJECT_ROOT.into(),
+        pilot_home: PathBuf::new(),
+        session_id: "s1".into(),
+        transcript_path: scratch.0.join("chat/s1.jsonl"),
+    };
+    let store = JsonlTranscriptStore::new();
+    store
+        .append(&key, &js(r#"{"type":"session_metadata","n":1}"#))
+        .unwrap();
+    // JsonlSessionPersistence.ts:24-25: entry.boundary.kind on undefined/null throws.
+    for (entry, shown) in [
+        (r#"{"type":"control_boundary"}"#, "undefined"),
+        (r#"{"type":"control_boundary","boundary":null}"#, "null"),
+    ] {
+        let error = store.append(&key, &js(entry)).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!("Cannot read properties of {shown} (reading 'kind')")
+        );
+    }
+    // A primitive boundary reads .kind as undefined in JS: written, not flushed.
+    store
+        .append(&key, &js(r#"{"type":"control_boundary","boundary":"x"}"#))
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&key.transcript_path).unwrap(),
+        "{\"type\":\"session_metadata\",\"n\":1}\n{\"type\":\"control_boundary\",\"boundary\":\"x\"}\n"
+    );
+}
