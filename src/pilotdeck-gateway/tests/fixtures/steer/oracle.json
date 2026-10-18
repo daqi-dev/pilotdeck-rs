@@ -1,0 +1,5275 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/session/SteerMailbox.ts": "2c8cfdd37728fac21c2b4839a549403f58c2e9c07b5108890c07e7fe409ee743",
+    "src/agent/turn/TurnRunner.ts": "8bf4dab4c8e40bba78781e6ad7352dda79e3fc52adf99b9504f1213e0157a5ac",
+    "src/agent/session/AgentSessionEventRecorder.ts": "4d8311f564a5d45bdbacaf7953f8a9d6fbae366c086ecf96162bdad027667ada",
+    "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts": "77a492b9a1a01cad44a6c7feb51fddaaf1d26a5a28de939abf3ed6310216424e",
+    "src/agent/modules/transport/agentLoopSidecarClient.ts": "0897981fa636cdec2e1ac9f6f5b0b974d8cb49d6bcf154d5a74577a0f863eb11",
+    "src/agent/modules/checkpoint/hostToolCheckpoint.ts": "0e437ecd537ad13e17383598aa7863afd0250ac58d326f1b17a6641ab5e969ea"
+  },
+  "mailboxCases": [
+    {
+      "name": "identity-dedup-finish",
+      "steps": [
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "drainOrClose",
+          "turn": "t"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        },
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "other",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "cancel",
+          "turn": "other",
+          "id": "a"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "replacement"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            },
+            "allowedReadFiles": [
+              "ignored"
+            ]
+          }
+        },
+        {
+          "op": "drain",
+          "turn": "other",
+          "id": "x"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "finish",
+          "turn": "other",
+          "id": "x"
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "b",
+          "input": {
+            "itemId": "b",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "b"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "b"
+              }
+            }
+          }
+        },
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "no_active_turn"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": false,
+              "reason": "no_active_turn"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_mismatch"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": false,
+              "reason": "turn_mismatch"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "no_active_turn"
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              },
+              "allowedReadFiles": []
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancel-tombstones",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "before"
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "before"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "before",
+          "input": {
+            "itemId": "before",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "before"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "before"
+              }
+            }
+          }
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "after"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "after",
+          "input": {
+            "itemId": "after",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "after"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "after"
+              }
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        },
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "before",
+          "input": {
+            "itemId": "before",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "before"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "before"
+              }
+            }
+          }
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "cancelled"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "cancelled"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_closing"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "before",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "before"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "before"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "before"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "a"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "after"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "before",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "before"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "before"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "offered-claimed-ack",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "claim",
+          "turn": "other",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "claim",
+          "turn": "other",
+          "id": "missing"
+        },
+        {
+          "op": "claim",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "claim",
+          "turn": "other",
+          "id": "a"
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "other",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": false,
+            "error": "Steer a is not offered for turn t."
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": false,
+              "reason": "too_late"
+            }
+          },
+          {
+            "ok": false,
+            "error": "Steer a is not offered for turn other."
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": false,
+              "reason": "too_late"
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": false,
+              "reason": "too_late"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "claim",
+              "itemId": "a"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "terminal-close-keeps-offered",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            },
+            "allowedReadFiles": [
+              "/a"
+            ]
+          }
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "b",
+          "input": {
+            "itemId": "b",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "b"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "b"
+              }
+            }
+          }
+        },
+        {
+          "op": "drainOrClose",
+          "turn": "t"
+        },
+        {
+          "op": "drainOrClose",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "late",
+          "input": {
+            "itemId": "late",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "late"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "late"
+              }
+            }
+          }
+        },
+        {
+          "op": "claim",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "unknown"
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [
+                {
+                  "itemId": "a",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "a"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "/a"
+                  ]
+                },
+                {
+                  "itemId": "b",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "b"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "b"
+                    }
+                  }
+                }
+              ],
+              "closed": false
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_closing"
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "b",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "b"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "b"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_closing"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "no_active_turn"
+            }
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              },
+              "allowedReadFiles": [
+                "/a"
+              ]
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "claim",
+              "itemId": "a"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "b",
+              "reason": "turn_ended"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "unknown"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "restart-resets-all",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "b"
+        },
+        {
+          "op": "start",
+          "turn": "next"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "enqueue",
+          "turn": "next",
+          "id": "b",
+          "input": {
+            "itemId": "b",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "b"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "b"
+              }
+            }
+          }
+        },
+        {
+          "op": "drainOrClose",
+          "turn": "t"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        },
+        {
+          "op": "drain",
+          "turn": "next"
+        },
+        {
+          "op": "finish",
+          "turn": "next"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_mismatch"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "b",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "b"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "b"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "b",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "b"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "b"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "b"
+            }
+          },
+          {
+            "turn": "next",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "utf16-and-empty-identities",
+      "steps": [
+        {
+          "op": "start",
+          "turn": ""
+        },
+        {
+          "op": "enqueue",
+          "turn": "",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "cancel",
+          "turn": "",
+          "id": "a"
+        },
+        {
+          "op": "drainOrClose",
+          "turn": ""
+        },
+        {
+          "op": "start",
+          "turn": "\ud800"
+        },
+        {
+          "op": "enqueue",
+          "turn": "\ud800",
+          "id": "",
+          "input": {
+            "itemId": "",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ],
+              "metadata": {
+                "queueItemId": ""
+              }
+            },
+            "allowedReadFiles": [
+              "",
+              "\ud800"
+            ]
+          }
+        },
+        {
+          "op": "claim",
+          "turn": "\ud800",
+          "id": ""
+        },
+        {
+          "op": "drain",
+          "turn": "\ud800"
+        },
+        {
+          "op": "claim",
+          "turn": "\ud801",
+          "id": ""
+        },
+        {
+          "op": "claim",
+          "turn": "\ud800",
+          "id": ""
+        },
+        {
+          "op": "ack",
+          "turn": "\ud800",
+          "id": ""
+        },
+        {
+          "op": "finish",
+          "turn": "\ud800"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "no_active_turn"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": false,
+              "reason": "no_active_turn"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": false,
+            "error": "Steer  is not offered for turn \ud800."
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": ""
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": ""
+                  }
+                },
+                "allowedReadFiles": [
+                  "",
+                  "\ud800"
+                ]
+              }
+            ]
+          },
+          {
+            "ok": false,
+            "error": "Steer  is not offered for turn \ud801."
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "\ud800",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": ""
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": ""
+                }
+              },
+              "allowedReadFiles": [
+                "",
+                "\ud800"
+              ]
+            }
+          },
+          {
+            "turn": "\ud800",
+            "mutation": {
+              "mutation": "claim",
+              "itemId": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "insert-close-race",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "block",
+          "mutation": "insert"
+        },
+        {
+          "op": "begin",
+          "key": "insert",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "a",
+            "input": {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "wait"
+        },
+        {
+          "op": "begin",
+          "key": "close",
+          "action": {
+            "op": "close",
+            "turn": "t"
+          }
+        },
+        {
+          "op": "begin",
+          "key": "late",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "b",
+            "input": {
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "join",
+          "key": "insert"
+        },
+        {
+          "op": "join",
+          "key": "close"
+        },
+        {
+          "op": "join",
+          "key": "late"
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_closing"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_closing"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "a",
+              "reason": "turn_closing"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "insert-drain-close-race",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "block",
+          "mutation": "insert"
+        },
+        {
+          "op": "begin",
+          "key": "insert",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "a",
+            "input": {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "wait"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "drainOrClose",
+          "turn": "t"
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "join",
+          "key": "insert"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "turn_closing"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "a",
+              "reason": "turn_closing"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancel-drain-race",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "block",
+          "mutation": "cancel"
+        },
+        {
+          "op": "begin",
+          "key": "cancel",
+          "action": {
+            "op": "cancel",
+            "turn": "t",
+            "id": "a"
+          }
+        },
+        {
+          "op": "wait"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "join",
+          "key": "cancel"
+        },
+        {
+          "op": "claim",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "cancelled"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "a"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "claim-ack-race",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "block",
+          "mutation": "claim"
+        },
+        {
+          "op": "begin",
+          "key": "claim",
+          "action": {
+            "op": "claim",
+            "turn": "t",
+            "id": "a"
+          }
+        },
+        {
+          "op": "wait"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "drainOrClose",
+          "turn": "t"
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "join",
+          "key": "claim"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "claim",
+              "itemId": "a"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "restart-during-insert",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "block",
+          "mutation": "insert"
+        },
+        {
+          "op": "begin",
+          "key": "insert",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "a",
+            "input": {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "wait"
+        },
+        {
+          "op": "start",
+          "turn": "next"
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "join",
+          "key": "insert"
+        },
+        {
+          "op": "enqueue",
+          "turn": "next",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "turn": "next"
+        },
+        {
+          "op": "finish",
+          "turn": "next"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "no_active_turn"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "a",
+              "reason": "turn_closing"
+            }
+          },
+          {
+            "turn": "next",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "finish-during-insert",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "block",
+          "mutation": "insert"
+        },
+        {
+          "op": "begin",
+          "key": "insert",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "a",
+            "input": {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "wait"
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "join",
+          "key": "insert"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": []
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "no_active_turn"
+            }
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "a",
+              "reason": "turn_closing"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "claim-captured-entry",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "block",
+          "mutation": "claim"
+        },
+        {
+          "op": "begin",
+          "key": "claim",
+          "action": {
+            "op": "claim",
+            "turn": "t",
+            "id": "a"
+          }
+        },
+        {
+          "op": "wait"
+        },
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "begin",
+          "key": "insert",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "a",
+            "input": {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "release"
+        },
+        {
+          "op": "join",
+          "key": "claim"
+        },
+        {
+          "op": "join",
+          "key": "insert"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "claim",
+              "itemId": "a"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "a",
+              "reason": "turn_ended"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "failure-recovery",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "fail",
+          "mutation": "insert"
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "enqueue",
+          "turn": "t",
+          "id": "a",
+          "input": {
+            "itemId": "a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ],
+              "metadata": {
+                "queueItemId": "a"
+              }
+            }
+          }
+        },
+        {
+          "op": "fail",
+          "mutation": "cancel"
+        },
+        {
+          "op": "cancel",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "fail",
+          "mutation": "claim"
+        },
+        {
+          "op": "claim",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "ack",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "claim",
+          "turn": "t",
+          "id": "a"
+        },
+        {
+          "op": "fail",
+          "mutation": "discard"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        },
+        {
+          "op": "finish",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": false,
+            "error": "fixture storage failure"
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": false,
+            "error": "fixture storage failure"
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": false,
+            "error": "fixture storage failure"
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": false,
+            "error": "fixture storage failure"
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": []
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "a"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "claim",
+              "itemId": "a"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "claim",
+              "itemId": "a"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "a",
+              "reason": "turn_ended"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "a",
+              "reason": "turn_ended"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-order",
+      "steps": [
+        {
+          "op": "start",
+          "turn": "t"
+        },
+        {
+          "op": "begin",
+          "key": "cancel",
+          "action": {
+            "op": "cancel",
+            "turn": "t",
+            "id": "a"
+          }
+        },
+        {
+          "op": "begin",
+          "key": "insert",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "a",
+            "input": {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "join",
+          "key": "insert"
+        },
+        {
+          "op": "join",
+          "key": "cancel"
+        },
+        {
+          "op": "begin",
+          "key": "first",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "b",
+            "input": {
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              },
+              "allowedReadFiles": [
+                "first"
+              ]
+            }
+          }
+        },
+        {
+          "op": "begin",
+          "key": "second",
+          "action": {
+            "op": "enqueue",
+            "turn": "t",
+            "id": "b",
+            "input": {
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              },
+              "allowedReadFiles": [
+                "second"
+              ]
+            }
+          }
+        },
+        {
+          "op": "join",
+          "key": "second"
+        },
+        {
+          "op": "join",
+          "key": "first"
+        },
+        {
+          "op": "drain",
+          "turn": "t"
+        },
+        {
+          "op": "close",
+          "turn": "t"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": false,
+              "reason": "cancelled"
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "cancelled": true
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": {
+              "accepted": true
+            }
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "b",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "b"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "b"
+                  }
+                },
+                "allowedReadFiles": [
+                  "first"
+                ]
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "b",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "b"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "b"
+                  }
+                },
+                "allowedReadFiles": [
+                  "first"
+                ]
+              }
+            ]
+          }
+        ],
+        "mutations": [
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "cancel",
+              "itemId": "a"
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "insert",
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              },
+              "allowedReadFiles": [
+                "first"
+              ]
+            }
+          },
+          {
+            "turn": "t",
+            "mutation": {
+              "mutation": "discard",
+              "itemId": "b",
+              "reason": "turn_ended"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "dispatcherCases": [
+    {
+      "name": "grants-after-apply",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {
+            "messages": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": [
+                  "/a",
+                  "/a",
+                  ""
+                ]
+              },
+              {
+                "itemId": "b",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "b"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "b"
+                  }
+                },
+                "allowedReadFiles": [
+                  "/b"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "kind": "apply",
+          "id": "unknown"
+        },
+        {
+          "kind": "apply",
+          "id": "a"
+        },
+        {
+          "kind": "apply",
+          "id": "a"
+        },
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_or_close_steer"
+            }
+          },
+          "result": {
+            "messages": [
+              {
+                "itemId": "c",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "c"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "c"
+                  }
+                },
+                "allowedReadFiles": [
+                  "/c"
+                ]
+              }
+            ],
+            "closed": false,
+            "extra": 7
+          }
+        },
+        {
+          "kind": "apply",
+          "id": "b"
+        },
+        {
+          "kind": "apply",
+          "id": "c"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": {
+              "messages": [
+                {
+                  "itemId": "a",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "a"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "/a",
+                    "/a",
+                    ""
+                  ]
+                },
+                {
+                  "itemId": "b",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "b"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "b"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "/b"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [
+                {
+                  "itemId": "c",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "c"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "c"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "/c"
+                  ]
+                }
+              ],
+              "closed": false,
+              "extra": 7
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ],
+          [
+            "seed",
+            "/a",
+            ""
+          ],
+          [
+            "seed",
+            "/a",
+            ""
+          ],
+          [
+            "seed",
+            "/a",
+            ""
+          ],
+          [
+            "seed",
+            "/a",
+            "",
+            "/b"
+          ],
+          [
+            "seed",
+            "/a",
+            "",
+            "/b",
+            "/c"
+          ]
+        ],
+        "trace": [
+          "drain",
+          "close"
+        ],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "filtered-overwrite-empty-retains",
+      "ports": [
+        "drain"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {
+            "messages": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": [
+                  "old"
+                ]
+              },
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": [
+                  "new",
+                  9,
+                  null,
+                  "\ud800"
+                ]
+              },
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": []
+              },
+              {
+                "itemId": "b",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "b"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "b"
+                  }
+                },
+                "allowedReadFiles": [
+                  false
+                ]
+              },
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "apply",
+          "id": "a"
+        },
+        {
+          "kind": "apply",
+          "id": "b"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": {
+              "messages": [
+                {
+                  "itemId": "a",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "a"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "old"
+                  ]
+                },
+                {
+                  "itemId": "a",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "a"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "new",
+                    9,
+                    null,
+                    "\ud800"
+                  ]
+                },
+                {
+                  "itemId": "a",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "a"
+                    }
+                  },
+                  "allowedReadFiles": []
+                },
+                {
+                  "itemId": "b",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "b"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "b"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    false
+                  ]
+                },
+                {
+                  "itemId": "a",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "a"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          },
+          {
+            "ok": true,
+            "value": null
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed",
+            "new",
+            "\ud800"
+          ],
+          [
+            "seed",
+            "new",
+            "\ud800"
+          ]
+        ],
+        "trace": [
+          "drain"
+        ],
+        "methods": [
+          "drain_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-cannot-grant",
+      "ports": [
+        "drain"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer",
+              "turnId": "other",
+              "messages": [
+                {
+                  "itemId": "evil",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "evil"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "evil"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "/evil"
+                  ]
+                }
+              ],
+              "allowedReadFiles": [
+                "/evil"
+              ]
+            }
+          },
+          "result": {
+            "messages": []
+          }
+        },
+        {
+          "kind": "apply",
+          "id": "evil"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": true,
+            "value": {
+              "messages": []
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ]
+        ],
+        "trace": [
+          "drain"
+        ],
+        "methods": [
+          "drain_steer"
+        ]
+      }
+    },
+    {
+      "name": "drain-only",
+      "ports": [
+        "drain"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_or_close_steer"
+            }
+          },
+          "result": {}
+        },
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {
+            "messages": []
+          }
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Host turn capability does not support drain_or_close_steer."
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": []
+            }
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ]
+        ],
+        "trace": [
+          "drain"
+        ],
+        "methods": [
+          "drain_steer"
+        ]
+      }
+    },
+    {
+      "name": "close-only",
+      "ports": [
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {}
+        },
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_or_close_steer"
+            }
+          },
+          "result": {
+            "messages": [],
+            "closed": true
+          }
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Host turn capability does not support drain_steer."
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ]
+        ],
+        "trace": [
+          "close"
+        ],
+        "methods": [
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "no-ports",
+      "ports": [],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {}
+        },
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_or_close_steer"
+            }
+          },
+          "result": {}
+        },
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "persist_compaction"
+            }
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Host turn capability does not support drain_steer."
+          },
+          {
+            "ok": false,
+            "error": "Host turn capability does not support drain_or_close_steer."
+          },
+          {
+            "ok": false,
+            "error": "Host turn capability does not support persist_compaction."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": null
+      }
+    },
+    {
+      "name": "callback-failures",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {},
+          "failure": "drain failed"
+        },
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_or_close_steer"
+            }
+          },
+          "result": {},
+          "failure": "close failed"
+        },
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {
+            "messages": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": [
+                  "after"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "kind": "apply",
+          "id": "a"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "drain failed"
+          },
+          {
+            "ok": false,
+            "error": "close failed"
+          },
+          {
+            "ok": true,
+            "value": {
+              "messages": [
+                {
+                  "itemId": "a",
+                  "message": {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ],
+                    "metadata": {
+                      "queueItemId": "a"
+                    }
+                  },
+                  "allowedReadFiles": [
+                    "after"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "ok": true,
+            "value": null
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ],
+          [
+            "seed",
+            "after"
+          ]
+        ],
+        "trace": [
+          "drain",
+          "close",
+          "drain"
+        ],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "invalid-path-array",
+      "ports": [
+        "drain"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "drain_steer"
+            }
+          },
+          "result": {
+            "messages": [
+              {
+                "itemId": "a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "a"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "a"
+                  }
+                },
+                "allowedReadFiles": 3
+              }
+            ]
+          }
+        },
+        {
+          "kind": "apply",
+          "id": "a"
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "message.allowedReadFiles?.filter is not a function"
+          },
+          {
+            "ok": true,
+            "value": null
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ],
+          [
+            "seed"
+          ]
+        ],
+        "trace": [
+          "drain"
+        ],
+        "methods": [
+          "drain_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-{}",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {}
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-{\"operation\":\"\"}",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": ""
+            }
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-{\"operation\":null}",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": null
+            }
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-{\"operation\":4}",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": 4
+            }
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-{\"operation\":\"unknown\"}",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "unknown"
+            }
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Host turn capability does not support unknown."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-{\"operation\":\"\\ud800\"}",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": {
+              "operation": "\ud800"
+            }
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Host turn capability does not support \ud800."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-null",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": null
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-[]",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": []
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-7",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": 7
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    },
+    {
+      "name": "payload-\"x\"",
+      "ports": [
+        "drain",
+        "close"
+      ],
+      "steps": [
+        {
+          "kind": "call",
+          "call": {
+            "module": "turn",
+            "payload": "x"
+          },
+          "result": {}
+        }
+      ],
+      "expected": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Sidecar payload field operation must be a non-empty string."
+          }
+        ],
+        "grants": [
+          [
+            "seed"
+          ]
+        ],
+        "trace": [],
+        "methods": [
+          "drain_steer",
+          "drain_or_close_steer"
+        ]
+      }
+    }
+  ],
+  "runnerCases": [
+    {
+      "mode": "success",
+      "steers": [
+        {
+          "itemId": "a",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "a"
+            }
+          }
+        },
+        {
+          "itemId": "b",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "b"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "b"
+            }
+          }
+        },
+        {
+          "itemId": "c",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "c"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "c"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "trace": [
+          [
+            "claim",
+            "a"
+          ],
+          [
+            "durable",
+            "a"
+          ],
+          [
+            "ack",
+            "a"
+          ],
+          [
+            "ack",
+            "a"
+          ],
+          [
+            "durable",
+            null
+          ]
+        ],
+        "drains": [
+          [
+            {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            },
+            {
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              }
+            }
+          ],
+          {
+            "messages": [
+              {
+                "itemId": "c",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "c"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "c"
+                  }
+                }
+              }
+            ],
+            "closed": false
+          }
+        ],
+        "afterApplied": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "start"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "a"
+            }
+          }
+        ],
+        "unapplied": [
+          "b",
+          "c"
+        ]
+      }
+    },
+    {
+      "mode": "claim-fails",
+      "steers": [
+        {
+          "itemId": "a",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "a"
+            }
+          }
+        },
+        {
+          "itemId": "b",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "b"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "b"
+            }
+          }
+        },
+        {
+          "itemId": "c",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "c"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "c"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "trace": [
+          [
+            "claim",
+            "a"
+          ]
+        ],
+        "drains": [
+          [
+            {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            },
+            {
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              }
+            }
+          ],
+          {
+            "messages": [
+              {
+                "itemId": "c",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "c"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "c"
+                  }
+                }
+              }
+            ],
+            "closed": false
+          }
+        ],
+        "afterApplied": [],
+        "unapplied": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    },
+    {
+      "mode": "durable-fails",
+      "steers": [
+        {
+          "itemId": "a",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "a"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "a"
+            }
+          }
+        },
+        {
+          "itemId": "b",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "b"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "b"
+            }
+          }
+        },
+        {
+          "itemId": "c",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "c"
+              }
+            ],
+            "metadata": {
+              "queueItemId": "c"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "trace": [
+          [
+            "claim",
+            "a"
+          ],
+          [
+            "durable",
+            "a"
+          ]
+        ],
+        "drains": [
+          [
+            {
+              "itemId": "a",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "a"
+                }
+              }
+            },
+            {
+              "itemId": "b",
+              "message": {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "b"
+                  }
+                ],
+                "metadata": {
+                  "queueItemId": "b"
+                }
+              }
+            }
+          ],
+          {
+            "messages": [
+              {
+                "itemId": "c",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "c"
+                    }
+                  ],
+                  "metadata": {
+                    "queueItemId": "c"
+                  }
+                }
+              }
+            ],
+            "closed": false
+          }
+        ],
+        "afterApplied": [],
+        "unapplied": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    }
+  ]
+}
