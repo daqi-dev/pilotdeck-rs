@@ -57,7 +57,7 @@
 ### 坑：合并提交暴露真实邮箱（2026-10-13）
 GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 noreply：`--merge` 的 merge commit 作者是它（原 `4172dc2`），`--rebase` 虽保留作者，**提交者**也换成它（`c720725`、`cfd7841`）。仓库是公开的。
 ⇒ 根治靠账号设置（人做）：GitHub Settings → Emails 勾「Keep my email addresses private」。没勾之前，**合并后 `git log --format='%ae %ce' -3` 核一眼**，别假定。
-⇒ 合并方式用 `gh pr merge --rebase`（历史线性），但它**不**解决邮箱问题。清理工作树另走下方证据保护规则，不附加 `--delete-branch`。
+⇒ 合并走 merge queue（见「合并闸门」），队列按 rebase 合入（历史线性），但它**不**解决邮箱问题。清理工作树另走下方证据保护规则，不附加 `--delete-branch`。
 
 ## 六、约定
 
@@ -88,6 +88,8 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 - 红线：不下载预编译二进制；冻结变更按上节；不碰 `~/.pilotdeck`、用户运行中的 PilotDeck、`~/ws/PilotDeck-rust-program-20261009/`；推送前 gitleaks，不强推 main。同一失败 3 次挂起该项；磁盘超上限停止新增写入。全量对拍串行，保留现有锁协议（`mkdir /tmp/pdrs-parity.lock`）。
 
 ### 合并闸门
+
+**仓库与合并方式（2026-10-18 人批）**：仓库在组织 `daqi-dev/pilotdeck-rs`（旧 `zhengdaqi/pilotdeck-rs` 永久重定向；**不得在 zhengdaqi 下再建同名仓库**，否则重定向断）。main 由 ruleset「main」保护：禁删除与强推；必需检查 `check`、`gateway-schema-baseline`（**不要求与 main 同步**）；**merge queue**（REBASE、ALLGREEN）。合并 = `gh pr merge <N>`（加入队列），队列在「最新 main + 前序 PR + 本 PR」的临时提交上重跑必需检查，全绿才合入；PR 自身 HEAD 不变，pr-gate 结果块的 `head=` 不因排队失效。**pr-gate 不设为必需检查**（它读 PR 描述，merge_group 上没有 PR 上下文），由协调者合并前核绿。旧 classic 保护快照见 `_tmp/20261018-org-transfer/classic-protection-before.json`。
 
 每条 PR 合并前依次过，**审的一律不是写的那家**：
 1. **规则层**：CI `check` 绿；worker 自证命令的原始输出贴进 PR 描述。
@@ -153,7 +155,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 | dev-launch §3/§4 高不确定性「停等拍板」、§3「值不值得」 | 按「决策分级」写卡：自决/待复核 → 继续；暂不执行 → READY 条目改 `human`，取下一条 | `scripts/next-task.sh` 跳过 human |
 | dev-launch §3 估算 >3 天「拒绝无人值守」 | 一 issue 拆多个小 PR，READY 里逐 PR 列条目（`<码>-pr1`…），不停 | 同上 |
 | dev-launch §6.6 / workflows README「无 P0/P1/P2 才收敛」 | 按本文件「问题分级 · P2 折中方案」 | 评审人 |
-| dev-launch §8「人工合并，绝不自动 merge」 | 第 14 条：协调者 `gh pr merge --rebase`（不加 `--delete-branch`），合并后核邮箱 | 人的用法 |
+| dev-launch §8「人工合并，绝不自动 merge」 | 第 14 条：协调者 `gh pr merge <N>` 加入 merge queue（不加 `--delete-branch`），合入后核邮箱 | 人的用法 |
 | dev-launch §8 关 issue 顺序 | PR 描述写 `Closes #N`（合并即关）或 `Refs #N`（一单多 PR）；关单前仍先回复说明 | `.github/workflows/pr-gate.yml` |
 | dev-launch §7.0 / `.claude/dev-launch.review.md`「只剩一家时停下等人」 | READY 条目改 `blocked`（写缺哪家通道），取下一条；不降级为单评审 | `scripts/next-task.sh` |
 | dev-req Phase0「复述确认 / AskUserQuestion」 | 复述写进 triage 文件，按决策分级自决，不等确认；「深度思考 MCP」不可用时跳过 | 人的用法 |
