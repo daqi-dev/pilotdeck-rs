@@ -1,6 +1,7 @@
 //! Global/project PilotConfig loading for the native read-only gateway. Every section
 //! participates in validation, even when catalog projection does not use it.
 mod binding;
+pub mod changes;
 mod graph;
 mod host;
 mod model;

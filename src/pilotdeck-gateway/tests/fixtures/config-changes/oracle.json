@@ -1,0 +1,1955 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/pilot/config/classifyChanges.ts": "ab2f844a1cee62603e452de7bcf280ee8a4b524979c77d1b11745867ae2a8fbf"
+  },
+  "pairs": [
+    {
+      "name": "identical-config",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": 1,
+          "nested": {
+            "b": [
+              1,
+              2
+            ]
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": 1,
+          "nested": {
+            "b": [
+              1,
+              2
+            ]
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "non-config-only",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "diagnostics": [],
+        "config": {
+          "a": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 2,
+        "diagnostics": [
+          {
+            "code": "X"
+          }
+        ],
+        "config": {
+          "a": 1
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "root-scalar",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": 1
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": 2
+      },
+      "changedPaths": [
+        "<root>"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "root-null-vs-undefined",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": null
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "undefined"
+        }
+      },
+      "changedPaths": [
+        "<root>"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "root-absent-both",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "undefined"
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "$": "undefined"
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "agent-leaf",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "agent": {
+            "model": "a"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "agent": {
+            "model": "b"
+          }
+        }
+      },
+      "changedPaths": [
+        "agent.model"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "model-leaf",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "model": {
+            "provider": "a"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "model": {
+            "provider": "b"
+          }
+        }
+      },
+      "changedPaths": [
+        "model.provider"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "extension-include-hook-exact",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "extension": {
+            "includeHookEvents": false
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "extension": {
+            "includeHookEvents": true
+          }
+        }
+      },
+      "changedPaths": [
+        "extension.includeHookEvents"
+      ],
+      "changeClasses": [
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "extension-include-hook-child",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "extension": {
+            "includeHookEvents": {
+              "a": 1
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "extension": {
+            "includeHookEvents": {
+              "a": 2
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "extension.includeHookEvents.a"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "extension-other",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "extension": {
+            "foo": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "extension": {
+            "foo": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "extension.foo"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-scenarios",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "scenarios": {
+              "x": 1
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "scenarios": {
+              "x": 2
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.scenarios.x"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-fallback",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "fallback": {
+              "a": 1
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "fallback": {
+              "a": 2
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.fallback.a"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-token-tiers",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "tokenSaver": {
+              "tiers": {
+                "a": 1
+              }
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "tokenSaver": {
+              "tiers": {
+                "a": 2
+              }
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.tokenSaver.tiers.a"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-zero-attempts",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "zeroUsageRetry": {
+              "maxAttempts": 1
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "zeroUsageRetry": {
+              "maxAttempts": 2
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.zeroUsageRetry.maxAttempts"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-zero-enabled",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "zeroUsageRetry": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "zeroUsageRetry": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.zeroUsageRetry.enabled"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-token-judge",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "tokenSaver": {
+              "judge": {
+                "model": "a"
+              }
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "tokenSaver": {
+              "judge": {
+                "model": "b"
+              }
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.tokenSaver.judge.model"
+      ],
+      "changeClasses": [
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-auto-orchestrate",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "autoOrchestrate": {
+              "skillExtensionId": "a"
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "autoOrchestrate": {
+              "skillExtensionId": "b"
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.autoOrchestrate.skillExtensionId"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-stats",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "stats": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "stats": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.stats.enabled"
+      ],
+      "changeClasses": [
+        "restart-required"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-custom",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "customRouter": {
+              "extensionId": "a"
+            }
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "customRouter": {
+              "extensionId": "b"
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "router.customRouter.extensionId"
+      ],
+      "changeClasses": [
+        "restart-required"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-default",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "enabled": false
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "router": {
+            "enabled": true
+          }
+        }
+      },
+      "changedPaths": [
+        "router.enabled"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "always-on",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "alwaysOn": {
+            "x": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "alwaysOn": {
+            "x": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "alwaysOn.x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "cron",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "cron": {
+            "x": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "cron": {
+            "x": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "cron.x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "tools",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "tools": {
+            "x": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "tools": {
+            "x": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "tools.x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "modules-exact",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": {
+            "a": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": null
+        }
+      },
+      "changedPaths": [
+        "modules"
+      ],
+      "changeClasses": [
+        "restart-required"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "modules-child",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": {
+            "a": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "modules": {
+            "a": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "modules.a"
+      ],
+      "changeClasses": [
+        "restart-required"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proxy-exact",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "proxy": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "proxy": 2
+        }
+      },
+      "changedPaths": [
+        "proxy"
+      ],
+      "changeClasses": [
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proxy-child",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "proxy": {
+            "a": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "proxy": {
+            "a": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "proxy.a"
+      ],
+      "changeClasses": [
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "run-policy-exact",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": 2
+        }
+      },
+      "changedPaths": [
+        "runPolicy"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": true
+    },
+    {
+      "name": "run-policy-child",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": {
+            "a": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": {
+            "a": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "runPolicy.a"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": true
+    },
+    {
+      "name": "run-policy-only-multi",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": {
+            "a": 1,
+            "b": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": {
+            "a": 2,
+            "b": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "runPolicy.a",
+        "runPolicy.b"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": true
+    },
+    {
+      "name": "run-policy-plus-other",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": {
+            "a": 1
+          },
+          "agent": {
+            "model": "x"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "runPolicy": {
+            "a": 2
+          },
+          "agent": {
+            "model": "y"
+          }
+        }
+      },
+      "changedPaths": [
+        "agent.model",
+        "runPolicy.a"
+      ],
+      "changeClasses": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "default-unknown",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "webui": {
+            "x": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "webui": {
+            "x": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "webui.x"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "array-same-length",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            1,
+            9,
+            3
+          ]
+        }
+      },
+      "changedPaths": [
+        "arr[1]"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "array-length",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            1
+          ]
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            1,
+            2
+          ]
+        }
+      },
+      "changedPaths": [
+        "arr"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "array-vs-object",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            1
+          ]
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": {
+            "0": 1
+          }
+        }
+      },
+      "changedPaths": [
+        "arr"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "array-object-leaf",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            {
+              "x": 1,
+              "y": 2
+            }
+          ]
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            {
+              "x": 1,
+              "y": 3
+            }
+          ]
+        }
+      },
+      "changedPaths": [
+        "arr[0].y"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "object-add-leaf",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "x": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "x": 1,
+            "y": 2
+          }
+        }
+      },
+      "changedPaths": [
+        "a.y"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "object-remove-leaf",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "x": 1,
+            "y": 2
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "x": 1
+          }
+        }
+      },
+      "changedPaths": [
+        "a.y"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "object-add-object",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "x": 1
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "x": 1,
+            "y": {
+              "z": 2
+            }
+          }
+        }
+      },
+      "changedPaths": [
+        "a.y"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "nested-array-leaf",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "b": [
+              {
+                "c": 1
+              }
+            ]
+          },
+          "d": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": {
+            "b": [
+              {
+                "c": 2
+              }
+            ]
+          },
+          "d": 1
+        }
+      },
+      "changedPaths": [
+        "a.b[0].c"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "root-array-same-length",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": [
+          1,
+          2
+        ]
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": [
+          1,
+          3
+        ]
+      },
+      "changedPaths": [
+        "[1]"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "root-array-length",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": [
+          1
+        ]
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": [
+          1,
+          2
+        ]
+      },
+      "changedPaths": [
+        "<root>"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "root-object-vs-array",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": [
+          1
+        ]
+      },
+      "changedPaths": [
+        "<root>"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "nan-same",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "NaN"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "NaN"
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "nan-vs-zero",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "NaN"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": 0
+        }
+      },
+      "changedPaths": [
+        "n"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "nan-vs-null",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "NaN"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": null
+        }
+      },
+      "changedPaths": [
+        "n"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "null-same",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": null
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": null
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "null-vs-undefined",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": null
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "undefined"
+          }
+        }
+      },
+      "changedPaths": [
+        "n"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "undefined-same",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "undefined"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "undefined"
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "undefined-removed",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "undefined"
+          },
+          "a": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": 1
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "undefined-added",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "a": 1,
+          "n": {
+            "$": "undefined"
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "negative-zero",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "-0"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": 0
+        }
+      },
+      "changedPaths": [
+        "n"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "infinity-same",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "Infinity"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "Infinity"
+          }
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "infinity-vs-null",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": {
+            "$": "Infinity"
+          }
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "n": null
+        }
+      },
+      "changedPaths": [
+        "n"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "array-specials-same",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            {
+              "$": "NaN"
+            },
+            null,
+            {
+              "$": "undefined"
+            }
+          ]
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "arr": [
+            {
+              "$": "NaN"
+            },
+            null,
+            {
+              "$": "undefined"
+            }
+          ]
+        }
+      },
+      "changedPaths": [],
+      "changeClasses": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "bool-vs-number",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "v": true
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "v": 1
+        }
+      },
+      "changedPaths": [
+        "v"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "string-change",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "s": "a"
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "s": "b"
+        }
+      },
+      "changedPaths": [
+        "s"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "key-sort-numeric",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "2": 1,
+          "10": 1,
+          "b": 1,
+          "a": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "2": 2,
+          "10": 2,
+          "b": 2,
+          "a": 2
+        }
+      },
+      "changedPaths": [
+        "10",
+        "2",
+        "a",
+        "b"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "key-sort-utf16",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "": 1,
+          "𐀀": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "": 2,
+          "𐀀": 2
+        }
+      },
+      "changedPaths": [
+        "𐀀",
+        ""
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "lone-surrogate-key",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "\ud800": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "\ud800": 2
+        }
+      },
+      "changedPaths": [
+        "\ud800"
+      ],
+      "changeClasses": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "mixed-classes",
+      "previous": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "agent": {
+            "model": "a"
+          },
+          "extension": {
+            "includeHookEvents": false
+          },
+          "modules": {
+            "a": 1
+          },
+          "proxy": {
+            "a": 1
+          },
+          "z": 1
+        }
+      },
+      "next": {
+        "schemaVersion": 1,
+        "version": 1,
+        "config": {
+          "agent": {
+            "model": "b"
+          },
+          "extension": {
+            "includeHookEvents": true
+          },
+          "modules": {
+            "a": 2
+          },
+          "proxy": {
+            "a": 2
+          },
+          "z": 2
+        }
+      },
+      "changedPaths": [
+        "agent.model",
+        "extension.includeHookEvents",
+        "modules.a",
+        "proxy.a",
+        "z"
+      ],
+      "changeClasses": [
+        "next-request",
+        "runtime-live",
+        "restart-required",
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    }
+  ],
+  "classify": [
+    {
+      "name": "empty",
+      "paths": [],
+      "classes": [],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "agent-exact-default",
+      "paths": [
+        "agent"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "agent-dot",
+      "paths": [
+        "agent."
+      ],
+      "classes": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "model-exact-default",
+      "paths": [
+        "model"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "model-dot",
+      "paths": [
+        "model."
+      ],
+      "classes": [
+        "next-request"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "extension-exact-default",
+      "paths": [
+        "extension"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "extension-include-hook-child",
+      "paths": [
+        "extension.includeHookEvents.x"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-exact-default",
+      "paths": [
+        "router"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-judge-prefix",
+      "paths": [
+        "router.tokenSaver.judge"
+      ],
+      "classes": [
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-judge-longer-prefix",
+      "paths": [
+        "router.tokenSaver.judgement"
+      ],
+      "classes": [
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "router-zero-suffix-not-exact",
+      "paths": [
+        "router.zeroUsageRetry.maxAttempts.x"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "modules-exact",
+      "paths": [
+        "modules"
+      ],
+      "classes": [
+        "restart-required"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "modules-dot",
+      "paths": [
+        "modules."
+      ],
+      "classes": [
+        "restart-required"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "proxy-dot",
+      "paths": [
+        "proxy."
+      ],
+      "classes": [
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "run-policy-dot",
+      "paths": [
+        "runPolicy."
+      ],
+      "classes": [
+        "next-request"
+      ],
+      "runPolicyOnly": true
+    },
+    {
+      "name": "run-policy-prefix-only",
+      "paths": [
+        "runPolicyX"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "class-order-dedupe",
+      "paths": [
+        "modules.a",
+        "agent.x",
+        "modules.b",
+        "proxy"
+      ],
+      "classes": [
+        "restart-required",
+        "next-request",
+        "runtime-live"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "run-policy-list",
+      "paths": [
+        "runPolicy",
+        "runPolicy.a"
+      ],
+      "classes": [
+        "next-request"
+      ],
+      "runPolicyOnly": true
+    },
+    {
+      "name": "all-next-runtime",
+      "paths": [
+        "alwaysOn.x",
+        "cron.y",
+        "tools.z",
+        "webui.q"
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    },
+    {
+      "name": "default-empty-segment",
+      "paths": [
+        ""
+      ],
+      "classes": [
+        "next-runtime"
+      ],
+      "runPolicyOnly": false
+    }
+  ]
+}
