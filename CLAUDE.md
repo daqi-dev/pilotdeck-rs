@@ -89,7 +89,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 
 ### 合并闸门
 
-**仓库与合并方式（2026-10-18 人批）**：仓库在组织 `daqi-dev/pilotdeck-rs`（旧 `zhengdaqi/pilotdeck-rs` 永久重定向；**不得在 zhengdaqi 下再建同名仓库**，否则重定向断）。main 由 ruleset「main」保护：禁删除与强推；必需检查 `check`、`gateway-schema-baseline`（**不要求与 main 同步**）；**merge queue**（REBASE、ALLGREEN）。合并 = `gh pr merge <N>`（加入队列），队列在「最新 main + 前序 PR + 本 PR」的临时提交上重跑必需检查，全绿才合入；PR 自身 HEAD 不变，pr-gate 结果块的 `head=` 不因排队失效。**pr-gate 不设为必需检查**（它读 PR 描述，merge_group 上没有 PR 上下文），由协调者**入队前**核绿；入队后若 PR 有新推送，队列会把它移出，须重新核 pr-gate 再入队。落后 main 不用本地先 rebase，队列会处理。**队列是异步的**：`gh pr merge` 成功返回不代表已经合入（必需检查未齐时可能只是开了 auto-merge，齐了才入队）；以 `gh pr view <N> --json state` 为 `MERGED` 才算合入，之后再 `git fetch` 核邮箱（`git log origin/main --format='%h %ae %ce' -3`）和接后续工作。远端分支删除不借队列或自动删分支设置，仍按证据保护流程人工处理。旧 classic 保护快照见 `_tmp/20261018-org-transfer/classic-protection-before.json`。
+**仓库与合并方式（2026-10-18 人批）**：仓库在组织 `daqi-dev/pilotdeck-rs`（旧 `zhengdaqi/pilotdeck-rs` 永久重定向；**不得在 zhengdaqi 下再建同名仓库**，否则重定向断）。main 由 ruleset「main」保护：禁删除与强推；必需检查 `check`、`gateway-schema-baseline`（**不要求与 main 同步**）；**merge queue**（REBASE、ALLGREEN）。合并 = `scripts/enqueue.sh <N>`（加入队列并等到合入；**不用 `gh pr merge`**——本仓库未开 auto-merge，它会报错），队列在「最新 main + 前序 PR + 本 PR」的临时提交上重跑必需检查，全绿才合入；PR 自身 HEAD 不变，pr-gate 结果块的 `head=` 不因排队失效。**pr-gate 不设为必需检查**（它读 PR 描述，merge_group 上没有 PR 上下文），由协调者**入队前**核绿；入队后若 PR 有新推送，队列会把它移出，须重新核 pr-gate 再入队。落后 main 不用本地先 rebase，队列会处理。**队列是异步的**：入队成功不代表合入；以 `gh pr view <N> --json state` 为 `MERGED` 才算合入（enqueue.sh 会等到这一步并打印邮箱核验），之后再接后续工作。远端分支删除不借队列或自动删分支设置，仍按证据保护流程人工处理。旧 classic 保护快照见 `_tmp/20261018-org-transfer/classic-protection-before.json`。
 
 每条 PR 合并前依次过，**审的一律不是写的那家**：
 1. **规则层**：CI `check` 绿；worker 自证命令的原始输出贴进 PR 描述。
@@ -155,7 +155,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 | dev-launch §3/§4 高不确定性「停等拍板」、§3「值不值得」 | 按「决策分级」写卡：自决/待复核 → 继续；暂不执行 → READY 条目改 `human`，取下一条 | `scripts/next-task.sh` 跳过 human |
 | dev-launch §3 估算 >3 天「拒绝无人值守」 | 一 issue 拆多个小 PR，READY 里逐 PR 列条目（`<码>-pr1`…），不停 | 同上 |
 | dev-launch §6.6 / workflows README「无 P0/P1/P2 才收敛」 | 按本文件「问题分级 · P2 折中方案」 | 评审人 |
-| dev-launch §8「人工合并，绝不自动 merge」 | 第 14 条：协调者 `gh pr merge <N>` 加入 merge queue（不加 `--delete-branch`），合入后核邮箱 | 人的用法 |
+| dev-launch §8「人工合并，绝不自动 merge」 | 第 14 条：协调者 `scripts/enqueue.sh <N>` 加入 merge queue，合入后核邮箱（不删分支） | 人的用法 |
 | dev-launch §8 关 issue 顺序 | PR 描述写 `Closes #N`（合并即关）或 `Refs #N`（一单多 PR）；关单前仍先回复说明 | `.github/workflows/pr-gate.yml` |
 | dev-launch §7.0 / `.claude/dev-launch.review.md`「只剩一家时停下等人」 | READY 条目改 `blocked`（写缺哪家通道），取下一条；不降级为单评审 | `scripts/next-task.sh` |
 | dev-req Phase0「复述确认 / AskUserQuestion」 | 复述写进 triage 文件，按决策分级自决，不等确认；「深度思考 MCP」不可用时跳过 | 人的用法 |
