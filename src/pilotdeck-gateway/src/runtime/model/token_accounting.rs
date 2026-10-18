@@ -434,3 +434,56 @@ fn js_min(a: f64, b: f64) -> f64 {
         a.min(b)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UnreachableTransport;
+    impl super::super::ProviderCountTransport for UnreachableTransport {
+        fn post(&self, _: super::super::CountHttpRequest) -> HostFuture<JsValue> {
+            panic!("malformed provider body must fail before transport")
+        }
+    }
+
+    #[tokio::test]
+    async fn real_ts_responses_tool_result_content_errors() {
+        let fixture = crate::test_baseline::oracle(include_str!(
+            "../../../tests/fixtures/token-accounting/oracle.json"
+        ));
+        let JsValue::Array(cases) = fixture.get("providerErrors").unwrap() else {
+            panic!("providerErrors")
+        };
+        assert_eq!(cases.len(), 3);
+        for (case, suffix) in cases.iter().zip(["null", "missing", "number"]) {
+            assert_eq!(
+                case.get("name")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap(),
+                format!("openai-responses-tool-result-{suffix}")
+            );
+            assert_eq!(case.get("calls").and_then(JsValue::as_number), Some(0.0));
+            let runtime = TokenAccountingRuntime::new(
+                case.get("config").unwrap().as_object().unwrap().clone(),
+            )
+            .with_transport(Arc::new(UnreachableTransport));
+            // Exercise provider_count directly: the public evaluator's local
+            // estimator would throw earlier and hide a flatten_result defect.
+            let error = runtime
+                .provider_count(
+                    case.get("request").unwrap().as_object().unwrap().clone(),
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(
+                JsValue::String(error.module_error.unwrap().message),
+                case.get("result").unwrap().get("message").unwrap().clone(),
+                "tool result content {suffix}"
+            );
+        }
+    }
+}

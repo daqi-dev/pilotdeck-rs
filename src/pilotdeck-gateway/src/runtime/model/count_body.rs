@@ -189,14 +189,35 @@ fn thinking(request: &JsValue, model: &JsValue, anthropic: bool) -> Result<JsVal
     let fail = |message: String| -> HostError {
         ModuleError::new(format!("{}: {message}", text(field(model, "id")))).into()
     };
-    if let Some(effort) = &effort
-        && !array(field(settings, "efforts"))
-            .iter()
-            .any(|e| is(e, effort))
-    {
-        return Err(fail(format!(
-            "Reasoning effort '{effort}' is not configured. Select Default or configure the model's supported efforts."
-        )));
+    if let Some(effort) = &effort {
+        let supported = match field(settings, "efforts") {
+            JsValue::Array(efforts) => efforts.iter().any(|e| is(e, effort)),
+            JsValue::String(efforts) => {
+                let needle: Vec<_> = effort.encode_utf16().collect();
+                efforts.units().windows(needle.len()).any(|s| s == needle)
+            }
+            value @ (JsValue::Null | JsValue::Undefined) => {
+                let receiver = if matches!(value, JsValue::Null) {
+                    "null"
+                } else {
+                    "undefined"
+                };
+                return Err(ModuleError::new(format!(
+                    "Cannot read properties of {receiver} (reading 'includes')"
+                ))
+                .into());
+            }
+            _ => {
+                return Err(
+                    ModuleError::new("settings?.efforts.includes is not a function").into(),
+                );
+            }
+        };
+        if !supported {
+            return Err(fail(format!(
+                "Reasoning effort '{effort}' is not configured. Select Default or configure the model's supported efforts."
+            )));
+        }
     }
     if is(field(settings, "format"), "server-default") {
         if disabled || effort.is_some() {

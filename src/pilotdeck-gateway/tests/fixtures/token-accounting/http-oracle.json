@@ -13335,6 +13335,382 @@
         "reservedOutputTokens": 0,
         "estimatorError": "Provider token count failed with HTTP 503."
       }
+    },
+    {
+      "name": "header-number",
+      "responses": [
+        {}
+      ],
+      "provider": {
+        "headers": {
+          "authorization": "Bearer fixture",
+          "proxy-authorization": "Basic fixture",
+          "cookie": "fixture=1",
+          "host": "ignored.invalid",
+          "content-encoding": "identity",
+          "content-language": "zh",
+          "content-location": "/body",
+          "x-fixture": 5
+        }
+      },
+      "requests": [
+        {
+          "origin": "$MOCK",
+          "path": "/v1/messages/count_tokens",
+          "method": "POST",
+          "headers": {
+            "anthropic-version": "2023-06-01",
+            "authorization": "Bearer fixture",
+            "content-encoding": "identity",
+            "content-language": "zh",
+            "content-location": "/body",
+            "content-type": "application/json",
+            "cookie": "fixture=1",
+            "proxy-authorization": "Basic fixture",
+            "x-api-key": "fixture-key",
+            "x-fixture": "5"
+          },
+          "body": {
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshot": {
+        "tokens": 73,
+        "localEstimateTokens": 6,
+        "estimateSource": "usage",
+        "usageTokens": 73,
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.73,
+        "source": "provider",
+        "exact": true,
+        "reservedOutputTokens": 0
+      }
+    },
+    {
+      "name": "header-true",
+      "responses": [
+        {}
+      ],
+      "provider": {
+        "headers": {
+          "authorization": "Bearer fixture",
+          "proxy-authorization": "Basic fixture",
+          "cookie": "fixture=1",
+          "host": "ignored.invalid",
+          "content-encoding": "identity",
+          "content-language": "zh",
+          "content-location": "/body",
+          "x-fixture": true
+        }
+      },
+      "requests": [
+        {
+          "origin": "$MOCK",
+          "path": "/v1/messages/count_tokens",
+          "method": "POST",
+          "headers": {
+            "anthropic-version": "2023-06-01",
+            "authorization": "Bearer fixture",
+            "content-encoding": "identity",
+            "content-language": "zh",
+            "content-location": "/body",
+            "content-type": "application/json",
+            "cookie": "fixture=1",
+            "proxy-authorization": "Basic fixture",
+            "x-api-key": "fixture-key",
+            "x-fixture": "true"
+          },
+          "body": {
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshot": {
+        "tokens": 73,
+        "localEstimateTokens": 6,
+        "estimateSource": "usage",
+        "usageTokens": 73,
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.73,
+        "source": "provider",
+        "exact": true,
+        "reservedOutputTokens": 0
+      }
+    },
+    {
+      "name": "header-false",
+      "responses": [
+        {}
+      ],
+      "provider": {
+        "headers": {
+          "authorization": "Bearer fixture",
+          "proxy-authorization": "Basic fixture",
+          "cookie": "fixture=1",
+          "host": "ignored.invalid",
+          "content-encoding": "identity",
+          "content-language": "zh",
+          "content-location": "/body",
+          "x-fixture": false
+        }
+      },
+      "requests": [
+        {
+          "origin": "$MOCK",
+          "path": "/v1/messages/count_tokens",
+          "method": "POST",
+          "headers": {
+            "anthropic-version": "2023-06-01",
+            "authorization": "Bearer fixture",
+            "content-encoding": "identity",
+            "content-language": "zh",
+            "content-location": "/body",
+            "content-type": "application/json",
+            "cookie": "fixture=1",
+            "proxy-authorization": "Basic fixture",
+            "x-api-key": "fixture-key",
+            "x-fixture": "false"
+          },
+          "body": {
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshot": {
+        "tokens": 73,
+        "localEstimateTokens": 6,
+        "estimateSource": "usage",
+        "usageTokens": 73,
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.73,
+        "source": "provider",
+        "exact": true,
+        "reservedOutputTokens": 0
+      }
+    },
+    {
+      "name": "header-null",
+      "responses": [
+        {}
+      ],
+      "provider": {
+        "headers": {
+          "authorization": "Bearer fixture",
+          "proxy-authorization": "Basic fixture",
+          "cookie": "fixture=1",
+          "host": "ignored.invalid",
+          "content-encoding": "identity",
+          "content-language": "zh",
+          "content-location": "/body",
+          "x-fixture": null
+        }
+      },
+      "requests": [
+        {
+          "origin": "$MOCK",
+          "path": "/v1/messages/count_tokens",
+          "method": "POST",
+          "headers": {
+            "anthropic-version": "2023-06-01",
+            "authorization": "Bearer fixture",
+            "content-encoding": "identity",
+            "content-language": "zh",
+            "content-location": "/body",
+            "content-type": "application/json",
+            "cookie": "fixture=1",
+            "proxy-authorization": "Basic fixture",
+            "x-api-key": "fixture-key",
+            "x-fixture": "null"
+          },
+          "body": {
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshot": {
+        "tokens": 73,
+        "localEstimateTokens": 6,
+        "estimateSource": "usage",
+        "usageTokens": 73,
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.73,
+        "source": "provider",
+        "exact": true,
+        "reservedOutputTokens": 0
+      }
+    },
+    {
+      "name": "initial-url-invalid",
+      "responses": [],
+      "provider": {
+        "url": "invalid"
+      },
+      "requests": [],
+      "snapshot": {
+        "tokens": 6,
+        "localEstimateTokens": 6,
+        "estimateSource": "estimator",
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.06,
+        "source": "local",
+        "exact": false,
+        "reservedOutputTokens": 0,
+        "estimatorError": "Failed to parse URL from invalid/v1/messages/count_tokens"
+      }
+    },
+    {
+      "name": "initial-url-credentials",
+      "responses": [],
+      "provider": {
+        "url": "http://fixture:fixture@127.0.0.1:1"
+      },
+      "requests": [],
+      "snapshot": {
+        "tokens": 6,
+        "localEstimateTokens": 6,
+        "estimateSource": "estimator",
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.06,
+        "source": "local",
+        "exact": false,
+        "reservedOutputTokens": 0,
+        "estimatorError": "Request cannot be constructed from a URL that includes credentials: http://fixture:fixture@127.0.0.1:1/v1/messages/count_tokens"
+      }
     }
   ]
 }

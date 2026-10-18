@@ -25,7 +25,7 @@ const config = { providers: { p: { id: 'p', protocol: 'anthropic', url: '$MOCK',
 const selectedHeaders = ['authorization', 'proxy-authorization', 'cookie', 'content-type', 'content-encoding',
   'content-language', 'content-location', 'x-api-key', 'anthropic-version', 'x-fixture'];
 type Reply = { status?: number; location?: string; locations?: string[]; text?: string; bytes?: number[] };
-const specs: { name: string; responses: Reply[] }[] = [];
+const specs: { name: string; responses: Reply[]; provider?: Record<string, any> }[] = [];
 const add = (name: string, responses: Reply[]) => specs.push({ name, responses });
 for (const status of [301, 302, 303, 307, 308]) {
   for (const [name, location] of Object.entries({ relative: '../final?x=1#fragment', root: '/final',
@@ -64,6 +64,12 @@ add('json-valid-surrogate', [{ text: '{"ignored":"\\ud800","input_tokens":78}' }
 add('json-mime-independent', [{ text: '{"input_tokens":75}' }]);
 add('json-empty-204', [{ status: 204 }]);
 add('json-http-error-precedes-parse', [{ status: 503, text: '<html>error</html>' }]);
+for (const [name, value] of [['number', 5], ['true', true], ['false', false], ['null', null]] as const) {
+  specs.push({ name: `header-${name}`, responses: [{}], provider: { headers: { ...headers, 'x-fixture': value } } });
+}
+for (const [name, url] of [['invalid', 'invalid'], ['credentials', 'http://fixture:fixture@127.0.0.1:1']] as const) {
+  specs.push({ name: `initial-url-${name}`, responses: [], provider: { url } });
+}
 let origins = ['http://127.0.0.1:41001', 'http://127.0.0.1:41002'];
 const materialize = (text: string) => text.replaceAll('$MOCK_AUTHORITY', new URL(origins[0]).host)
   .replaceAll('$OTHER_AUTHORITY', new URL(origins[1]).host).replaceAll('$MOCK', origins[0]).replaceAll('$OTHER', origins[1]);
@@ -114,13 +120,20 @@ try {
   const cases = [];
   for (const spec of specs) {
     active = spec.responses; requests = [];
-    const runtime = new TokenAccountingRuntime({ modelConfig: JSON.parse(materialize(JSON.stringify(config))), cacheSize: 0,
+    const modelConfig = JSON.parse(materialize(JSON.stringify(config)));
+    Object.assign(modelConfig.providers.p, spec.provider);
+    const runtime = new TokenAccountingRuntime({ modelConfig, cacheSize: 0,
       fetch: (url: any, init: any) => {
-        assert.ok(origins.includes(new URL(String(url)).origin), 'no external providers');
+        if (spec.provider?.url !== undefined) {
+          assert.ok(['invalid/v1/messages/count_tokens', 'http://fixture:fixture@127.0.0.1:1/v1/messages/count_tokens'].includes(String(url)), 'only known invalid initial URLs');
+        } else assert.ok(origins.includes(new URL(String(url)).origin), 'no external providers');
         return fetch(url, capture ? { ...init, dispatcher } : init);
       } });
     const snapshot = await runtime.evaluateRequestBudget(request, options);
-    assert.ok(requests.length > 0, `${spec.name}: fixture never reached the mock`);
+    if (spec.provider?.url !== undefined) {
+      assert.equal(snapshot.source, 'local');
+      assert.ok(snapshot.estimatorError, `${spec.name}: fetch must reject before transport`);
+    } else assert.ok(requests.length > 0, `${spec.name}: fixture never reached the mock`);
     assert.equal(requests.length, spec.name.endsWith('-loop') || spec.name === 'redirect-limit-21' ? 21 : spec.responses.length, `${spec.name}: complete hop trace`);
     if (spec.name.startsWith('redirect-') && spec.responses.length > 1 && spec.name !== 'redirect-limit-21' && spec.name !== 'redirect-final-http-error') {
       assert.equal(snapshot.source, 'provider', `${spec.name}: redirect must reach valid JSON`);
@@ -128,8 +141,8 @@ try {
     }
     cases.push({ ...spec, requests, snapshot });
   }
-  assert.equal(cases.length, 143);
-  assert.equal(cases.reduce((n, c) => n + c.requests.length, 0), 320);
+  assert.equal(cases.length, 149);
+  assert.equal(cases.reduce((n, c) => n + c.requests.length, 0), 324);
   assertBaseline(baseline);
   assert.deepEqual(await baselineSourceHashes(baseline, sources), sourceSha256);
   await writeFile(join(output, 'http-oracle.json'), JSON.stringify({ sourceCommit, sourceSha256,
