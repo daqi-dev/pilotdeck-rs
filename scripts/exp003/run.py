@@ -184,8 +184,9 @@ def main():
     parser.add_argument('--baseline', type=Path, help='baseline checkout (default: PDRS_BASELINE or this checkout resources/PilotDeck)')
     args = parser.parse_args()
     baseline = Path(args.baseline or os.environ.get('PDRS_BASELINE') or ROOT / 'resources/PilotDeck').resolve()
-    # 按实际启动的产物准入：gateway 用 dist CLI，ui/server 经 tsx loader 加载（:207、:222）
-    missing = [name for name in ('dist/src/cli/pilotdeck.js', 'node_modules/tsx/dist/loader.mjs', 'ui/server/index.js')
+    # Gateway and driver use dist; ui/server uses the tsx loader.
+    missing = [name for name in ('dist/src/cli/pilotdeck.js', 'dist/src/gateway/client/GatewayWsClient.js',
+                                'node_modules/tsx/dist/loader.mjs', 'ui/server/index.js')
                if not (baseline / name).is_file()]
     if missing:
         parser.error(f'baseline at {baseline} lacks {missing}; pass --baseline or set PDRS_BASELINE')
