@@ -1,5 +1,6 @@
 use pilotdeck_gateway::hooks::{config::*, protocol::*};
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
+use sha2::{Digest, Sha256};
 
 fn array(value: &JsValue) -> &[JsValue] {
     let JsValue::Array(items) = value else {
@@ -13,6 +14,7 @@ fn text(value: &JsValue) -> String {
 fn decode(value: &JsValue) -> JsValue {
     let parts = array(value);
     match text(&parts[0]).as_str() {
+        "json" => parse_json(&text(&parts[1])).unwrap(),
         "undefined" => JsValue::Undefined,
         "null" => JsValue::Null,
         "boolean" | "string" => parts[1].clone(),
@@ -44,6 +46,42 @@ fn decode(value: &JsValue) -> JsValue {
 fn oracle() -> JsValue {
     parse_json(include_str!("fixtures/hooks-config/oracle.json")).unwrap()
 }
+#[test]
+fn oracle_is_bound_to_the_fixed_ts_sources() {
+    let fixtures = oracle();
+    assert_eq!(
+        text(fixtures.get("sourceCommit").unwrap()),
+        "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"
+    );
+    assert_eq!(text(fixtures.get("nodeVersion").unwrap()), "v22.22.0");
+    assert_eq!(text(fixtures.get("unicodeVersion").unwrap()), "17.0");
+    let sources = fixtures.get("sourceSha256").unwrap().as_object().unwrap();
+    let paths = [
+        "config/parseHooksConfig.ts",
+        "config/matchHook.ts",
+        "config/matchHookCondition.ts",
+        "protocol/events.ts",
+        "protocol/input.ts",
+        "protocol/output.ts",
+        "protocol/settings.ts",
+    ];
+    assert_eq!(sources.entries().len(), paths.len());
+    let baseline = std::env::var_os("PDRS_BASELINE").map(std::path::PathBuf::from);
+    for path in paths {
+        let path = format!("src/extension/hooks/{path}");
+        let expected = text(sources.get(&path).expect("missing source digest"));
+        assert_eq!(expected.len(), 64, "{path}");
+        if let Some(baseline) = &baseline {
+            let bytes =
+                std::fs::read(baseline.join(&path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(
+                format!("{:x}", Sha256::digest(bytes)),
+                expected,
+                "TS source changed: {path}"
+            );
+        }
+    }
+}
 fn assert_json(actual: &JsValue, case: &JsValue, field: &str) {
     assert_eq!(
         stringify_json(actual).unwrap().unwrap(),
@@ -56,7 +94,7 @@ fn assert_json(actual: &JsValue, case: &JsValue, field: &str) {
 fn parses_every_ts_diagnostic_and_retains_valid_hooks() {
     let fixtures = oracle();
     let cases = array(fixtures.get("parses").unwrap());
-    assert!(cases.len() >= 30);
+    assert_eq!(cases.len(), 104);
     for case in cases {
         let input = decode(case.get("input").unwrap());
         assert_json(&parse_hooks_config(&input).to_value(), case, "expected");
@@ -66,7 +104,9 @@ fn parses_every_ts_diagnostic_and_retains_valid_hooks() {
 fn matcher_matrix_matches_real_ts_including_legacy_regexp() {
     let fixtures = oracle();
     let mut failures = Vec::new();
-    for case in array(fixtures.get("matchers").unwrap()) {
+    let cases = array(fixtures.get("matchers").unwrap());
+    assert_eq!(cases.len(), 9800);
+    for case in cases {
         let matcher = decode(case.get("matcher").unwrap());
         let query = decode(case.get("query").unwrap());
         let result = match_hook_matcher(matcher.as_string(), query.as_string());
@@ -87,7 +127,9 @@ fn matcher_matrix_matches_real_ts_including_legacy_regexp() {
 #[test]
 fn conditions_match_real_ts_json_and_tool_name_rules() {
     let fixtures = oracle();
-    for case in array(fixtures.get("conditions").unwrap()) {
+    let cases = array(fixtures.get("conditions").unwrap());
+    assert_eq!(cases.len(), 194);
+    for case in cases {
         let condition = decode(case.get("condition").unwrap());
         let input = decode(case.get("input").unwrap());
         let result = match_hook_condition(
@@ -97,18 +139,71 @@ fn conditions_match_real_ts_json_and_tool_name_rules() {
                 tool_input: input.get("toolInput"),
             },
         );
+        let name = text(case.get("name").unwrap());
+        if let Some(expected) = case.get("error") {
+            let error = result.expect_err(&name);
+            assert_eq!(error.name(), text(expected.get("name").unwrap()), "{name}");
+            assert_eq!(
+                error.message(),
+                text(expected.get("message").unwrap()),
+                "{name}"
+            );
+            assert_eq!(
+                error.to_string(),
+                format!("{}: {}", error.name(), error.message())
+            );
+        } else {
+            assert_eq!(
+                result.unwrap(),
+                case.get("expected").unwrap().as_bool().unwrap(),
+                "{name}"
+            );
+        }
+    }
+}
+
+// These assertions pin the approved conservative policy inside the accepted
+// uncertainty band. They are deliberately separate from the real TS oracle.
+#[test]
+fn conservative_resource_budgets_are_inclusive() {
+    let query = "b".into();
+    assert!(match_hook_matcher(
+        Some(&"/^(?:a?){2000000}b$/".into()),
+        Some(&query)
+    ));
+    assert!(!match_hook_matcher(
+        Some(&"/^(?:a?){2000001}b$/".into()),
+        Some(&query)
+    ));
+    assert!(!match_hook_matcher(
+        Some(&"/^(?!(a?){1000001}c)b$/".into()),
+        Some(&query)
+    ));
+    for depth in [4000, 4001] {
+        let input = parse_json(&format!("{}0{}", "[".repeat(depth), "]".repeat(depth))).unwrap();
+        let result = match_hook_condition(
+            Some(&"Read(0)".into()),
+            HookConditionInput {
+                tool_name: None,
+                tool_input: Some(&input),
+            },
+        );
         assert_eq!(
             result,
-            case.get("expected").unwrap().as_bool().unwrap(),
-            "{}",
-            text(case.get("name").unwrap())
+            if depth == 4000 {
+                Ok(true)
+            } else {
+                Err(HookConditionError::StackOverflow)
+            }
         );
     }
 }
 #[test]
 fn input_creation_and_legacy_projection_match_real_ts() {
     let fixtures = oracle();
-    for case in array(fixtures.get("inputs").unwrap()) {
+    let cases = array(fixtures.get("inputs").unwrap());
+    assert_eq!(cases.len(), 8);
+    for case in cases {
         let event = decode(case.get("event").unwrap());
         let base = decode(case.get("base").unwrap());
         let payload = decode(case.get("payload").unwrap());
@@ -125,7 +220,9 @@ fn input_creation_and_legacy_projection_match_real_ts() {
 #[test]
 fn supported_and_legacy_events_match_real_ts() {
     let fixtures = oracle();
-    for case in array(fixtures.get("events").unwrap()) {
+    let cases = array(fixtures.get("events").unwrap());
+    assert_eq!(cases.len(), 32);
+    for case in cases {
         let value = decode(case.get("value").unwrap());
         assert_eq!(
             is_hook_event(value.as_string().unwrap()),
