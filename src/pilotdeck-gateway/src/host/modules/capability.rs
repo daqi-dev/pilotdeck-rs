@@ -108,17 +108,17 @@ impl Handler {
                 };
             }
             if operation.equals_str("list_tools") {
-                let mut tools = Vec::new();
-                if let Some(ports) = &handler.ports {
-                    ports.execution.refresh().await?;
-                    tools = ports
-                        .execution
-                        .list()
-                        .await?
-                        .iter()
-                        .map(|tool| JsValue::Object(serialize_tool_descriptor(tool.as_ref())))
-                        .collect();
-                }
+                let ports = handler.ports.as_ref().ok_or_else(|| {
+                    ModuleError::new("Host did not provide a tool execution port.")
+                })?;
+                ports.execution.refresh().await?;
+                let tools = ports
+                    .execution
+                    .list()
+                    .await?
+                    .iter()
+                    .map(|tool| JsValue::Object(serialize_tool_descriptor(tool.as_ref())))
+                    .collect();
                 let mut response = JsObject::new();
                 response.insert("tools".into(), JsValue::Array(tools));
                 return Ok(response);
@@ -146,12 +146,15 @@ impl Handler {
             } else {
                 None
             };
-            let (Some(calls), Some(ports), Some(context)) = (calls, handler.ports, context) else {
+            let Some(calls) = calls else {
                 return Err(wire::named_error(
                     "Unsupported sidecar capability operation: ",
                     operation,
                     "",
                 ));
+            };
+            let (Some(ports), Some(context)) = (handler.ports, context) else {
+                return Err(ModuleError::new("Host did not provide a tool execution port.").into());
             };
             let count = calls.len();
             let results = ports.execution.execute_all(calls, context).await?;

@@ -388,7 +388,7 @@ impl PermissionDecision for Fake {
 async fn real_ts_capability_permission_responses_and_port_calls() {
     let oracle = parse_json(include_str!("fixtures/host-capability/oracle.json")).unwrap();
     let cases = array(oracle.get("cases").unwrap());
-    assert_eq!(cases.len(), 120);
+    assert_eq!(cases.len(), 128);
     for case in cases {
         let fake = Fake::new(field(case, "config"));
         let router = fake.router();
@@ -424,6 +424,61 @@ async fn real_ts_capability_permission_responses_and_port_calls() {
             case.get("name")
         );
         router.dispose().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn missing_tool_execution_port_fails_closed_after_payload_validation() {
+    let router = ModuleRouter::default();
+    for (payload, message) in [
+        (
+            r#"{"operation":"list_tools"}"#,
+            "Host did not provide a tool execution port.",
+        ),
+        (
+            r#"{"operation":"execute","toolCallId":"id","name":"read"}"#,
+            "Host did not provide a tool execution port.",
+        ),
+        (
+            r#"{"operation":"execute_batch","calls":[]}"#,
+            "Host did not provide a tool execution port.",
+        ),
+        (
+            r#"{"operation":"execute_batch","calls":[{"toolCallId":"id","name":"read"}]}"#,
+            "Host did not provide a tool execution port.",
+        ),
+        (
+            r#"{"operation":"execute"}"#,
+            "Sidecar payload field toolCallId must be a non-empty string.",
+        ),
+        (
+            r#"{"operation":"execute_batch"}"#,
+            "Capability batch call must contain calls.",
+        ),
+        (
+            r#"{"operation":"unknown"}"#,
+            "Unsupported sidecar capability operation: unknown",
+        ),
+        (
+            r#"{"operation":"plan_todo"}"#,
+            "Host did not provide a plan/todo capability.",
+        ),
+        (
+            "null",
+            "Sidecar payload field operation must be a non-empty string.",
+        ),
+    ] {
+        let error = router
+            .module_call(val([
+                ("module", "capability".into()),
+                ("payload", parse_json(payload).unwrap()),
+            ]))
+            .await
+            .unwrap_err();
+        assert!(
+            error.module_error.unwrap().message.equals_str(message),
+            "payload: {payload}"
+        );
     }
 }
 
