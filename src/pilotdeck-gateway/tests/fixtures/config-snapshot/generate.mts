@@ -271,6 +271,76 @@ add('modules-knowledge-credential', BASE + `modules: {knowledge: {enabled: true,
 add('modules-skills-enabled', BASE + `modules: {skills: {enabled: true, provider: pilotdeck}, knowledge: {enabled: false}}\n`);
 add('sop-discovery-env', BASE + `modules: {sop: {enabled: true, implementationId: s, contract: sop.lifecycle/v2, transport: sop-http-v2, endpoint: https://s, definitionsPath: /abs/defs.json, defaultSopId: x, discoveryEndpoint: https://d, discoveryAgentId: a, discoveryApiKey: "\${SOP_KEY}", discoveryPath: p, discoveryTimeoutMs: 3}}\n`, { env: { SOP_KEY: ' resolved-secret ', STAFFDECK_PROJECT_BINDING_ENABLED: 'true' } });
 add('proxy-empty-string', BASE + `proxy: ""\n`);
+// Review round 1 (codex P1 #1-#7, Claude P1-1/P1-2) counterexamples. Every
+// expectation below is produced by the fixed baseline itself.
+const BASE_M = `schemaVersion: 1
+agent: {model: parity/m}
+model:
+  providers:
+    parity:
+      protocol: openai
+      url: http://127.0.0.1:28794/v1
+      apiKey: mock-only
+      models:
+        m: {}
+        other: {}
+`;
+add('router-scenarios-default-aligned', BASE_M + `router: {scenarios: {default: parity/m}}\n`);
+add('router-scenarios-default-conflict', BASE_M + `router: {scenarios: {default: parity/other}}\n`);
+for (const key of ['${A-B}', '${1KEY}', '${ A }']) {
+  add(`model-apikey-env-lookalike-${key.replace(/[^A-Za-z0-9]+/g, '-')}`,
+    BASE.replace('apiKey: mock-only', `apiKey: '${key}'`));
+}
+add('sop-discovery-apikey-literal', BASE + `modules: {sop: {enabled: true, implementationId: s, contract: sop.lifecycle/v2, transport: sop-http-v2, endpoint: https://s, definitionsPath: /abs/defs.json, defaultSopId: x, discoveryEndpoint: https://d, discoveryAgentId: a, discoveryApiKey: '\${A-B}', discoveryPath: p, discoveryTimeoutMs: 3}}\n`);
+add('gateway-sweep-15', BASE + `gateway: {idleSweepIntervalSeconds: 15}\n`);
+add('gateway-sweep-zero', BASE + `gateway: {idleSweepIntervalSeconds: 0}\n`);
+add('gateway-sweep-fractional', BASE + `gateway: {idleSweepIntervalSeconds: 0.25}\n`);
+add('gateway-sweep-invalid', BASE + `gateway: {idleSweepIntervalSeconds: '15'}\n`);
+add('router-token-saver-int-order', BASE + `router: {tokenSaver: {judge: parity/deterministic, tiers: {2: {model: parity/deterministic}, 1: {model: parity/deterministic}}}}\n`);
+add('router-token-saver-int-order-mixed', BASE + `router: {tokenSaver: {judge: parity/deterministic, tiers: {10: {model: parity/deterministic}, 2: {model: parity/deterministic}, z: {model: parity/deterministic}, 1: {model: parity/deterministic}}}}\n`);
+const nestedMap = (depth: number) => '{x:'.repeat(depth) + '42' + '}'.repeat(depth);
+const BASE_NO_SCHEMA = BASE.slice('schemaVersion: 1\n'.length);
+add('depth-object-300', BASE + `adapters:\n  telegram:\n    extra: ${nestedMap(300)}\n`);
+add('depth-object-500', BASE + `adapters:\n  telegram:\n    extra: ${nestedMap(500)}\n`);
+add('depth-array-schema-300', `schemaVersion: ${'['.repeat(300)}1${']'.repeat(300)}\n` + BASE_NO_SCHEMA);
+add('depth-over-v8-limit', BASE + `adapters:\n  telegram:\n    extra: ${nestedMap(1200)}\n`);
+add('extension-proto-own-key', BASE + `extension: {builtinPluginsEnabled: {__proto__: true, a: false}}\n`);
+add('adapters-extra-proto', BASE + `adapters: {telegram: {enabled: true, extra: {__proto__: {x: 1}, y: 2}}}\n`);
+add('adapters-extra-int-order', BASE + `adapters: {telegram: {enabled: true, extra: {10: a, 2: b}}}\n`);
+add('always-on-project-surrogate', BASE + `alwaysOn: {projects: {"\\uD800": {enabled: true}}}\n`);
+add('modules-manifest-surrogate', BASE + `modules: {tools: {enabled: true, implementationId: x, contract: pilotdeck.tools/v1, transport: module-http-v2, endpoint: http://x, manifestPath: "/x\\uD800y", catalog: [{name: t, description: d, inputSchema: {}}]}}\n`);
+add('modules-args-surrogate', BASE + `modules: {agentLoop: {enabled: true, implementationId: a, contract: pilotdeck.agent-loop/v1, transport: module-stdio-v2, command: node, args: ["\\uD800"]}}\n`);
+add('version-non-default', BASE, { version: 7 });
+add('model-int-order', `schemaVersion: 1
+agent: {model: parity/2}
+model:
+  providers:
+    parity:
+      protocol: openai
+      url: http://127.0.0.1:28794/v1
+      apiKey: mock-only
+      models:
+        10: {}
+        2: {}
+`);
+add('no-pilot-home-bootstrap', BASE, { noPilotHome: true });
+add('config-path-via-env', BASE, { configPathViaEnv: true });
+add('project-proto-inherited', BASE, {
+  projectYaml: `schemaVersion: 1
+__proto__: {telemetry: {enabled: true}}
+`,
+  project: 'project',
+});
+add('project-nested-proto-inherited', BASE.replace('agent: {model: parity/deterministic}', `agent:
+  model: parity/deterministic
+  subagents: {default: parity/deterministic}`), {
+  projectYaml: `schemaVersion: 1
+agent:
+  __proto__: {thinking: {enabled: true, budgetTokens: 7}}
+`,
+  project: 'project',
+});
+
 // Replay successful cases from the pre-existing config fixture corpus as well.
 // The corpus is diagnostic-oriented, so only loadable cases can produce a
 // snapshot; this samples it deterministically instead of duplicating thousands
@@ -336,7 +406,7 @@ function normalize(value: unknown, root: string): unknown {
   if (typeof value === 'string') return value.split(root).join('<ROOT>').split(process.cwd()).join('<CWD>');
   if (Array.isArray(value)) return value.map((v) => normalize(v, root));
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, normalize(v, root)]));
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [normalize(k, root), normalize(v, root)]));
   }
   return value;
 }
@@ -371,23 +441,42 @@ try {
     }
     const env: Record<string, string> = {
       HOME: home,
-      PILOT_HOME: home,
       PILOTDECK_SKIP_BROWSER_OPEN: '1',
       ...(item.env ?? {}),
     };
-    env.PILOT_HOME = home;
+    if (!item.noPilotHome) env.PILOT_HOME = home;
     env.HOME = home;
+    if (item.configPathViaEnv) env.PILOTDECK_CONFIG_PATH = join(home, 'pilotdeck.yaml');
     let snapshot;
     try {
       snapshot = loadPilotConfig({
         env,
-        configPath: join(home, 'pilotdeck.yaml'),
+        ...(item.configPathViaEnv ? {} : { configPath: join(home, 'pilotdeck.yaml') }),
         ...(projectRoot ? { projectRoot } : {}),
         version: item.version ?? 1,
       });
     } catch (error) {
-      const e = error as { name?: string; code?: string; message?: string };
-      recorded.push({ id: item.id, error: { name: e.name, code: e.code, message: e.message } });
+      const e = error as { name?: string; code?: string; message?: string; diagnostics?: any[] };
+      recorded.push({
+        id: item.id,
+        yaml: item.yaml,
+        ...(item.projectYaml ? { projectYaml: item.projectYaml } : {}),
+        ...(item.project ? { project: item.project } : {}),
+        ...(item.version !== undefined ? { version: item.version } : {}),
+        ...(item.noPilotHome ? { noPilotHome: true } : {}),
+        ...(item.configPathViaEnv ? { configPathViaEnv: true } : {}),
+        env: normalize({
+          ...(item.env ?? {}),
+          ...(item.configPathViaEnv ? { PILOTDECK_CONFIG_PATH: join(home, 'pilotdeck.yaml') } : {}),
+        }, root),
+        error: {
+          name: e.name,
+          code: e.code,
+          message: e.message,
+          diagnosticCode: e.diagnostics?.[0]?.code,
+          hint: e.diagnostics?.[0]?.hint,
+        },
+      });
       continue;
     }
     const normalized = encode(normalizedSnapshot(snapshot, root));
@@ -397,7 +486,12 @@ try {
       ...(item.projectYaml ? { projectYaml: item.projectYaml } : {}),
       ...(item.project ? { project: item.project } : {}),
       ...(item.version !== undefined ? { version: item.version } : {}),
-      env: normalize(item.env ?? {}, root),
+      ...(item.noPilotHome ? { noPilotHome: true } : {}),
+      ...(item.configPathViaEnv ? { configPathViaEnv: true } : {}),
+      env: normalize({
+        ...(item.env ?? {}),
+        ...(item.configPathViaEnv ? { PILOTDECK_CONFIG_PATH: join(home, 'pilotdeck.yaml') } : {}),
+      }, root),
       snapshot: normalized,
     };
     recorded.push(normalizedCase);
