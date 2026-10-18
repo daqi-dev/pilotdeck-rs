@@ -154,10 +154,12 @@ const bundleCases: any[] = [];
   steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
   steps.push({ op: 'stage-again', ...stageResult(() => bundle.stage()) });
   const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
   events.push('after-dispose-call');
-  await disposal;
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
   events.push('after-await');
-  steps.push({ op: 'dispose', beforeAwaitEvents: ['factory', 'after-dispose-call'], afterAwaitEvents: events.slice() });
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'factory-throws', factory: 'throws', factoryCalls: 1, options: bundleOptions({ enabled: true, provider: 'edgeclaw' }), steps, events });
 }
 
@@ -178,8 +180,9 @@ const bundleCases: any[] = [];
   events.push('after-dispose-call');
   const steps: any[] = [{ op: 'dispose-call' }];
   steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
+  const disposalAgain = bundle.dispose();
   const beforeAwaitEvents = events.slice();
-  await disposal;
+  await Promise.all([disposal, disposalAgain]);
   events.push('after-await');
   steps.push({ op: 'dispose-await', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'dispose-before-stage', factory: 'undefined', options: bundleOptions(null), factoryCalls, steps, events });
@@ -199,10 +202,12 @@ const bundleCases: any[] = [];
   const steps: any[] = [];
   steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
   const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
   events.push('after-dispose-call');
-  await disposal;
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
   events.push('after-await');
-  steps.push({ op: 'dispose', beforeAwaitEvents: ['factory', 'after-dispose-call'], afterAwaitEvents: events.slice() });
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'factory-undefined', factory: 'undefined', factoryCalls: 1, options: bundleOptions({ enabled: false, provider: 'edgeclaw' }), steps, events });
 }
 
@@ -217,10 +222,12 @@ const bundleCases: any[] = [];
   const steps: any[] = [];
   steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
   const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
   events.push('after-dispose-call');
-  await disposal;
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
   events.push('after-await');
-  steps.push({ op: 'dispose', beforeAwaitEvents: ['after-dispose-call'], afterAwaitEvents: events.slice() });
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'native-unconfigured', factory: 'none', factoryCalls: 0, options: bundleOptions(null), steps, events });
 }
 
@@ -251,10 +258,12 @@ const bundleCases: any[] = [];
   const steps: any[] = [];
   steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
   const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
   events.push('after-dispose-call');
-  await disposal;
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
   events.push('after-await');
-  steps.push({ op: 'dispose', beforeAwaitEvents: ['create', 'after-dispose-call'], afterAwaitEvents: events.slice() });
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'native-create-provider', factory: 'native', factoryCalls: 1, options: bundleOptions({ enabled: true, provider: 'edgeclaw' }, 'test/model'), nativeOptions: captured, steps, events });
 }
 
@@ -279,10 +288,12 @@ const bundleCases: any[] = [];
   const steps: any[] = [];
   steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
   const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
   events.push('after-dispose-call');
-  await disposal;
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
   events.push('after-await');
-  steps.push({ op: 'dispose', beforeAwaitEvents: ['factory', 'after-dispose-call'], afterAwaitEvents: events.slice() });
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'provider-factory-preferred', factory: 'preferred', factoryCalls: 1, options: bundleOptions({ enabled: true, provider: 'edgeclaw' }), factoryOptions: captured, steps, events });
 }
 
@@ -302,11 +313,68 @@ const bundleCases: any[] = [];
   const steps: any[] = [];
   steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
   const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
   events.push('after-dispose-call');
-  await disposal;
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
   events.push('after-await');
-  steps.push({ op: 'dispose', beforeAwaitEvents: ['factory', 'after-dispose-call'], afterAwaitEvents: events.slice() });
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
   bundleCases.push({ name: 'memory-only-provider', factory: 'memory-only', factoryCalls: 1, options: bundleOptions({ enabled: true, provider: 'edgeclaw' }), steps, events });
+}
+
+// 9. A rejecting disposer rejects every caller's promise after the disposer
+//    runs exactly once; the bundle stays completed for later calls.
+{
+  const events: string[] = [];
+  const bundle = new ProjectMemoryBundle({
+    config: { enabled: true, provider: 'edgeclaw', captureStrategy: 'last_turn', includeAssistant: false },
+    projectRoot: PROJECT,
+    providerFactory: () => {
+      events.push('factory');
+      return {
+        memory: {},
+        dispose: async () => {
+          events.push('dispose');
+          throw new Error('dispose boom');
+        },
+      };
+    },
+  });
+  const steps: any[] = [];
+  steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
+  const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
+  events.push('after-dispose-call');
+  const beforeAwaitEvents = events.slice();
+  let disposeError;
+  try {
+    await Promise.all([disposal, disposalAgain]);
+  } catch (error) {
+    disposeError = errorJson(error);
+  }
+  events.push('after-await');
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice(), disposeError });
+  bundleCases.push({ name: 'dispose-rejects', factory: 'dispose-throws', factoryCalls: 1, options: bundleOptions({ enabled: true, provider: 'edgeclaw' }), steps, events });
+}
+
+// 10. A disabled config with no factory: the real native factory early-returns
+//     undefined without constructing EdgeClaw (no sqlite service is created).
+{
+  const events: string[] = [];
+  const bundle = new ProjectMemoryBundle({
+    config: { enabled: false, provider: 'edgeclaw', captureStrategy: 'last_turn', includeAssistant: false },
+    projectRoot: PROJECT,
+  });
+  const steps: any[] = [];
+  steps.push({ op: 'stage', ...stageResult(() => bundle.stage()) });
+  const disposal = bundle.dispose();
+  const disposalAgain = bundle.dispose();
+  events.push('after-dispose-call');
+  const beforeAwaitEvents = events.slice();
+  await Promise.all([disposal, disposalAgain]);
+  events.push('after-await');
+  steps.push({ op: 'dispose', beforeAwaitEvents, afterAwaitEvents: events.slice() });
+  bundleCases.push({ name: 'native-disabled', factory: 'none', factoryCalls: 0, options: bundleOptions({ enabled: false, provider: 'edgeclaw' }), steps, events });
 }
 
 // The management methods are plain JS once extracted; execute the exact source
@@ -334,7 +402,13 @@ function cloneItems() {
 const projectionCases: any[] = [];
 async function projectionCase(
   name: string,
-  options: { management: 'available' | 'unavailable'; items?: any[]; fail?: { op: string; message: string } },
+  options: {
+    management: 'available' | 'unavailable';
+    items?: any[];
+    fail?: { op: string; message: string };
+    resolveProjectKeyFails?: string;
+    registryResolveFails?: string;
+  },
   inputs: Array<{ op: 'list' | 'wipe'; input: any }>,
 ) {
   const items = options.items ?? cloneItems();
@@ -358,6 +432,7 @@ async function projectionCase(
     projects: {
       resolveProjectKey: async (key: string) => {
         sharedCalls.push({ op: 'resolveProjectKey', key });
+        if (options.resolveProjectKeyFails) throw new Error(options.resolveProjectKeyFails);
         return `resolved:${key}`;
       },
     },
@@ -365,6 +440,7 @@ async function projectionCase(
   const registry = {
     resolve: (key: string) => {
       sharedCalls.push({ op: 'resolve', key });
+      if (options.registryResolveFails) throw new Error(options.registryResolveFails);
       return { memoryManagement: management };
     },
   };
@@ -394,7 +470,15 @@ async function projectionCase(
     step.calls = sharedCalls.slice(before);
     steps.push(step);
   }
-  projectionCases.push({ name, management: options.management, items, ...(options.fail ? { fail: options.fail } : {}), steps });
+  projectionCases.push({
+    name,
+    management: options.management,
+    items,
+    ...(options.fail ? { fail: options.fail } : {}),
+    ...(options.resolveProjectKeyFails ? { resolveProjectKeyFails: options.resolveProjectKeyFails } : {}),
+    ...(options.registryResolveFails ? { registryResolveFails: options.registryResolveFails } : {}),
+    steps,
+  });
 }
 
 await projectionCase('list-filter', { management: 'available' }, [
@@ -426,6 +510,18 @@ await projectionCase('clear-session-throws', { management: 'available', fail: { 
   { op: 'wipe', input: { projectKey: PROJECT, scope: 'session', sessionKey: 's1' } },
 ]);
 await projectionCase('clear-project-throws', { management: 'available', fail: { op: 'clear', message: 'clear project exploded' } }, [
+  { op: 'wipe', input: { projectKey: PROJECT, scope: 'project' } },
+]);
+// A rejected project-key resolver propagates unchanged and stops before the
+// registry lookup; both methods take the same path.
+await projectionCase('resolve-project-key-throws', { management: 'available', resolveProjectKeyFails: 'resolve key exploded' }, [
+  { op: 'list', input: { projectKey: PROJECT } },
+  { op: 'wipe', input: { projectKey: PROJECT, scope: 'session', sessionKey: 's1' } },
+]);
+// A throwing registry.resolve propagates unchanged after project-key
+// resolution; it is not turned into CAPABILITY_UNAVAILABLE.
+await projectionCase('registry-resolve-throws', { management: 'available', registryResolveFails: 'registry resolve exploded' }, [
+  { op: 'list', input: { projectKey: PROJECT } },
   { op: 'wipe', input: { projectKey: PROJECT, scope: 'project' } },
 ]);
 

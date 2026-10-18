@@ -325,7 +325,13 @@ impl ProjectMemoryBundle {
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
             loop {
+                // Register before looking at the flag: `enable()` makes this
+                // waiter visible to `notify_waiters()` immediately, so a
+                // completion between the flag check and the first poll cannot
+                // be missed.
                 let notified = shared.notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 {
                     let state = shared.state.lock().unwrap();
                     if state.disposed {
@@ -389,11 +395,20 @@ impl MemoryManagementService for NativeManagement {
 }
 
 /// Project-key resolution plus the per-project `memoryManagement` lookup.
+///
+/// Both seams are fallible because the TS ones can throw: an async
+/// `dialog.projects.resolveProjectKey` may reject, and `registry.resolve` runs
+/// `assertActive` and the generation factory. Their errors propagate unchanged
+/// through the projection; they are never collapsed into `None` and a false
+/// `CAPABILITY_UNAVAILABLE`.
 pub trait ProjectMemoryRegistry: Send + Sync {
     /// `dialog.projects.resolveProjectKey`: the input is already the fallback
     /// when the wire field was absent or null.
-    fn resolve_project_key(&self, project_key: &Path) -> PathBuf;
-    fn memory_management(&self, project_key: &Path) -> Option<Arc<dyn MemoryManagementService>>;
+    fn resolve_project_key(&self, project_key: &Path) -> Result<PathBuf, MemoryProviderError>;
+    fn memory_management(
+        &self,
+        project_key: &Path,
+    ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError>;
 }
 
 #[derive(Clone, Debug, Default)]
@@ -439,27 +454,30 @@ impl MemoryWipeResult {
 pub enum MemoryProjectionError {
     CapabilityUnavailable,
     InvalidMemoryScope,
+    /// `resolveProjectKey` / `registry.resolve` threw; the TS methods do not
+    /// catch it, so the shape is carried through unchanged.
+    Registry(MemoryProviderError),
     Provider(MemoryProviderError),
 }
 impl MemoryProjectionError {
     pub fn name(&self) -> &str {
         match self {
             Self::CapabilityUnavailable | Self::InvalidMemoryScope => "DialogGatewayError",
-            Self::Provider(error) => &error.name,
+            Self::Registry(error) | Self::Provider(error) => &error.name,
         }
     }
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::CapabilityUnavailable => Some("CAPABILITY_UNAVAILABLE"),
             Self::InvalidMemoryScope => Some("INVALID_MEMORY_SCOPE"),
-            Self::Provider(error) => error.code.as_deref(),
+            Self::Registry(error) | Self::Provider(error) => error.code.as_deref(),
         }
     }
     pub fn message(&self) -> &str {
         match self {
             Self::CapabilityUnavailable => "Gateway memory provider is unavailable.",
             Self::InvalidMemoryScope => "sessionKey is required for a session-scoped wipe.",
-            Self::Provider(error) => &error.message,
+            Self::Registry(error) | Self::Provider(error) => &error.message,
         }
     }
     pub fn to_js(&self) -> JsValue {
@@ -490,16 +508,18 @@ impl MemoryProjection {
         }
     }
 
-    fn resolution_key(&self, project_key: Option<&Path>) -> PathBuf {
+    fn resolution_key(&self, project_key: Option<&Path>) -> Result<PathBuf, MemoryProjectionError> {
         self.registry
             .resolve_project_key(project_key.unwrap_or(&self.fallback_project_root))
+            .map_err(MemoryProjectionError::Registry)
     }
 
     pub fn list(&self, input: &MemoryListInput) -> Result<MemoryListResult, MemoryProjectionError> {
-        let project_key = self.resolution_key(input.project_key.as_deref());
+        let project_key = self.resolution_key(input.project_key.as_deref())?;
         let management = self
             .registry
             .memory_management(&project_key)
+            .map_err(MemoryProjectionError::Registry)?
             .ok_or(MemoryProjectionError::CapabilityUnavailable)?;
         let items = management
             .list(100)
@@ -520,10 +540,11 @@ impl MemoryProjection {
     }
 
     pub fn wipe(&self, input: &MemoryWipeInput) -> Result<MemoryWipeResult, MemoryProjectionError> {
-        let project_key = self.resolution_key(input.project_key.as_deref());
+        let project_key = self.resolution_key(input.project_key.as_deref())?;
         let management = self
             .registry
             .memory_management(&project_key)
+            .map_err(MemoryProjectionError::Registry)?
             .ok_or(MemoryProjectionError::CapabilityUnavailable)?;
         if input.scope.as_deref() == Some("session") {
             let session_key = input

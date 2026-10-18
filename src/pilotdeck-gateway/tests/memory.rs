@@ -118,6 +118,27 @@ fn bundle_error_json(error: &MemoryBundleError) -> Value {
     })
 }
 
+fn runtime_error_json(error: &RuntimeError) -> Value {
+    json!({
+        "name": "Error",
+        "code": Value::Null,
+        "message": error.message,
+    })
+}
+
+fn assert_dispose_outcome(result: &RuntimeResult, step: &Value, label: &str) {
+    match (result, step.get("disposeError")) {
+        (Ok(()), None) => {}
+        (Err(error), Some(expected)) => {
+            assert_eq!(&runtime_error_json(error), expected, "{label}");
+        }
+        (Err(error), None) => panic!("{label}: unexpected dispose error: {error}"),
+        (Ok(()), Some(expected)) => {
+            panic!("{label}: expected dispose error {expected}, got success")
+        }
+    }
+}
+
 fn options_from_fixture(case: &Value) -> ProjectMemoryBundleOptions {
     let options = &case["options"];
     let project_root = options["projectRoot"].as_str().unwrap();
@@ -245,6 +266,26 @@ fn bundle_from_fixture(
                 }))
             }));
         }
+        "dispose-throws" => {
+            let factory_events = Arc::clone(&events);
+            options.provider_factory = Some(Arc::new(move |_: ProjectMemoryBundleOptions| {
+                factory_calls.fetch_add(1, Ordering::SeqCst);
+                factory_events.push("factory");
+                let dispose_events = Arc::clone(&factory_events);
+                Ok(Some(ProjectMemoryProvider {
+                    memory: Arc::new(FakeResolver),
+                    maintenance: None,
+                    management: None,
+                    dispose: Some(Arc::new(move || {
+                        let events = Arc::clone(&dispose_events);
+                        Box::pin(async move {
+                            events.push("dispose");
+                            Err(RuntimeError::new("dispose boom"))
+                        })
+                    })),
+                }))
+            }));
+        }
         "none" => {}
         other => panic!("unknown factory mode {other}"),
     }
@@ -257,7 +298,7 @@ async fn real_ts_memory_bundle_oracle() {
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
     assert_eq!(oracle["sourceSha256"].as_object().unwrap().len(), 3);
     let cases = oracle["bundleCases"].as_array().unwrap();
-    assert_eq!(cases.len(), 8);
+    assert_eq!(cases.len(), 10);
     let mut replayed = 0;
     for case in cases {
         let events = Arc::new(Events::default());
@@ -271,7 +312,7 @@ async fn real_ts_memory_bundle_oracle() {
             Arc::clone(&captured_native),
             Arc::clone(&factory_calls),
         );
-        let mut pending: Option<Pin<Box<dyn Future<Output = RuntimeResult> + Send + '_>>> = None;
+        let mut pending: Vec<Pin<Box<dyn Future<Output = RuntimeResult> + Send + '_>>> = Vec::new();
 
         for step in case["steps"].as_array().unwrap() {
             match step["op"].as_str().unwrap() {
@@ -296,10 +337,27 @@ async fn real_ts_memory_bundle_oracle() {
                     }
                 }
                 "dispose" => {
-                    let disposal = bundle.dispose();
+                    let first = bundle.dispose();
+                    let second = bundle.dispose();
                     events.push("after-dispose-call");
-                    assert_eq!(json!(events.snapshot()), step["beforeAwaitEvents"]);
-                    disposal.await.expect("dispose succeeds");
+                    assert_eq!(
+                        json!(events.snapshot()),
+                        step["beforeAwaitEvents"],
+                        "{}:dispose before await",
+                        case["name"]
+                    );
+                    let first_result = first.await;
+                    let second_result = second.await;
+                    assert_eq!(
+                        first_result, second_result,
+                        "{}: repeated dispose observes the same completion",
+                        case["name"]
+                    );
+                    assert_dispose_outcome(
+                        &first_result,
+                        step,
+                        &format!("{}:dispose", case["name"]),
+                    );
                     events.push("after-await");
                     assert_eq!(
                         json!(events.snapshot()),
@@ -309,12 +367,35 @@ async fn real_ts_memory_bundle_oracle() {
                     );
                 }
                 "dispose-call" => {
-                    pending = Some(bundle.dispose());
+                    pending.push(bundle.dispose());
                     events.push("after-dispose-call");
                 }
                 "dispose-await" => {
-                    assert_eq!(json!(events.snapshot()), step["beforeAwaitEvents"]);
-                    pending.take().expect("pending dispose").await.unwrap();
+                    // The TS case calls dispose a second time after the
+                    // (failed) stage, then captures the pre-await events.
+                    pending.push(bundle.dispose());
+                    assert_eq!(
+                        json!(events.snapshot()),
+                        step["beforeAwaitEvents"],
+                        "{}:dispose-await before await",
+                        case["name"]
+                    );
+                    let mut results = Vec::new();
+                    for disposal in pending.drain(..) {
+                        results.push(disposal.await);
+                    }
+                    for result in &results {
+                        assert_eq!(
+                            result, &results[0],
+                            "{}: every dispose caller observes the same completion",
+                            case["name"]
+                        );
+                    }
+                    assert_dispose_outcome(
+                        &results[0],
+                        step,
+                        &format!("{}:dispose-await", case["name"]),
+                    );
                     events.push("after-await");
                     assert_eq!(
                         json!(events.snapshot()),
@@ -326,7 +407,7 @@ async fn real_ts_memory_bundle_oracle() {
                 other => panic!("unknown bundle step {other}"),
             }
         }
-        assert!(pending.is_none(), "{}: unreplayed dispose", case["name"]);
+        assert!(pending.is_empty(), "{}: unreplayed dispose", case["name"]);
         assert_eq!(
             json!(events.snapshot()),
             case["events"],
@@ -359,8 +440,8 @@ async fn real_ts_memory_bundle_oracle() {
         }
         replayed += 1;
     }
-    assert_eq!(replayed, 8);
-    assert!(oracle["projectionCases"].as_array().unwrap().len() == 6);
+    assert_eq!(replayed, 10);
+    assert!(oracle["projectionCases"].as_array().unwrap().len() == 8);
 }
 
 fn optional_path(input: &Value, key: &str) -> Option<PathBuf> {
@@ -373,21 +454,32 @@ fn optional_string(input: &Value, key: &str) -> Option<String> {
 struct ProjectionRegistry {
     calls: Arc<Mutex<Vec<Value>>>,
     management: Option<Arc<dyn MemoryManagementService>>,
+    resolve_key_fail: Option<String>,
+    resolve_fail: Option<String>,
 }
 impl ProjectMemoryRegistry for ProjectionRegistry {
-    fn resolve_project_key(&self, project_key: &Path) -> PathBuf {
+    fn resolve_project_key(&self, project_key: &Path) -> Result<PathBuf, MemoryProviderError> {
         self.calls.lock().unwrap().push(json!({
             "op": "resolveProjectKey",
             "key": project_key.to_string_lossy(),
         }));
-        PathBuf::from(format!("resolved:{}", project_key.display()))
+        if let Some(message) = &self.resolve_key_fail {
+            return Err(MemoryProviderError::new(message.clone()));
+        }
+        Ok(PathBuf::from(format!("resolved:{}", project_key.display())))
     }
-    fn memory_management(&self, project_key: &Path) -> Option<Arc<dyn MemoryManagementService>> {
+    fn memory_management(
+        &self,
+        project_key: &Path,
+    ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
         self.calls.lock().unwrap().push(json!({
             "op": "resolve",
             "key": project_key.to_string_lossy(),
         }));
-        self.management.clone()
+        if let Some(message) = &self.resolve_fail {
+            return Err(MemoryProviderError::new(message.clone()));
+        }
+        Ok(self.management.clone())
     }
 }
 
@@ -436,7 +528,7 @@ fn real_ts_memory_projection_oracle() {
     let _ = baseline::oracle(ORACLE);
     let oracle: Value = serde_json::from_str(ORACLE).unwrap();
     let cases = oracle["projectionCases"].as_array().unwrap();
-    assert_eq!(cases.len(), 6);
+    assert_eq!(cases.len(), 8);
     let mut replayed = 0;
     for case in cases {
         let calls = Arc::new(Mutex::new(Vec::new()));
@@ -459,6 +551,8 @@ fn real_ts_memory_projection_oracle() {
         let registry = Arc::new(ProjectionRegistry {
             calls: Arc::clone(&calls),
             management,
+            resolve_key_fail: case["resolveProjectKeyFails"].as_str().map(str::to_owned),
+            resolve_fail: case["registryResolveFails"].as_str().map(str::to_owned),
         });
         let projection = MemoryProjection::new(registry, "/pdrs-fixture/fallback");
         for step in case["steps"].as_array().unwrap() {
@@ -514,7 +608,7 @@ fn real_ts_memory_projection_oracle() {
         }
         replayed += 1;
     }
-    assert_eq!(replayed, 6);
+    assert_eq!(replayed, 8);
 }
 
 struct Scratch(PathBuf);
@@ -591,4 +685,58 @@ async fn missing_factory_matches_native_selection() {
         MemoryBundleError::NativeProviderNotPorted
     );
     bundle.dispose().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_dispose_waiters_observe_one_completion() {
+    let disposer_calls = Arc::new(AtomicUsize::new(0));
+    let events = Arc::new(Events::default());
+    let mut options = ProjectMemoryBundleOptions::new(PROJECT);
+    options.provider_factory = Some(Arc::new({
+        let disposer_calls = Arc::clone(&disposer_calls);
+        let events = Arc::clone(&events);
+        move |_: ProjectMemoryBundleOptions| {
+            let disposer_calls = Arc::clone(&disposer_calls);
+            let events = Arc::clone(&events);
+            Ok(Some(ProjectMemoryProvider {
+                memory: Arc::new(FakeResolver),
+                maintenance: None,
+                management: None,
+                dispose: Some(Arc::new(move || {
+                    let disposer_calls = Arc::clone(&disposer_calls);
+                    let events = Arc::clone(&events);
+                    Box::pin(async move {
+                        disposer_calls.fetch_add(1, Ordering::SeqCst);
+                        events.push("dispose");
+                        tokio::task::yield_now().await;
+                        Ok(())
+                    })
+                })),
+            }))
+        }
+    }));
+    let bundle = Arc::new(ProjectMemoryBundle::new(options));
+    bundle.stage().unwrap();
+
+    let mut waiters = Vec::new();
+    for _ in 0..32 {
+        let bundle = Arc::clone(&bundle);
+        waiters.push(tokio::spawn(async move { bundle.dispose().await }));
+    }
+    let completion = async {
+        for waiter in waiters {
+            waiter.await.unwrap().unwrap();
+        }
+        // A caller that starts after completion also observes the same result.
+        bundle.dispose().await.unwrap();
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), completion)
+        .await
+        .expect("every dispose caller must complete");
+    assert_eq!(
+        disposer_calls.load(Ordering::SeqCst),
+        1,
+        "the disposer must run exactly once"
+    );
+    assert_eq!(events.snapshot(), ["dispose"]);
 }
