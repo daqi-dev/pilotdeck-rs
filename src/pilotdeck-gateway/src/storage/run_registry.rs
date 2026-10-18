@@ -9,7 +9,7 @@ use super::{
     ledger::{field, truthy},
     transcript::{Temporary, timestamp, uuid},
 };
-use crate::metadata::{js_trim, object};
+use crate::{js_value, metadata::object};
 use pilotdeck_protocol::{CodecError, JsObject, JsString, JsValue, parse_json, stringify_json};
 use regex::Regex;
 use std::{
@@ -135,6 +135,7 @@ impl RunRef {
             &JsValue::String(self.session_key.clone()),
             &JsValue::String(self.run_id.clone()),
         )
+        .expect("string parts never nest")
     }
     fn run_id(&self) -> String {
         String::from_utf16_lossy(self.run_id.units())
@@ -299,7 +300,7 @@ impl FileRunRegistry {
             // TS strict-mode TypeErrors, in TS order: `.push` on a non-array
             // list, property writes on a primitive record, `.type` of a
             // null/undefined event. None of them reaches persist.
-            let seq = js_plus_one(field(record, "lastSeq"));
+            let seq = js_plus_one(field(record, "lastSeq"))?;
             let mut events = event_list(snapshot.events.get_key(&key))?.to_vec();
             events.push(object([("seq", seq.clone()), ("event", event.clone())]));
             // An array record is a JS object, so the record writes succeed in
@@ -318,7 +319,7 @@ impl FileRunRegistry {
                 return Ok(((), true));
             };
             record.insert("lastSeq".into(), seq);
-            let revision = js_plus_one(record_field(&record, "revision"));
+            let revision = js_plus_one(record_field(&record, "revision"))?;
             record.insert("revision".into(), revision);
             record.insert("updatedAt".into(), now()?);
             let kind = field(event, "type");
@@ -381,7 +382,7 @@ impl FileRunRegistry {
             if matches!(entry, JsValue::Null) {
                 return Err(invalid("Run registry event entry is null."));
             }
-            if js_to_number(field(entry, "seq")) > after_seq {
+            if js_value::to_number(field(entry, "seq")).map_err(stack_overflow)? > after_seq {
                 selected.push(entry.clone());
             }
         }
@@ -417,7 +418,7 @@ impl FileRunRegistry {
                     continue;
                 }
                 record.insert("state".into(), RunState::Interrupted.as_str().into());
-                let revision = js_plus_one(record_field(&record, "revision"));
+                let revision = js_plus_one(record_field(&record, "revision"))?;
                 record.insert("revision".into(), revision);
                 record.insert("updatedAt".into(), now()?);
                 snapshot.records.insert(key, JsValue::Object(record));
@@ -591,7 +592,7 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
             field(record, "projectKey"),
             field(record, "sessionKey"),
             field(record, "runId"),
-        );
+        )?;
         snapshot.records.insert(key, record.clone());
     }
     // Object.entries(snapshot.events). Load order is irrelevant to the bytes:
@@ -623,113 +624,38 @@ fn read_snapshot(path: &Path) -> Result<Snapshot> {
 }
 
 /// `${projectKey ?? ""}\0${sessionKey}\0${runId}` (RunRegistry.ts:70).
-fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> JsString {
+fn run_key(project: &JsValue, session: &JsValue, run: &JsValue) -> Result<JsString> {
     let mut units = match project {
         JsValue::Undefined | JsValue::Null => vec![],
-        value => template_units(value),
+        value => template_units(value)?,
     };
     units.push(0);
-    units.extend(template_units(session));
+    units.extend(template_units(session)?);
     units.push(0);
-    units.extend(template_units(run));
-    JsString::from_utf16(units)
+    units.extend(template_units(run)?);
+    Ok(JsString::from_utf16(units))
 }
 /// JS template-literal ToString of a JSON value.
-fn template_units(value: &JsValue) -> Vec<u16> {
-    match value {
-        JsValue::String(s) => s.units().to_vec(),
-        JsValue::Array(items) => {
-            let mut units = vec![];
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    units.push(u16::from(b','));
-                }
-                if !matches!(item, JsValue::Undefined | JsValue::Null) {
-                    units.extend(template_units(item));
-                }
-            }
-            units
-        }
-        other => {
-            let text = match other {
-                JsValue::Undefined => "undefined".to_owned(),
-                JsValue::Null => "null".to_owned(),
-                JsValue::Bool(b) => b.to_string(),
-                JsValue::Number(n) => number_string(*n),
-                _ => "[object Object]".to_owned(),
-            };
-            text.encode_utf16().collect()
-        }
-    }
+fn template_units(value: &JsValue) -> Result<Vec<u16>> {
+    js_value::to_string_units(value).map_err(stack_overflow)
 }
-fn number_string(n: f64) -> String {
-    if n.is_nan() {
-        "NaN".into()
-    } else if n.is_infinite() {
-        (if n > 0.0 { "Infinity" } else { "-Infinity" }).into()
-    } else {
-        // JSON.stringify uses Number::toString for finite values.
-        stringify_json(&JsValue::Number(n))
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-    }
+/// V8's RangeError from a too-deep array join surfaces as a plain TS error.
+fn stack_overflow(_: js_value::StackOverflow) -> RunRegistryError {
+    invalid(js_value::StackOverflow::MESSAGE)
 }
 /// JS `value + 1` for a JSON value (`revision += 1`, `lastSeq + 1`).
-fn js_plus_one(value: &JsValue) -> JsValue {
-    match value {
+fn js_plus_one(value: &JsValue) -> Result<JsValue> {
+    Ok(match value {
         JsValue::Number(n) => JsValue::Number(n + 1.0),
         JsValue::Undefined => JsValue::Number(f64::NAN),
         JsValue::Null => JsValue::Number(1.0),
         JsValue::Bool(b) => JsValue::Number(f64::from(u8::from(*b)) + 1.0),
         other => {
-            let mut units = template_units(other);
+            let mut units = template_units(other)?;
             units.push(u16::from(b'1'));
             JsValue::String(JsString::from_utf16(units))
         }
-    }
-}
-/// JS ToNumber, for `entry.seq > afterSeq` with a numeric right side.
-fn js_to_number(value: &JsValue) -> f64 {
-    static DECIMAL: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$").unwrap()
-    });
-    match value {
-        JsValue::Undefined => f64::NAN,
-        JsValue::Null => 0.0,
-        JsValue::Bool(b) => f64::from(u8::from(*b)),
-        JsValue::Number(n) => *n,
-        other => {
-            let text = String::from_utf16_lossy(&template_units(other));
-            let text = js_trim(&text);
-            if text.is_empty() {
-                return 0.0;
-            }
-            for (prefix, radix) in [
-                ("0x", 16),
-                ("0X", 16),
-                ("0o", 8),
-                ("0O", 8),
-                ("0b", 2),
-                ("0B", 2),
-            ] {
-                if let Some(digits) = text.strip_prefix(prefix) {
-                    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
-                        return f64::NAN;
-                    }
-                    return digits.chars().fold(0.0, |acc, c| {
-                        acc * f64::from(radix) + f64::from(c.to_digit(radix).unwrap())
-                    });
-                }
-            }
-            match text {
-                "Infinity" | "+Infinity" => f64::INFINITY,
-                "-Infinity" => f64::NEG_INFINITY,
-                _ if DECIMAL.is_match(text) => text.parse().unwrap_or(f64::NAN),
-                _ => f64::NAN,
-            }
-        }
-    }
+    })
 }
 /// `Array.prototype.slice(0, limit)` end index.
 fn slice_end(len: usize, limit: f64) -> usize {

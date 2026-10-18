@@ -5,6 +5,7 @@ mod dispatch;
 mod frame;
 pub mod host;
 pub mod http_proxy;
+mod js_value;
 mod metadata;
 mod model_catalog;
 mod native_archive;

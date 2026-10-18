@@ -31,6 +31,12 @@ const ARCHIVE_TRANSCRIPT: &[&str] = &[
     "ENAMETOOLONG",
     "ELOOP",
 ];
+// skills/oracle.json, per SkillManager method (GatewayWsConnection.ts:542-557);
+// skills::tests checks each set equals the errno codes that method recorded.
+const SKILL_READ: &[&str] = &["ENOTDIR", "EISDIR"];
+const SKILL_WRITE: &[&str] = &["ENOTDIR", "EEXIST", "EISDIR"];
+const SKILL_PATH: &[&str] = &["ENOTDIR"];
+const SKILL_IMPORT: &[&str] = &["ENOTDIR", "EEXIST"];
 pub(crate) const LOCAL_ERRNOS: &[(&str, &[&str])] = &[
     ("project_files_list", PROJECT_FILES),
     ("project_file_read", PROJECT_FILES),
@@ -38,6 +44,14 @@ pub(crate) const LOCAL_ERRNOS: &[(&str, &[&str])] = &[
     ("model_catalog_list", SESSION_CONFIG),
     ("native_archive_manifest", ARCHIVE_TRANSCRIPT),
     ("native_archive_entries", ARCHIVE_TRANSCRIPT),
+    ("skill_list", SKILL_PATH),
+    ("skill_read", SKILL_READ),
+    ("skill_write", SKILL_WRITE),
+    ("skill_create", SKILL_PATH),
+    ("skill_delete", SKILL_PATH),
+    ("skill_import", SKILL_IMPORT),
+    ("skill_validate", &[]),
+    ("skill_scan", SKILL_PATH),
 ];
 pub(crate) fn lookup_for(method: &str, error: &io::Error) -> Option<(&'static str, &'static str)> {
     let found = lookup(error)?;

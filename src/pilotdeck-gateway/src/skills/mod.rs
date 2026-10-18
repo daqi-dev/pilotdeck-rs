@@ -1,23 +1,27 @@
 //! Native skill manager, ported against PilotDeck cc7c4e6
-//! src/extension/skills/SkillManager.ts: list / read / write / create / delete /
-//! validate. `import`, `scan` and the disabled/external skills binding
-//! selection (createLocalGateway.ts:851–860) belong to A6.8-pr4. This module is
-//! not wired into Gateway dispatch.
+//! src/extension/skills/SkillManager.ts (all eight methods), plus the
+//! native/disabled/external binding selection of createLocalGateway.ts:851–870
+//! (binding.rs). This module is not wired into Gateway dispatch yet; the
+//! facade is driven in-process by the contract tests.
 //!
 //! Inputs and results are wire `JsValue`s: the gateway hands frame params to
 //! the manager untyped (GatewayWsConnection.ts:542–557), so every TS runtime
 //! check (`typeof`, truthiness, `??`) is mirrored, and results keep the TS
 //! object key order. Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE);
 //! the non-ignored golden test replays tests/fixtures/skills/oracle.json.
+mod binding;
 mod error;
 mod frontmatter;
+mod import;
 #[cfg(test)]
 mod tests;
 mod validate;
 
+pub use binding::{SkillMethod, SkillsBinding, SkillsFacade, select_binding};
 pub use error::SkillError;
 
 use crate::{
+    js_value::{display, number_string, to_number},
     metadata::{argument_received, object},
     model_catalog::lower,
     project_files::{node_collator, node_locale},
@@ -32,6 +36,7 @@ use std::{
     fs,
     io::{self, Write},
     os::unix::fs::MetadataExt,
+    sync::{Mutex, PoisonError},
 };
 
 type Result<T> = std::result::Result<T, SkillError>;
@@ -76,18 +81,20 @@ pub struct SkillManager {
 }
 
 impl SkillManager {
-    /// SkillManager.ts:84–92.
-    pub fn new(options: SkillManagerOptions) -> Self {
-        let pilot_home = resolve(&options.pilot_home);
+    /// SkillManager.ts:84–92. Fails only where TS's `path.resolve` would: a
+    /// relative path while the process cwd cannot be read.
+    pub fn new(options: SkillManagerOptions) -> Result<Self> {
+        let pilot_home = resolve(&options.pilot_home)?;
         let general_cwd_paths = match options.general_cwd_paths {
-            Some(paths) => paths.iter().map(|p| resolve(p)).collect(),
+            Some(paths) => paths.iter().map(|p| resolve(p)).collect::<Result<_>>()?,
             None => vec![pilot_home.clone()],
         };
-        Self {
+        Ok(Self {
             builtin_root: options
                 .builtin_skills_root
                 .filter(|r| !r.is_empty())
-                .map(|r| resolve(&r)),
+                .map(|r| resolve(&r))
+                .transpose()?,
             general_cwd_paths,
             pilot_home,
             env: options.env,
@@ -95,7 +102,22 @@ impl SkillManager {
                 .locale
                 .unwrap_or_else(|| node_locale(|key| std::env::var(key).ok())),
             home_dir: options.home_dir,
-        }
+        })
+    }
+
+    /// One gateway method on the native manager, with its errno admission.
+    pub fn call(&self, method: SkillMethod, input: &JsValue) -> Result<JsValue> {
+        let result = match method {
+            SkillMethod::List => self.list(input),
+            SkillMethod::Read => self.read(input),
+            SkillMethod::Write => self.write(input),
+            SkillMethod::Create => self.create(input),
+            SkillMethod::Delete => self.delete(input),
+            SkillMethod::Import => self.import(input),
+            SkillMethod::Validate => self.validate(input),
+            SkillMethod::Scan => self.scan(input),
+        };
+        result.map_err(|e| e.admit(method.wire()))
     }
 
     // ---------------------------------------------------------------- paths
@@ -117,34 +139,34 @@ impl SkillManager {
             return Ok(false);
         }
         let key = path_arg(key)?;
-        Ok(self.general_cwd_paths.contains(&resolve(&key)) || self.is_virtual_root(&key))
+        Ok(self.general_cwd_paths.contains(&resolve(&key)?) || self.is_virtual_root(&key)?)
     }
 
     /// writablePaths.ts:36–64 isVirtualProjectRoot / isDesktopRuntimeProjectRoot.
-    fn is_virtual_root(&self, root: &str) -> bool {
-        let root = resolve(root);
-        if root == resolve(&self.pilot_home) {
-            return true;
+    fn is_virtual_root(&self, root: &str) -> Result<bool> {
+        let root = resolve(root)?;
+        if root == self.pilot_home {
+            return Ok(true);
         }
         if self.env_var("PILOTDECK_DESKTOP").as_deref() != Some("1") {
-            return false;
+            return Ok(false);
         }
         if let Some(runtime) = self
             .env_var("PILOTDECK_DESKTOP_RUNTIME_ROOT")
             .filter(|v| !v.is_empty())
-            && root == resolve(&runtime)
+            && root == resolve(&runtime)?
         {
-            return true;
+            return Ok(true);
         }
         // /[\\/]resources[\\/]runtime$/i (non-unicode /i folds ASCII only here).
         let b = root.as_bytes();
-        b.len() >= 18 && {
+        Ok(b.len() >= 18 && {
             let t = &b[b.len() - 18..];
             b"/\\".contains(&t[0])
                 && t[1..10].eq_ignore_ascii_case(b"resources")
                 && b"/\\".contains(&t[10])
                 && t[11..].eq_ignore_ascii_case(b"runtime")
-        }
+        })
     }
 
     /// SkillManager.ts:124.
@@ -161,7 +183,7 @@ impl SkillManager {
                     "Project scope requires a real project (general chat doesn't qualify).",
                 ));
             }
-            return Ok(project_root(&path_arg(project_key)?));
+            return project_root(&path_arg(project_key)?);
         }
         Ok(self.user_root())
     }
@@ -170,13 +192,7 @@ impl SkillManager {
     fn resolve_skill_dir(&self, input: &JsValue) -> Result<(String, JsValue)> {
         let slug = field(input, "slug")?;
         let Some(name) = valid_slug(slug) else {
-            return Err(SkillError::manager(
-                "invalid_slug",
-                format!(
-                    "Invalid slug \"{}\". Allowed: [a-zA-Z0-9][a-zA-Z0-9._-]{{0,99}}, no \"..\".",
-                    display(slug)
-                ),
-            ));
+            return Err(invalid_slug(&display(slug)?));
         };
         let root = self.resolve_scope_root(field(input, "scope")?, field(input, "projectKey")?)?;
         Ok((join(&root, &name), slug.clone()))
@@ -193,14 +209,14 @@ impl SkillManager {
             project_key
         };
         let collator = node_collator(&self.locale)
-            .map_err(|(code, message)| SkillError::host(code, message))?;
+            .map_err(|(code, message)| SkillError::host_failure(code, message))?;
         let builtin = match &self.builtin_root {
             Some(root) => list_skills_in(root, "builtin", &collator)?,
             None => vec![],
         };
         let user = list_skills_in(&self.user_root(), "user", &collator)?;
         let project = if truthy(&effective) {
-            list_skills_in(&project_root(&path_arg(&effective)?), "project", &collator)?
+            list_skills_in(&project_root(&path_arg(&effective)?)?, "project", &collator)?
         } else {
             vec![]
         };
@@ -249,7 +265,7 @@ impl SkillManager {
         let Some(scope_name) = LIST_SCOPES.iter().find(|s| is_str(&scope, s)) else {
             return Err(invalid_input(format!(
                 "Invalid skill scope: {}.",
-                display(&scope)
+                display(&scope)?
             )));
         };
         let query = match field(input, "query")? {
@@ -461,6 +477,14 @@ fn invalid_input(message: impl Into<String>) -> SkillError {
     SkillError::manager("invalid_input", message)
 }
 
+/// SkillManager.ts:153 / 367.
+fn invalid_slug(slug: &str) -> SkillError {
+    SkillError::manager(
+        "invalid_slug",
+        format!("Invalid slug \"{slug}\". Allowed: [a-zA-Z0-9][a-zA-Z0-9._-]{{0,99}}, no \"..\"."),
+    )
+}
+
 /// SkillManager.ts:140.
 fn assert_mutable(scope: &JsValue) -> Result<()> {
     if is_str(scope, "builtin") {
@@ -632,8 +656,13 @@ fn decode_list_cursor(value: &JsValue, signature: &str) -> Result<f64> {
     let invalid = || invalid_input("cursor is invalid or does not match the query.");
     let bytes = match value {
         JsValue::String(s) => base64_lenient(s.units()),
-        // Buffer.from(array) copies ToUint8 of each element and ignores the encoding.
-        JsValue::Array(items) => items.iter().map(|v| to_uint8(js_to_number(v))).collect(),
+        // Buffer.from(array) copies ToUint8 of each element and ignores the
+        // encoding; a too-deep element's RangeError is caught like the rest.
+        JsValue::Array(items) => items
+            .iter()
+            .map(|v| to_number(v).map(to_uint8))
+            .collect::<std::result::Result<Vec<u8>, _>>()
+            .map_err(|_| invalid())?,
         _ => return Err(invalid()),
     };
     let parsed = parse_json(&String::from_utf8_lossy(&bytes)).map_err(|_| invalid())?;
@@ -682,14 +711,19 @@ fn base64url(value: &JsValue) -> String {
     )
 }
 
-/// fs.promises.mkdir(path, { recursive: true }) (Node MKDirpAsync): errors
-/// always name the requested path; a non-directory in the way is EEXIST.
+/// fs.promises.mkdir(path, { recursive: true }) (node_file.cc MKDirpAsync);
+/// errors always name the requested path. Any errno other than ENOENT and the
+/// four fatal ones is settled by stat-ing the same path: a directory is
+/// success (after EEXIST the pending children continue; after any other errno
+/// the whole call ends there), a missing path reports stat's errno, a
+/// non-directory is EEXIST, or ENOTDIR when the EEXIST hit an ancestor.
+/// 待实测 for EROFS/EDQUOT: RESULT.md lists the read-only-volume probe.
 fn mkdir_p(path: &str) -> Result<()> {
     let fail = |e: &io::Error| SkillError::io(e, "mkdir", Some(path));
+    let errno = |n| io::Error::from_raw_os_error(n);
     let mut pending = vec![path.to_owned()];
-    while let Some(next) = pending.last().cloned() {
+    while let Some(next) = pending.pop() {
         let Err(e) = fs::create_dir(&next) else {
-            pending.pop();
             continue;
         };
         match e.raw_os_error() {
@@ -697,19 +731,25 @@ fn mkdir_p(path: &str) -> Result<()> {
                 return Err(fail(&e));
             }
             Some(libc::ENOENT) => {
-                let parent = dirname(&next);
+                // std::string::substr(0, find_last_of('/')): "/a" → "".
+                let parent = next.rfind('/').map_or(next.as_str(), |i| &next[..i]);
                 if parent == next {
                     return Err(fail(&e));
                 }
+                let parent = parent.to_owned();
+                pending.push(next);
                 pending.push(parent);
             }
-            _ => match fs::metadata(&next) {
-                Ok(m) if m.is_dir() => {
-                    pending.pop();
+            code => {
+                let ancestor = code == Some(libc::EEXIST) && !pending.is_empty();
+                match fs::metadata(&next) {
+                    Ok(m) if m.is_dir() && ancestor => {}
+                    Ok(m) if m.is_dir() => return Ok(()),
+                    _ if ancestor => return Err(fail(&errno(libc::ENOTDIR))),
+                    Ok(_) => return Err(fail(&errno(libc::EEXIST))),
+                    Err(stat) => return Err(fail(&stat)),
                 }
-                Ok(_) => return Err(fail(&io::Error::from_raw_os_error(libc::EEXIST))),
-                Err(stat) => return Err(fail(&stat)),
-            },
+            }
         }
     }
     Ok(())
@@ -749,16 +789,15 @@ fn remove_tree(path: &str) -> Result<()> {
 // ------------------------------------------------------- JS value semantics
 
 fn field<'a>(input: &'a JsValue, key: &str) -> Result<&'a JsValue> {
-    match input {
-        JsValue::Undefined | JsValue::Null => Err(SkillError::type_error(
-            "",
-            format!(
-                "Cannot read properties of {} (reading '{key}')",
-                display(input)
-            ),
-        )),
-        _ => Ok(input.get(key).unwrap_or(&UNDEFINED)),
-    }
+    let base = match input {
+        JsValue::Undefined => "undefined",
+        JsValue::Null => "null",
+        _ => return Ok(input.get(key).unwrap_or(&UNDEFINED)),
+    };
+    Err(SkillError::type_error(
+        "",
+        format!("Cannot read properties of {base} (reading '{key}')"),
+    ))
 }
 /// `value ?? fallback`
 fn or(value: &JsValue, fallback: JsValue) -> JsValue {
@@ -794,104 +833,6 @@ fn is_str(value: &JsValue, text: &str) -> bool {
 fn is_integer(n: f64) -> bool {
     n.is_finite() && n.trunc() == n
 }
-/// JS Number#toString (radix 10).
-fn number_string(n: f64) -> String {
-    if n.is_nan() {
-        "NaN".into()
-    } else if n == f64::INFINITY {
-        "Infinity".into()
-    } else if n == f64::NEG_INFINITY {
-        "-Infinity".into()
-    } else if n == 0.0 {
-        "0".into()
-    } else {
-        stringify_json(&JsValue::Number(n))
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-    }
-}
-/// `String(value)` for wire values (lone surrogates become U+FFFD).
-fn display(value: &JsValue) -> String {
-    match value {
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Null => "null".into(),
-        JsValue::Bool(b) => b.to_string(),
-        JsValue::Number(n) => number_string(*n),
-        JsValue::String(s) => String::from_utf16_lossy(s.units()),
-        JsValue::Array(items) => items
-            .iter()
-            .map(|v| {
-                if nullish(v) {
-                    String::new()
-                } else {
-                    display(v)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        JsValue::Object(_) => "[object Object]".into(),
-    }
-}
-/// `Number(value)` for wire values.
-fn js_to_number(value: &JsValue) -> f64 {
-    match value {
-        JsValue::Undefined => f64::NAN,
-        JsValue::Null => 0.0,
-        JsValue::Bool(b) => f64::from(u8::from(*b)),
-        JsValue::Number(n) => *n,
-        JsValue::String(s) => string_to_number(&String::from_utf16_lossy(s.units())),
-        JsValue::Array(_) => string_to_number(&display(value)),
-        JsValue::Object(_) => f64::NAN,
-    }
-}
-/// ECMAScript StringToNumber.
-fn string_to_number(text: &str) -> f64 {
-    let t = crate::metadata::js_trim(text);
-    if t.is_empty() {
-        return 0.0;
-    }
-    let radix = match t.get(..2) {
-        Some("0x" | "0X") => 16,
-        Some("0o" | "0O") => 8,
-        Some("0b" | "0B") => 2,
-        _ => 0,
-    };
-    if radix != 0 {
-        let digits = &t[2..];
-        if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
-            return f64::NAN;
-        }
-        return match u128::from_str_radix(digits, radix) {
-            Ok(v) => v as f64,
-            Err(_) => digits.chars().fold(0.0, |acc, c| {
-                acc * f64::from(radix) + f64::from(c.to_digit(radix).unwrap())
-            }),
-        };
-    }
-    match t {
-        "Infinity" | "+Infinity" => return f64::INFINITY,
-        "-Infinity" => return f64::NEG_INFINITY,
-        _ => {}
-    }
-    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
-    let (mantissa, exponent) = match body.find(['e', 'E']) {
-        Some(i) => (&body[..i], Some(&body[i + 1..])),
-        None => (body, None),
-    };
-    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
-    let mantissa_ok = digits(int) && digits(frac) && !(int.is_empty() && frac.is_empty());
-    let exponent_ok = exponent.is_none_or(|e| {
-        let e = e.strip_prefix(['+', '-']).unwrap_or(e);
-        !e.is_empty() && digits(e)
-    });
-    if mantissa_ok && exponent_ok {
-        t.parse().unwrap_or(f64::NAN)
-    } else {
-        f64::NAN
-    }
-}
 /// ToUint8 (Uint8Array element store).
 fn to_uint8(n: f64) -> u8 {
     if !n.is_finite() {
@@ -919,12 +860,33 @@ fn decode_utf8(bytes: &[u8]) -> JsString {
 
 // ------------------------------------------------------ node:path (posix)
 
-/// path.resolve(value) against the process cwd.
-fn resolve(value: &str) -> String {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
-    crate::metadata::resolve(&cwd, value)
+/// path.resolve(value). An absolute value never reads the cwd (posix resolve
+/// stops at the first absolute segment); a relative one uses process.cwd().
+fn resolve(value: &str) -> Result<String> {
+    let cwd = if value.starts_with('/') {
+        "/".to_owned()
+    } else {
+        process_cwd()?
+    };
+    Ok(crate::metadata::resolve(std::path::Path::new(&cwd), value)
         .to_string_lossy()
-        .into_owned()
+        .into_owned())
+}
+/// process.cwd(): Node caches the first successful read (until chdir), so a
+/// cwd deleted later still resolves against the old path; only a failed
+/// first read throws `ENOENT: no such file or directory, uv_cwd`. 待实测.
+fn process_cwd() -> Result<String> {
+    static CACHED: Mutex<Option<String>> = Mutex::new(None);
+    let mut cached = CACHED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(cwd) = &*cached {
+        return Ok(cwd.clone());
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|e| SkillError::io(&e, "uv_cwd", None))?
+        .to_string_lossy()
+        .into_owned();
+    *cached = Some(cwd.clone());
+    Ok(cwd)
 }
 /// path.join(dir, name) for a resolved `dir` and a single, dot-free segment.
 fn join(dir: &str, name: &str) -> String {
@@ -934,15 +896,13 @@ fn join(dir: &str, name: &str) -> String {
         format!("{dir}/{name}")
     }
 }
-fn dirname(path: &str) -> String {
-    match path.rfind('/') {
-        Some(0) | None => "/".into(),
-        Some(i) => path[..i].into(),
-    }
+/// path.basename of a resolved path ("/" → "").
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 /// getPilotExtensionPaths(projectRoot).projectSkillsDir
-fn project_root(project: &str) -> String {
-    join(&join(&resolve(project), ".pilotdeck"), "skills")
+fn project_root(project: &str) -> Result<String> {
+    Ok(join(&join(&resolve(project)?, ".pilotdeck"), "skills"))
 }
 /// path.resolve rejects non-strings with ERR_INVALID_ARG_TYPE.
 fn path_arg(value: &JsValue) -> Result<String> {

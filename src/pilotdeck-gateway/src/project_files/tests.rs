@@ -709,7 +709,17 @@ fn node_round3_locale_fallback_and_latin1_case_mapping() {
 
 #[test]
 fn node_round3_base64_uses_utf16_low_bytes() {
-    for probe in round3()["base64Probe"].as_array().unwrap() {
+    let probes = round3()["base64Probe"].as_array().unwrap().clone();
+    // Real Node outcomes must cover the alphabet swap and '=' termination.
+    for needle in ["+", "/", "=", "-", "_"] {
+        assert!(
+            probes
+                .iter()
+                .any(|p| p["input"].as_str().unwrap().contains(needle)),
+            "no base64 probe with {needle:?}"
+        );
+    }
+    for probe in &probes {
         let input = parse_json(probe["input"].as_str().unwrap()).unwrap();
         let bytes = decode_base64(input.as_string().unwrap().units()).unwrap();
         let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();

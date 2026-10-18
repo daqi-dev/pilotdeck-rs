@@ -170,6 +170,8 @@ for(const vars of [
  round3.localeProbe.push({env:vars,...JSON.parse(child.stdout)});
 }
 round3.base64Probe=['QUJD','őUJD','\ud800','QUJD\ud800','\u013dQUJD','\ud851UJD','Q😀UJD'].map(input=>({input:JSON.stringify(input),hex:Buffer.from(input,'base64url').toString('hex')}));
+// Alphabet and padding: '+'/'/' decode as '-'/'_', and the first '=' ends decoding.
+round3.base64Probe.push(...['Pj4-Pz8_','Pj4+Pz8/','QQ==QUJD','QUJD=zzzz','QU=JD','=QUJD'].map(input=>({input:JSON.stringify(input),hex:Buffer.from(input,'base64url').toString('hex')})));
 const cursorPage=await capture('project_files_list',{projectKey:root,limit:2});
 const validCursor=cursorPage.result.nextCursor;
 round3.cursorProbe=[];

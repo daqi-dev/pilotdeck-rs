@@ -882,6 +882,30 @@
     {
       "input": "\"Q😀UJD\"",
       "hex": ""
+    },
+    {
+      "input": "\"Pj4-Pz8_\"",
+      "hex": "3e3e3e3f3f3f"
+    },
+    {
+      "input": "\"Pj4+Pz8/\"",
+      "hex": "3e3e3e3f3f3f"
+    },
+    {
+      "input": "\"QQ==QUJD\"",
+      "hex": "41"
+    },
+    {
+      "input": "\"QUJD=zzzz\"",
+      "hex": "414243"
+    },
+    {
+      "input": "\"QU=JD\"",
+      "hex": "41"
+    },
+    {
+      "input": "\"=QUJD\"",
+      "hex": ""
     }
   ],
   "cursorProbe": [
