@@ -1,4 +1,36 @@
-# B2 原批准依据
+# B2 批准依据
+
+## 当前（2026-10-18 重新冻结，#94）
+
+| 当前文件 | 来源 | 说明 |
+|---|---|---|
+| [calibration-summary.json](calibration-summary.json) | 批次 `_tmp/archive/b2-calibration-2026-10-18-a025aa97/summary.json`（仓外 checkout `/Users/da/ws/pdrs-b2cal-20261018` 录制后归档） | PENDING_REVIEW / independent_review=null / frozen=false 是评审前现场；批准以 FROZEN 与两份评审共同为据 |
+| [review-glm.md](review-glm.md) | `_tmp/20261018-b2-94/freeze-glm.md` | 冻结结论：同意 |
+| [review-deepseek.md](review-deepseek.md) | `_tmp/20261018-b2-94/freeze-ds2.md` | 补核后冻结结论：同意 |
+| [review-deepseek-r1.md](review-deepseek-r1.md) | `_tmp/20261018-b2-94/freeze-ds.md` | DeepSeek 首轮：附件不足判「不同意」，保留以示过程，不作为批准依据 |
+| [driver.log](driver.log) | `_tmp/20261018-b2-94/{calib2,calib-retry16,calib3}.log` 依次拼接 | 首跑至 ref16 REFUSED、ref16 单遍重采、续跑完成 |
+
+厚 ruler 留归档，仓内只留路径与哈希：
+- `_tmp/archive/b2-calibration-2026-10-18-a025aa97/ts-ruler-55036e36-ee90-4304-a5ca-60ef5aeead02.json` · `68799e6b2a833f0ee3d2c99f2d72dfec1d936eb5dfd2c9f35042967f072a3e60` · 22511759 bytes
+- `_tmp/archive/b2-calibration-2026-10-18-a025aa97/final-ruler-333fbde2-b5d9-4b01-b29b-c2952ac87357.json` · `ef977aaeb3902b3be8704ed38ff72ffa7716b2570674a4333a64891b29a816e0` · 24043440 bytes
+
+两批依赖覆盖对照（DeepSeek 冻结条件）：
+
+| 项 | 10-14 | 10-18 |
+|---|---|---|
+| node_modules 根数 | 1594 | 1594 |
+| workspace_packages | apps/desktop, packages/sdk, ui | 同 |
+| link_targets | 1483 | 1483 |
+| covered_roots | 4 | 4 |
+| node_modules.sha256 | `b744de7b…c097` | `a619eaf9…9798` |
+
+摘要差异来自基线 `ui/` 于 10-15 新增的 `ui/dist`（Vite 构建产物）与空目录 `ui/node_modules/.vite-temp`；apps/desktop、node_modules、packages/sdk 三根自 10-14 无改动。基线演进留痕规则另开 P2-跟进（前置于下次定标）。
+
+## 历史（2026-10-14 冻结）
+
+原四份原件移至 [2026-10-14/](2026-10-14/)，内容逐字节未改，下文为当时的索引原文。
+
+### 原索引
 
 此目录是当前FROZEN批准依据的可移植引用。三份批准原文与6979字节驱动日志均逐字节来自原归档，不重写历史状态；完整定标录制及两份厚ruler仍在原归档。`calibration-summary.json`的PENDING_REVIEW、independent_review=null和frozen=false是评审前现场，后续批准以FROZEN和两份原评审共同为据。Claude原文的“缺对应专项负控”P2留白仍保留，不能从本次迁移推导B2全部缺陷为0。
 

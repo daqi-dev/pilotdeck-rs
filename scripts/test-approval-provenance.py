@@ -13,7 +13,7 @@ import tempfile
 import unittest
 
 check = runpy.run_path(str(Path(__file__).with_name('check-approval-provenance.py')))['check']
-NAMES = ('calibration-summary.json', 'review-glm.md', 'review-claude.md', 'driver.log')
+NAMES = ('calibration-summary.json', 'review-glm.md', 'review-deepseek.md', 'driver.log')
 
 
 class ProvenanceControls(unittest.TestCase):

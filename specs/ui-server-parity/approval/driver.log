@@ -1,36 +1,122 @@
-{"preflight": {"resource_root": "/Users/da/ws/pilotdeck-rs", "cap_bytes": 30000000000, "used_bytes": 23709323264, "size_reference": "/Users/da/ws/pilotdeck-rs/_tmp/archive/wt-b2c-tmp/20261014-b2-live3-ts1", "reference_bytes": 12554240, "per_run_estimate_bytes": 18831360, "remaining_runs": 26, "estimated_additional_bytes": 2489615360, "projected_bytes": 26198938624, "filesystem_free_bytes": 179055460352, "approximate": false, "events": []}}
-batch /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb
-capture ref1 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref1-2541a76b-e954-4401-a747-0e8b365a0918.log
-capture ref2 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref2-824be68c-6ced-4d40-b1ea-2484b72fec3f.log
-capture ref3 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref3-533391f9-f3a3-4a99-bb0b-6a25149db12d.log
-capture ref4 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref4-ced41dee-f845-494f-a4b7-682c34d56998.log
-capture ref5 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref5-8e3bb199-630f-492a-b536-63e9fbd397a9.log
-capture ref6 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref6-a67e13a1-977a-461a-a621-fa0636870da6.log
-capture ref7 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref7-98174dba-e343-4676-bffb-04143c8af7c5.log
-capture ref8 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref8-213f465d-d4c0-42ef-8fb3-a8f8667264f2.log
-capture ref9 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref9-3ceabde8-8962-4310-824c-dd279f068a47.log
-capture ref10 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref10-79cca96c-6609-4db8-86eb-78ca486b609b.log
-capture ref11 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref11-596551d1-c09d-4b34-81f1-0c03f754febd.log
-capture ref12 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref12-289702b0-879d-4a02-83ab-3c494bdcbf9c.log
-capture ref13 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref13-51770f17-c1c1-4a11-b4bd-f167f417b575.log
-capture ref14 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref14-0428536e-608f-4295-b3a5-4d84c0effb21.log
-capture ref15 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref15-3a336ee9-a333-41c7-babb-fd6bb688fcde.log
-capture ref16 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref16-ba8b185f-545f-4413-a718-198882999f99.log
-capture ref17 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref17-42dccec3-b8a9-42fd-a210-e4ca2f3337a3.log
-capture ref18 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref18-560413bf-327c-4a0d-a38a-2b43b3e66253.log
-capture ref19 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref19-634d16f0-028f-42dc-a705-c1adcfe6c853.log
-capture ref20 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ref20-631e6403-0f2b-4b90-b356-95b152ea4646.log
-capture ts1 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ts1-9f740cf5-a276-462c-bf21-4e591584e625.log
-capture ts2 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ts2-de565653-64a2-432e-b2f0-48c8d8972a33.log
-capture ts3 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ts3-9fca8c77-e419-4fc7-9c50-83317568985a.log
-capture ts4 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ts4-31cf3bea-50ed-42f1-b639-e42db2eff1e8.log
-capture ts5 -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/ts5-4118412d-6660-41de-8bb4-e867b104b2e3.log
-capture proxy -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/attempts/proxy-c5110420-c6b2-47c6-a6ef-bf14d272af6e.log
+{"preflight": {"resource_root": "/Users/da/ws/pilotdeck-rs", "cap_bytes": 85899345920, "used_bytes": 50135748608, "size_reference": "/Users/da/ws/pilotdeck-rs/_tmp/archive/wt-b2c-tmp/20261014-b2-live3-ts1", "reference_bytes": 12554240, "per_run_estimate_bytes": 18831360, "remaining_runs": 26, "estimated_additional_bytes": 2489615360, "projected_bytes": 52625363968, "filesystem_free_bytes": 134717497344, "approximate": false, "events": []}}
+batch /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c
+capture ref1 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref1-dde31fe0-27fd-4ef2-8e28-635e82ff1952.log
+capture ref2 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref2-7006b923-9a61-48b7-8a3d-4cc969c358ad.log
+capture ref3 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref3-9cfe770c-7936-4b08-bee2-eed5838a99bf.log
+capture ref4 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref4-fde68790-87e6-4c95-8339-d05ac9da9a32.log
+capture ref5 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref5-bdd6a2b4-d183-4568-a420-70af3a66d5cf.log
+capture ref6 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref6-eec0bf7a-3c86-4c38-86c5-b0680a9f52e7.log
+capture ref7 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref7-e52c94b6-9cde-48cf-9937-dd371ec9544a.log
+capture ref8 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref8-46362bb0-b8c1-4498-88c3-70fc5cdce297.log
+capture ref9 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref9-3d21ad64-b8f1-41df-b09c-0ba28573d070.log
+capture ref10 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref10-70cba540-11c1-4687-8bf1-b9b0a40235ec.log
+capture ref11 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref11-7cce3f29-8575-438a-9504-26e65b8e25c5.log
+capture ref12 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref12-0870e0b6-4390-464f-b8c5-8e030996d1ea.log
+capture ref13 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref13-f89a5902-dcb3-46ff-8759-0393732c5f26.log
+capture ref14 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref14-f846edf2-f20f-4e82-bb2a-d4e024ae9157.log
+capture ref15 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref15-06e3b68f-480e-4cdf-a426-e1d6d27eb3ed.log
+capture ref16 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref16-8e1eb954-2952-4782-848c-59e69ead8e9e.log
+{
+  "verdict": "INCOMPLETE",
+  "error": "ref16: REFUSED/2; preserved /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref16-8e1eb954-2952-4782-848c-59e69ead8e9e; retry ONLY this run: --batch /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c --retry ref16",
+  "batch": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c",
+  "utc_day": "2026-10-18",
+  "ts_pairs_pass": 0,
+  "ts_pairs_expected": 10,
+  "proxy": null,
+  "clock_regression_check": {
+    "ref1": "PASS",
+    "ref2": "PASS",
+    "ref3": "PASS",
+    "ref4": "PASS",
+    "ref5": "PASS",
+    "ref6": "PASS",
+    "ref7": "PASS",
+    "ref8": "PASS",
+    "ref9": "PASS",
+    "ref10": "PASS",
+    "ref11": "PASS",
+    "ref12": "PASS",
+    "ref13": "PASS",
+    "ref14": "PASS",
+    "ref15": "PASS",
+    "ref16": "REFUSED"
+  },
+  "all_26_clocks_pass": false,
+  "independent_review": null,
+  "frozen": false,
+  "head": "ce7714962a7f2fb191ec69eff533deae4272e650",
+  "build": {
+    "target_dir": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target",
+    "binary": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target/debug/pdrs-exp008-proxy",
+    "cargo_home": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-home",
+    "toolchain": {
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1",
+      "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+    },
+    "sha256": "ddf42642a1ccb52cd7a4684ec5fc75be358f7f987328813a6d3debde848b7a6c"
+  },
+  "reports": {}
+}
+capture ref16 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref16-e70fb516-e456-4f59-9b79-c83d8ab9eb0d.log
+{
+  "verdict": "INCOMPLETE",
+  "error": null,
+  "batch": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c",
+  "utc_day": "2026-10-18",
+  "ts_pairs_pass": 0,
+  "ts_pairs_expected": 10,
+  "proxy": null,
+  "clock_regression_check": {
+    "ref1": "PASS",
+    "ref2": "PASS",
+    "ref3": "PASS",
+    "ref4": "PASS",
+    "ref5": "PASS",
+    "ref6": "PASS",
+    "ref7": "PASS",
+    "ref8": "PASS",
+    "ref9": "PASS",
+    "ref10": "PASS",
+    "ref11": "PASS",
+    "ref12": "PASS",
+    "ref13": "PASS",
+    "ref14": "PASS",
+    "ref15": "PASS",
+    "ref16": "PASS"
+  },
+  "all_26_clocks_pass": false,
+  "independent_review": null,
+  "frozen": false,
+  "head": "ce7714962a7f2fb191ec69eff533deae4272e650",
+  "build": {
+    "target_dir": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target",
+    "binary": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target/debug/pdrs-exp008-proxy",
+    "cargo_home": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-home",
+    "toolchain": {
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1",
+      "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+    },
+    "sha256": "ddf42642a1ccb52cd7a4684ec5fc75be358f7f987328813a6d3debde848b7a6c"
+  },
+  "reports": {}
+}
+retry=0
+capture ref17 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref17-d4ae6955-ad6f-4aa4-bf08-866de0c7a168.log
+capture ref18 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref18-4d340745-ecf2-4ce4-bd69-361c793a2eb1.log
+capture ref19 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref19-fbed384a-f450-408e-b9cf-a7a93ed98ee7.log
+capture ref20 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ref20-47d60234-072e-45d0-88b4-0bdef6c776d1.log
+capture ts1 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ts1-3e1ef16c-1171-4aa6-b492-fe4a197b1f17.log
+capture ts2 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ts2-ecb018e1-1b8a-4025-ad4a-a7bbfa824120.log
+capture ts3 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ts3-13ce3bf3-a59b-4195-b762-0127c6d4c4e7.log
+capture ts4 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ts4-8801b6da-de60-4e5a-b221-5e4eadf405ad.log
+capture ts5 -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/ts5-350f2633-f57c-4fef-af1a-86000c983742.log
+capture proxy -> /Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/attempts/proxy-875d73e0-0d4a-43da-8367-5bdb5e6a667d.log
 {
   "verdict": "PENDING_REVIEW",
   "error": null,
-  "batch": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb",
-  "utc_day": "2026-10-14",
+  "batch": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c",
+  "utc_day": "2026-10-18",
   "ts_pairs_pass": 10,
   "ts_pairs_expected": 10,
   "proxy": "PASS",
@@ -65,19 +151,19 @@ capture proxy -> /Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879
   "all_26_clocks_pass": true,
   "independent_review": null,
   "frozen": false,
-  "head": "eb2f2c7fd2595339fe02eda0e74c9632ca7c0f6d",
+  "head": "ce7714962a7f2fb191ec69eff533deae4272e650",
   "build": {
-    "target_dir": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-target",
-    "binary": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-target/debug/pdrs-exp008-proxy",
-    "cargo_home": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-home",
+    "target_dir": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target",
+    "binary": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target/debug/pdrs-exp008-proxy",
+    "cargo_home": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-home",
     "toolchain": {
       "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1",
       "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
     },
-    "sha256": "fe2fff6434dcdccf8c8f675f5b02ce1b48378f52c028b4a4fe3626f8bb7345ed"
+    "sha256": "ddf42642a1ccb52cd7a4684ec5fc75be358f7f987328813a6d3debde848b7a6c"
   },
   "reports": {
-    "ts_ruler": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/ts-ruler-f32ed7c9-dbe1-4859-bc6e-a7f18809ccba.json",
-    "final_ruler": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/final-ruler-72ccd4e0-a2bc-4adb-98f9-05919887e396.json"
+    "ts_ruler": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/ts-ruler-55036e36-ee90-4304-a5ca-60ef5aeead02.json",
+    "final_ruler": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/final-ruler-333fbde2-b5d9-4b01-b29b-c2952ac87357.json"
   }
 }
