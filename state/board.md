@@ -1,13 +1,16 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 22:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- D2-pr1 | gate | ready | PR #279：main 每动一次 decisions 文件，分支就冲突一次；22:34 再次 rebase（4c9f924），gate4 中 → 更新结果块 → 入队
-- A6.4-pr2a | gate | ready | PR #286 已入队（gate2 唯一的 P1 是 upload 生成器的同类遗漏，降为 P2 并入 #280）
-- #275 | review | ready | 合并闸门机器校验「谁写谁不审」（协调者接手）：gate 报 P0（折行 author 少算）、P1（跨行注释里的 ``` 被当围栏），已修（9f820a2），第六轮增量 dsh + codex 中
-- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM→DeepSeek @9ccb606+）：codex 第三轮 P0（夹具对固定 /tmp 目录递归删除）+ P1×2，DeepSeek 已修，协调者复跑中
-- A6.4-pr1 | review | blocked | model module 适配（wt-a6-x0 @304ed1f）：GLM 0/0/0；早先提交带 Claude 署名，作者含 DeepSeek、codex、Claude，缺第二家——待用户答复是否 squash 改实署名
-- A6.3-pr6 | review | blocked | 会话权限 registry（wt-a63-pr6 @475d3a6）：GLM 0/0/0；同上，待 squash 答复
+updated: 2026-10-19 00:35 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.3-pr6 | gate | ready | PR #291 已入队（会话权限 registry，DeepSeek→codex，squash 实署名）
+- A6.6-pr3 | gate | ready | WorkspaceSnapshot（wt-a66-pr3 @616af3a，GLM→DeepSeek）：两家 0/0；闸门 sibling 超时，拆成生产与测试两段重跑中
+- A6.7-pr2 | review | ready | event.emit 适配（wt-a67-pr2 @83edc84，DeepSeek）：闸门 P0/P1=0；P2 抛错金样已补，codex + Claude 增量确认中；顺序契约登记 #289
+- A6.4-pr2b | review | ready | budget module 适配（wt-a63-pr1 @97ae7ed，codex）：两条 P1 已修（金样改由真实 TS 组合录制），DeepSeek + Claude 增量确认中
+- A6.5-pr2 | review | ready | 轮内 checkpoint + 工具运行上下文（wt-a65-pr2 @fc7f7a3，codex）：复跑 354/0，DeepSeek + Claude 评审中
+- A6-recorder | impl | ready | durable model/tool 记录（A6.4-pr10 + A6.5-pr13，wt-a6-recorder，DeepSeek→codex）：codex 评审报 P1×7（与 TranscriptWriter 共享序号与父链等），codex 接手修复
+- A6.7-pr1 | impl | blocked | SteerMailbox + turn drain；等 A6.5-pr2 合并
+- #275 | coord | blocked | 合并闸门机器校验「谁写谁不审」：同一类 Markdown 绕过修了 8 轮未收敛，挂起转 draft；重启需人选 (a) 标准 CommonMark 解析器（新依赖）或 (b) 评审声明改走 label/JSON 通道
+- p2-sweep-5 | impl | ready | P2-跟进 30 个（>10）：下一批清账，优先 #280（生成器溯源守卫铺满），codex
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -15,6 +18,11 @@ updated: 2026-10-18 22:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-19 00:35 · /loop 两小时交接（自 17:10 起，期间 22:40 有一次中段记录）
+> 合并（17:10 以来共 19 个 PR）：产品方面有 #266 A6-X0、#267 A6.3-pr1、#272 A6.4-pr11、#278 A6.7-pr3、#279 D2-pr1、#284 F2-A34-pr2、#285 A6.5-pr1、#286 A6.4-pr2a、#288 A6.4-pr1，以及 #257/#262 B2 重冻结和 #269 p2-sweep-4；其余是 board 与规则（含 #282 署名口径 B、#264 模型分工 v2）。入队中：#291 A6.3-pr6。
+> 用户定的规则：署名按 B（原样提交 worker 产物时署实际实现方）；可以 squash 未合并分支改成实署名；四角色闸门同时 ≤2 个。挂起：#275（见 READY）。换人实现：A6.4-pr1 DeepSeek→codex，A6.3-pr6 DeepSeek→codex，A6.6-pr3 GLM→DeepSeek，A6-recorder DeepSeek→codex。看板「重派次数」为 4；DeepSeek 在有并发和生命周期的单上多次被 codex 抓出 P1，这类单今后起手就派 codex。
+> **持有人与后台**：协调者本会话。worktree 12/12，磁盘 67.3/100 GiB，P2-跟进 30 个。在跑：A6.6-pr3 拆分闸门、三路评审（A6.7-pr2、A6.4-pr2b、A6.5-pr2）、codex 修 A6-recorder。**下一步**：A6.5-pr2 合入后放出 A6.7-pr1；空出槽位就开 p2-sweep-5。
 
 > ## 2026-10-18 22:40 · /loop
 > 合并：#278（A6.7-pr3）、#281（board）、#282（署名口径 B，用户本人在协调者会话确认，已写入 CLAUDE.md）、#284（F2-A34-pr2）、#285（A6.5-pr1）。入队中：#279（D2）、#286（A6.4-pr2a）。#275 由守护会话移交给协调者：评审多轮在同一类 Markdown 绕过上来回，改成结构性规则（标记须顶格、独占一行、不在围栏或缩进代码块里，author 只多算不少算）。A6.6-pr3 的 codex 评审抓到一个 P0：夹具会递归删除固定的 /tmp 目录；main 上同类排查无命中。**用户定闸门并行 ≤2**：四角色闸门同时最多 2 个，GLM 评审另留最多 2 个余量（共用 ZAI key 全局并发约 10，超限立即 429，见 `state/memory/20261018-glm-concurrency.md`），排队用 `_tmp/20261018-a6-split/gate-serial.sh`。待用户答复：A6.4-pr1、A6.3-pr6 是否 squash 成实署名的单提交（不碰 main 历史），以便 Claude 当第二家评审。新 P2-跟进 #280、#283。
