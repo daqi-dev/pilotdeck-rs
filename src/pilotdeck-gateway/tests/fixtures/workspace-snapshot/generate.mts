@@ -449,7 +449,10 @@ try {
   // Non-UTF-8 file names need a byte-transparent filesystem (Linux ext4 and
   // friends); APFS/HFS+ reject the bytes with EINVAL, so the scenario probes
   // first and both this generator and the Rust replay drop it where the name
-  // cannot exist (CI runs ubuntu, where the scenario executes).
+  // cannot exist. The committed oracle was generated on macOS, where the probe
+  // is rejected, so it has no non-utf8 scenario and CI never regenerates the
+  // fixtures: this path is currently uncovered. Linux generation is pending
+  // #283.
   const nonUtf8Probe = Buffer.concat([Buffer.from(`${scratch}/probe-`), Buffer.from([0xff])]);
   const nonUtf8Names = await writeFile(nonUtf8Probe, '')
     .then(() => removeOwned(scratch, nonUtf8Probe))
@@ -914,6 +917,13 @@ try {
       { op: 'writeSnapshot', path: `${quirkBase}/manual-entries-object/manifest.json`, text: JSON.stringify({ snapshotId: 'entries-object', entries: {} }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-entries-string/manifest.json`, text: JSON.stringify({ snapshotId: 'entries-string', entries: 'x' }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-entries-null/manifest.json`, text: JSON.stringify({ snapshotId: 'entries-null', entries: null }) },
+      // workspaceSnapshot.ts:125/128 guards the type-specific field inside the
+      // same condition as entryType: an entry that names the type but omits
+      // linkTarget/objectKey is deliberately skipped, and restore still
+      // resolves `{restored:true}`. Measured against the real provider
+      // (probe-r13-missing-fields.log): both cases succeed with no output.
+      { op: 'writeSnapshot', path: `${quirkBase}/manual-link-missing/manifest.json`, text: JSON.stringify({ snapshotId: 'link-missing-1', entries: [{ path: 'link-only', entryType: 'symlink' }] }) },
+      { op: 'writeSnapshot', path: `${quirkBase}/manual-file-missing/manifest.json`, text: JSON.stringify({ snapshotId: 'file-missing-1', entries: [{ path: 'file-only', entryType: 'file' }] }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-abs/manifest.json`, text: JSON.stringify({ snapshotId: 'abs-1', entries: [{ path: '/etc/passwd', entryType: 'file' }] }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-esc/manifest.json`, text: JSON.stringify({ snapshotId: 'esc-1', entries: [{ path: 'a/../../esc.txt', entryType: 'file' }] }) },
       { op: 'writeSnapshot', path: `${quirkBase}/manual-dupkey/manifest.json`, text: '{"snapshotId":"ignored","snapshotId":"dupkey-1","phase":"pre_user"}' },
@@ -947,6 +957,8 @@ try {
       { op: 'restore', snapshotId: 'entries-object', target: 'quirk-eobj' },
       { op: 'restore', snapshotId: 'entries-string', target: 'quirk-estr' },
       { op: 'restore', snapshotId: 'entries-null', target: 'quirk-enull' },
+      { op: 'restore', snapshotId: 'link-missing-1', target: 'quirk-link-missing' },
+      { op: 'restore', snapshotId: 'file-missing-1', target: 'quirk-file-missing' },
       { op: 'get', snapshotId: 'entries-5' },
     ],
   });
@@ -970,6 +982,18 @@ try {
       assert.equal(restores[5 + index].outcome.restored, true, `${target} restores`);
       assert.equal(restores[5 + index].outcome.workspaceKey, `<dir>/${target}`);
       assert.deepEqual(restores[5 + index].targetTree, [], `${target} has no entries to restore`);
+    }
+    // Missing type-specific field: the real TS provider skips the entry and
+    // still returns restored:true (probe-r13-missing-fields.log), so the
+    // oracle must keep that outcome instead of a fabricated TypeError.
+    for (const [id, target] of [
+      ['link-missing-1', 'quirk-link-missing'],
+      ['file-missing-1', 'quirk-file-missing'],
+    ] as const) {
+      const step = providerQuirks.steps.find((s: any) => s.op === 'restore' && s.snapshotId === id)!;
+      assert.equal(step.outcome.restored, true, `${id} restores`);
+      assert.equal(step.outcome.workspaceKey, `<dir>/${target}`);
+      assert.deepEqual(step.targetTree, [], `${id} skips the field-less entry`);
     }
     const entriesNumber = providerQuirks.steps.filter((s: any) => s.op === 'get').at(-1)!.outcome.value;
     assert.equal(entriesNumber.entries, 5, 'get returns the non-array entries value verbatim');
