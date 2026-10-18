@@ -24,8 +24,16 @@ credential env 保持各 provider 的解析与可用性判断。
 - `value.rs`：JS truthiness、String、Object.entries、UTF-16 诊断文本。
 - `host.rs`：引用 JavaScript intrinsic prototype 状态的特殊配置交回 TS。
 
-返回类型是 catalog 所需投影与完整诊断，不是可供执行器使用的完整配置快照。
-没有增加配置写入、热加载或版本/hash API。
+`Config` 仍是 catalog 所需投影与完整诊断。`snapshot.rs` 在同一个已验证文档上
+额外导出可执行快照：`load_snapshot(pilot_home, cwd, env, project, version,
+loaded_at)` 返回与 `loadPilotConfig` 输出同形的 `version`、`schemaVersion`、
+`loadedAt`、`contentHash`、`sources`、`diagnostics`、`config`。快照路径使用
+`graph::inspect_full` 物化完整 YAML 值；既有 catalog/诊断加载仍用原来的
+角色受限投影，解析顺序、诊断与错误语义不变。没有增加配置写入或热加载 API。
+
+`load_project` / `load_project_with_files` 的公开行为不变；`snapshot.rs` 只投影
+已验证的值，不新增诊断或改变校验。完整快照的真实 TS 原件、生成器和回放见
+`tests/fixtures/config-snapshot/README.md`。
 
 公共 `load_project(pilot_home, cwd, env, project)` 接收显式路径与环境，供 CLI
 复用同一加载器；不会从进程环境推导 PilotHome，也不会启动宿主回退。

@@ -34,9 +34,13 @@ enum Role {
     Guard,
     Array,
     Opaque,
+    Full,
 }
 fn child(role: Role, key: &str) -> Role {
     use Role::*;
+    if matches!(role, Full) {
+        return Full;
+    }
     match role {
         SopBundle => {
             if key == "sops" {
@@ -159,16 +163,30 @@ fn child(role: Role, key: &str) -> Role {
             "toolFailureLimits" | "toolLabels" => Fields,
             _ => Opaque,
         },
-        Fields | Array | Opaque => Opaque,
+        Fields | Array | Opaque | Full => Opaque,
     }
 }
 pub(super) fn inspect_sops(g: &ValueGraph) -> JsValue {
-    convert(g, &g.root, Role::SopBundle, &mut vec![])
+    convert(g, &g.root, Role::SopBundle, &mut vec![], 0)
 }
 pub(super) fn inspect(g: &ValueGraph) -> JsValue {
-    convert(g, &g.root, Role::Root, &mut vec![])
+    convert(g, &g.root, Role::Root, &mut vec![], 0)
 }
-fn convert(g: &ValueGraph, v: &Value, role: Role, active: &mut Vec<usize>) -> JsValue {
+/// Materialize every reachable value. Used only for the executable snapshot;
+/// validator-observed loads keep the cheaper role-limited projection.
+pub(super) fn inspect_full(g: &ValueGraph) -> JsValue {
+    convert(g, &g.root, Role::Full, &mut vec![], 0)
+}
+fn convert(
+    g: &ValueGraph,
+    v: &Value,
+    role: Role,
+    active: &mut Vec<usize>,
+    depth: usize,
+) -> JsValue {
+    if depth > 256 {
+        return JsValue::Undefined;
+    }
     match v {
         Value::Null => JsValue::Null,
         Value::Bool(b) => JsValue::Bool(*b),
@@ -177,7 +195,8 @@ fn convert(g: &ValueGraph, v: &Value, role: Role, active: &mut Vec<usize>) -> Js
         Value::Undefined | Value::Symbol { .. } => JsValue::Undefined,
         Value::Ref(id) => match &g.nodes[*id] {
             Container::Object(entries) => {
-                if matches!(role, Role::Root) && active.contains(id) {
+                if (matches!(role, Role::Root) || matches!(role, Role::Full)) && active.contains(id)
+                {
                     return JsValue::Object(JsObject::new());
                 }
                 active.push(*id);
@@ -188,7 +207,7 @@ fn convert(g: &ValueGraph, v: &Value, role: Role, active: &mut Vec<usize>) -> Js
                         JsValue::Undefined
                     } else {
                         let key = k.to_utf8().unwrap_or_default();
-                        convert(g, v, child(role, &key), active)
+                        convert(g, v, child(role, &key), active, depth + 1)
                     };
                     o.insert(k.clone(), value);
                 }
@@ -200,12 +219,17 @@ fn convert(g: &ValueGraph, v: &Value, role: Role, active: &mut Vec<usize>) -> Js
                     return JsValue::Array(vec![]);
                 }
                 active.push(*id);
-                let role = if matches!(role, Role::Array | Role::SopRows) {
+                let role = if matches!(role, Role::Full) {
+                    Role::Full
+                } else if matches!(role, Role::Array | Role::SopRows) {
                     Role::Fields
                 } else {
                     Role::Opaque
                 };
-                let a = items.iter().map(|v| convert(g, v, role, active)).collect();
+                let a = items
+                    .iter()
+                    .map(|v| convert(g, v, role, active, depth + 1))
+                    .collect();
                 active.pop();
                 JsValue::Array(a)
             }
