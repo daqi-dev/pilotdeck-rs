@@ -17,19 +17,19 @@ const turnOrder = page => surface(page).evaluate((node, labels) => {
   for (const label of labels) for (let at = text.indexOf(label); at >= 0; at = text.indexOf(label, at + 1)) hits.push([at, label]);
   return hits.sort((a, b) => a[0] - b[0]).map(([, label]) => label);
 }, TURN);
-// :31-32/:42 also fail on any extra store row; turnOrder alone cannot see a row
-// sharing no text with TURN. Count rows (the baseline's own row selector,
-// streaming-lifecycle.spec.mjs:128) outside and inside the expanded trace.
+// :31-32/:42 also fail on an extra store row; turnOrder alone cannot see a row
+// sharing no text with TURN. Count outermost keyed rows only ([data-message-key],
+// the contract selector of a-class-disposition.md:27, with no keyed ancestor), so
+// an extra top-level row fails while the trace's inner split stays free.
 // Old side, derived from source: the compact segment's previous host is the
 // thinking row (processGrouping.ts:377-389, :681-704), so it rides as that row's
 // after-attachment (:864-886); the fold keeps prior-user, prior-answer, user,
-// trace and answer (:944-969) and the trace holds only thinking
-// (MessagesPaneV2.tsx:1110-1122). No windowing below 160 items (:127).
-const ROWS = { rows: 5, traced: 1 };
-const rowCounts = page => surface(page).evaluate(node => ({
-  rows: [...node.querySelectorAll('[data-message-key]')].filter(row => !row.closest('[data-turn-trace]')).length,
-  traced: node.querySelectorAll('[data-turn-trace] [data-message-key]').length,
-}));
+// trace and answer (:944-969). Each is one MeasuredMessageItem
+// (MessagesPaneV2.tsx:288-291, :1096); the expanded trace's keyed children
+// (:1116-1122) sit inside the trace host's item. No windowing below 160 items (:127).
+const ROWS = 5;
+const rowCounts = page => surface(page).evaluate(node =>
+  [...node.querySelectorAll('[data-message-key]')].filter(row => !row.parentElement.closest('[data-message-key]')).length);
 // complete triggers refreshFromServer; wait until the mock served the new history.
 async function refreshed(page, after, persisted) {
   await expect.poll(async () => (await historyReads(page)).slice(after).some(read =>
