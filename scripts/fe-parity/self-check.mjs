@@ -4,7 +4,7 @@ import { orchestrationSelfCheck } from './orchestration-self-check.mjs';
 import { baselineStaleSelfCheck, staleControlAttempt } from './baseline-stale-self-check.mjs';
 import { staleEntry } from './baseline-stale.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { verifyBaseline, lockedImporterVersions, pnpmStoreDir, UNBOUND_PACKAGES } from './baseline.mjs';
 import { readFile, readdir, stat, mkdtemp, writeFile, symlink, link, rm, mkdir } from 'node:fs/promises';
 import { Readable } from 'node:stream';
@@ -107,6 +107,20 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       assert(checkAIdentities(bad, historical).length);
     }
     assert(checkAIdentities(rows, { ...historical, tests: historical.tests.filter(row => caseId(row) !== caseId(A_IDENTITIES[0])) }).length);
+  });
+  await check('A reports never enter the baseline ledger: --suite a-class --reconcile exits non-zero; A results in a baseline report FAIL', async () => {
+    const cli = spawnSync(process.execPath, [resolve(root, 'scripts/fe-parity/run.mjs'), '--suite', 'a-class', '--reconcile',
+      '--old-report', '/nonexistent/a-old.json', '--new-report', '/nonexistent/a-new.json'], { cwd: root, encoding: 'utf8' });
+    assert.notEqual(cli.status, 0); assert.match(cli.stderr, /never takes A-class reports/);
+    const inventory = [{ file: 'a.spec.mjs', title: 'one' }];
+    const aRows = A_IDENTITIES.map(entry => ({ file: entry.spec, title: aTitle(entry) }));
+    const make = rows => ({ config: { forbidOnly: true }, suites: [{ specs: rows.map(row => ({ ...row, tests: [{ expectedStatus: 'passed', annotations: [], results: [{ status: 'passed' }] }] })) }] });
+    assert.equal(reconcile(inventory, make(inventory), '').status, 'PASS');
+    for (const rows of [[...inventory, ...aRows], aRows, [...inventory, { file: 'x.spec.mjs', title: 'g › [A:x.spec.mjs:uncatalogued]' }]]) {
+      const account = reconcile(inventory, make(rows), '');
+      assert.equal(account.status, 'FAIL'); assert(account.errors.some(error => error.startsWith('A rewrite result never credits')));
+    }
+    assert.equal(reconcile(aRows, make(aRows), '').status, 'PASS', 'A-class own account still accepts its own rows');
   });
   await check('reconciliation positive and adversarial controls', () => {
     const inventory = [{ file: 'a.spec.mjs', title: 'one' }, SKIP_ALLOWLIST[0]];
