@@ -1,19 +1,19 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 17:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6-X0 | review | ready | 宿主 module 路由 + 错误投影（wt-a6-x0，codex/a6-x0 @8ee65db）：首轮三家 0/0，P2 当轮修完，增量确认中（GLM + DeepSeek）；缺省模块 Unsupported 登记 #258（前置于 A6.9）
-- A6.3-pr1 | gate | ready | 配置 diff/classify（wt-a63-pr1，deepseek/a63-pr1 @45c2595；DeepSeek dsh 试点）：首轮两家撞车 P1（原型链回落）已修，二轮 GLM 0/0、codex 0/0；四角色闸门中 → PR
-- D2-pr1 | review | ready | skills migrate（wt-d1-cli，codex/d2-skills-migrate @af5e952）：D0 正式轮 TS 自比较 PASS、Rust 对 TS PASS（28 场景）；跨流顺序按场景声明（卡见 decisions-20261017 末节）；GLM + DeepSeek 评审中
-- F2-A34-pr2 | review | ready | A 类样板 #15、#5、#1（wt-f34b，claude/f2-a34-pr2 @6070e59）：旧侧 3/3 PASS，基线零写入；GLM + DeepSeek 评审中；分母 68 待人复核
-- B2-94-archive | gate | ready | #257 合入时漏掉的归档哈希登记（wt-a62-run，claude/b2-94-archive）：闸门 P2 已修，gate5 + DeepSeek 确认中
-- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，glm/a66-pr3）：GLM 第三轮（生成器断言 + 测试 12 个编译错误）
-- A6.4-pr11 | impl | ready | SDK task budget JSONL 账本（wt-a64-pr11，codex/a64-pr11）：codex 实现中
-- A6.3-pr6 | impl | ready | 会话权限规则/模式 registry + SessionConfigOverrides（不依赖 X0）
-- A6.7-pr3 | impl | ready | hooks 配置解析与匹配（纯函数，不依赖 X0）
+updated: 2026-10-18 17:35 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6-X0 | gate | ready | 宿主 module 路由（wt-a6-x0，codex/a6-x0 @8ee65db）：两轮收敛 0/0/0，四角色闸门中 → 立即入队（串行热点，插队）
+- A6.3-pr1 | impl | ready | 配置 diff/classify（wt-a63-pr1，DeepSeek dsh）：闸门 P2 transientRetry 覆盖当轮修中；另两条 P2 登记 #261
+- D2-pr1 | impl | ready | skills migrate（wt-d1-cli，codex）：GLM P1（目录权限未经过 umask，实测）修复中；DeepSeek 两条条件 P1 已用 TS 实录驳回
+- F2-A34-pr2 | impl | ready | A 类样板（wt-f34b，Claude）：GLM P1（turnOrder 漏检多余可见行，P2-b 升格）修复中；DeepSeek 两条 P1 已由实跑驳回
+- A6.4-pr11 | review | ready | SDK task budget 账本（wt-a64-pr11，codex @2580feb）：协调者复跑 317/0；GLM + DeepSeek 评审中
+- B2-94-archive | gate | ready | PR #262（归档哈希登记）：gate5 0/0/0、DeepSeek 0/0/0，入队中
+- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：第四轮，生成器第 8 个场景的断言（前 7 个已过）
+- A6.7-pr3 | impl | ready | hooks 配置解析与匹配（wt-a67-pr3，codex/a67-pr3）：codex 实现中
+- A6.3-pr6 | impl | ready | 会话权限规则/模式 registry（wt-a63-pr6，deepseek/a63-pr6）：DeepSeek dsh 实现中
+- p2-sweep-4 | impl | ready | P2-跟进清账（wt-p2-sweep-4，codex/p2-sweep-4）：开着的有 28 个，挑 ≤6 条近期前置的
 - A6.4-pr1 | impl | blocked | model module 适配；等 A6-X0 合并
 - A6.5-pr1 | impl | blocked | capability + permission 适配；等 A6-X0 合并
-- p2-sweep-4 | impl | ready | P2-跟进 27 个（>10）：下一批清账，codex；排在 A6 首批之后
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -21,6 +21,9 @@ updated: 2026-10-18 17:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 17:35 · /loop（按新版 loop-prompt「先派满」）
+> 合并：#260（board + 两条 memory）。17:27 醒来发现所有后台任务都已结束、线全空，于是当轮派满：A6.7-pr3（codex，接在它交付 A6.4-pr11 之后）、A6.3-pr6（DeepSeek dsh）、p2-sweep-4（codex），另有五单进修复或评审轮。评审中被实测证据驳回的 P1 有四条（D2 两条看 TS 实录 exit 和事件流，F2 两条看旧侧实跑 PASS）。新 P2-跟进 #261。开 #262 补 B2 归档登记。worktree 11/12，磁盘约 53/100 GiB，cargo 槽 1/4。**下一步**：X0 闸门一过就入队，合入后当轮放出 A6.4-pr1、A6.5-pr1；其余按回调推进。
 
 > ## 2026-10-18 17:10 · /loop 两小时交接（自 14:58 起）
 > 合并：#255（board）、#257（B2-94 重新冻结，Closes #94）。#257 入队「失败」后 auto-merge 仍开着，结果合入的是 dae2557，闸门 P2 修复 e6aa919 没进去。另开 claude/b2-94-archive 补上，教训记入 `state/memory/20261018-auto-merge-armed.md`。A6 首批：X0 三家首轮 0/0；A6.3-pr1（DeepSeek dsh 试点）首轮两家撞车 P1 一次修好，二轮 0/0。dsh 有工具后能自己实测 TS 再改，试点表现正常。A6.6-pr3（GLM，无 Bash）第一轮 1 小时超时，留下的代码编译不过，第三轮中，结论待收敛后记卡。D2 与 F2-A34-pr2 实测全过，进评审。新 P2-跟进 #253、#254、#258。外部定标 checkout 已核对哈希后删除，证据在 `_tmp/archive/b2-calibration-2026-10-18-a025aa97/`。worktree 8/8（主仓 + a62-run、d1-cli、f34b、a6-x0、a63-pr1、a66-pr3、a64-pr11）；17:15 #256、#259 合入，上限改为 12 / 100 GiB，cargo 并发 ≤ 4（开跑前跑 scripts/cargo-slots.sh）。守护会话在仓外 clone 提交，6 个提交作者邮箱为空（14c19a1…e333c4b），main 禁强推无法改写，教训见 `state/memory/20261018-clone-author-email.md`，磁盘 52.2/80 GiB。
