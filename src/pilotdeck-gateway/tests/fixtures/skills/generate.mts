@@ -38,16 +38,27 @@ function substitute(value: any, root: string, cursors: (string | undefined)[] = 
 }
 // Node's base64 decoding is character-set lenient: "+" decodes like "-", "=" ends
 // the payload, and unrelated junk is skipped. Each named probe mangles a cursor
-// the manager itself produced, so the real decoder decides the outcome. No
-// alphabet-swap probe exists: cursors are base64url of pure-ASCII JSON, which
-// yields sextet 62/63 only from a 3-byte group's third byte ('>' '?' '~' DEL in
-// ASCII) — bytes the cursor's JSON never contains — so a real cursor cannot
-// carry '-'/'_' and the swap would be a no-op (that '+'/'/' equals '-'/'_' is
-// pinned by the Rust base64_lenient unit tests instead).
+// the manager itself produced, so the real decoder decides the outcome. A cursor
+// as emitted never carries '-'/'_': base64url of pure-ASCII JSON yields sextet
+// 62/63 only from a 3-byte group's third byte ('>' '?' '~' DEL in ASCII), bytes
+// the cursor's JSON never contains. 'ignored-field' lifts exactly that limit: it
+// keeps offset and signature but adds a field the decoder never reads, whose
+// '>>>???' text supplies those bytes, so the re-encoded cursor does carry both
+// specials (asserted) and 'std-alphabet' has real characters to swap for '+'/'/'.
+// That pins the two alphabets' equivalence on real TS outcomes: the Rust
+// base64_lenient unit tests cover only skipping, '=' termination and truncation.
 function mangleCursor(raw: string, how: string): string {
   const half = Math.floor(raw.length / 2);
   if (how === 'plus-prefix') return `+${raw}`;
   if (how === 'equals-middle') return `${raw.slice(0, half)}=${raw.slice(half)}zzzz`;
+  if (how === 'equals-suffix') return `${raw}=zzzz`;
+  if (how === 'ignored-field') {
+    const outer = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    const url = Buffer.from(JSON.stringify({ ...outer, ignored: '>>>???' })).toString('base64url');
+    assert.ok(url.includes('-') && url.includes('_'), 'ignored-field cursor lacks the url-safe specials');
+    return url;
+  }
+  if (how === 'std-alphabet') return mangleCursor(raw, 'ignored-field').replaceAll('-', '+').replaceAll('_', '/');
   throw new Error(`unknown cursor mangle ${how}`);
 }
 // Outputs: root -> "<dir>", mtime -> "<mtime>" (unless kept), nextCursor decoded.
@@ -146,7 +157,9 @@ async function runSteps(manager: any, steps: any[], root: string, keepMtime = fa
     for (const step of steps) out.push({ ...step, outcome: await runStep(manager, step, root, cursors, keepMtime) });
   } finally { process.env.HOME = savedHome; }
   // Mangled cursors record as literals, like portable nextCursor.raw values; the
-  // probes keep projectKey null so no machine path can survive here.
+  // probes keep projectKey null so no machine path can survive here. The literal
+  // scan below cannot see a root hidden inside the encoded signature, so the raw
+  // cursor must first survive cursorView's double decode.
   for (const step of steps) {
     const input = step.input;
     if (!input || typeof input.cursor !== 'string') continue;
@@ -154,6 +167,7 @@ async function runSteps(manager: any, steps: any[], root: string, keepMtime = fa
     if (!m) continue;
     const raw = cursors[Number(m[1])];
     assert.ok(raw, `step ${m[1]} returned no cursor`);
+    assert.ok(cursorView(raw, root).raw !== null, `${m[2]} source cursor embeds the scenario root`);
     const mangled = mangleCursor(raw, m[2]);
     assert.ok(!mangled.includes(root), `${m[2]} cursor embeds the scenario root`);
     input.cursor = mangled;
@@ -298,10 +312,17 @@ try {
       op('list', { query: 5 }),
       op('list', { cursor: [8, 109] }),
       // Node's lenient base64url decoding, probed on real cursors (projectKey stays
-      // null so the recorded literals carry no machine path).
+      // null so the recorded literals carry no machine path). Step 33 consumes the
+      // cursor untouched; each positive probe must land on that exact page: '='
+      // ends the payload before the suffix junk, '+'/'/' decode as '-'/'_'. A
+      // decoder made strict (rejecting '+'/'/'/'=') fails steps 34 and 36.
       op('list', { query: 'a', limit: 5 }),
       op('list', { query: 'a', limit: 5, cursor: '<cursor:30:plus-prefix>' }),
       op('list', { query: 'a', limit: 5, cursor: '<cursor:30:equals-middle>' }),
+      op('list', { query: 'a', limit: 5, cursor: '<cursor:30>' }),
+      op('list', { query: 'a', limit: 5, cursor: '<cursor:30:equals-suffix>' }),
+      op('list', { query: 'a', limit: 5, cursor: '<cursor:30:ignored-field>' }),
+      op('list', { query: 'a', limit: 5, cursor: '<cursor:30:std-alphabet>' }),
     ],
   });
   {
@@ -309,7 +330,7 @@ try {
       'list:17', 'list:10+', 'list:14', 'list:14', 'list:4', 'list:10', 'list:3', 'list:0', 'list:3',
       'list:5+', 'list:5+', 'list:5+', 'list:2', ...times(11, 'invalid_input'), 'list:17', 'list:10+', 'list:0', 'list:0',
       'TypeError', 'invalid_input',
-      'list:5+', 'invalid_input', 'invalid_input',
+      'list:5+', 'invalid_input', 'invalid_input', 'list:5+', 'list:5+', 'list:5+', 'list:5+',
     ]);
     // The projectKey "" quirk: echoed, yet no project listing.
     assert.equal(o[3].result.projectPath, '');
@@ -317,6 +338,9 @@ try {
     const byScope = (r: any) => Object.fromEntries(['builtin', 'user', 'project'].map(s => [s, r[s].map((k: any) => [k.slug, k.overriddenBy ?? null, k.overridesBuiltin ?? null])]));
     assert.deepEqual(byScope(o[0].result).builtin, [['alpha', 'project', null], ['beta', 'user', null], ['gamma', 'project', null], ['linked', null, null]]);
     assert.ok(o[8].result.items.find((i: any) => i.slug === 'zeta').matches.length === 2);
+    // Every accepted probe lands on the untouched control page (o[33]).
+    assert.equal(o[33].result.nextCursor.offset, 10);
+    for (const i of [34, 35, 36]) assert.deepEqual(o[i].result, o[33].result);
   }
 
   await scenario('list-scandir-error', {
