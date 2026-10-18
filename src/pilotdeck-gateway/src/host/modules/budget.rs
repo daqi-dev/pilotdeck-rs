@@ -7,7 +7,8 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 /// Ports receive the shallow-validated request intact, including extensions.
-/// Implementations must be cooperative: dropping a future stops its owned work.
+/// Implementations must be cooperative: dropping a future cancels owned I/O.
+/// Local tokenizer batches already running finish under a bounded CPU permit.
 pub trait RequestInputEstimator: Send + Sync {
     fn estimate_request_input(&self, request: JsObject) -> HostFuture<f64>;
 }
@@ -43,12 +44,14 @@ pub struct Ports {
     pub estimate_usage_cost: Option<Arc<dyn UsageCostEstimator>>,
 }
 impl Ports {
-    /// Local accounting only. Provider counts/evaluation arrive in A6.4-pr3.
+    /// Local accounting, including budget evaluation without provider access.
     pub fn local(pricing: Option<PricingMap>) -> Self {
         Self {
             estimate_request_input: Some(Arc::new(LocalRequestInput)),
+            evaluate_request_budget: Some(Arc::new(
+                crate::runtime::model::token_accounting::TokenAccountingRuntime::default(),
+            )),
             estimate_usage_cost: Some(Arc::new(LocalUsageCost { pricing })),
-            ..Self::default()
         }
     }
 }
@@ -181,10 +184,13 @@ pub struct LocalRequestInput;
 impl RequestInputEstimator for LocalRequestInput {
     fn estimate_request_input(&self, request: JsObject) -> HostFuture<f64> {
         Box::pin(async move {
-            let (request, extra_tool_tokens) = accounting_request(&request)?;
-            model_cost::estimate_request_input(&request)
-                .map(|tokens| (tokens + extra_tool_tokens) as f64)
-                .map_err(|error| ModuleError::new(format!("{error:?}")).into())
+            crate::runtime::model::cpu::run(move || {
+                let (request, extra_tool_tokens) = accounting_request(&request)?;
+                model_cost::estimate_request_input(&request)
+                    .map(|tokens| (tokens + extra_tool_tokens) as f64)
+                    .map_err(|error| ModuleError::new(format!("{error:?}")).into())
+            })
+            .await
         })
     }
 }
@@ -295,7 +301,9 @@ fn surrogate_pricing(
 // are iterable, template interpolation accepts missing names, and tool-result
 // Array#join converts primitives. The resulting typed request still shares the
 // existing model_cost counter and tokenizer.
-fn accounting_request(raw: &JsObject) -> Result<(CanonicalModelRequest, usize), HostError> {
+pub(crate) fn accounting_request(
+    raw: &JsObject,
+) -> Result<(CanonicalModelRequest, usize), HostError> {
     let system_prompt = raw
         .get("systemPrompt")
         .filter(|value| truthy(value))
@@ -487,6 +495,25 @@ fn accounting_result(block: &JsValue) -> Result<JsValue, HostError> {
         }
         _ => JsValue::Undefined,
     })
+}
+pub(crate) fn flatten_result(block: &JsValue) -> Result<JsValue, HostError> {
+    let Some(JsValue::Array(items)) = block.get("content") else {
+        return Err(ModuleError::new("content.map is not a function").into());
+    };
+    let mapped = items
+        .iter()
+        .map(accounting_result)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut units = Vec::new();
+    for (index, value) in mapped.iter().enumerate() {
+        if index > 0 {
+            units.push(u16::from(b'\n'));
+        }
+        if !matches!(value, JsValue::Null | JsValue::Undefined) {
+            units.extend_from_slice(template_string(Some(value))?.units());
+        }
+    }
+    Ok(JsValue::String(JsString::from_utf16(units)))
 }
 fn template_string(value: Option<&JsValue>) -> Result<JsString, HostError> {
     let undefined = JsValue::Undefined;

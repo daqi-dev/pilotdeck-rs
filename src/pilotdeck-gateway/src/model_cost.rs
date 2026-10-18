@@ -466,7 +466,7 @@ fn estimate_message_tokens(message: &Message) -> Result<usize, TokenizeError> {
     Ok(total)
 }
 
-fn estimate_block_tokens(block: &ContentBlock) -> Result<usize, TokenizeError> {
+pub(crate) fn estimate_block_tokens(block: &ContentBlock) -> Result<usize, TokenizeError> {
     match &block.body {
         ContentBody::Text(text) => count_tokens(&text.text),
         ContentBody::Thinking(thinking) => count_tokens(
