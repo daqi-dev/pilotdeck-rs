@@ -571,3 +571,190 @@ async fn empty_context_settlement_does_not_overwrite_expiry_that_won_the_race() 
         .unwrap();
     assert_eq!(again.status.as_str(), "expired");
 }
+
+fn registration(id: &str, timeout_ms: f64) -> AsyncHookRegistration {
+    AsyncHookRegistration {
+        session_key: "s".into(),
+        invocation_id: id.into(),
+        hook_name: "hook".into(),
+        hook_event: "PreToolUse".into(),
+        timeout_ms: Some(timeout_ms),
+        include_hook_events: true,
+    }
+}
+fn status_sink(events: &Arc<Mutex<Vec<String>>>) -> impl Fn(&JsString, JsObject) + use<> {
+    let sink = events.clone();
+    move |_, event| {
+        let status = event.get("status").and_then(JsValue::as_string).cloned();
+        sink.lock()
+            .unwrap()
+            .push(status.unwrap().to_utf8().unwrap());
+    }
+}
+fn started_turn() -> AsyncHookTurn {
+    let mailbox = SteerMailbox::new(None);
+    mailbox.start("r".into());
+    AsyncHookTurn {
+        run_id: "r".into(),
+        mailbox,
+    }
+}
+
+/// Blocks one `now_ms` call (the deadline check of a chosen submit) until
+/// released, then reports a time past every deadline.
+struct GatedClock {
+    inner: Clock,
+    calls: Mutex<usize>,
+    gate_call: usize,
+    entered: Mutex<std::sync::mpsc::Sender<()>>,
+    release: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+impl AsyncHookClock for GatedClock {
+    fn now_ms(&self) -> f64 {
+        let call = {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            *calls
+        };
+        if call == self.gate_call {
+            self.entered.lock().unwrap().send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            return self.inner.now_ms() + 1_000.0;
+        }
+        self.inner.now_ms()
+    }
+    fn schedule(&self, delay: f64, callback: Box<dyn FnOnce() + Send>) -> Box<dyn AsyncHookTimer> {
+        self.inner.schedule(delay, callback)
+    }
+}
+
+#[tokio::test]
+async fn deadline_expiry_reports_settlement_that_won_after_admission() {
+    // Submit A passes the outcome/pending checks, then stalls in its deadline
+    // read. Submit B settles `delivered` meanwhile. TS runs A's prefix
+    // synchronously, so A either expires first (and B sees `expired`) or sees
+    // B's outcome (`duplicate`). A must not report `expired` beside a stored
+    // `delivered` outcome and a lone delivered event.
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let clock = Arc::new(GatedClock {
+        inner: Clock::default(),
+        calls: Mutex::new(0),
+        gate_call: 2, // 1: register, 2: A's deadline check, 3: B's.
+        entered: Mutex::new(entered_tx),
+        release: Mutex::new(release_rx),
+    });
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let turn = started_turn();
+    let registry = AsyncHookRegistry::new(
+        clock.clone(),
+        move |_| Some(turn.clone()),
+        status_sink(&events),
+    );
+    registry.register(registration("a", 10.0)).unwrap();
+    let a = {
+        let registry = registry.clone();
+        std::thread::spawn(move || {
+            registry.submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+        })
+    };
+    entered_rx.recv().unwrap();
+    let b = registry
+        .submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    assert_eq!(b.status.as_str(), "delivered");
+    release_tx.send(()).unwrap();
+    let a = a.join().unwrap().await.unwrap();
+    assert_eq!(a.status.as_str(), "duplicate");
+    assert_eq!(*events.lock().unwrap(), vec!["delivered".to_string()]);
+    let again = registry
+        .submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    assert_eq!(again.status.as_str(), "duplicate");
+}
+
+#[tokio::test]
+async fn old_run_expiry_is_not_interleaved_by_a_concurrent_submit() {
+    // A's run fence finds no matching run. While A is inside that lookup,
+    // submit B starts on another thread and would see the run active. TS
+    // expires A synchronously, so B must observe `expired`, never deliver
+    // between A's fence and A's expiry.
+    // Under the fix B cannot pass admission until A has expired, so every
+    // iteration passes deterministically. Without it the bad interleaving is
+    // only probabilistic (B must win the admission lock right after A drops
+    // it); 10k iterations caught it in every recorded negative-control run.
+    for _ in 0..10_000 {
+        let clock = Arc::new(Clock::default());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let turn = started_turn();
+        let calls = Arc::new(Mutex::new(0));
+        let slot = Arc::new(Mutex::new(None::<AsyncHookRegistry>));
+        let b_thread = Arc::new(Mutex::new(None));
+        let (count, own, spawned) = (calls.clone(), slot.clone(), b_thread.clone());
+        let registry = AsyncHookRegistry::new(
+            clock.clone(),
+            move |_| {
+                let call = {
+                    let mut n = count.lock().unwrap();
+                    *n += 1;
+                    *n
+                };
+                if call != 2 {
+                    return Some(turn.clone());
+                }
+                // A's fence lookup: start B, then report the run as gone.
+                let registry = own.lock().unwrap().take().unwrap();
+                *spawned.lock().unwrap() = Some(std::thread::spawn(move || {
+                    registry.submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+                }));
+                std::thread::yield_now();
+                None
+            },
+            status_sink(&events),
+        );
+        *slot.lock().unwrap() = Some(registry.clone());
+        registry.register(registration("a", 10_000.0)).unwrap();
+        let a = registry
+            .submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+            .await
+            .unwrap();
+        let b_thread = b_thread.lock().unwrap().take().unwrap();
+        let b = b_thread.join().unwrap().await.unwrap();
+        assert_eq!(
+            (a.status.as_str(), b.status.as_str()),
+            ("expired", "expired")
+        );
+        assert_eq!(*events.lock().unwrap(), vec!["expired".to_string()]);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_registry_cancels_pending_and_retention_timers() {
+    use pilotdeck_gateway::runtime::async_hooks::TokioHookClock;
+    let metrics = tokio::runtime::Handle::current().metrics();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let turn = started_turn();
+    let registry = AsyncHookRegistry::new(
+        Arc::new(TokioHookClock),
+        move |_| Some(turn.clone()),
+        status_sink(&events),
+    );
+    // `a` keeps a pending expiry timer; `b` settles and keeps a retention timer.
+    registry.register(registration("a", 10.0)).unwrap();
+    registry.register(registration("b", 10.0)).unwrap();
+    let b = registry
+        .submit("s".into(), "b".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    assert_eq!(b.status.as_str(), "delivered");
+    tokio::task::yield_now().await;
+    assert_eq!(metrics.num_alive_tasks(), 2);
+    drop(registry);
+    tokio::task::yield_now().await;
+    assert_eq!(metrics.num_alive_tasks(), 0);
+    tokio::time::advance(std::time::Duration::from_millis(300_001)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(*events.lock().unwrap(), vec!["delivered".to_string()]);
+}

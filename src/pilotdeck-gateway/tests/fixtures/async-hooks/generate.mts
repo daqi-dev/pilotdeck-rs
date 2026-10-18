@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { bindSourceTree } from '../../baseline_source_guard.mjs';
 
@@ -15,9 +15,45 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 const commit = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const git = realpathSync(process.env.PDRS_GIT || execFileSync('which', ['git'], { encoding: 'utf8' }).trim());
+const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+const runGit = (...args: string[]) => execFileSync(git, ['--no-replace-objects', '-C', baseline, ...args], { env: gitEnv, maxBuffer: 32 * 1024 * 1024 });
+// bindSourceTree pins HEAD and every tracked src byte; the whole tracked tree
+// (package.json, tsconfig, ...) must also be clean, before and after the run.
+const assertTrackedClean = () => {
+  const changes = runGit('status', '--porcelain', '--untracked-files=no').toString();
+  assert.equal(changes, '', `baseline has uncommitted changes to tracked files:\n${changes}`);
+};
 const sourceCommit = bindSourceTree(baseline, commit, git).ref;
+assertTrackedClean();
 const sources = ['src/gateway/client/InProcessGateway.ts', 'src/agent/session/SteerMailbox.ts', 'src/gateway/dialog/GatewayAttachmentTurnComposer.ts'];
-const sourceSha256 = Object.fromEntries(await Promise.all(sources.map(async file => [file, createHash('sha256').update(await readFile(join(baseline, file))).digest('hex')])));
+// Like workspace-snapshot: hash the relative-import closure of the entries,
+// not the entries alone. Bare and node: specifiers are external.
+async function resolveSource(absolute: string): Promise<string | undefined> {
+  const stem = absolute.endsWith('.js') ? absolute.slice(0, -3) : undefined;
+  for (const candidate of [absolute, `${absolute}.ts`, `${absolute}.tsx`, `${absolute}.mts`, join(absolute, 'index.ts'), ...(stem ? [`${stem}.ts`, `${stem}.tsx`] : [])]) {
+    try { if ((await lstat(candidate)).isFile()) return candidate; } catch { /* next candidate */ }
+  }
+  return undefined;
+}
+const closure = new Set<string>(sources);
+for (const queue = [...sources]; queue.length > 0;) {
+  const file = queue.shift()!;
+  const text = await readFile(join(baseline, file), 'utf8');
+  for (const [, , specifier] of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])([^'"]+)\1/g)) {
+    if (!specifier.startsWith('./') && !specifier.startsWith('../')) continue;
+    const resolved = await resolveSource(join(baseline, dirname(file), specifier));
+    assert.ok(resolved, `unresolved baseline import ${specifier} in ${file}`);
+    const path = relative(baseline, resolved).split(sep).join('/');
+    if (!closure.has(path)) { closure.add(path); queue.push(path); }
+  }
+}
+const sourceSha256: Record<string, string> = {};
+for (const file of [...closure].sort()) {
+  assert.ok(file.startsWith('src/'), `import closure escaped src/: ${file}`);
+  const committed = runGit('show', `${commit}:${file}`);
+  assert.deepEqual(await readFile(join(baseline, file)), committed, `${file} differs from ${commit}`);
+  sourceSha256[file] = createHash('sha256').update(committed).digest('hex');
+}
 const { InProcessGateway } = await import(pathToFileURL(join(baseline, sources[0])).href);
 const { SteerMailbox } = await import(pathToFileURL(join(baseline, sources[1])).href);
 const { GatewayAttachmentTurnComposer } = await import(pathToFileURL(join(baseline, sources[2])).href);
@@ -152,6 +188,7 @@ try {
   for (const spec of specs) scenarios.push(await run(spec));
   assert.equal(scenarios.length,36);
   bindSourceTree(baseline,commit,git);
+  assertTrackedClean();
   const data = JSON.stringify({sourceCommit,sourceSha256,scenarios},null,2)+'\n';
   for (const path of [scratch,baseline,output]) assert.ok(!data.includes(path),'fixture path leak');
   await mkdir(output,{recursive:true});

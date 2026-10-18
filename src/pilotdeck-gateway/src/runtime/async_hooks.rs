@@ -139,6 +139,13 @@ impl State {
             .find(|p| &p.input.invocation_id == id)
             .cloned()
     }
+    /// Status a repeated submit from `pending`'s session would see now.
+    fn observed(&self, pending: &Pending) -> AsyncHookStatus {
+        self.outcomes
+            .get(&pending.input.invocation_id)
+            .filter(|prior| prior.session_key == pending.input.session_key)
+            .map_or(AsyncHookStatus::Unknown, |prior| prior.status.repeated())
+    }
 }
 struct Inner {
     clock: Arc<dyn AsyncHookClock>,
@@ -238,8 +245,9 @@ impl AsyncHookRegistry {
             }
         };
         if self.0.clock.now_ms() >= pending.expires_at {
-            self.expire(&pending);
-            return ready(Ok(result(AsyncHookStatus::Expired)));
+            // A concurrent settlement may win between admission and here; TS
+            // would then have returned the stored outcome instead.
+            return ready(Ok(result(self.expire(&pending))));
         }
         let mut in_flight = pending.delivery.lock().unwrap();
         // A concurrent submit may have captured this entry before the first
@@ -272,12 +280,7 @@ impl AsyncHookRegistry {
                     .pending(&invocation_id)
                     .is_some_and(|entry| Arc::ptr_eq(&entry, &pending))
                 {
-                    let status = state
-                        .outcomes
-                        .get(&invocation_id)
-                        .filter(|prior| prior.session_key == session_key)
-                        .map_or(AsyncHookStatus::Unknown, |prior| prior.status.repeated());
-                    return ready(Ok(result(status)));
+                    return ready(Ok(result(state.observed(&pending))));
                 }
                 self.settle_locked(&mut state, &pending, AsyncHookStatus::Delivered);
                 drop(state);
@@ -285,9 +288,11 @@ impl AsyncHookRegistry {
                 self.emit(&pending, AsyncHookStatus::Delivered);
                 AsyncHookStatus::Delivered
             } else {
+                // Keep admission held so no other submit settles in between;
+                // still report the stored outcome like the TS prefix would.
+                let status = self.expire(&pending);
                 drop(in_flight);
-                self.expire(&pending);
-                AsyncHookStatus::Expired
+                status
             };
             return ready(Ok(result(status)));
         }
@@ -333,6 +338,7 @@ impl AsyncHookRegistry {
                     })
                 }
                 Ok(_) => {
+                    // TS reports `expired` here even if a timer settled first.
                     registry.expire(&pending);
                     Ok(AsyncHookResult {
                         invocation_id,
@@ -363,17 +369,21 @@ impl AsyncHookRegistry {
             self.expire(&pending);
         }
     }
-    fn expire(&self, pending: &Arc<Pending>) {
+    /// Expires `pending` if it still owns its id. Returns what a repeated
+    /// submission from the same session would observe under the same lock:
+    /// `expired` when this call settled it, otherwise the outcome that won.
+    fn expire(&self, pending: &Arc<Pending>) -> AsyncHookStatus {
         let mut state = self.0.state.lock().unwrap();
         if !state
             .pending(&pending.input.invocation_id)
             .is_some_and(|entry| Arc::ptr_eq(&entry, pending))
         {
-            return;
+            return state.observed(pending);
         }
         self.settle_locked(&mut state, pending, AsyncHookStatus::Expired);
         drop(state);
         self.emit(pending, AsyncHookStatus::Expired);
+        AsyncHookStatus::Expired
     }
     fn settle(&self, pending: &Arc<Pending>, status: AsyncHookStatus) {
         self.settle_locked(&mut self.0.state.lock().unwrap(), pending, status);
