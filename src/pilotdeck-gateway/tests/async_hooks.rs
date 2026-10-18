@@ -1,0 +1,573 @@
+#[path = "common/baseline.rs"]
+mod baseline;
+use pilotdeck_gateway::{
+    host::{HostFuture, ModuleError},
+    runtime::{
+        async_hooks::{
+            AsyncHookClock, AsyncHookRegistration, AsyncHookRegistry, AsyncHookTimer,
+            AsyncHookTurn, timer_delay_ms,
+        },
+        steer::{MutationRecorder, SteerMailbox},
+    },
+};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+use tokio::sync::Notify;
+static UNDEFINED: JsValue = JsValue::Undefined;
+const ORACLE: &str = include_str!("fixtures/async-hooks/oracle.json");
+fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
+    value.get(key).unwrap_or(&UNDEFINED)
+}
+fn string(value: &JsValue) -> JsString {
+    value.as_string().expect("string").clone()
+}
+fn number(value: &JsValue) -> f64 {
+    if let JsValue::Number(n) = value {
+        *n
+    } else {
+        panic!("number")
+    }
+}
+fn array(value: &JsValue) -> &[JsValue] {
+    if let JsValue::Array(a) = value {
+        a
+    } else {
+        panic!("array")
+    }
+}
+fn object<const N: usize>(fields: [(&str, JsValue); N]) -> JsValue {
+    let mut result = JsObject::new();
+    for (key, value) in fields {
+        result.insert(key.into(), value);
+    }
+    JsValue::Object(result)
+}
+fn js(s: &JsString) -> JsValue {
+    JsValue::String(s.clone())
+}
+fn ok(value: JsValue) -> JsValue {
+    object([("ok", JsValue::Bool(true)), ("value", value)])
+}
+async fn capture(future: HostFuture<JsValue>) -> JsValue {
+    match future.await {
+        Ok(value) => ok(value),
+        Err(error) => {
+            let module = error.module_error.unwrap();
+            let mut result = JsObject::new();
+            result.insert("ok".into(), JsValue::Bool(false));
+            result.insert("error".into(), js(&module.message));
+            if let Some(code) = module.code {
+                result.insert("code".into(), js(&code));
+            }
+            JsValue::Object(result)
+        }
+    }
+}
+struct TimerGuard(Arc<AtomicBool>);
+impl AsyncHookTimer for TimerGuard {}
+impl Drop for TimerGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+struct Timer {
+    at: f64,
+    cancelled: Arc<AtomicBool>,
+    callback: Box<dyn FnOnce() + Send>,
+}
+#[derive(Default)]
+struct Clock {
+    now: Mutex<f64>,
+    timers: Mutex<Vec<Timer>>,
+}
+impl AsyncHookClock for Clock {
+    fn now_ms(&self) -> f64 {
+        *self.now.lock().unwrap()
+    }
+    fn schedule(&self, delay: f64, callback: Box<dyn FnOnce() + Send>) -> Box<dyn AsyncHookTimer> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let at = self.now_ms() + timer_delay_ms(delay) as f64;
+        self.timers.lock().unwrap().push(Timer {
+            at,
+            cancelled: cancelled.clone(),
+            callback,
+        });
+        Box::new(TimerGuard(cancelled))
+    }
+}
+impl Clock {
+    fn advance(&self, ms: f64, fire: bool) {
+        let target = self.now_ms() + ms;
+        if fire {
+            loop {
+                let next = {
+                    let mut timers = self.timers.lock().unwrap();
+                    timers.retain(|t| !t.cancelled.load(Ordering::SeqCst));
+                    let index = timers
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, t)| t.at <= target)
+                        .min_by(|(i, a), (j, b)| a.at.total_cmp(&b.at).then(i.cmp(j)))
+                        .map(|(i, _)| i);
+                    index.map(|index| timers.remove(index))
+                };
+                let Some(timer) = next else { break };
+                *self.now.lock().unwrap() = self.now_ms().max(timer.at);
+                (timer.callback)();
+            }
+        }
+        *self.now.lock().unwrap() = target;
+    }
+}
+#[derive(Default)]
+struct Gate {
+    entered: Notify,
+    release: Notify,
+}
+#[derive(Default)]
+struct Recording {
+    mutations: Mutex<Vec<JsValue>>,
+    gate: Mutex<Option<Arc<Gate>>>,
+    fail: AtomicBool,
+}
+struct Recorder {
+    session: JsString,
+    state: Arc<Recording>,
+}
+impl MutationRecorder for Recorder {
+    fn record(&self, turn: JsString, mutation: JsObject) -> HostFuture<()> {
+        let state = self.state.clone();
+        let session = self.session.clone();
+        Box::pin(async move {
+            let insert = mutation
+                .get("mutation")
+                .and_then(JsValue::as_string)
+                .is_some_and(|v| v.equals_str("insert"));
+            state.mutations.lock().unwrap().push(object([
+                ("session", js(&session)),
+                ("turn", js(&turn)),
+                ("mutation", JsValue::Object(mutation)),
+            ]));
+            let gate = if insert {
+                state.gate.lock().unwrap().take()
+            } else {
+                None
+            };
+            if let Some(gate) = gate {
+                gate.entered.notify_one();
+                gate.release.notified().await;
+            }
+            if insert && state.fail.swap(false, Ordering::SeqCst) {
+                return Err(ModuleError::new("fixture storage failure").into());
+            }
+            Ok(())
+        })
+    }
+}
+struct Harness {
+    clock: Arc<Clock>,
+    registry: AsyncHookRegistry,
+    active: Arc<Mutex<HashMap<JsString, AsyncHookTurn>>>,
+    mailboxes: HashMap<JsString, SteerMailbox>,
+    recording: Arc<Recording>,
+    events: Arc<Mutex<Vec<JsValue>>>,
+}
+impl Harness {
+    fn new() -> Self {
+        let clock = Arc::new(Clock::default());
+        let active = Arc::new(Mutex::new(HashMap::<JsString, AsyncHookTurn>::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let lookup = active.clone();
+        let sink = events.clone();
+        let registry = AsyncHookRegistry::new(
+            clock.clone(),
+            move |session| lookup.lock().unwrap().get(session).cloned(),
+            move |session, event| {
+                sink.lock().unwrap().push(object([
+                    ("session", js(session)),
+                    ("event", JsValue::Object(event)),
+                ]))
+            },
+        );
+        Self {
+            clock,
+            registry,
+            active,
+            mailboxes: HashMap::new(),
+            recording: Arc::new(Recording::default()),
+            events,
+        }
+    }
+    fn mailbox(&mut self, session: &JsString) -> SteerMailbox {
+        self.mailboxes
+            .entry(session.clone())
+            .or_insert_with(|| {
+                SteerMailbox::new(Some(Arc::new(Recorder {
+                    session: session.clone(),
+                    state: self.recording.clone(),
+                })))
+            })
+            .clone()
+    }
+    fn invoke(&mut self, step: &JsValue) -> HostFuture<JsValue> {
+        let op = string(field(step, "op"));
+        let session = step.get("session").map(string).unwrap_or_default();
+        let run = step.get("run").map(string).unwrap_or_default();
+        let mut value = JsValue::Null;
+        match op.to_utf8().unwrap().as_str() {
+            "start" => {
+                let mailbox = self.mailbox(&session);
+                mailbox.start(run.clone());
+                self.active.lock().unwrap().insert(
+                    session,
+                    AsyncHookTurn {
+                        run_id: run,
+                        mailbox,
+                    },
+                );
+            }
+            "finish" => {
+                self.active.lock().unwrap().remove(&session);
+                self.mailbox(&session).finish(&run);
+            }
+            "register" => {
+                let input = field(step, "input");
+                let result = self.registry.register(AsyncHookRegistration {
+                    session_key: string(field(input, "sessionKey")),
+                    invocation_id: string(field(input, "invocationId")),
+                    hook_name: string(field(input, "hookName")),
+                    hook_event: string(field(input, "hookEvent")),
+                    timeout_ms: input.get("timeoutMs").map(number),
+                    include_hook_events: matches!(
+                        field(input, "includeHookEvents"),
+                        JsValue::Bool(true)
+                    ),
+                });
+                return Box::pin(async { result.map(|_| JsValue::Null) });
+            }
+            "submit" => {
+                let input = field(step, "input");
+                let future = self.registry.submit(
+                    string(field(input, "sessionKey")),
+                    string(field(input, "invocationId")),
+                    field(input, "output").clone(),
+                );
+                return Box::pin(async move {
+                    future.await.map(|r| {
+                        object([
+                            ("invocationId", js(&r.invocation_id)),
+                            ("status", r.status.as_str().into()),
+                        ])
+                    })
+                });
+            }
+            "deepSubmit" => {
+                let mut event = JsValue::String("event".into());
+                for _ in 0..number(field(step, "depth")) as usize {
+                    event = JsValue::Array(vec![event]);
+                }
+                let output = object([("hookSpecificOutput", object([("hookEventName", event)]))]);
+                let future = self.registry.submit("s".into(), "a".into(), output);
+                return Box::pin(async move {
+                    future.await.map(|r| {
+                        object([
+                            ("invocationId", js(&r.invocation_id)),
+                            ("status", r.status.as_str().into()),
+                        ])
+                    })
+                });
+            }
+            "tick" => self.clock.advance(number(field(step, "ms")), true),
+            "now" => self.clock.advance(number(field(step, "ms")), false),
+            "expire" => self.registry.expire_for_turn(&session, &run),
+            "drain" => {
+                value = JsValue::Array(
+                    self.mailbox(&session)
+                        .drain(&run)
+                        .iter()
+                        .map(|m| JsValue::Object(m.to_object()))
+                        .collect(),
+                )
+            }
+            "close" => {
+                let result = self.mailbox(&session).drain_or_close(&run);
+                value = object([
+                    (
+                        "messages",
+                        JsValue::Array(
+                            result
+                                .messages
+                                .iter()
+                                .map(|m| JsValue::Object(m.to_object()))
+                                .collect(),
+                        ),
+                    ),
+                    ("closed", JsValue::Bool(result.closed)),
+                ]);
+            }
+            _ => panic!("unknown op {op:?}"),
+        }
+        Box::pin(async { Ok(value) })
+    }
+}
+#[tokio::test]
+async fn replay_real_gateway_async_hooks() {
+    let oracle = baseline::oracle(ORACLE);
+    let scenarios = array(field(&oracle, "scenarios"));
+    assert_eq!(scenarios.len(), 36);
+    let mut count = 0;
+    for scenario in scenarios {
+        let name = string(field(scenario, "name")).to_utf8().unwrap();
+        let mut h = Harness::new();
+        let mut pending = HashMap::new();
+        let mut blocked = None;
+        for (index, step) in array(field(scenario, "steps")).iter().enumerate() {
+            count += 1;
+            let mut actual = JsValue::Null;
+            match string(field(step, "op")).to_utf8().unwrap().as_str() {
+                "block" => {
+                    let gate = Arc::new(Gate::default());
+                    *h.recording.gate.lock().unwrap() = Some(gate.clone());
+                    blocked = Some(gate);
+                }
+                "wait" => blocked.as_ref().unwrap().entered.notified().await,
+                "release" => blocked.as_ref().unwrap().release.notify_one(),
+                "fail" => h.recording.fail.store(true, Ordering::SeqCst),
+                "begin" => {
+                    let future = h.invoke(field(step, "action"));
+                    pending.insert(string(field(step, "key")), tokio::spawn(capture(future)));
+                }
+                "join" => {
+                    actual = pending
+                        .remove(&string(field(step, "key")))
+                        .unwrap()
+                        .await
+                        .unwrap()
+                }
+                _ => actual = capture(h.invoke(step)).await,
+            }
+            assert_eq!(
+                &actual,
+                field(step, "result"),
+                "{name:?} step {index}: {step:?}"
+            );
+        }
+        assert!(pending.is_empty());
+        assert_eq!(
+            JsValue::Array(h.events.lock().unwrap().clone()),
+            *field(scenario, "events"),
+            "{name:?} events"
+        );
+        assert_eq!(
+            JsValue::Array(h.recording.mutations.lock().unwrap().clone()),
+            *field(scenario, "mutations"),
+            "{name:?} mutations"
+        );
+    }
+    assert_eq!(count, 261);
+}
+
+#[tokio::test(start_paused = true)]
+async fn production_timer_expires_and_cancels_on_drop() {
+    use pilotdeck_gateway::runtime::async_hooks::TokioHookClock;
+    let clock = TokioHookClock;
+    let fired = Arc::new(AtomicBool::new(false));
+    let mark = fired.clone();
+    let timer = clock.schedule(
+        10.0,
+        Box::new(move || {
+            mark.store(true, Ordering::SeqCst);
+        }),
+    );
+    // Do not poll the spawned timer before advancing: its deadline must
+    // already be fixed at schedule time, just like setTimeout.
+    tokio::time::advance(std::time::Duration::from_millis(9)).await;
+    assert!(!fired.load(Ordering::SeqCst));
+    tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    tokio::task::yield_now().await;
+    assert!(fired.load(Ordering::SeqCst));
+    drop(timer);
+    let mark = fired.clone();
+    fired.store(false, Ordering::SeqCst);
+    let timer = clock.schedule(
+        1.0,
+        Box::new(move || {
+            mark.store(true, Ordering::SeqCst);
+        }),
+    );
+    drop(timer);
+    tokio::time::advance(std::time::Duration::from_millis(2)).await;
+    assert!(!fired.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn concurrent_empty_submissions_match_ts_duplicate_and_event_counts() {
+    // The statuses and event stream come from the real Promise pair. Exercise
+    // that same pair on separate Rust threads, not just one Tokio executor.
+    let oracle = baseline::oracle(ORACLE);
+    let scenario = array(field(&oracle, "scenarios"))
+        .iter()
+        .find(|s| {
+            field(s, "name")
+                .as_string()
+                .unwrap()
+                .equals_str("concurrent-empty")
+        })
+        .unwrap();
+    let steps = array(field(scenario, "steps"));
+    let mut expected = steps
+        .iter()
+        .filter(|s| field(s, "op").as_string().unwrap().equals_str("join"))
+        .map(|s| {
+            pilotdeck_protocol::stringify_json(field(s, "result"))
+                .unwrap()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+    for _ in 0..64 {
+        let mut h = Harness::new();
+        capture(h.invoke(&steps[0])).await;
+        capture(h.invoke(&steps[1])).await;
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let futures = std::thread::scope(|scope| {
+            let tasks = (0..2)
+                .map(|_| {
+                    let registry = h.registry.clone();
+                    let barrier = barrier.clone();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        registry.submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+                    })
+                })
+                .collect::<Vec<_>>();
+            tasks
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let mut actual = Vec::new();
+        for future in futures {
+            let value = capture(Box::pin(async move {
+                future.await.map(|r| {
+                    object([
+                        ("invocationId", js(&r.invocation_id)),
+                        ("status", r.status.as_str().into()),
+                    ])
+                })
+            }))
+            .await;
+            actual.push(pilotdeck_protocol::stringify_json(&value).unwrap().unwrap());
+        }
+        actual.sort();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            JsValue::Array(h.events.lock().unwrap().clone()),
+            *field(scenario, "events")
+        );
+        assert_eq!(
+            JsValue::Array(h.recording.mutations.lock().unwrap().clone()),
+            *field(scenario, "mutations")
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_delivery_is_cleared_before_immediate_retry() {
+    let oracle = baseline::oracle(ORACLE);
+    let scenario = array(field(&oracle, "scenarios"))
+        .iter()
+        .find(|s| {
+            field(s, "name")
+                .as_string()
+                .unwrap()
+                .equals_str("delivery-failure-retry")
+        })
+        .unwrap();
+    let steps = array(field(scenario, "steps"));
+    for _ in 0..128 {
+        let mut h = Harness::new();
+        capture(h.invoke(&steps[0])).await;
+        capture(h.invoke(&steps[1])).await;
+        h.recording.fail.store(true, Ordering::SeqCst);
+        assert_eq!(
+            capture(h.invoke(&steps[3])).await,
+            *field(&steps[3], "result")
+        );
+        assert_eq!(
+            capture(h.invoke(&steps[4])).await,
+            *field(&steps[4], "result")
+        );
+        assert_eq!(
+            JsValue::Array(h.events.lock().unwrap().clone()),
+            *field(scenario, "events")
+        );
+        assert_eq!(
+            JsValue::Array(h.recording.mutations.lock().unwrap().clone()),
+            *field(scenario, "mutations")
+        );
+    }
+}
+
+#[tokio::test]
+async fn empty_context_settlement_does_not_overwrite_expiry_that_won_the_race() {
+    // TS settles empty context synchronously, so expiry cannot interleave.
+    // With threaded timers it can: fire the expiry timer from inside the run
+    // lookup (after admission, before settlement) and require the expiry to
+    // stand, as if it had run first in TS (`expired`, one expired event).
+    let clock = Arc::new(Clock::default());
+    let mailbox = SteerMailbox::new(None);
+    mailbox.start("r".into());
+    let turn = AsyncHookTurn {
+        run_id: "r".into(),
+        mailbox,
+    };
+    let lookups = Arc::new(Mutex::new(0));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (timer_clock, count, sink) = (clock.clone(), lookups.clone(), events.clone());
+    let registry = AsyncHookRegistry::new(
+        clock.clone(),
+        move |_| {
+            let mut n = count.lock().unwrap();
+            *n += 1;
+            if *n == 2 {
+                timer_clock.advance(10.0, true);
+            }
+            Some(turn.clone())
+        },
+        move |_, event| {
+            let status = event.get("status").and_then(JsValue::as_string).cloned();
+            sink.lock()
+                .unwrap()
+                .push(status.unwrap().to_utf8().unwrap());
+        },
+    );
+    registry
+        .register(AsyncHookRegistration {
+            session_key: "s".into(),
+            invocation_id: "a".into(),
+            hook_name: "hook".into(),
+            hook_event: "PreToolUse".into(),
+            timeout_ms: Some(10.0),
+            include_hook_events: true,
+        })
+        .unwrap();
+    let result = registry
+        .submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    assert_eq!(result.status.as_str(), "expired");
+    assert_eq!(*lookups.lock().unwrap(), 2);
+    assert_eq!(*events.lock().unwrap(), vec!["expired".to_string()]);
+    let again = registry
+        .submit("s".into(), "a".into(), JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    assert_eq!(again.status.as_str(), "expired");
+}

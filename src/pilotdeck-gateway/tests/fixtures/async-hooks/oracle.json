@@ -1,0 +1,4608 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/agent/session/SteerMailbox.ts": "2c8cfdd37728fac21c2b4839a549403f58c2e9c07b5108890c07e7fe409ee743",
+    "src/gateway/dialog/GatewayAttachmentTurnComposer.ts": "4896c129136b0f30ab0eb8985f7c3d7f8ac65148a6c2aaf5da990c0b9de5c400"
+  },
+  "scenarios": [
+    {
+      "name": "delivered-duplicate-unknown-session",
+      "steps": [
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        },
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "other",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": null
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "missing",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "missing",
+              "status": "unknown"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "empty-context-no-steer",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "b",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "explicit-empty-string-still-steers",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": ""
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\n\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\n\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "expiry-timer-9",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 9,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "expiry-timer-10",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 10,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "expiry-timer-11",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 11,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "expiry-check-9",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "now",
+          "ms": 9,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "expiry-check-10",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "now",
+          "ms": 10,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "expiry-check-11",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "now",
+          "ms": 11,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "retention-delivered-299999",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 299999,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "retention-delivered-300000",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 300000,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "retention-delivered-300001",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 300001,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "retention-expired-299999",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 10,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 299999,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "retention-expired-300000",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 10,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 300000,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "retention-expired-300001",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 10,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 300001,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "retention-waits-for-timer",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "now",
+          "ms": 300001,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 0,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "registration-ownership-no-refresh",
+      "steps": [
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": " ﻿",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "now",
+          "ms": 9,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "ignored",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 100
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "start",
+          "run": "next",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": false,
+            "error": "Async hook invocation id is already owned by another active turn.",
+            "code": "ASYNC_HOOK_INVOCATION_CONFLICT"
+          }
+        },
+        {
+          "op": "start",
+          "run": "r",
+          "session": "other",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "other",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": false,
+            "error": "Async hook invocation id is already owned by another active turn.",
+            "code": "ASYNC_HOOK_INVOCATION_CONFLICT"
+          }
+        },
+        {
+          "op": "now",
+          "ms": 1,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "minimum-and-default-timeout",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 0
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": -4
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "c",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 1,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "b",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 59998,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "c",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "c",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "d",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 60000,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "d",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "d",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "c",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "d",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "fractional-timer-fires-before-expiry",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 1.9
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 1,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "old-run-context-fence",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "start",
+          "run": "next",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "next",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "old-run-empty-fence",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "start",
+          "run": "next",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "next",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "no-active-run",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "finish",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "closing-mailbox",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "close",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": {
+              "messages": [],
+              "closed": true
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "expire-only-matching-turn",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "start",
+          "run": "r",
+          "session": "other",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "other",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "start",
+          "run": "next",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "c",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "expire",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "other",
+            "invocationId": "b",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "b",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "c",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "c",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "expire",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "expire",
+          "run": "next",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "c",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "c",
+              "status": "duplicate"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        },
+        {
+          "session": "other",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "c",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "outcome-shadows-reused-id",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 400000
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 300000,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "expired-outcome-shadows-new-owner",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "expire",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "start",
+          "run": "n",
+          "session": "other",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "other",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 400000
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "other",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 300000,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "other",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        },
+        {
+          "session": "other",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "events-disabled",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": false,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": false,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 10,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "b",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "concurrent-empty",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "begin",
+          "key": "one",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {}
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "two",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {}
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "join",
+          "key": "one",
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "key": "two",
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "concurrent-duplicate",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "block",
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "one",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {
+                "hookSpecificOutput": {
+                  "hookEventName": "PreToolUse",
+                  "additionalContext": "context"
+                }
+              }
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "wait",
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "two",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": null
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "release",
+          "result": null
+        },
+        {
+          "op": "join",
+          "key": "one",
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "key": "two",
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "run-switch-during-write",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "block",
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "one",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {
+                "hookSpecificOutput": {
+                  "hookEventName": "PreToolUse",
+                  "additionalContext": "context"
+                }
+              }
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "wait",
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "two",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {
+                "hookSpecificOutput": {
+                  "hookEventName": "PreToolUse",
+                  "additionalContext": "context"
+                }
+              }
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "start",
+          "run": "next",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "release",
+          "result": null
+        },
+        {
+          "op": "join",
+          "key": "one",
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "join",
+          "key": "two",
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "next",
+          "result": {
+            "ok": true,
+            "value": []
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        },
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "discard",
+            "itemId": "async-hook:a",
+            "reason": "turn_closing"
+          }
+        }
+      ]
+    },
+    {
+      "name": "expiry-during-write-then-accepted",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "block",
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "one",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {
+                "hookSpecificOutput": {
+                  "hookEventName": "PreToolUse",
+                  "additionalContext": "context"
+                }
+              }
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "wait",
+          "result": null
+        },
+        {
+          "op": "tick",
+          "ms": 10,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "expired"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 5,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "release",
+          "result": null
+        },
+        {
+          "op": "join",
+          "key": "one",
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 299999,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "duplicate"
+            }
+          }
+        },
+        {
+          "op": "tick",
+          "ms": 1,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "unknown"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "delivery-failure-retry",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "fail",
+          "result": null
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "fixture storage failure"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        },
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-delivery-failure-retry",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "block",
+          "result": null
+        },
+        {
+          "op": "fail",
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "one",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {
+                "hookSpecificOutput": {
+                  "hookEventName": "PreToolUse",
+                  "additionalContext": "context"
+                }
+              }
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "wait",
+          "result": null
+        },
+        {
+          "op": "begin",
+          "key": "two",
+          "action": {
+            "op": "submit",
+            "input": {
+              "sessionKey": "s",
+              "invocationId": "a",
+              "output": {
+                "hookSpecificOutput": {
+                  "hookEventName": "PreToolUse",
+                  "additionalContext": "context"
+                }
+              }
+            }
+          },
+          "result": null
+        },
+        {
+          "op": "release",
+          "result": null
+        },
+        {
+          "op": "join",
+          "key": "one",
+          "result": {
+            "ok": false,
+            "error": "fixture storage failure"
+          }
+        },
+        {
+          "op": "join",
+          "key": "two",
+          "result": {
+            "ok": false,
+            "error": "fixture storage failure"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        },
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-and-payload-validation",
+      "steps": [
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "",
+            "output": {}
+          },
+          "result": {
+            "ok": false,
+            "error": "sessionKey and invocationId are required.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": " ﻿",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": false,
+            "error": "sessionKey and invocationId are required.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": null
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook output must be an object.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": []
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook output must be an object.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": false
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook output must be an object.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": "x"
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook output must be an object.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "continue": false
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook results may only supply hookSpecificOutput.additionalContext.",
+            "code": "UNSUPPORTED_ASYNC_HOOK_EFFECT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": null
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "hookSpecificOutput must be an object.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": []
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "hookSpecificOutput must be an object.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "decision": "block"
+              }
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook results may only supply hookEventName and additionalContext.",
+            "code": "UNSUPPORTED_ASYNC_HOOK_EFFECT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {}
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook result belongs to undefined, expected PreToolUse.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "Stop"
+              }
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook result belongs to Stop, expected PreToolUse.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": {
+                  "toString": 42
+                }
+              }
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Cannot convert object to primitive value"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": [
+                  {
+                    "toString": 42
+                  }
+                ]
+              }
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Cannot convert object to primitive value"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": [
+                  "a",
+                  null,
+                  {}
+                ]
+              }
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook result belongs to a,,[object Object], expected PreToolUse.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": 1
+              }
+            }
+          },
+          "result": {
+            "ok": false,
+            "error": "Deferred hook additionalContext must be a string.",
+            "code": "INVALID_ASYNC_HOOK_RESULT"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": "context"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s",
+          "run": "r",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s",
+          "turn": "r",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"PreToolUse\">\ncontext\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "deep-event-conversion",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "deepSubmit",
+          "depth": 5000,
+          "result": {
+            "ok": false,
+            "error": "Maximum call stack size exceeded"
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
+      "name": "utf16-identities-context",
+      "steps": [
+        {
+          "op": "start",
+          "run": "\ud800",
+          "session": "s\ud801",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s\ud801",
+            "invocationId": "a\ud802",
+            "hookName": "h\ud804",
+            "hookEvent": "X\ud803",
+            "includeHookEvents": true,
+            "timeoutMs": 10
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s\ud801",
+            "invocationId": "a\ud802",
+            "output": {
+              "hookSpecificOutput": {
+                "hookEventName": "X\ud803",
+                "additionalContext": "\ud805<&"
+              }
+            }
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a\ud802",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "drain",
+          "session": "s\ud801",
+          "run": "\ud800",
+          "result": {
+            "ok": true,
+            "value": [
+              {
+                "itemId": "async-hook:a\ud802",
+                "message": {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "<async_hook_context event=\"X\ud803\">\n\ud805<&\n</async_hook_context>"
+                    }
+                  ],
+                  "metadata": {
+                    "purpose": "mid_turn_steer",
+                    "queueItemId": "async-hook:a\ud802"
+                  }
+                },
+                "allowedReadFiles": []
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s\ud801",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a\ud802",
+            "hookName": "h\ud804",
+            "hookEvent": "X\ud803",
+            "status": "delivered"
+          }
+        }
+      ],
+      "mutations": [
+        {
+          "session": "s\ud801",
+          "turn": "\ud800",
+          "mutation": {
+            "mutation": "insert",
+            "itemId": "async-hook:a\ud802",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<async_hook_context event=\"X\ud803\">\n\ud805<&\n</async_hook_context>"
+                }
+              ],
+              "metadata": {
+                "purpose": "mid_turn_steer",
+                "queueItemId": "async-hook:a\ud802"
+              }
+            },
+            "allowedReadFiles": []
+          }
+        }
+      ]
+    }
+  ]
+}
