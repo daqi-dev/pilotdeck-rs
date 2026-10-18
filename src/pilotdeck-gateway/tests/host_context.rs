@@ -48,7 +48,8 @@ fn decode(v: &JsValue, root: &Path) -> JsValue {
                 return JsValue::Number(match text(n).as_str() {
                     "NaN" => f64::NAN,
                     "Infinity" => f64::INFINITY,
-                    _ => f64::NEG_INFINITY,
+                    "-Infinity" => f64::NEG_INFINITY,
+                    other => panic!("unknown $number sentinel {other}"),
                 });
             }
             let mut out = JsObject::new();
@@ -353,7 +354,7 @@ fn outcome(result: Result<JsObject, HostError>) -> JsValue {
 async fn real_ts_context_dispatcher_replay() {
     let oracle = baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 352);
+    assert_eq!(cases.len(), 355);
     let root = std::env::temp_dir().join(format!("pdrs-host-context-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("media.txt"), b"aGVsbG8=\n").unwrap();
@@ -410,17 +411,22 @@ async fn real_ts_context_dispatcher_replay() {
         if field(case, "materializer").as_bool() == Some(true) {
             model.materializer = Some(fake.clone());
         }
+        let budget_spec = field(case, "budget");
+        let ports = if budget_spec.as_bool() == Some(false) {
+            None
+        } else {
+            Some(budget::Ports {
+                evaluate_request_budget: (!budget_spec
+                    .as_string()
+                    .is_some_and(|value| value.equals_str("no-port")))
+                .then(|| fake.clone() as Arc<dyn budget::RequestBudgetEvaluator>),
+                ..Default::default()
+            })
+        };
         let router = ModuleRouter {
             context,
             model,
-            budget: budget::Handler {
-                ports: Some(budget::Ports {
-                    evaluate_request_budget: (field(case, "budget").as_bool() != Some(false))
-                        .then(|| fake.clone() as Arc<dyn budget::RequestBudgetEvaluator>),
-                    ..Default::default()
-                }),
-                signal,
-            },
+            budget: budget::Handler { ports, signal },
             ..Default::default()
         };
         if field(case, "prepared").as_bool() == Some(true) {

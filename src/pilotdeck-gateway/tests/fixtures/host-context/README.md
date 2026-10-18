@@ -15,8 +15,8 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 
 覆盖五个 operation 和全部 16 种可选能力组合；operation/input 缺失、null、错类型；宿主身份覆盖；capture 返回 null；runtime 错误的 code/canonical/retryable/retryAfterMs。普通 input 按 TS 只接纳对象，不额外施加 ContextRuntime 类型校验。
 
-try_auto_compact 覆盖 stage 回填（含显式 budgetStage 优先于 budgetProjection）、配置预算缺省、budgetRequest 的浅 canonical 校验与删除、无 budget 端口、preparation 查找和路由一致性、materializer 引用要求、calibration 投影、可信 signal、候选消息与快照合同错误、runtime/materializer/budget 异步错误原样传播。
+try_auto_compact 覆盖 stage 回填（含显式 budgetStage 优先于 budgetProjection）、配置预算缺省、budgetRequest 的浅 canonical 校验与删除、无 budget 模块、已安装 budget 模块但缺 evaluateRequestBudget 端口（该分支仍先做 canonical 校验、跳过 maxContextTokens/reservedOutputTokens 校验）、preparation 查找和路由一致性、materializer 引用要求、calibration 投影、可信 signal、候选消息与快照合同错误、runtime/materializer/budget 异步错误原样传播。
 
 候选请求覆盖 assistant 合并、preview prepare、pre_route/routed/recovery 投影、plan reminder、systemPrompt nullish 回退、cache 重建与 locale 排序、UTF-16、深层 metadata、媒体成功和 fallback。缓存里的 JS String(value) 与排序错误以真实 TS 行为为准，不提前校验 runtime 返回值；preview 的 tools 为非可迭代对象/数字/undefined/null 或含 null 元素时，错误文本也由真实 V8 运行固定。
 
-Rust 回放精确断言总条数，逐条比较 methods、完整 port 调用序列和响应 payload/错误字段；双方序列化后逐字节比较，保留 JSON 的 undefined 省略规则并锁定所有层级的键序，不使用数值容差。wire 相关 ID 属于既有 X0 测试覆盖范围。ContextRuntime 未来实现、真实模型网络调用和持久化压缩属于后续包；本夹具只替换依赖端口，dispatcher 与请求组装均为真实基线。
+Rust 回放精确断言总条数（355），逐条比较 methods、完整 port 调用序列和响应 payload/错误字段；双方序列化后逐字节比较，保留 JSON 的 undefined 省略规则并锁定所有层级的键序，不使用数值容差。wire 相关 ID 属于既有 X0 测试覆盖范围。ContextRuntime 的真实实现（A6.6-pr5 起）不在本夹具范围，本夹具只替换依赖端口；真实模型网络调用和持久化压缩属于后续包。dispatcher 与请求组装均为真实基线。
