@@ -10,7 +10,9 @@
 //! Errors preserve the TS split: `DialogGatewayError`s carry a wire `code` and
 //! the `DialogGatewayError` name; provider errors keep their `Error` /
 //! `TypeError` / `SyntaxError` name and only the Node fs errnos (`ENOENT`, ...)
-//! or `ERR_INVALID_ARG_VALUE` also carry a code, as in the real runtime.
+//! or `ERR_INVALID_ARG_VALUE` also carry a code, as in the real runtime. An fs
+//! errno outside the method's source-oracle set is an explicit host boundary
+//! (`NODE_IO_REQUIRED` + `requires_host`), never a guessed Rust Display string.
 use crate::storage::{
     RestoredSnapshot, WorkspaceSnapshotDescriptor, WorkspaceSnapshotError,
     WorkspaceSnapshotProvider,
@@ -27,7 +29,16 @@ const MKDTEMP_TEMPLATE_SUFFIX: &str = ".pilotdeck-restore-XXXXXX";
 /// the resolved key in the first method and that key's on-disk workspace id in
 /// the second.
 pub trait SnapshotProjectResolver: Send + Sync {
-    fn resolve_project_key(&self, project_key: &str) -> Result<String, SnapshotProjectionError>;
+    /// `resolveProjectKey` compares JS strings by code unit (projectRegistry.ts:
+    /// 41-59), so the port receives the raw UTF-16 units of `input.projectKey`.
+    /// A lone surrogate must not be replacement-decoded before the lookup: on a
+    /// filesystem that can store U+FFFD, `"\ud800"` and `"\ufffd"` are different
+    /// projects and `from_utf16_lossy` would alias one onto the other. Use
+    /// [`SnapshotProjectionError::unknown_project_key`] for the rejection so the
+    /// wire message also keeps the original units.
+    fn resolve_project_key(&self, project_key: &[u16]) -> Result<String, SnapshotProjectionError>;
+    /// The key returned by `resolve_project_key` (a registry path, never a lone
+    /// surrogate), so the storage-id resolver keeps its UTF-8 signature.
     fn workspace_id(&self, project_key: &str) -> String;
 }
 
@@ -67,6 +78,31 @@ impl SnapshotProjectionError {
             requires_host: false,
         }
     }
+    /// `PROJECT_NOT_FOUND`, `Unknown projectKey: <raw key>` (projectRegistry.ts:
+    /// 56/62). The registry port builds the rejection with the original units so
+    /// a lone surrogate survives to the wire instead of becoming U+FFFD.
+    pub fn unknown_project_key(project_key: &[u16]) -> Self {
+        let mut units = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+        units.extend_from_slice(project_key);
+        Self {
+            code: Some("PROJECT_NOT_FOUND".into()),
+            name: "DialogGatewayError",
+            message: JsString::from_utf16(units),
+            requires_host: false,
+        }
+    }
+    /// R19 host boundary for an fs errno the method's source oracle never
+    /// observed: the native port must not guess Node's wording. Same shape as
+    /// `session_model`/`skills` (`NODE_IO_REQUIRED`, empty message,
+    /// `requires_host`).
+    fn node_io_required() -> Self {
+        Self {
+            code: Some("NODE_IO_REQUIRED".into()),
+            name: "Error",
+            message: JsString::default(),
+            requires_host: true,
+        }
+    }
     pub fn code(&self) -> Option<&str> {
         self.code.as_deref()
     }
@@ -100,54 +136,49 @@ impl fmt::Display for SnapshotProjectionError {
     }
 }
 impl std::error::Error for SnapshotProjectionError {}
-impl From<WorkspaceSnapshotError> for SnapshotProjectionError {
-    fn from(error: WorkspaceSnapshotError) -> Self {
-        match error {
-            WorkspaceSnapshotError::Invalid(message) => {
-                if message.starts_with("Cannot read properties of ") {
-                    Self::plain("TypeError", message)
-                } else {
-                    Self::plain("Error", message)
-                }
+/// Provider errors are projected per gateway method: the fs errno set is
+/// admitted from `node_io::LOCAL_ERRNOS`, so an errno the method's source oracle
+/// never observed becomes `NODE_IO_REQUIRED` instead of a guessed wire string.
+fn project_error(error: WorkspaceSnapshotError, method: &str) -> SnapshotProjectionError {
+    match error {
+        WorkspaceSnapshotError::Invalid(message) => {
+            if message.starts_with("Cannot read properties of ") {
+                SnapshotProjectionError::plain("TypeError", message)
+            } else {
+                SnapshotProjectionError::plain("Error", message)
             }
-            WorkspaceSnapshotError::Syntax(message) => Self::plain("SyntaxError", message),
-            WorkspaceSnapshotError::Io(message) => match io_code(&message) {
-                Some(code) => Self::plain_code("Error", code, message),
-                None => Self::plain("Error", message),
-            },
-            WorkspaceSnapshotError::NotFound(message) => Self::plain("Error", message),
-            WorkspaceSnapshotError::UnsafePath => {
-                Self::plain("Error", "Snapshot contains an unsafe relative path.")
-            }
-            WorkspaceSnapshotError::Escape => {
-                Self::plain("Error", "Snapshot path escapes target workspace.")
-            }
-            WorkspaceSnapshotError::TypeError(message) => Self {
-                code: Some("ERR_INVALID_ARG_VALUE".into()),
-                name: "TypeError",
-                message,
-                requires_host: false,
-            },
-            WorkspaceSnapshotError::HostRequired(message) => Self {
-                code: Some("JS_HOST_REQUIRED".into()),
-                name: "Error",
-                message: JsString::from(message),
-                requires_host: true,
-            },
         }
+        WorkspaceSnapshotError::Syntax(message) => {
+            SnapshotProjectionError::plain("SyntaxError", message)
+        }
+        WorkspaceSnapshotError::Io { code, message } => match code {
+            Some(code) if crate::node_io::admits(method, code) => {
+                SnapshotProjectionError::plain_code("Error", code, message)
+            }
+            _ => SnapshotProjectionError::node_io_required(),
+        },
+        WorkspaceSnapshotError::NotFound(message) => {
+            SnapshotProjectionError::plain("Error", message)
+        }
+        WorkspaceSnapshotError::UnsafePath => {
+            SnapshotProjectionError::plain("Error", "Snapshot contains an unsafe relative path.")
+        }
+        WorkspaceSnapshotError::Escape => {
+            SnapshotProjectionError::plain("Error", "Snapshot path escapes target workspace.")
+        }
+        WorkspaceSnapshotError::TypeError(message) => SnapshotProjectionError {
+            code: Some("ERR_INVALID_ARG_VALUE".into()),
+            name: "TypeError",
+            message,
+            requires_host: false,
+        },
+        WorkspaceSnapshotError::HostRequired(message) => SnapshotProjectionError {
+            code: Some("JS_HOST_REQUIRED".into()),
+            name: "Error",
+            message: JsString::from(message),
+            requires_host: true,
+        },
     }
-}
-
-/// Node fs errors carry their errno in `error.code`; the native port keeps the
-/// code inside the Node-formatted message (`ENOENT: ...`). Surface it again for
-/// the wire-shaped replay/error object.
-fn io_code(message: &str) -> Option<String> {
-    let (head, _) = message.split_once(": ")?;
-    (head.len() >= 2
-        && head
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'))
-    .then(|| head.to_owned())
 }
 
 /// `createLocalGateway.ts:1271-1313`. `provider` is `None` when the host has no
@@ -180,7 +211,9 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
         let limit = snapshot_limit(field(input, "limit"))?;
         let session_key = field(input, "sessionKey");
         let cursor = field(input, "cursor");
-        let descriptors = provider.list()?;
+        let descriptors = provider
+            .list()
+            .map_err(|error| project_error(error, "snapshot_list"))?;
         let items: Vec<WorkspaceSnapshotDescriptor> = descriptors
             .into_iter()
             .filter(|item| item.workspace_id.equals_str(&workspace_id))
@@ -236,8 +269,10 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
         let project_key = self.resolve_source_project(input)?;
         let workspace_id = self.resolver.workspace_id(&project_key);
         let snapshot_id = field(input, "snapshotId");
-        let snapshot_units = id_units(snapshot_id);
-        let manifest = provider.get_units(&snapshot_units)?;
+        let snapshot_units = string_units(snapshot_id);
+        let manifest = provider
+            .get_units(&snapshot_units)
+            .map_err(|error| project_error(error, "snapshot_get"))?;
         let Some(manifest) = manifest.filter(|manifest| {
             field(manifest, "workspaceId")
                 .as_string()
@@ -256,8 +291,10 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
         let source_project = self.resolve_source_project(input)?;
         let workspace_id = self.resolver.workspace_id(&source_project);
         let snapshot_id = field(input, "snapshotId");
-        let snapshot_units = id_units(snapshot_id);
-        let manifest = provider.get_units(&snapshot_units)?;
+        let snapshot_units = string_units(snapshot_id);
+        let manifest = provider
+            .get_units(&snapshot_units)
+            .map_err(|error| project_error(error, "snapshot_restore"))?;
         if !manifest.is_some_and(|manifest| {
             field(&manifest, "workspaceId")
                 .as_string()
@@ -268,16 +305,18 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
         // TS uses `input.targetProjectKey ?? input.projectKey` (no fallback).
         let target = field(input, "targetProjectKey");
         let target_key = if nullish(target) {
-            string_text(field(input, "projectKey"))
+            string_units(field(input, "projectKey"))
         } else {
-            string_text(target)
+            string_units(target)
         };
         let target_project = self.resolver.resolve_project_key(&target_key)?;
         let target_root = make_temp_restore_dir(&target_project)?;
         let RestoredSnapshot {
             restored,
             workspace_key,
-        } = provider.restore_units(&snapshot_units, &target_root)?;
+        } = provider
+            .restore_units(&snapshot_units, &target_root)
+            .map_err(|error| project_error(error, "snapshot_restore"))?;
         let mut result = JsObject::new();
         result.insert("restored".into(), JsValue::Bool(restored));
         result.insert("workspaceKey".into(), workspace_key.as_str().into());
@@ -295,12 +334,12 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
 
     fn resolve_source_project(&self, input: &JsValue) -> Result<String, SnapshotProjectionError> {
         let requested = field(input, "projectKey");
-        let requested = if nullish(requested) {
-            self.fallback_project_root.clone()
+        let units = if nullish(requested) {
+            self.fallback_project_root.encode_utf16().collect()
         } else {
-            string_text(requested)
+            string_units(requested)
         };
-        self.resolver.resolve_project_key(&requested)
+        self.resolver.resolve_project_key(&units)
     }
 }
 
@@ -310,9 +349,10 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
 fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Null | JsValue::Undefined)
 }
-/// `String(value)` for the inputs the gateway entry has already validated as
-/// strings. Preserve lone surrogates lossily rather than panicking; the
-/// project/snapshot identifier contract is a UTF-8 path/id.
+/// `String(value)` rendering for non-string inputs and the rare fallback that
+/// must produce a UTF-8 `String` (such as `Display`). Identifiers go through
+/// [`string_units`] instead, so a lone surrogate is never replacement-decoded
+/// before a JS-equality lookup.
 fn string_text(value: &JsValue) -> String {
     match value {
         JsValue::String(text) => String::from_utf16_lossy(text.units()),
@@ -323,10 +363,13 @@ fn string_text(value: &JsValue) -> String {
         _ => String::from_utf16_lossy(&crate::js_value::to_string_units(value).unwrap_or_default()),
     }
 }
-/// Snapshot ids are compared by JS `===`, i.e. code unit by code unit. Keep
-/// the raw units of a string instead of `from_utf16_lossy`: `"\ud800"` and
-/// `"\ufffd"` name different snapshots in TS.
-fn id_units(value: &JsValue) -> Vec<u16> {
+/// `String(value)` with JS string identity preserved: the gateway entry has
+/// already validated the identifiers as strings, and both snapshot ids and
+/// project keys are compared by code unit. Keep the raw units instead of
+/// `from_utf16_lossy`: `"\ud800"` and `"\ufffd"` name different snapshots and
+/// different projects in TS. Non-string values keep the old `String()`
+/// rendering (the projection is only reachable after entry validation).
+fn string_units(value: &JsValue) -> Vec<u16> {
     match value {
         JsValue::String(text) => text.units().to_vec(),
         _ => string_text(value).encode_utf16().collect(),
@@ -388,14 +431,7 @@ fn make_temp_restore_dir(target_project: &str) -> Result<String, SnapshotProject
             Ok(()) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(
-                    match crate::node_io::diagnostic(&error, "mkdtemp", Some(&candidate)) {
-                        Some((code, message)) => {
-                            SnapshotProjectionError::plain_code("Error", code, message)
-                        }
-                        None => SnapshotProjectionError::plain("Error", error.to_string()),
-                    },
-                );
+                return Err(mkdtemp_error(&error, &candidate));
             }
         }
     }
@@ -404,6 +440,19 @@ fn make_temp_restore_dir(target_project: &str) -> Result<String, SnapshotProject
         "EEXIST",
         format!("EEXIST: file already exists, mkdtemp '{template}'"),
     ))
+}
+/// Gateway method admission for `mkdtemp`: only the errnos this method's Node
+/// oracle observed may become a wire code. `lookup_for` also rejects an errno
+/// outside libuv's table entirely, so a Rust Display string can never reach the
+/// wire; the fallback is the same `NODE_IO_REQUIRED` host boundary as
+/// `session_model`/`skills`/`native_archive`/`project_files`.
+fn mkdtemp_error(error: &std::io::Error, candidate: &str) -> SnapshotProjectionError {
+    match crate::node_io::lookup_for("snapshot_restore", error)
+        .and_then(|_| crate::node_io::diagnostic(error, "mkdtemp", Some(candidate)))
+    {
+        Some((code, message)) => SnapshotProjectionError::plain_code("Error", code, message),
+        None => SnapshotProjectionError::node_io_required(),
+    }
 }
 /// Node `path.join(left, right)` for POSIX. A later absolute-looking argument
 /// is nested, not reset; `..` pops the previous lexical segment (and is kept
@@ -456,4 +505,110 @@ fn random_suffix() -> String {
         suffix.push(ALPHABET[(*byte as usize) % ALPHABET.len()] as char);
     }
     suffix
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn mkdtemp_errno_uses_the_method_whitelist() {
+        let missing = mkdtemp_error(
+            &io::Error::from_raw_os_error(libc::ENOENT),
+            "/tmp/x/.pilotdeck-restore-abc123",
+        );
+        assert_eq!(missing.code(), Some("ENOENT"));
+        assert_eq!(missing.name(), "Error");
+        assert!(!missing.requires_host());
+        assert!(
+            missing.message().units().starts_with(
+                "ENOENT: no such file or directory, mkdtemp '/tmp/x/.pilotdeck-restore-abc123'"
+                    .encode_utf16()
+                    .collect::<Vec<_>>()
+                    .as_slice()
+            )
+        );
+
+        // EACCES is in the global libuv table but was never observed for
+        // snapshotRestore: only method admission (not table membership)
+        // decides, and guessing the Node wording would put an unmeasured
+        // code/message on the wire.
+        let denied = mkdtemp_error(
+            &io::Error::from_raw_os_error(libc::EACCES),
+            "/tmp/x/.pilotdeck-restore-abc123",
+        );
+        assert_eq!(denied.code(), Some("NODE_IO_REQUIRED"));
+        assert_eq!(denied.name(), "Error");
+        assert!(denied.requires_host());
+        assert!(denied.message().units().is_empty());
+
+        // EDQUOT is outside libuv's table entirely (`diagnostic` returns None);
+        // the Rust Display must not leak either.
+        let quota = mkdtemp_error(
+            &io::Error::from_raw_os_error(libc::EDQUOT),
+            "/tmp/x/.pilotdeck-restore-abc123",
+        );
+        assert_eq!(quota.code(), Some("NODE_IO_REQUIRED"));
+        assert_eq!(quota.name(), "Error");
+        assert!(quota.requires_host());
+        assert!(quota.message().units().is_empty());
+    }
+
+    #[test]
+    fn provider_io_is_admitted_per_gateway_method() {
+        let io_error = |code, message: &str| WorkspaceSnapshotError::Io {
+            code,
+            message: message.into(),
+        };
+        // snapshotRestore's oracle observed ENOENT (mkdtemp and open).
+        let admitted = project_error(
+            io_error(
+                Some("ENOENT"),
+                "ENOENT: no such file or directory, open '/x'",
+            ),
+            "snapshot_restore",
+        );
+        assert_eq!(admitted.code(), Some("ENOENT"));
+        assert!(!admitted.requires_host());
+
+        // The same code is not in snapshotList's measured set.
+        let stale = project_error(
+            io_error(
+                Some("ENOENT"),
+                "ENOENT: no such file or directory, open '/x'",
+            ),
+            "snapshot_list",
+        );
+        assert_eq!(stale.code(), Some("NODE_IO_REQUIRED"));
+        assert!(stale.requires_host());
+        assert!(stale.message().units().is_empty());
+
+        // An errno outside libuv's table carries no code; the Rust Display must
+        // not become the wire message.
+        let unknown = project_error(
+            io_error(None, "Disk quota exceeded (os error 122)"),
+            "snapshot_restore",
+        );
+        assert_eq!(unknown.code(), Some("NODE_IO_REQUIRED"));
+        assert!(unknown.requires_host());
+        assert!(unknown.message().units().is_empty());
+    }
+
+    #[test]
+    fn unknown_project_key_keeps_raw_units() {
+        let error = SnapshotProjectionError::unknown_project_key(&[0xD800]);
+        assert_eq!(error.code(), Some("PROJECT_NOT_FOUND"));
+        assert_eq!(error.name(), "DialogGatewayError");
+        assert!(!error.requires_host());
+        assert_eq!(
+            error.message().units(),
+            "Unknown projectKey: "
+                .encode_utf16()
+                .chain([0xD800])
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+        assert!(!error.message().units().contains(&0xFFFD));
+    }
 }
