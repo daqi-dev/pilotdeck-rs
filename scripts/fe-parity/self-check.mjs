@@ -256,7 +256,8 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
         return dirPath;
       };
       for (const [dir, name, version] of [
-        ['vite@7.3.3_aaa', 'vite', '7.3.3'],
+        ['vite@7.3.3_aaa@1.0.0', 'vite', '7.3.3'],
+        ['ws@8.18.0', 'ws', '8.18.0'],
         ['ws@8.21.0', 'ws', '8.21.0'],
         ['@playwright+test@1.60.0', '@playwright/test', '1.60.0'],
         ['@xterm+xterm@5.5.0', '@xterm/xterm', '5.5.0'],
@@ -269,14 +270,20 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
         await mkdir(dirname(resolve(ui, 'node_modules', name)), { recursive: true });
         await symlink(resolve(store, dir, 'node_modules', name), resolve(ui, 'node_modules', name));
       };
-      await link('vite', 'vite@7.3.3_aaa');
+      await link('vite', 'vite@7.3.3_aaa@1.0.0');
       await link('ws', 'ws@8.21.0');
       await link('@playwright/test', '@playwright+test@1.60.0');
       await link('@xterm/xterm', '@xterm+xterm@5.5.0');
-      const lock = 'lockfileVersion: 9\n'; await writeFile(resolve(fixture, 'pnpm-lock.yaml'), lock);
+      // Manifest and lockfile pin the wanted set; versions bind the links (#61.2).
+      await writeFile(resolve(ui, 'package.json'), JSON.stringify({ dependencies: { ws: '^8', '@xterm/xterm': '^5' },
+        devDependencies: { vite: '^7', '@playwright/test': '^1' } }));
+      const entry = (name, version) => `      ${name.startsWith('@') ? `'${name}'` : name}:\n        specifier: x\n        version: ${version}\n`;
+      const lock = 'lockfileVersion: 9\n\nimporters:\n\n  ui:\n    dependencies:\n' + entry('@xterm/xterm', '5.5.0') + entry('ws', '8.21.0')
+        + '    devDependencies:\n' + entry('@playwright/test', '1.60.0') + entry('vite', '7.3.3(aaa@1.0.0)') + '\npackages:\n';
+      await writeFile(resolve(fixture, 'pnpm-lock.yaml'), lock);
       // Like the real baseline, installed modules are untracked.
       await writeFile(resolve(fixture, '.gitignore'), 'node_modules/\n');
-      git(['init', '-q']); git(['add', 'ui', '.gitignore']); git(['add', 'pnpm-lock.yaml']);
+      git(['init', '-q']); git(['add', 'ui', '.gitignore', 'pnpm-lock.yaml']); git(['add', 'pnpm-lock.yaml']);
       git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline nm fixture']);
       const head = git(['rev-parse', 'HEAD']);
       // Missing node_modules/.pnpm/lock.yaml
@@ -295,6 +302,20 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       // The well-formed fixture passes and reports every package, @xterm included.
       const good = await verifyBaseline(ui, head);
       assert.deepEqual(good.nodeModules.packages.map(p => p.name), ['vite', 'ws', '@playwright/test', '@xterm/xterm']);
+      // Lockfile unchanged, link moved to another valid version in the store.
+      await rm(resolve(ui, 'node_modules', 'ws')); await link('ws', 'ws@8.18.0');
+      await assert.rejects(() => verifyBaseline(ui, head), /ws resolves to ws@8\.18\.0, lockfile expects ws@8\.21\.0/);
+      await rm(resolve(ui, 'node_modules', 'ws')); await link('ws', 'ws@8.21.0');
+      // A declared @xterm link deleted, or the whole scope gone, fails.
+      await rm(resolve(ui, 'node_modules', '@xterm', 'xterm'));
+      await assert.rejects(() => verifyBaseline(ui, head), /missing package: @xterm\/xterm/);
+      await rm(resolve(ui, 'node_modules', '@xterm'), { recursive: true });
+      await assert.rejects(() => verifyBaseline(ui, head), /missing package: @xterm\/xterm/);
+      await link('@xterm/xterm', '@xterm+xterm@5.5.0');
+      // An installed @xterm package the manifest does not declare fails.
+      await pkg('@xterm+extra@1.0.0', '@xterm/extra'); await link('@xterm/extra', '@xterm+extra@1.0.0');
+      await assert.rejects(() => verifyBaseline(ui, head), /undeclared @xterm packages: @xterm\/extra/);
+      await rm(resolve(ui, 'node_modules', '@xterm', 'extra'));
       // An @xterm link outside the store is rejected, not skipped.
       const strayXterm = resolve(fixture, 'stray-xterm', 'node_modules', '@xterm', 'xterm');
       await mkdir(strayXterm, { recursive: true });
