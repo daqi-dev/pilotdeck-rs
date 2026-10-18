@@ -591,8 +591,8 @@ fn unmeasured_errnos_require_the_host() {
     );
 }
 
-/// 待实测: the TS outcome of a too-deep array (RESULT.md probe). Here only the
-/// shape is pinned: no Rust stack overflow, and the error lands where V8's
+/// The depth itself is a known divergence (js_value module docs). Here only
+/// the shape is pinned: no Rust stack overflow, and the error lands where V8's
 /// RangeError would (caught inside decodeListCursor, uncaught elsewhere).
 #[test]
 fn deep_arrays_never_overflow_the_stack() {

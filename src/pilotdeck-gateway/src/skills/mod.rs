@@ -717,7 +717,8 @@ fn base64url(value: &JsValue) -> String {
 /// success (after EEXIST the pending children continue; after any other errno
 /// the whole call ends there), a missing path reports stat's errno, a
 /// non-directory is EEXIST, or ENOTDIR when the EEXIST hit an ancestor.
-/// 待实测 for EROFS/EDQUOT: RESULT.md lists the read-only-volume probe.
+/// 待实测 for EROFS/EDQUOT: A6.8-pr4 RESULT.md 第二轮 lists the
+/// read-only-image probe.
 fn mkdir_p(path: &str) -> Result<()> {
     let fail = |e: &io::Error| SkillError::io(e, "mkdir", Some(path));
     let errno = |n| io::Error::from_raw_os_error(n);
@@ -747,7 +748,9 @@ fn mkdir_p(path: &str) -> Result<()> {
                     Ok(m) if m.is_dir() => return Ok(()),
                     _ if ancestor => return Err(fail(&errno(libc::ENOTDIR))),
                     Ok(_) => return Err(fail(&errno(libc::EEXIST))),
-                    Err(stat) => return Err(fail(&stat)),
+                    // Measured on a read-only volume (Node 22.22): the stat error names the
+                    // component being created, e.g. mkdir("ro/a/b") -> ENOENT path "ro/a".
+                    Err(stat) => return Err(SkillError::io(&stat, "mkdir", Some(&next))),
                 }
             }
         }

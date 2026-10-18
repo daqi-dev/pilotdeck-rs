@@ -128,7 +128,9 @@ impl SkillManager {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(not_found()),
             Err(e) => return Err(SkillError::io(&e, "scandir", Some(&root))),
         };
-        // readdir order is libuv's strcmp sort.
+        // fs.promises.readdir is uv_fs_scandir, whose uv__fs_scandir_sort is
+        // strcmp: the same byte order as OsString, so the stable sort below
+        // breaks ties exactly as TS does (CLAUDE.md 问题分级, 2026-10-14).
         entries.sort_by_key(|e| e.file_name());
         let current = scan_folder(&root, basename(&root));
         let collator = node_collator(&self.locale)
@@ -316,7 +318,8 @@ fn copy_entry(
 ) -> Result<()> {
     let kind = src_stat.file_type();
     if kind.is_dir() {
-        // onDir / mkDirAndCopy
+        // onDir: only mkDirAndCopy ends in setDestMode; an existing dest
+        // directory keeps its own mode.
         if dest_stat.is_none() {
             fs::create_dir(dest).map_err(|e| SkillError::io(&e, "mkdir", Some(dest)))?;
             copy_dir(src, dest)?;
@@ -378,7 +381,9 @@ fn copy_dir(src: &str, dest: &str) -> Result<()> {
 }
 
 /// cp.js onLink (verbatimSymlinks: false): a relative link target is made
-/// absolute against the link's own directory.
+/// absolute against the link's own directory. A dest that is not a link
+/// (readlink EINVAL) gets no unlink: onLink calls symlink straight away and
+/// lets it fail with EEXIST.
 fn copy_link(dest_exists: bool, src: &str, dest: &str) -> Result<()> {
     let resolved_src = absolute_link(src)?;
     if dest_exists {
