@@ -146,8 +146,9 @@ def strip_code(body: str) -> str:
 
 
 def marker_lines(body: str) -> str:
-    """只保留「整行就是 HTML 注释标记」的行（代码已剥）：标记必须独占一行，行内提到的写法不算。"""
-    return "\n".join(l for l in strip_code(body).splitlines() if l.strip().startswith("<!--") and l.strip().endswith("-->"))
+    """只保留「整行就是 HTML 注释标记、且从第 0 列开始」的行（代码已剥）：标记必须独占一行、顶格，行内或缩进里提到的写法不算。"""
+    # 标记必须从第 0 列开始（不许任何前导空白）：列表项、引用块、缩进或混合缩进的代码块里的写法一律不算
+    return "\n".join(l for l in strip_code(body).splitlines() if l.startswith("<!--") and l.rstrip().endswith("-->"))
 
 
 def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:

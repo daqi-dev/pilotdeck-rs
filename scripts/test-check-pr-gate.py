@@ -84,6 +84,9 @@ def main() -> int:
     ("四空格缩进的 waiver 不算", "Refs #1\n<!-- reviewers: codex,deepseek -->\n\n    <!-- pr-gate:waiver 纯文档测试用例足够长 -->\n", "claude/x", False, "缺角色审计结果块"),
     ("围栏内 ```python 行不是关闭围栏", "Refs #1\n<!-- reviewers: codex,deepseek -->\n```\n```python\n" + GLM_BLOCK.split("\n")[0] + "\n```\n", "claude/x", False, "缺角色审计结果块"),
     ("行内提到的标记写法不算标记", "Refs #1\n说明：用 <!-- pr-gate:waiver 纯文档测试用例足够长 --> 豁免。\n<!-- reviewers: codex,deepseek -->\n", "claude/x", False, "缺角色审计结果块"),
+        ("列表项里的围栏中的标记不算", "Refs #1\n- ```\n  " + GLM_BLOCK.split("\n")[0] + "\n  <!-- reviewers: deepseek,glm -->\n  ```\n", "claude/x", False, "缺角色审计结果块"),
+        ("空格+Tab 混合缩进的标记不算", "Refs #1\n \t" + GLM_BLOCK.split("\n")[0] + "\n \t<!-- reviewers: deepseek,glm -->\n", "claude/x", False, "缺角色审计结果块"),
+        ("两空格缩进的 reviewers 不算", "<!-- pr-gate:waiver 纯文档测试用例足够长 -->\nRefs #1\n  <!-- reviewers: deepseek,glm -->\n", "claude/x", False, "恰好一个"),
     ]:
         e = gate.check(body, "", ref)
         good = (not e) if ok else (bool(e) and any(want in x for x in e))
@@ -261,7 +264,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 31} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 34} 例）")
     return 1 if fails else 0
 
 
