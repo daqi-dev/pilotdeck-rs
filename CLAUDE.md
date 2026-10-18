@@ -83,6 +83,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 
 ### 当前协作与持续推进
 - 谁写谁不审：合并前须有**两家非作者评审**收敛到无 P0/P1；曾审后成为该范围作者的结论不计独立终审。模型分工与通道见 `state/memory/20261015-model-runners.md`；无工具通道的模型只生成候选文本，由持有人机械应用。
+- **提交署名如实写（2026-10-18 人定）**：协调者只是原样提交 worker 写好的代码时，`Co-Authored-By` 写实际实现方（`Codex <noreply@openai.com>` / `DeepSeek <noreply@deepseek.com>` / `GLM-5.3 <noreply@zhipu.com>`），不加 Claude；只有 Claude 真改过代码（修评审意见、手工解决冲突、自己写的状态文件等）才加 `Claude Opus 5.5 <noreply@anthropic.com>`。pr-gate 的作者谱系会把署名计入作者，所以署名决定谁还能当评审。已带 Claude 署名的旧提交不改历史。
 - 任务文件写入 `_tmp/<日期>-<名字>/task.md`。命令参数以当前工具为准，提示词经文件/stdin；写入工作区与证据绑定明确，避免同一工作区并发修改。
 - 已授权的重构判断与阶段推进由 AI 承担；判断性代拍写入 `state/decisions-*.md`，标「AI 代批，待人复核」，随后继续工作。当前停点由最新用户指令和 board 确定；2026-10-14 夜跑的 08:30 截止及首 Issue 专属期限不重复生效，历史见当日晨报和 Git。
 - 红线：不下载预编译二进制；冻结变更按上节；不碰 `~/.pilotdeck`、用户运行中的 PilotDeck、`~/ws/PilotDeck-rust-program-20261009/`；推送前 gitleaks，不强推 main。同一失败 3 次挂起该项；磁盘超上限停止新增写入。全量对拍串行，保留现有锁协议（`mkdir /tmp/pdrs-parity.lock`）。
