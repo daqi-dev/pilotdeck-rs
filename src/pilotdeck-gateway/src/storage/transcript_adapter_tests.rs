@@ -863,18 +863,18 @@ fn jsonl_store_failure_keeps_previous_bytes_and_state() {
         .unwrap();
     let before = fs::read(&storage.transcript_path).unwrap();
     let state = storage.transcript.snapshot_state();
-    // Make the temporary sibling impossible to create: the directory is read-only.
+    // Make the append open fail: the transcript is read-only.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let dir = storage.transcript_path.parent().unwrap();
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o500)).unwrap();
+        let path = &storage.transcript_path;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o400)).unwrap();
         let result = storage.transcript.record_session_metadata(
             &"s1".into(),
             &"t".into(),
             metadata_value(2),
         );
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         assert!(matches!(result, Err(AdapterError::Store(_))), "{result:?}");
         assert_eq!(fs::read(&storage.transcript_path).unwrap(), before);
         assert_eq!(storage.transcript.snapshot_state(), state);
@@ -884,6 +884,63 @@ fn jsonl_store_failure_keeps_previous_bytes_and_state() {
             .unwrap();
         assert_eq!(storage.transcript.snapshot_state().sequence, 2);
     }
+}
+
+#[test]
+fn jsonl_store_instances_appending_one_key_keep_every_line() {
+    let scratch = Scratch::new();
+    let key = TranscriptKey {
+        project_root: PROJECT_ROOT.into(),
+        pilot_home: PathBuf::new(),
+        session_id: "s1".into(),
+        transcript_path: scratch.0.join("chat/s1.jsonl"),
+    };
+    let entry = |n: usize| js(&format!(r#"{{"type":"session_metadata","n":{n}}}"#));
+    // Interleaved: each instance's first append prepares the tail once, like
+    // TS prepareTail, so crash debris gets exactly one LF.
+    fs::create_dir_all(key.transcript_path.parent().unwrap()).unwrap();
+    fs::write(&key.transcript_path, r#"{"type":"partial"#).unwrap();
+    let (a, b) = (JsonlTranscriptStore::new(), JsonlTranscriptStore::new());
+    a.append(&key, &entry(1)).unwrap();
+    b.append(&key, &entry(2)).unwrap();
+    a.append(&key, &entry(3)).unwrap();
+    assert_eq!(
+        fs::read_to_string(&key.transcript_path).unwrap(),
+        "{\"type\":\"partial\n\
+         {\"type\":\"session_metadata\",\"n\":1}\n\
+         {\"type\":\"session_metadata\",\"n\":2}\n\
+         {\"type\":\"session_metadata\",\"n\":3}\n"
+    );
+    // Concurrent: two instances (as two Gateway processes would) lose no line.
+    fs::remove_file(&key.transcript_path).unwrap();
+    let stores = [
+        Arc::new(JsonlTranscriptStore::new()),
+        Arc::new(JsonlTranscriptStore::new()),
+    ];
+    let threads: Vec<_> = (0..8)
+        .map(|t| {
+            let store = stores[t % 2].clone();
+            let key = key.clone();
+            thread::spawn(move || {
+                for i in 0..50 {
+                    store.append(&key, &entry(t * 100 + i)).unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    let text = fs::read_to_string(&key.transcript_path).unwrap();
+    let written: HashSet<usize> = text
+        .lines()
+        .map(|line| field(&js(line), "n").as_number().unwrap() as usize)
+        .collect();
+    let expected: HashSet<usize> = (0..8)
+        .flat_map(|t| (0..50).map(move |i| t * 100 + i))
+        .collect();
+    assert_eq!(text.lines().count(), 400);
+    assert_eq!(written, expected);
 }
 
 #[test]

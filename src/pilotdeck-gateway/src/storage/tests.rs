@@ -895,6 +895,57 @@ fn malformed_history_conflicts_fail_without_rewriting_bytes() {
 }
 
 #[test]
+fn restore_rejects_event_log_with_ts_validation_messages() {
+    // Full SessionEventLogValidation.ts:38/47/97/103/113/119 texts; the async
+    // adapter oracle pins the same strings from the real TS module.
+    let line = |sequence: &str, extra: &str| {
+        format!(
+            r#"{{"type":"session_metadata","sessionId":"session-1","turnId":"t","createdAt":"2026-10-18T00:00:00.000Z","sequence":{sequence}{extra}}}"#
+        ) + "\n"
+    };
+    let cases = [
+        (
+            line("0", ""),
+            "Session event sequence must be a positive safe integer: 0.",
+        ),
+        (
+            line("1.5", ""),
+            "Session event sequence must be a positive safe integer: 1.5.",
+        ),
+        (
+            line("1", "") + &line("1", ""),
+            "Session event sequence must increase strictly: received 1 after 1.",
+        ),
+        (
+            line("1", r#","entryId":"a""#) + &line("2", r#","entryId":"a""#),
+            "Session event entryId must be unique: a.",
+        ),
+        (
+            line("1", r#","entryId":"  ""#),
+            "Session event entryId must be a non-empty string when present.",
+        ),
+        (
+            line("1", r#","parentEntryId":5"#),
+            "Session event parentEntryId must be null or a non-empty string when present.",
+        ),
+        (
+            line("1", r#","entryId":"a","parentEntryId":"a""#),
+            "Session event a cannot reference itself as parent.",
+        ),
+    ];
+    for (bytes, expected) in cases {
+        let scratch = Scratch::new();
+        fs::write(scratch.path(), &bytes).unwrap();
+        match JsonlLedgerStore::open(scratch.path(), "session-1") {
+            Err(LedgerError::Invalid(message)) => assert_eq!(message, expected, "{bytes}"),
+            Err(error) => panic!("{bytes}: {error}"),
+            Ok(_) => panic!("accepted: {bytes}"),
+        }
+        assert_eq!(fs::read_to_string(scratch.path()).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn real_ts_rejects_mismatched_accepted_and_terminal_identities() {
     let fixture = oracle();
     let JsValue::Array(cases) = field(&fixture, "rejectedCases") else {
