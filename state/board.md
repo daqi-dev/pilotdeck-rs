@@ -4,7 +4,7 @@
 updated: 2026-10-18 08:30 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
 - A6.8-pr3 | impl | ready | 原生 SkillManager list/read/write/create/delete/validate（wt-a68-skills，分支 claude/a68-skills）：Claude 实现中（_tmp/20261018-a68-skills/task.md），完成后协调者跑真实 TS 夹具与 cargo；import/scan/binding 留 pr4
 - D1-pr2 | impl | ready | CLI 第二批 = 清 #214/#215/#218/#219（wt-d1-cli，分支 claude/d1-pr2）：Claude 实现中（_tmp/20261018-d1-pr2/task.md），含 Node 探针与 D0 新场景（协调者用真实 TS 定标）
-- A6.2-pr3 | impl | ready | 历史事务（plan 005:98 第三个 PR）；先 triage 范围，可与上两条并行
+- A6.2-pr3 | impl | ready | transcript/metadata 适配器（AsyncTranscriptStorageAdapter + NativeSessionStorageAdapter，wt-a62-run 复用，分支 claude/a62-pr3）：Claude 实现中（_tmp/20261018-a62-pr3/task.md）
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
 - #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
