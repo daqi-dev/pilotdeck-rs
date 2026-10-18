@@ -116,8 +116,14 @@ for (const materialized of [U,null,{provider:'p',model:'m',messages:[],extra:'ma
 for (const [stage, projected] of [['pre_route','recovery'],['recovery','pre_route'],['routed','pre_route'],['bad','recovery']] as const) compact(`stage-projection-${specs.length}`,{budgetStage:stage,budgetProjection:{stage:projected}});
 // String(error) for non-iterable preview tools and null elements is V8-owned.
 for (const tools of [{},7,U,null,[null,{name:'a'}],[{name:'a'},null],[null,{}]]) compact(`cache-tools-${specs.length}`,{}, {preview:{cachePlan:{generation:0},tools}});
-// Valid budgetRequest, budget module present but no evaluateRequestBudget port: still removes the field and succeeds.
+// Valid budgetRequest, budget module absent: still removes the field and succeeds.
 compact('without-budget-valid',{}, {budget:false});
+// Installed budget module with no evaluation port (Rust Handler with default Ports).
+compact('without-budget-port-valid',{}, {budget:'no-port'});
+// The no-port branch still canonicalizes budgetRequest before deleting it.
+compact('without-budget-port-invalid-request',{budgetRequest:{provider:1,model:'m',messages:[]}}, {budget:'no-port'});
+// The no-port branch skips maxContextTokens/reservedOutputTokens validation.
+compact('without-budget-port-lax',{maxContextTokens:null,reservedOutputTokens:null}, {budget:'no-port'});
 const cases=[];
 for(const raw of specs) {
   const spec=decode(raw), calls:any[]=[];
@@ -150,7 +156,7 @@ for(const raw of specs) {
   const input={sessionId:'session',turnId:'turn',messages:[],...(signal?{abortSignal:signal}:{})};
   const dispatcher=createSidecarDefaultModuleDispatcher({config,input,checkpoint:{},capabilityResultObserver:{},planTodoHandler:async()=>({}),modules:{model,
     context:{execution:context,requestIdentity:createSidecarContextRequestIdentityServices({})},
-    ...(spec.budget===false?{}:{budget:{evaluateRequestBudget:async(request:any,options:any)=>{
+    ...(spec.budget===false?{}:spec.budget==='no-port'?{budget:{}}:{budget:{evaluateRequestBudget:async(request:any,options:any)=>{
       const {signal:passed,...rest}=options;if(passed)assert.equal(passed,signal);
       calls.push({operation:'budget',request,options:rest,signal:passed?(passed.aborted?'aborted':'active'):'absent'});fail('budget');
       return Object.hasOwn(spec,'snapshot')?spec.snapshot:snapshot;

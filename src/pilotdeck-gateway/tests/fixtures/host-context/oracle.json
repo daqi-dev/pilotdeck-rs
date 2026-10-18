@@ -30319,6 +30319,211 @@
           }
         }
       }
+    },
+    {
+      "name": "without-budget-port-valid",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "budget": "no-port",
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "result": {
+            "operation": "try_auto_compact",
+            "extra": "kept"
+          }
+        }
+      }
+    },
+    {
+      "name": "without-budget-port-invalid-request",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": 1,
+            "model": "m",
+            "messages": []
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "budget": "no-port",
+      "calls": [],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "COMPACTION_BUDGET_CONTRACT_INVALID",
+        "error": {
+          "message": "Sidecar model call contains an invalid canonical request."
+        }
+      }
+    },
+    {
+      "name": "without-budget-port-lax",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": null,
+          "reservedOutputTokens": null
+        }
+      },
+      "budget": "no-port",
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": null,
+            "reservedOutputTokens": null,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "result": {
+            "operation": "try_auto_compact",
+            "extra": "kept"
+          }
+        }
+      }
     }
   ]
 }
