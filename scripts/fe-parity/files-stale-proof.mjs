@@ -49,7 +49,13 @@ export async function proveFilesBaselineStale(clickButton, entry) {
   for (const language of ['en', 'zh-CN']) {
     const common = JSON.parse(await readFile(resolve(baseline, `src/i18n/locales/${language}/common.json`), 'utf8'));
     const t = (key, options = {}) => key.split('.').reduce((v, part) => v?.[part], common) ?? options.defaultValue ?? key;
-    const shared = { require: requireUI, cn: (...v) => v.filter(Boolean).join(' '), t, FILES_TAB: { labelKey: 'tabs.files' },
+    // Same guard as baseline-stale-proof: the evaluated frozen snippet may only
+    // load what it is known to load, so no package bypasses the node_modules gate.
+    const guardedRequire = name => {
+      assert(name === 'react/jsx-runtime', `Unexpected files dependency ${name}`);
+      return requireUI(name);
+    };
+    const shared = { require: guardedRequire, cn: (...v) => v.filter(Boolean).join(' '), t, FILES_TAB: { labelKey: 'tabs.files' },
       setDashboardMenuOpen() {}, chatHistorySearch: { closeSearch() {} }, setActiveTab() {},
       singlePanelMode: false, explorerVisible: false, explorerCollapsed: true, assistantCollapsed: false,
       assistantVisible: true, toggleExplorer() {}, toggleAssistant() {} };

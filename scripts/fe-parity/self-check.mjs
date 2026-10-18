@@ -5,7 +5,7 @@ import { baselineStaleSelfCheck, staleControlAttempt } from './baseline-stale-se
 import { staleEntry } from './baseline-stale.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { verifyBaseline, lockedImporterVersions, REQUIRED_PACKAGES, ROOT_PACKAGES, UNBOUND_PACKAGES } from './baseline.mjs';
+import { verifyBaseline, lockedImporterVersions, pnpmStoreDir, UNBOUND_PACKAGES } from './baseline.mjs';
 import { readFile, readdir, stat, mkdtemp, writeFile, symlink, link, rm, mkdir } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { resolve, dirname } from 'node:path';
@@ -243,16 +243,27 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     } finally { await rm(fixture, { recursive: true }); }
   });
   await check('baseline node_modules gate binds every package the runner requireUI()s', async () => {
+    // Every target of a requireUI call or requireUI.resolve call, in any scripts/fe-parity
+    // file, must be a direct dependency the gate binds (ui or root manifest).
     const used = new Set();
-    for (const file of await readdir(resolve(root, 'scripts/fe-parity'))) {
-      if (!file.endsWith('.mjs')) continue;
-      const text = await readFile(resolve(root, 'scripts/fe-parity', file), 'utf8');
-      for (const m of text.matchAll(/requireUI\(['"]([^'"]+)['"]/g)) {
-        const [first, second] = m[1].split('/');
-        used.add(first.startsWith('@') ? `${first}/${second}` : first);
+    const walk = async dir => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const path = resolve(dir, entry.name);
+        if (entry.isDirectory()) { await walk(path); continue; }
+        if (!/\.(mjs|js)$/.test(entry.name)) continue;
+        for (const m of (await readFile(path, 'utf8')).matchAll(/requireUI(?:\.resolve)?\(\s*['"]([^'"]+)['"]/g)) {
+          const [first, second] = m[1].split('/');
+          used.add(first.startsWith('@') ? `${first}/${second}` : first);
+        }
       }
-    }
-    const bound = new Set([...REQUIRED_PACKAGES, ...ROOT_PACKAGES, ...UNBOUND_PACKAGES]);
+    };
+    await walk(resolve(root, 'scripts/fe-parity'));
+    const declaredBy = async dir => {
+      const m = JSON.parse(await readFile(resolve(dir, 'package.json'), 'utf8'));
+      return Object.keys({ ...m.dependencies, ...m.devDependencies });
+    };
+    const bound = new Set([...await declaredBy(baseline), ...await declaredBy(dirname(baseline)), ...UNBOUND_PACKAGES]);
+    assert.ok(used.has('vite') && used.has('typescript'), 'scanner found the known call sites');
     assert.deepEqual([...used].filter(name => !bound.has(name)).sort(), []);
   });
   await check('baseline node_modules gate rejects missing/diverged lockfile and links outside .pnpm', async () => {
@@ -332,8 +343,14 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       await rm(resolve(ui, 'node_modules', 'ws')); await link('ws', 'ws@8.21.0');
       // The well-formed fixture passes and reports every package, @xterm included.
       const good = await verifyBaseline(ui, head);
-      assert.deepEqual(good.nodeModules.packages.map(p => p.name),
-        ['vite', 'ws', '@playwright/test', 'react', 'react-dom', 'typescript', 'yaml', '@xterm/xterm', 'jsonrepair']);
+      assert.deepEqual(good.nodeModules.packages.map(p => `${p.importer}:${p.name}`),
+        ['ui:@playwright/test', 'ui:@xterm/xterm', 'ui:react', 'ui:react-dom', 'ui:typescript', 'ui:vite', 'ui:ws', 'ui:yaml', '.:jsonrepair']);
+      // pnpm's store names, checked against real baseline directories: peers nest,
+      // and long names are truncated plus a SHA-256 prefix.
+      assert.equal(pnpmStoreDir('react-router-dom', '6.30.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)'),
+        'react-router-dom@6.30.3_react-dom@18.3.1_react@18.3.1__react@18.3.1');
+      assert.equal(pnpmStoreDir('@replit/codemirror-minimap', '0.5.2(@codemirror/language@6.12.3)(@codemirror/lint@6.9.6)(@codemirror/state@6.6.0)(@codemirror/view@6.43.0)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)'),
+        '@replit+codemirror-minimap@0.5.2_@codemirror+language@6.12.3_@codemirror+lint@6.9.6_@co_f948bbb4c9ec9485279b50606a015b3c');
       // Store directory name right but the package inside reports another version.
       await writeFile(resolve(store, 'yaml@2.8.0', 'node_modules', 'yaml', 'package.json'), JSON.stringify({ name: 'yaml', version: '2.9.0' }));
       await writeFile(resolve(store, 'yaml@2.9.0', 'node_modules', 'yaml', 'package.json'), JSON.stringify({ name: 'yaml', version: '2.8.0' }));
@@ -343,7 +360,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       await writeFile(resolve(fixture, 'node_modules', '.modules.yaml'), JSON.stringify({ nodeLinker: 'hoisted', virtualStoreDir: '.pnpm', virtualStoreDirMaxLength: 120 }));
       await assert.rejects(() => verifyBaseline(ui, head), /layout unsupported/);
       await writeFile(resolve(fixture, 'node_modules', '.modules.yaml'), JSON.stringify({ nodeLinker: 'isolated', virtualStoreDir: '.pnpm', virtualStoreDirMaxLength: '120' }));
-      await assert.rejects(() => verifyBaseline(ui, head), /hashed store directory/);
+      await assert.rejects(() => verifyBaseline(ui, head), /virtualStoreDirMaxLength unsupported: 120/);
       await modulesYaml(120);
       // Lockfile reader fails closed on a missing name, a duplicate, or a missing importer.
       assert.throws(() => lockedImporterVersions(lockOf({ dropYaml: true }), 'ui', ['yaml']), /importers\.ui does not resolve yaml/);
@@ -351,7 +368,7 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       assert.throws(() => lockedImporterVersions(lock, 'apps/desktop', []), /no importers\.apps\/desktop section/);
       // A layout whose store names would be hashed is refused explicitly.
       await modulesYaml(10);
-      await assert.rejects(() => verifyBaseline(ui, head), /hashed store directory for vite/);
+      await assert.rejects(() => verifyBaseline(ui, head), /virtualStoreDirMaxLength unsupported: 10/);
       await modulesYaml(120);
       // Lockfile unchanged, link moved to another valid version in the store.
       await rm(resolve(ui, 'node_modules', 'ws')); await link('ws', 'ws@8.18.0');
