@@ -81,27 +81,15 @@ fn message(id: &str) -> SteerMessage {
         allowed_read_files: Some(vec![format!("/{id}").into()]),
     }
 }
-fn normalized(value: &JsValue) -> JsValue {
-    parse_json(&stringify_json(value).unwrap().unwrap()).unwrap()
-}
 fn equal(actual: &JsValue, expected: &JsValue, label: &str) {
-    fn same(a: &JsValue, b: &JsValue) -> bool {
-        match (a, b) {
-            (JsValue::Object(a), JsValue::Object(b)) => {
-                a.len() == b.len()
-                    && a.entries()
-                        .iter()
-                        .all(|(k, v)| b.get_key(k).is_some_and(|v2| same(v, v2)))
-            }
-            (JsValue::Array(a), JsValue::Array(b)) => {
-                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same(a, b))
-            }
-            _ => a == b,
-        }
-    }
-    assert!(
-        same(&normalized(actual), expected),
-        "{label}\nactual={actual:?}\nexpected={expected:?}"
+    // JSON normalization still omits undefined fields, but key order is part of
+    // the contract: recorded mutations are spread into session JSONL entries.
+    let actual = stringify_json(actual).unwrap().unwrap();
+    let expected = stringify_json(expected).unwrap().unwrap();
+    assert_eq!(
+        actual.as_bytes(),
+        expected.as_bytes(),
+        "{label}\nactual={actual}\nexpected={expected}"
     );
 }
 fn outcome(result: Result<JsValue, HostError>) -> JsValue {

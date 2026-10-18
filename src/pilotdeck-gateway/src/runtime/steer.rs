@@ -178,8 +178,11 @@ impl SteerMailbox {
                     });
                 }
             }
-            let mut insert = input.to_object();
+            let mut insert = JsObject::new();
             insert.insert("mutation".into(), "insert".into());
+            for (key, value) in input.to_object().entries() {
+                insert.insert(key.clone(), value.clone());
+            }
             mailbox.record(&turn_id, insert).await?;
             let rejected = {
                 let mut state = mailbox.0.state.lock().unwrap();
