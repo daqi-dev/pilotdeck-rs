@@ -21,12 +21,55 @@ enum Completed {
     Event(Frame, bool, Result<(), HostError>),
 }
 
+/// Own callbacks and their cleanup together: abort alone is not a join barrier.
+pub(super) struct TurnScope {
+    callbacks: JoinSet<Completed>,
+    handler: Option<Arc<dyn HostHandler>>,
+    timeout: Duration,
+}
+impl TurnScope {
+    pub(super) fn new(handler: Arc<dyn HostHandler>, timeout: Duration) -> Self {
+        Self {
+            callbacks: JoinSet::new(),
+            handler: Some(handler),
+            timeout,
+        }
+    }
+    pub(super) async fn stop_callbacks(&mut self) {
+        self.callbacks.shutdown().await;
+    }
+    fn start_dispose(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+        let handler = self.handler.take()?;
+        let mut callbacks = std::mem::take(&mut self.callbacks);
+        let duration = self.timeout;
+        let runtime = tokio::runtime::Handle::try_current().ok()?;
+        Some(runtime.spawn(async move {
+            callbacks.shutdown().await;
+            let _ = timeout(duration, async { handler.dispose().await }).await;
+        }))
+    }
+    pub(super) async fn dispose(&mut self) {
+        if let Some(task) = self.start_dispose() {
+            // Isolate a cleanup panic as well; it cannot replace a known result.
+            let _ = task.await;
+        }
+    }
+}
+impl Drop for TurnScope {
+    fn drop(&mut self) {
+        // Dropping the JoinHandle detaches cleanup, including if the caller is
+        // itself cancelled while awaiting dispose. Ownership is taken once.
+        drop(self.start_dispose());
+    }
+}
+
 pub(super) async fn run(
     client: &mut HostClient,
     request: ExecuteRequest,
     handler: Arc<dyn HostHandler>,
     progress: &mut Progress,
     cancellation: Cancellation,
+    scope: &mut TurnScope,
 ) -> Result<ExecuteResult, HostError> {
     // TS client:593: an already-aborted input never sends execute.
     if cancellation.is_cancelled() {
@@ -68,7 +111,7 @@ pub(super) async fn run(
     let mut terminal_received = false;
     let mut terminal_applied = None;
     let mut drain_deadline = None;
-    let mut callbacks = JoinSet::new();
+    let callbacks = &mut scope.callbacks;
     let mut interruption = None;
     loop {
         if let Some(error) = interruption.take() {
@@ -328,7 +371,7 @@ pub(super) async fn run(
             }
         }
     }
-    // JoinSet aborts unfinished callbacks on any return/drop, including timeouts.
+    // TurnScope joins unfinished callbacks before disposing turn-owned state.
 }
 // An unrepresentable deadline is effectively unbounded, like Tokio timeout's
 // checked-add path. Keep execution and terminal drain independently optional.
@@ -356,7 +399,7 @@ pub(super) fn same_call(left: &JsValue, right: &JsValue) -> Result<bool, HostErr
     };
     Ok(encode(left)? == encode(right)?)
 }
-fn module_response(call: &JsValue, result: Result<JsObject, HostError>) -> JsValue {
+pub(super) fn module_response(call: &JsValue, result: Result<JsObject, HostError>) -> JsValue {
     let mut response = JsObject::new();
     response.insert("kind".into(), "response".into());
     let id = call.get("messageId").unwrap().as_string().unwrap();
@@ -374,9 +417,41 @@ fn module_response(call: &JsValue, result: Result<JsObject, HostError>) -> JsVal
             response.insert("payload".into(), JsValue::Object(payload));
         }
         Err(error) => {
-            response.insert("code".into(), "HOST_MODULE_FAILED".into());
+            let module = error.module_error.as_deref();
+            response.insert(
+                "code".into(),
+                JsValue::String(
+                    module
+                        .and_then(|error| error.code.clone())
+                        .unwrap_or_else(|| "HOST_MODULE_FAILED".into()),
+                ),
+            );
             let mut detail = JsObject::new();
-            detail.insert("message".into(), error.message.as_str().into());
+            detail.insert(
+                "message".into(),
+                JsValue::String(
+                    module
+                        .map(|error| error.message.clone())
+                        .unwrap_or_else(|| error.message.into()),
+                ),
+            );
+            if let Some(module) = module {
+                if let Some(canonical) = &module.canonical
+                    && canonical.get("code").and_then(JsValue::as_string).is_some()
+                    && canonical
+                        .get("message")
+                        .and_then(JsValue::as_string)
+                        .is_some()
+                {
+                    detail.insert("canonical".into(), JsValue::Object(canonical.clone()));
+                }
+                if let Some(retryable) = module.retryable {
+                    detail.insert("retryable".into(), JsValue::Bool(retryable));
+                }
+                if let Some(delay) = module.retry_after_ms.filter(|value| value.is_finite()) {
+                    detail.insert("retryAfterMs".into(), JsValue::Number(delay));
+                }
+            }
             response.insert("error".into(), JsValue::Object(detail));
         }
     }

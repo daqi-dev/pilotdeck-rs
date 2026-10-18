@@ -36,6 +36,7 @@
 mod budget;
 mod connection;
 mod execution;
+pub mod modules;
 mod recovery;
 
 use connection::Connection;
@@ -158,6 +159,8 @@ pub struct HostError {
     pub stream_id: Option<JsString>,
     /// Last successfully applied event; -1 means no event has been applied.
     pub last_applied_sequence: Option<f64>,
+    /// Module wire details, separate from transport/execution progress.
+    pub module_error: Option<Box<ModuleError>>,
 }
 impl HostError {
     pub fn new(kind: HostErrorKind, message: impl Into<String>) -> Self {
@@ -167,6 +170,7 @@ impl HostError {
             accepted: false,
             stream_id: None,
             last_applied_sequence: None,
+            module_error: None,
         }
     }
     fn protocol(message: impl Into<String>) -> Self {
@@ -187,12 +191,52 @@ impl fmt::Display for HostError {
 }
 impl std::error::Error for HostError {}
 
+/// Failure carried by a host module. Keep UTF-16 messages/codes lossless on wire.
+/// Canonical objects and retry delays are validated when projecting the response.
+#[derive(Debug, Clone)]
+pub struct ModuleError {
+    pub message: JsString,
+    pub code: Option<JsString>,
+    pub canonical: Option<JsObject>,
+    pub retryable: Option<bool>,
+    pub retry_after_ms: Option<f64>,
+}
+impl ModuleError {
+    pub fn new(message: impl Into<JsString>) -> Self {
+        Self {
+            message: message.into(),
+            code: None,
+            canonical: None,
+            retryable: None,
+            retry_after_ms: None,
+        }
+    }
+}
+impl From<ModuleError> for HostError {
+    fn from(error: ModuleError) -> Self {
+        let mut host = Self::new(
+            HostErrorKind::Callback,
+            String::from_utf16_lossy(error.message.units()),
+        );
+        host.module_error = Some(Box::new(error));
+        host
+    }
+}
+
 pub type HostFuture<T> = Pin<Box<dyn Future<Output = Result<T, HostError>> + Send>>;
 /// Returned module payload is wrapped with the callback's own correlation IDs.
 /// Events arrive in sequence and are ACKed only after `event` succeeds. A pending
 /// module callback never prevents an event callback or input validation progressing.
 pub trait HostHandler: Send + Sync + 'static {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject>;
+    /// One handler instance belongs to one execute/turn. Called once after all
+    /// callback futures have stopped, including on failure or dropped execute.
+    /// Cleanup is best-effort and bounded by close_timeout. Dropped executions
+    /// schedule cleanup on the live Tokio runtime; runtime/process shutdown
+    /// cannot guarantee asynchronous cleanup. Errors do not replace a terminal.
+    fn dispose(&self) -> HostFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
     fn event(&self, _event: JsValue) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
@@ -365,6 +409,7 @@ impl HostClient {
         handler: Arc<dyn HostHandler>,
         cancellation: Cancellation,
     ) -> Result<ExecuteResult, HostError> {
+        let mut scope = execution::TurnScope::new(handler.clone(), self.limits.close_timeout);
         let mut progress = Progress {
             last_applied_sequence: Arc::new(AtomicU64::new((-1.0_f64).to_bits())),
             ..Progress::default()
@@ -375,8 +420,10 @@ impl HostClient {
             handler.clone(),
             &mut progress,
             cancellation,
+            &mut scope,
         )
         .await;
+        scope.stop_callbacks().await;
         // TS client:1143-1146: only a started but not successful reconnect
         // emits failure. Later replay/terminal errors cannot reverse success.
         if result.is_err() && self.reconnect_attempted && !self.reconnect_succeeded {
@@ -390,6 +437,7 @@ impl HostClient {
             Err(error) => Err(error),
         };
         let cleanup = self.connection.close().await;
+        scope.dispose().await;
         let result = result.and_then(|terminal| cleanup.map(|()| terminal));
         result.map_err(|mut error| {
             error.accepted = progress.stream_id.is_some();

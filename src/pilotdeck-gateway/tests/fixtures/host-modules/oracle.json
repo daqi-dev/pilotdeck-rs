@@ -1,0 +1,2843 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sources": {
+    "src/agent/modules/transport/agentLoopSidecarClient.ts": "0897981fa636cdec2e1ac9f6f5b0b974d8cb49d6bcf154d5a74577a0f863eb11",
+    "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts": "77a492b9a1a01cad44a6c7feb51fddaaf1d26a5a28de939abf3ed6310216424e"
+  },
+  "routing": [
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-1",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-1",
+        "inReplyTo": "call-1",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar model operation: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-2",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-2",
+        "inReplyTo": "call-2",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-3",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-3",
+        "inReplyTo": "call-3",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-4",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-4",
+        "inReplyTo": "call-4",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-5",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-5",
+        "inReplyTo": "call-5",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar model operation:  "
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-6",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-6",
+        "inReplyTo": "call-6",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar model operation: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-7",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "budget",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-7",
+        "inReplyTo": "call-7",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability does not support unknown."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-8",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "budget",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-8",
+        "inReplyTo": "call-8",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-9",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "budget",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-9",
+        "inReplyTo": "call-9",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-10",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "budget",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-10",
+        "inReplyTo": "call-10",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-11",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "budget",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-11",
+        "inReplyTo": "call-11",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability does not support  ."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-12",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "budget",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-12",
+        "inReplyTo": "call-12",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability does not support \ud800."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-13",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-13",
+        "inReplyTo": "call-13",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar capability operation: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-14",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-14",
+        "inReplyTo": "call-14",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-15",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-15",
+        "inReplyTo": "call-15",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-16",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-16",
+        "inReplyTo": "call-16",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-17",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-17",
+        "inReplyTo": "call-17",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar capability operation:  "
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-18",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-18",
+        "inReplyTo": "call-18",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar capability operation: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-19",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-19",
+        "inReplyTo": "call-19",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar permission operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-20",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-20",
+        "inReplyTo": "call-20",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-21",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-21",
+        "inReplyTo": "call-21",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-22",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-22",
+        "inReplyTo": "call-22",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-23",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-23",
+        "inReplyTo": "call-23",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar permission operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-24",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-24",
+        "inReplyTo": "call-24",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar permission operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-25",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "context",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-25",
+        "inReplyTo": "call-25",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host context capability does not support unknown."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-26",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "context",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-26",
+        "inReplyTo": "call-26",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-27",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "context",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-27",
+        "inReplyTo": "call-27",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-28",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "context",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-28",
+        "inReplyTo": "call-28",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-29",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "context",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-29",
+        "inReplyTo": "call-29",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host context capability does not support  ."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-30",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "context",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-30",
+        "inReplyTo": "call-30",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host context capability does not support \ud800."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-31",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "turn",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-31",
+        "inReplyTo": "call-31",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host turn capability does not support unknown."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-32",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "turn",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-32",
+        "inReplyTo": "call-32",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-33",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "turn",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-33",
+        "inReplyTo": "call-33",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-34",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "turn",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-34",
+        "inReplyTo": "call-34",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-35",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "turn",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-35",
+        "inReplyTo": "call-35",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host turn capability does not support  ."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-36",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "turn",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-36",
+        "inReplyTo": "call-36",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host turn capability does not support \ud800."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-37",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "lifecycle",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-37",
+        "inReplyTo": "call-37",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar lifecycle operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-38",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "lifecycle",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-38",
+        "inReplyTo": "call-38",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-39",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "lifecycle",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-39",
+        "inReplyTo": "call-39",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-40",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "lifecycle",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-40",
+        "inReplyTo": "call-40",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-41",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "lifecycle",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-41",
+        "inReplyTo": "call-41",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar lifecycle operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-42",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "lifecycle",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-42",
+        "inReplyTo": "call-42",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar lifecycle operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-43",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "event",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-43",
+        "inReplyTo": "call-43",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar event operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-44",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "event",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-44",
+        "inReplyTo": "call-44",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-45",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "event",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-45",
+        "inReplyTo": "call-45",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-46",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "event",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-46",
+        "inReplyTo": "call-46",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-47",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "event",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-47",
+        "inReplyTo": "call-47",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar event operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-48",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "event",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-48",
+        "inReplyTo": "call-48",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar event operation."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-49",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-49",
+        "inReplyTo": "call-49",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-50",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-50",
+        "inReplyTo": "call-50",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-51",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-51",
+        "inReplyTo": "call-51",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-52",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-52",
+        "inReplyTo": "call-52",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-53",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-53",
+        "inReplyTo": "call-53",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-54",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-54",
+        "inReplyTo": "call-54",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-55",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-55",
+        "inReplyTo": "call-55",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-56",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-56",
+        "inReplyTo": "call-56",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-57",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-57",
+        "inReplyTo": "call-57",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-58",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-58",
+        "inReplyTo": "call-58",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-59",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-59",
+        "inReplyTo": "call-59",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-60",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-60",
+        "inReplyTo": "call-60",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-61",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {}
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-61",
+        "inReplyTo": "call-61",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-62",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "unknown"
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-62",
+        "inReplyTo": "call-62",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field preparationId must be a non-empty string."
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-63",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": null
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-63",
+        "inReplyTo": "call-63",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Sidecar payload field preparationId must be a non-empty string."
+        }
+      }
+    }
+  ],
+  "errors": [
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-64",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {},
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-64",
+        "inReplyTo": "call-64",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "failure \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-65",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {
+        "code": "MODEL_RATE_LIMIT",
+        "error": {
+          "code": "rate_limit",
+          "message": "retry",
+          "vendor": {
+            "status": 429
+          }
+        },
+        "retryable": true,
+        "retryAfterMs": 12.5
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-65",
+        "inReplyTo": "call-65",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "MODEL_RATE_LIMIT",
+        "error": {
+          "message": "failure \ud800",
+          "canonical": {
+            "code": "rate_limit",
+            "message": "retry",
+            "vendor": {
+              "status": 429
+            }
+          },
+          "retryable": true,
+          "retryAfterMs": 12.5
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-66",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {
+        "code": "",
+        "error": {
+          "code": "",
+          "message": "",
+          "extra": 1
+        },
+        "retryable": false,
+        "retryAfterMs": -0.25
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-66",
+        "inReplyTo": "call-66",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "",
+        "error": {
+          "message": "failure \ud800",
+          "canonical": {
+            "code": "",
+            "message": "",
+            "extra": 1
+          },
+          "retryable": false,
+          "retryAfterMs": -0.25
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-67",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {
+        "code": 7,
+        "error": [],
+        "retryable": "yes",
+        "retryAfterMs": "3"
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-67",
+        "inReplyTo": "call-67",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "failure \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-68",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {
+        "code": null,
+        "error": null,
+        "retryable": null,
+        "retryAfterMs": null
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-68",
+        "inReplyTo": "call-68",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "failure \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-69",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {
+        "error": {
+          "code": "bad"
+        },
+        "retryAfterMs": 0
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-69",
+        "inReplyTo": "call-69",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "failure \ud800",
+          "retryAfterMs": 0
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-70",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {
+        "error": {
+          "code": 1,
+          "message": "invalid"
+        },
+        "retryAfterMs": 2
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-70",
+        "inReplyTo": "call-70",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "failure \ud800",
+          "retryAfterMs": 2
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-71",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "failure \ud800",
+      "fields": {
+        "code": "\ud800",
+        "error": {
+          "code": "ok",
+          "message": "\ud800"
+        },
+        "retryable": false
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-71",
+        "inReplyTo": "call-71",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "\ud800",
+        "error": {
+          "message": "failure \ud800",
+          "canonical": {
+            "code": "ok",
+            "message": "\ud800"
+          },
+          "retryable": false
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-72",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "nonfinite",
+      "fields": {},
+      "nonfinite": "NaN",
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-72",
+        "inReplyTo": "call-72",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "nonfinite"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-73",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "nonfinite",
+      "fields": {},
+      "nonfinite": "Infinity",
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-73",
+        "inReplyTo": "call-73",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "nonfinite"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-74",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {
+          "operation": "test_error"
+        }
+      },
+      "message": "nonfinite",
+      "fields": {},
+      "nonfinite": "-Infinity",
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-74",
+        "inReplyTo": "call-74",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "nonfinite"
+        }
+      }
+    }
+  ],
+  "fields": [
+    {
+      "helper": "stringField",
+      "input": {
+        "missing": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "undefined": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": null
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": ""
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": " "
+      },
+      "expected": {
+        "value": " "
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": "\ud800"
+      },
+      "expected": {
+        "value": "\ud800"
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": "3"
+      },
+      "expected": {
+        "value": "3"
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": false
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": 0
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": -0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": 0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": []
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "value": {}
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "nonfinite": "NaN"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "nonfinite": "Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "nonfinite": "-Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "missing": true
+      },
+      "expected": {
+        "missing": true
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "undefined": true
+      },
+      "expected": {
+        "missing": true
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": null
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": ""
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": " "
+      },
+      "expected": {
+        "value": " "
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": "\ud800"
+      },
+      "expected": {
+        "value": "\ud800"
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": "3"
+      },
+      "expected": {
+        "value": "3"
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": false
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": 0
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": -0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": 0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": []
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "value": {}
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "nonfinite": "NaN"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "nonfinite": "Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "nonfinite": "-Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "missing": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "undefined": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": null
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": ""
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": " "
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": "\ud800"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": "3"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": false
+      },
+      "expected": {
+        "value": false
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": true
+      },
+      "expected": {
+        "value": true
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": 0
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": -0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": 0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": []
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "value": {}
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "nonfinite": "NaN"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "nonfinite": "Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "nonfinite": "-Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "missing": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "undefined": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": null
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": ""
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": " "
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": "\ud800"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": "3"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": false
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": 0
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": -0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": 0.25
+      },
+      "expected": {
+        "value": 0.25
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": []
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "value": {}
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "nonfinite": "NaN"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "nonfinite": "Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "nonfinite": "-Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "missing": true
+      },
+      "expected": {
+        "missing": true
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "undefined": true
+      },
+      "expected": {
+        "missing": true
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": null
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": ""
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": " "
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": "\ud800"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": "3"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": false
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": 0
+      },
+      "expected": {
+        "value": 0
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": -0.25
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": 0.25
+      },
+      "expected": {
+        "value": 0.25
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": []
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "value": {}
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "nonfinite": "NaN"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "nonfinite": "Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "nonfinite": "-Infinity"
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be non-negative."
+      }
+    }
+  ]
+}
