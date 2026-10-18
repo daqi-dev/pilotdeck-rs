@@ -1309,7 +1309,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "unknown",
+        "module": "checkpoint",
         "payload": {
           "operation": "unknown",
           "preparationId": "prepared",
@@ -1324,7 +1324,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: unknown"
+          "message": "Unsupported sidecar host module: checkpoint"
         }
       }
     },
@@ -1336,7 +1336,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "unknown",
+        "module": "checkpoint",
         "payload": {
           "operation": "",
           "preparationId": "prepared",
@@ -1351,7 +1351,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: unknown"
+          "message": "Unsupported sidecar host module: checkpoint"
         }
       }
     },
@@ -1363,7 +1363,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "unknown",
+        "module": "checkpoint",
         "payload": {
           "operation": null,
           "preparationId": "prepared",
@@ -1378,7 +1378,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: unknown"
+          "message": "Unsupported sidecar host module: checkpoint"
         }
       }
     },
@@ -1390,7 +1390,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "unknown",
+        "module": "checkpoint",
         "payload": {
           "operation": 3,
           "preparationId": "prepared",
@@ -1405,7 +1405,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: unknown"
+          "message": "Unsupported sidecar host module: checkpoint"
         }
       }
     },
@@ -1417,7 +1417,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "unknown",
+        "module": "checkpoint",
         "payload": {
           "operation": " ",
           "preparationId": "prepared",
@@ -1432,7 +1432,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: unknown"
+          "message": "Unsupported sidecar host module: checkpoint"
         }
       }
     },
@@ -1444,7 +1444,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "unknown",
+        "module": "checkpoint",
         "payload": {
           "operation": "\ud800",
           "preparationId": "prepared",
@@ -1459,7 +1459,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: unknown"
+          "message": "Unsupported sidecar host module: checkpoint"
         }
       }
     },
@@ -1471,7 +1471,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "\ud800",
+        "module": "skills",
         "payload": {
           "operation": "unknown",
           "preparationId": "prepared",
@@ -1486,7 +1486,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: \ud800"
+          "message": "Unsupported sidecar host module: skills"
         }
       }
     },
@@ -1498,7 +1498,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "\ud800",
+        "module": "skills",
         "payload": {
           "operation": "",
           "preparationId": "prepared",
@@ -1513,7 +1513,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: \ud800"
+          "message": "Unsupported sidecar host module: skills"
         }
       }
     },
@@ -1525,7 +1525,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "\ud800",
+        "module": "skills",
         "payload": {
           "operation": null,
           "preparationId": "prepared",
@@ -1540,7 +1540,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: \ud800"
+          "message": "Unsupported sidecar host module: skills"
         }
       }
     },
@@ -1552,7 +1552,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "\ud800",
+        "module": "skills",
         "payload": {
           "operation": 3,
           "preparationId": "prepared",
@@ -1567,7 +1567,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: \ud800"
+          "message": "Unsupported sidecar host module: skills"
         }
       }
     },
@@ -1579,7 +1579,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "\ud800",
+        "module": "skills",
         "payload": {
           "operation": " ",
           "preparationId": "prepared",
@@ -1594,7 +1594,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: \ud800"
+          "message": "Unsupported sidecar host module: skills"
         }
       }
     },
@@ -1606,7 +1606,7 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "\ud800",
+        "module": "skills",
         "payload": {
           "operation": "\ud800",
           "preparationId": "prepared",
@@ -1621,7 +1621,7 @@
         "ok": false,
         "code": "HOST_MODULE_FAILED",
         "error": {
-          "message": "Unsupported sidecar host module: \ud800"
+          "message": "Unsupported sidecar host module: skills"
         }
       }
     },
@@ -1633,13 +1633,499 @@
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
-        "module": "model",
-        "payload": {}
+        "module": "knowledge",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
       },
       "response": {
         "kind": "response",
         "messageId": "host-module-call-61",
         "inReplyTo": "call-61",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: knowledge"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-62",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "knowledge",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-62",
+        "inReplyTo": "call-62",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: knowledge"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-63",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "knowledge",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-63",
+        "inReplyTo": "call-63",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: knowledge"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-64",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "knowledge",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-64",
+        "inReplyTo": "call-64",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: knowledge"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-65",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "knowledge",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-65",
+        "inReplyTo": "call-65",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: knowledge"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-66",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "knowledge",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-66",
+        "inReplyTo": "call-66",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: knowledge"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-67",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-67",
+        "inReplyTo": "call-67",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-68",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-68",
+        "inReplyTo": "call-68",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-69",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-69",
+        "inReplyTo": "call-69",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-70",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-70",
+        "inReplyTo": "call-70",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-71",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-71",
+        "inReplyTo": "call-71",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-72",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "unknown",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-72",
+        "inReplyTo": "call-72",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: unknown"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-73",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": "unknown",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-73",
+        "inReplyTo": "call-73",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-74",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": "",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-74",
+        "inReplyTo": "call-74",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-75",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": null,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-75",
+        "inReplyTo": "call-75",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-76",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": 3,
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-76",
+        "inReplyTo": "call-76",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-77",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": " ",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-77",
+        "inReplyTo": "call-77",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-78",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "\ud800",
+        "payload": {
+          "operation": "\ud800",
+          "preparationId": "prepared",
+          "input": {}
+        }
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-78",
+        "inReplyTo": "call-78",
+        "requestId": "callback-request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Unsupported sidecar host module: \ud800"
+        }
+      }
+    },
+    {
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "call-79",
+        "requestId": "callback-request",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "model",
+        "payload": {}
+      },
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-call-79",
+        "inReplyTo": "call-79",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1652,7 +2138,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-62",
+        "messageId": "call-80",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1663,8 +2149,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-62",
-        "inReplyTo": "call-62",
+        "messageId": "host-module-call-80",
+        "inReplyTo": "call-80",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1677,7 +2163,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-63",
+        "messageId": "call-81",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1689,8 +2175,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-63",
-        "inReplyTo": "call-63",
+        "messageId": "host-module-call-81",
+        "inReplyTo": "call-81",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1705,7 +2191,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-64",
+        "messageId": "call-82",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1718,8 +2204,8 @@
       "fields": {},
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-64",
-        "inReplyTo": "call-64",
+        "messageId": "host-module-call-82",
+        "inReplyTo": "call-82",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1732,7 +2218,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-65",
+        "messageId": "call-83",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1756,8 +2242,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-65",
-        "inReplyTo": "call-65",
+        "messageId": "host-module-call-83",
+        "inReplyTo": "call-83",
         "requestId": "callback-request",
         "ok": false,
         "code": "MODEL_RATE_LIMIT",
@@ -1779,7 +2265,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-66",
+        "messageId": "call-84",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1801,8 +2287,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-66",
-        "inReplyTo": "call-66",
+        "messageId": "host-module-call-84",
+        "inReplyTo": "call-84",
         "requestId": "callback-request",
         "ok": false,
         "code": "",
@@ -1822,7 +2308,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-67",
+        "messageId": "call-85",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1840,8 +2326,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-67",
-        "inReplyTo": "call-67",
+        "messageId": "host-module-call-85",
+        "inReplyTo": "call-85",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1854,7 +2340,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-68",
+        "messageId": "call-86",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1872,8 +2358,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-68",
-        "inReplyTo": "call-68",
+        "messageId": "host-module-call-86",
+        "inReplyTo": "call-86",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1886,7 +2372,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-69",
+        "messageId": "call-87",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1904,8 +2390,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-69",
-        "inReplyTo": "call-69",
+        "messageId": "host-module-call-87",
+        "inReplyTo": "call-87",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1919,7 +2405,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-70",
+        "messageId": "call-88",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1938,8 +2424,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-70",
-        "inReplyTo": "call-70",
+        "messageId": "host-module-call-88",
+        "inReplyTo": "call-88",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -1953,7 +2439,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-71",
+        "messageId": "call-89",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -1973,8 +2459,8 @@
       },
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-71",
-        "inReplyTo": "call-71",
+        "messageId": "host-module-call-89",
+        "inReplyTo": "call-89",
         "requestId": "callback-request",
         "ok": false,
         "code": "\ud800",
@@ -1992,7 +2478,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-72",
+        "messageId": "call-90",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -2006,8 +2492,8 @@
       "nonfinite": "NaN",
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-72",
-        "inReplyTo": "call-72",
+        "messageId": "host-module-call-90",
+        "inReplyTo": "call-90",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -2020,7 +2506,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-73",
+        "messageId": "call-91",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -2034,8 +2520,8 @@
       "nonfinite": "Infinity",
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-73",
-        "inReplyTo": "call-73",
+        "messageId": "host-module-call-91",
+        "inReplyTo": "call-91",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -2048,7 +2534,7 @@
       "call": {
         "kind": "request",
         "method": "module_call",
-        "messageId": "call-74",
+        "messageId": "call-92",
         "requestId": "callback-request",
         "runId": "run",
         "operationId": "operation",
@@ -2062,8 +2548,8 @@
       "nonfinite": "-Infinity",
       "response": {
         "kind": "response",
-        "messageId": "host-module-call-74",
-        "inReplyTo": "call-74",
+        "messageId": "host-module-call-92",
+        "inReplyTo": "call-92",
         "requestId": "callback-request",
         "ok": false,
         "code": "HOST_MODULE_FAILED",
@@ -2078,6 +2564,15 @@
       "helper": "stringField",
       "input": {
         "missing": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a non-empty string."
+      }
+    },
+    {
+      "helper": "stringField",
+      "input": {
+        "absent": true
       },
       "expected": {
         "error": "Sidecar payload field value must be a non-empty string."
@@ -2231,6 +2726,15 @@
       "helper": "optionalStringField",
       "input": {
         "missing": true
+      },
+      "expected": {
+        "missing": true
+      }
+    },
+    {
+      "helper": "optionalStringField",
+      "input": {
+        "absent": true
       },
       "expected": {
         "missing": true
@@ -2384,6 +2888,15 @@
       "helper": "booleanField",
       "input": {
         "missing": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be a boolean."
+      }
+    },
+    {
+      "helper": "booleanField",
+      "input": {
+        "absent": true
       },
       "expected": {
         "error": "Sidecar payload field value must be a boolean."
@@ -2537,6 +3050,15 @@
       "helper": "positiveFinite",
       "input": {
         "missing": true
+      },
+      "expected": {
+        "error": "Sidecar payload field value must be positive."
+      }
+    },
+    {
+      "helper": "positiveFinite",
+      "input": {
+        "absent": true
       },
       "expected": {
         "error": "Sidecar payload field value must be positive."
@@ -2690,6 +3212,15 @@
       "helper": "optionalNonNegativeFinite",
       "input": {
         "missing": true
+      },
+      "expected": {
+        "missing": true
+      }
+    },
+    {
+      "helper": "optionalNonNegativeFinite",
+      "input": {
+        "absent": true
       },
       "expected": {
         "missing": true
