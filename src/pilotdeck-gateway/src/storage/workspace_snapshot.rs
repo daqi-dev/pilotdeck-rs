@@ -331,7 +331,14 @@ impl WorkspaceSnapshotProvider {
 
     /// workspaceSnapshot.ts:108-110 with 152-158: full walk, last match wins.
     pub fn get(&self, snapshot_id: &str) -> Result<Option<JsValue>> {
-        let Some((_, manifest)) = self.find(snapshot_id)? else {
+        self.get_units(&snapshot_id.encode_utf16().collect::<Vec<_>>())
+    }
+
+    /// Raw-UTF-16 form for callers that already hold the JS string. TS compares
+    /// `manifest.snapshotId === snapshotId` by code unit, so a lone surrogate
+    /// must never be replacement-decoded into another snapshot's id.
+    pub fn get_units(&self, snapshot_id: &[u16]) -> Result<Option<JsValue>> {
+        let Some((_, manifest)) = self.find_units(snapshot_id)? else {
             return Ok(None);
         };
         Ok(Some(manifest))
@@ -339,9 +346,19 @@ impl WorkspaceSnapshotProvider {
 
     /// workspaceSnapshot.ts:112-134.
     pub fn restore(&self, snapshot_id: &str, target_root: &str) -> Result<RestoredSnapshot> {
-        let Some((_, manifest)) = self.find(snapshot_id)? else {
+        self.restore_units(&snapshot_id.encode_utf16().collect::<Vec<_>>(), target_root)
+    }
+
+    /// Raw-UTF-16 form of [`Self::restore`]; see [`Self::get_units`].
+    pub fn restore_units(
+        &self,
+        snapshot_id: &[u16],
+        target_root: &str,
+    ) -> Result<RestoredSnapshot> {
+        let Some((_, manifest)) = self.find_units(snapshot_id)? else {
             return Err(WorkspaceSnapshotError::NotFound(format!(
-                "Snapshot {snapshot_id} was not found."
+                "Snapshot {} was not found.",
+                String::from_utf16_lossy(snapshot_id)
             )));
         };
         // workspaceSnapshot.ts:115: `Array.isArray(...) ? ... : []`. A
@@ -463,15 +480,15 @@ impl WorkspaceSnapshotProvider {
 
     /// workspaceSnapshot.ts:152-158: the walk visits manifests in Node readdir
     /// (libuv byte) order, so a duplicated snapshotId resolves to the last one
-    /// seen.
-    fn find(&self, snapshot_id: &str) -> Result<Option<(String, JsValue)>> {
+    /// seen. Exact UTF-16 comparison: `manifest.snapshotId === snapshotId`.
+    fn find_units(&self, snapshot_id: &[u16]) -> Result<Option<(String, JsValue)>> {
         let root = self.root()?;
         let mut manifests = Vec::new();
         walk_manifests(Path::new(&root), &mut manifests)?;
         Ok(manifests.into_iter().rfind(|(_, manifest)| {
             field(manifest, "snapshotId")
                 .as_string()
-                .is_some_and(|id| id.equals_str(snapshot_id))
+                .is_some_and(|id| id.units() == snapshot_id)
         }))
     }
 }

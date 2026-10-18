@@ -36,6 +36,8 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("provider-syntax", 3, 8),
     ("provider-null", 3, 8),
     ("unconfigured", 3, 0),
+    ("restore-missing-target", 1, 8),
+    ("restore-partial", 1, 10),
 ];
 static UNDEFINED: JsValue = JsValue::Undefined;
 
@@ -169,6 +171,53 @@ fn mask(value: &JsValue, from: &str, to: &str) -> JsValue {
         other => other.clone(),
     }
 }
+/// Mask a random mkdtemp suffix quoted in a Node error. The oracle records
+/// `.../.pilotdeck-restore-<random>`; the native run draws its own six
+/// `[A-Za-z0-9]` characters.
+fn mask_restore_random(value: &JsValue) -> JsValue {
+    match value {
+        JsValue::String(value) => JsValue::String(JsString::from(mask_restore_random_text(
+            &String::from_utf16_lossy(value.units()),
+        ))),
+        JsValue::Array(values) => JsValue::Array(values.iter().map(mask_restore_random).collect()),
+        JsValue::Object(object) => {
+            let mut result = JsObject::new();
+            for (key, value) in object.entries() {
+                result.insert(key.clone(), mask_restore_random(value));
+            }
+            JsValue::Object(result)
+        }
+        other => other.clone(),
+    }
+}
+fn mask_restore_random_text(text: &str) -> String {
+    const PREFIX: &str = ".pilotdeck-restore-";
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find(PREFIX) {
+        let (head, tail) = rest.split_at(index + PREFIX.len());
+        output.push_str(head);
+        let bytes = tail.as_bytes();
+        let mut length = 0;
+        while length < 6 && bytes.get(length).is_some_and(u8::is_ascii_alphanumeric) {
+            length += 1;
+        }
+        if length == 6 && &tail[..6] != "XXXXXX" {
+            output.push_str("<random>");
+            rest = &tail[length..];
+        } else if length == 6 {
+            // The literal mkdtemp template is not a random name; leave it so
+            // a hand-written/template path cannot masquerade as `<random>`.
+            output.push_str(&tail[..6]);
+            rest = &tail[length..];
+        } else {
+            output.push_str(tail);
+            rest = "";
+        }
+    }
+    output.push_str(rest);
+    output
+}
 
 /// Materialize the recorded snapshot root. Manifest bytes were projected with
 /// `<dir>` for the one hand-planted absolute objectKey; substitute the scratch
@@ -210,6 +259,12 @@ fn materialize(scenario: &JsValue, scratch: &Path) {
         .unwrap();
     }
     for project in items(field(scenario, "projects")) {
+        // A `missing` project is registry-only: the real TS general workspace
+        // resolves without a stat, and the scenario deliberately removed it so
+        // mkdtemp fails. Do not recreate it during materialization.
+        if field(project, "missing").as_bool() == Some(true) {
+            continue;
+        }
         fs::create_dir_all(expand(&text(field(project, "key")), scratch)).unwrap();
     }
 }
@@ -355,8 +410,8 @@ fn scenarios_match_real_ts_projection() {
             .iter()
             .map(|scenario| items(field(scenario, "operations")).len())
             .sum::<usize>(),
-        53,
-        "53 projection operations are replayed"
+        55,
+        "55 projection operations are replayed"
     );
 
     for (scenario, (name, expected_ops, expected_tree)) in scenarios.iter().zip(EXPECTED) {
@@ -488,11 +543,31 @@ fn replay_operation(
                 .as_deref()
                 .map_or(value.clone(), |dir| mask(&value, dir, "<restore>"));
             let value = mask(&value, &scratch.to_string_lossy(), "<dir>");
+            let value = mask_restore_random(&value);
             assert_eq!(
                 value,
                 *field(expected, "error"),
                 "{name} op #{index} ({op}): error mismatch"
             );
+            // A failed restore can still leave a partially written tree (for
+            // example, the first entry succeeds and a later entry is unsafe).
+            // The recorder captures `targetTree` for both outcomes, so compare
+            // it and the 0700 guarantee on the failure path too; otherwise an
+            // implementation could leave extra files while returning the same
+            // error.
+            if let Some(dir) = &restore_dir {
+                assert_eq!(
+                    mode(dir),
+                    0o700,
+                    "{name} op #{index}: failed mkdtemp directory mode"
+                );
+                let tree = JsValue::Array(record_tree(Path::new(dir)));
+                assert_eq!(
+                    tree,
+                    *field(operation, "targetTree"),
+                    "{name} op #{index}: failed restore tree"
+                );
+            }
         }
     }
 }
@@ -539,55 +614,6 @@ fn fallback_and_empty_session_filter_cover_unreachable_entry_branches() {
 }
 
 #[test]
-fn restore_reports_mkdtemp_failure_with_node_code_and_template() {
-    let scratch = Scratch::new();
-    let root = scratch.0.join("snapshots");
-    let manifest_dir = root.join("workspaces/w/sessions/s/snapshots/id");
-    fs::create_dir_all(&manifest_dir).unwrap();
-    fs::write(
-        manifest_dir.join("manifest.json"),
-        r#"{"snapshotId":"id","workspaceId":"w","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","entries":[]}"#,
-    )
-    .unwrap();
-    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
-        root: root.to_string_lossy().into_owned(),
-        snapshot_root: root.to_string_lossy().into_owned(),
-    });
-    let source = scratch.0.join("project").to_string_lossy().into_owned();
-    let missing = scratch.0.join("missing-project");
-    let projection = SnapshotProjection::new(
-        Some(provider),
-        TestResolver {
-            projects: vec![
-                (source.clone(), "w".into()),
-                (missing.to_string_lossy().into_owned(), "other".into()),
-            ],
-        },
-        source.clone(),
-    );
-    let mut input = JsObject::new();
-    input.insert("projectKey".into(), source.as_str().into());
-    input.insert("snapshotId".into(), "id".into());
-    input.insert(
-        "targetProjectKey".into(),
-        missing.to_string_lossy().as_ref().into(),
-    );
-    let error = projection
-        .restore(&JsValue::Object(input))
-        .expect_err("missing target project cannot be mkdtemp'd");
-    assert_eq!(error.name(), "Error");
-    assert_eq!(error.code(), Some("ENOENT"));
-    assert_eq!(
-        error.message().to_utf8().unwrap(),
-        format!(
-            "ENOENT: no such file or directory, mkdtemp '{}'",
-            missing.join(".pilotdeck-restore-XXXXXX").display()
-        )
-    );
-    assert!(!missing.exists(), "mkdtemp failure creates nothing");
-}
-
-#[test]
 fn capability_unavailable_precedes_project_resolution() {
     struct PanicResolver;
     impl SnapshotProjectResolver for PanicResolver {
@@ -608,6 +634,190 @@ fn capability_unavailable_precedes_project_resolution() {
         error.message().to_utf8().unwrap(),
         "Gateway snapshot provider is unavailable."
     );
+}
+
+#[test]
+fn snapshot_ids_keep_lone_surrogates_instead_of_matching_replacement() {
+    let scratch = Scratch::new();
+    let root = scratch.0.join("snapshots");
+    let manifest_root = root.join("workspaces/w/sessions/s/snapshots");
+    // `\ud800` and U+FFFD are distinct JS strings; the old lossy conversion
+    // turned the first request into the second manifest's id.
+    write_manifest(
+        &manifest_root.join("a-surrogate"),
+        br#"{"snapshotId":"\ud800","workspaceId":"w","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","entries":[]}"#,
+    );
+    write_manifest(
+        &manifest_root.join("z-replacement"),
+        br#"{"snapshotId":"\ufffd","workspaceId":"w","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","entries":[{"path":"../evil.txt","entryType":"file","objectKey":"objects/missing"}]}"#,
+    );
+    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root.to_string_lossy().into_owned(),
+        snapshot_root: root.to_string_lossy().into_owned(),
+    });
+    let source = scratch.0.join("project");
+    fs::create_dir_all(&source).unwrap();
+    let target = scratch.0.join("target");
+    fs::create_dir_all(&target).unwrap();
+    let projection = SnapshotProjection::new(
+        Some(provider),
+        TestResolver {
+            projects: vec![
+                (source.to_string_lossy().into_owned(), "w".into()),
+                (target.to_string_lossy().into_owned(), "target".into()),
+            ],
+        },
+        source.to_string_lossy().into_owned(),
+    );
+
+    let surrogate = JsString::from_utf16(vec![0xD800]);
+    let mut get = JsObject::new();
+    get.insert(
+        "projectKey".into(),
+        source.to_string_lossy().as_ref().into(),
+    );
+    get.insert("snapshotId".into(), JsValue::String(surrogate.clone()));
+    let got = projection
+        .get(&JsValue::Object(get))
+        .expect("raw surrogate id resolves");
+    assert_eq!(
+        field(field(&got, "snapshot"), "snapshotId")
+            .as_string()
+            .expect("snapshot id")
+            .units(),
+        &[0xD800],
+        "get must not replacement-decode the request"
+    );
+
+    let mut restore = JsObject::new();
+    restore.insert(
+        "projectKey".into(),
+        source.to_string_lossy().as_ref().into(),
+    );
+    restore.insert("snapshotId".into(), JsValue::String(surrogate));
+    restore.insert(
+        "targetProjectKey".into(),
+        target.to_string_lossy().as_ref().into(),
+    );
+    projection
+        .restore(&JsValue::Object(restore))
+        .expect("restore resolves the surrogate manifest, not the replacement one");
+    let dirs = restore_dirs(&target);
+    assert_eq!(dirs.len(), 1, "one restore directory");
+    assert!(
+        record_tree(&target.join(&dirs[0])).is_empty(),
+        "the surrogate manifest has no entries"
+    );
+}
+
+#[test]
+fn mkdtemp_normalizes_join_before_creating_the_directory() {
+    let scratch = Scratch::new();
+    let base = scratch.0.join("base");
+    let tmp = base.join("tmp");
+    let real = base.join("real");
+    let real_sub = real.join("sub");
+    fs::create_dir_all(&tmp).unwrap();
+    fs::create_dir_all(&real_sub).unwrap();
+    symlink(&real_sub, tmp.join("link")).unwrap();
+    // Raw registry value: `link/..` is only `tmp` after Node's lexical join.
+    // The OS instead follows the symlink, so a plain Path::join creates the
+    // mkdtemp directory under `real`.
+    let target_project = format!("{}/tmp/link/..", base.to_string_lossy());
+
+    let root = scratch.0.join("snapshots");
+    write_manifest(
+        &root.join("workspaces/w/sessions/s/snapshots/id"),
+        br#"{"snapshotId":"id","workspaceId":"w","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","entries":[]}"#,
+    );
+    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root.to_string_lossy().into_owned(),
+        snapshot_root: root.to_string_lossy().into_owned(),
+    });
+    let source = scratch.0.join("project");
+    fs::create_dir_all(&source).unwrap();
+    let projection = SnapshotProjection::new(
+        Some(provider),
+        TestResolver {
+            projects: vec![
+                (source.to_string_lossy().into_owned(), "w".into()),
+                (target_project.clone(), "target".into()),
+            ],
+        },
+        source.to_string_lossy().into_owned(),
+    );
+    let mut input = JsObject::new();
+    input.insert(
+        "projectKey".into(),
+        source.to_string_lossy().as_ref().into(),
+    );
+    input.insert("snapshotId".into(), "id".into());
+    input.insert("targetProjectKey".into(), target_project.as_str().into());
+    let restored = projection
+        .restore(&JsValue::Object(input))
+        .expect("restore into the normalized target");
+    let workspace_key = text(field(&restored, "workspaceKey"));
+    assert!(
+        workspace_key.starts_with(&format!(
+            "{}/tmp/.pilotdeck-restore-",
+            base.to_string_lossy()
+        )),
+        "workspaceKey is the normalized directory: {workspace_key}"
+    );
+    assert_eq!(
+        restore_dirs(&tmp).len(),
+        1,
+        "mkdtemp lands where path.join points"
+    );
+    assert!(
+        restore_dirs(&real).is_empty(),
+        "the symlink-resolved parent must not receive a stray directory"
+    );
+    assert_eq!(mode(tmp.join(&restore_dirs(&tmp)[0])), 0o700);
+}
+
+#[test]
+fn host_required_collation_keeps_the_host_boundary_marker() {
+    let scratch = Scratch::new();
+    let root = scratch.0.join("snapshots");
+    let manifest_root = root.join("workspaces/w/sessions/s/snapshots");
+    write_manifest(
+        &manifest_root.join("a-surrogate"),
+        br#"{"snapshotId":"a","workspaceId":"w","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","createdAt":"\ud800","entries":[]}"#,
+    );
+    write_manifest(
+        &manifest_root.join("b-replacement"),
+        br#"{"snapshotId":"b","workspaceId":"w","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","createdAt":"\ufffd","entries":[]}"#,
+    );
+    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root.to_string_lossy().into_owned(),
+        snapshot_root: root.to_string_lossy().into_owned(),
+    });
+    let source = scratch.0.join("project");
+    fs::create_dir_all(&source).unwrap();
+    let projection = SnapshotProjection::new(
+        Some(provider),
+        TestResolver {
+            projects: vec![(source.to_string_lossy().into_owned(), "w".into())],
+        },
+        source.to_string_lossy().into_owned(),
+    );
+    let mut input = JsObject::new();
+    input.insert(
+        "projectKey".into(),
+        source.to_string_lossy().as_ref().into(),
+    );
+    let error = projection
+        .list(&JsValue::Object(input))
+        .expect_err("unpaired-surrogate collation is a host boundary");
+    assert_eq!(error.code(), Some("JS_HOST_REQUIRED"));
+    assert!(error.requires_host(), "A8 must be able to forward it");
+    assert_eq!(error.name(), "Error");
+}
+
+fn write_manifest(directory: &Path, bytes: &[u8]) {
+    fs::create_dir_all(directory).unwrap();
+    fs::write(directory.join("manifest.json"), bytes).unwrap();
 }
 
 fn mode(path: impl AsRef<Path>) -> u32 {

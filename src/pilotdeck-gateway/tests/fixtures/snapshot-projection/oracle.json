@@ -1933,6 +1933,157 @@
           "targetTree": []
         }
       ]
+    },
+    {
+      "name": "restore-missing-target",
+      "tree": [
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/<workspaceId>",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/<workspaceId>/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/<workspaceId>/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/<workspaceId>/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/<workspaceId>/sessions/s/snapshots/id",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/<workspaceId>/sessions/s/snapshots/id/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImlkIiwKICAid29ya3NwYWNlSWQiOiAiPHdvcmtzcGFjZUlkPiIsCiAgInNlc3Npb25JZCI6ICJzIiwKICAidHVybklkIjogInQiLAogICJydW5JZCI6ICJyIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJlbnRyaWVzIjogW10KfQ=="
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/pilot-home",
+          "workspaceId": "<workspaceId>",
+          "missing": true
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/pilot-home",
+      "operations": [
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/pilot-home",
+            "snapshotId": "id",
+            "targetProjectKey": "<dir>/pilot-home"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "code": "ENOENT",
+              "message": "ENOENT: no such file or directory, mkdtemp '<dir>/pilot-home/.pilotdeck-restore-<random>'"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        }
+      ]
+    },
+    {
+      "name": "restore-partial",
+      "tree": [
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/partial.txt",
+          "kind": "file",
+          "b64": "cGFydGlhbAo="
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots/partial",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots/partial/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInBhcnRpYWwiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAicyIsCiAgInR1cm5JZCI6ICJ0IiwKICAicnVuSWQiOiAiciIsCiAgInBoYXNlIjogInByZV91c2VyIiwKICAiY3JlYXRlZEF0IjogIjIwMjUtMTItMjhUMjM6NTk6NTkuMDAwWiIsCiAgImVudHJpZXMiOiBbCiAgICB7CiAgICAgICJwYXRoIjogIndyaXR0ZW4udHh0IiwKICAgICAgImVudHJ5VHlwZSI6ICJmaWxlIiwKICAgICAgInNpemUiOiA4LAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvcGFydGlhbC50eHQiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICIuLi9lc2NhcGUudHh0IiwKICAgICAgImVudHJ5VHlwZSI6ICJmaWxlIiwKICAgICAgInNpemUiOiA4LAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvcGFydGlhbC50eHQiCiAgICB9CiAgXQp9"
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/project",
+          "workspaceId": "p-main"
+        },
+        {
+          "key": "<dir>/target-project",
+          "workspaceId": "p-target"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "operations": [
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "partial",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Snapshot contains an unsafe relative path."
+            }
+          },
+          "restoreDir": true,
+          "targetTree": [
+            {
+              "path": "written.txt",
+              "kind": "file",
+              "b64": "cGFydGlhbAo="
+            }
+          ]
+        }
+      ]
     }
   ]
 }
