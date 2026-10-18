@@ -633,6 +633,7 @@ impl GatewaySessionPermissionModeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{sync::Barrier, thread};
 
     fn key(value: &str) -> JsString {
         value.into()
@@ -640,6 +641,102 @@ mod tests {
 
     fn rule(source: &str, behavior: &str, tool: &str) -> PermissionRule {
         PermissionRule::new(source, behavior, tool)
+    }
+
+    #[test]
+    fn concurrent_acquire_grant_and_close_release_keep_one_entry_and_rule() {
+        const WORKERS: usize = 8;
+        let registry = GatewaySessionPermissionRuleSetRegistry::new();
+        let session = key("shared");
+        let barrier = Barrier::new(WORKERS);
+        let results = thread::scope(|scope| {
+            let handles: Vec<_> = (0..WORKERS)
+                .map(|index| {
+                    let (registry, session, barrier) = (&registry, &session, &barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        let lease = registry.acquire(session, None);
+                        barrier.wait();
+                        // force is deliberately excluded from sameRule.
+                        let granted = registry.grant(
+                            session,
+                            rule("session", "allow", "Read").with_force(index % 2 == 0),
+                        );
+                        (lease, granted)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("grant worker"))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(results.iter().filter(|(_, granted)| *granted).count(), 1);
+        assert_eq!(registry.size(), 1);
+        let expected = registry.allow_rules(&session).snapshot();
+        assert_eq!(expected.len(), 1);
+        for (lease, _) in &results {
+            assert_eq!(lease.rules().snapshot().allow, expected);
+        }
+
+        let barrier = Barrier::new(WORKERS + 1);
+        thread::scope(|scope| {
+            for (lease, _) in &results {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    lease.release();
+                    lease.release();
+                });
+            }
+            scope.spawn(|| {
+                barrier.wait();
+                registry.close_session(&session);
+            });
+        });
+        assert_eq!(registry.size(), 0);
+        assert!(registry.allow_rules(&session).is_empty());
+    }
+
+    #[test]
+    fn concurrent_dispose_and_old_releases_preserve_replacement() {
+        const WORKERS: usize = 8;
+        let registry = GatewaySessionPermissionRuleSetRegistry::new();
+        let session = key("shared");
+        let retained = registry.acquire(&session, None);
+        let old: Vec<_> = (0..WORKERS)
+            .map(|_| registry.acquire(&session, None))
+            .collect();
+        let read = rule("session", "allow", "Read");
+        assert!(registry.grant(&session, read.clone()));
+        let barrier = Barrier::new(WORKERS + 1);
+        let replacement = thread::scope(|scope| {
+            for lease in &old {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    lease.release();
+                });
+            }
+            scope
+                .spawn(|| {
+                    barrier.wait();
+                    registry.dispose();
+                    registry.acquire(&session, None)
+                })
+                .join()
+                .expect("dispose worker")
+        });
+        assert_eq!(registry.size(), 1);
+        assert!(replacement.rules().snapshot().allow.is_empty());
+        assert_eq!(retained.rules().snapshot().allow, vec![read]);
+        // Guarantee a first release from the old generation after replacement,
+        // independently of how the racing workers above were scheduled.
+        retained.release();
+        retained.release();
+        assert_eq!(registry.size(), 1);
+        replacement.release();
+        assert_eq!(registry.size(), 0);
     }
 
     #[test]
