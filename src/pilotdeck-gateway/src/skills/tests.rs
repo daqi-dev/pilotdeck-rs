@@ -4,25 +4,15 @@ use super::*;
 use base64::engine::general_purpose::STANDARD;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
-use std::{
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::path::{Path, PathBuf};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/skills");
 
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../_tmp/20261018-a68-skills/test-scratch")
-            .join(format!(
-                "{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = std::env::temp_dir().join(format!("pdrs-skills-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
         // Results carry resolved paths; compare against the canonical spelling.
         Self(fs::canonicalize(&dir).unwrap())
     }
@@ -355,7 +345,7 @@ fn real_ts_scenarios_match_outcomes_and_file_trees() {
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    let oracle = json(&text);
+    let oracle = crate::test_baseline::oracle(&text);
     assert_eq!(str_of(oracle.get("locale").unwrap()), "en-US");
     let JsValue::Array(scenarios) = oracle.get("scenarios").unwrap() else {
         panic!("scenarios")
@@ -423,7 +413,7 @@ fn cursor_bytes_and_slugs_follow_node() {
 }
 
 fn oracle() -> JsValue {
-    json(&fs::read_to_string(format!("{FIXTURES}/oracle.json")).unwrap())
+    crate::test_baseline::oracle(&fs::read_to_string(format!("{FIXTURES}/oracle.json")).unwrap())
 }
 
 #[test]

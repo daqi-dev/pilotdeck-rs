@@ -1,10 +1,12 @@
 //! Config change diff/classification replayed from the real TypeScript baseline
 //! (`tests/fixtures/config-changes/generate.mts`). Every expected path, class
 //! order and runPolicy flag in `oracle.json` comes from `classifyChanges.ts`.
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::config::changes::{
     ChangeClass, classify_config_changes, diff_config_snapshots, is_run_policy_only_change,
 };
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashSet;
 use std::fs;
 
@@ -111,7 +113,7 @@ fn oracle() -> JsValue {
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    parse_json(&text).expect("oracle.json parses")
+    baseline::oracle(&text)
 }
 
 #[test]

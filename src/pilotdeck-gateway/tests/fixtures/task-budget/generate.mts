@@ -1,9 +1,8 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real baseline methods, compiled in memory; no baseline source is copied or changed.
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -13,9 +12,8 @@ assert.ok(process.argv[2], 'provide output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 const source = 'src/cli/ProjectRuntimeRegistry.ts';
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
-assert.equal(execFileSync('git', ['-C', baseline, 'diff', 'HEAD', '--', source], { encoding: 'utf8' }), '');
+const sourceCommit = assertBaseline(baseline);
+const sourceSha256 = await baselineSourceHashes(baseline, [source]);
 const sourcePath = join(baseline, source);
 const original = await readFile(sourcePath, 'utf8');
 const requireBaseline = createRequire(join(baseline, 'package.json'));
@@ -263,7 +261,7 @@ try {
   assert.equal(defaultLimit.steps[1].count, 1);
   assert.equal(JSON.parse(defaultLimit.steps[1].file).kind, 'snapshot');
   await scenario('fixed-rounding', [configure(0.0078125), configure(0.0234375), configure(1e21)]);
-  const oracle = JSON.stringify({ sourceCommit, sourceSha256: { [source]: createHash('sha256').update(original).digest('hex') }, scenarios }, null, 2) + '\n';
+  const oracle = JSON.stringify({ sourceCommit, sourceSha256, scenarios }, null, 2) + '\n';
   for (const path of [baseline, output, scratch]) assert.ok(!oracle.includes(path), `oracle leaks ${path}`);
   await writeFile(join(output, 'oracle.json'), oracle);
   console.log(`PASS: ${scenarios.length} real TS task-budget scenarios generated`);

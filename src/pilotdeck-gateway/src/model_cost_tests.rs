@@ -5,13 +5,12 @@
 //! epsilon), including the order of the floating-point additions.
 
 use super::*;
+use pilotdeck_protocol::JsValue;
 use pilotdeck_protocol::model::{
     AudioBlock, CanonicalModelRequest, ContentBlock, ContentBody, ImageBlock, MediaSource,
     MediaType, Message, PdfBlock, Role, TextBlock, ThinkingBlock, ToolCall, ToolResult,
     ToolResultContent, ToolResultItem, ToolResultReference, ToolSchema, Usage,
 };
-use pilotdeck_protocol::{JsValue, parse_json};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -22,7 +21,7 @@ static UNDEFINED: JsValue = JsValue::Undefined;
 static PARSED_ORACLE: OnceLock<JsValue> = OnceLock::new();
 
 fn oracle() -> &'static JsValue {
-    PARSED_ORACLE.get_or_init(|| parse_json(ORACLE).expect("oracle.json must be valid JSON"))
+    PARSED_ORACLE.get_or_init(|| crate::test_baseline::oracle(ORACLE))
 }
 
 fn field<'a>(value: &'a JsValue, name: &str) -> &'a JsValue {
@@ -331,53 +330,6 @@ fn oracle_comes_from_the_fixed_baseline() {
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
     assert!(!ORACLE.contains(".generate-"));
-    checks_oracle_against_baseline_when_available(hashes);
-}
-
-/// With `PDRS_BASELINE` set, re-run the generator's provenance checks: the
-/// checkout must have no modifications to tracked files, and every recorded
-/// hash must equal the blob at the pinned commit (not just the working tree).
-fn checks_oracle_against_baseline_when_available(hashes: &JsValue) {
-    let Ok(baseline) = std::env::var("PDRS_BASELINE") else {
-        return;
-    };
-    let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&baseline)
-            .args(args)
-            .output()
-            .expect("run git against PDRS_BASELINE");
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        output.stdout
-    };
-    let head = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]))
-        .trim()
-        .to_string();
-    assert_eq!(
-        head, BASELINE_COMMIT,
-        "PDRS_BASELINE must be checked out at the fixed commit"
-    );
-    let tracked = String::from_utf8_lossy(&git(&["status", "--porcelain", "--untracked-files=no"]))
-        .into_owned();
-    assert!(
-        tracked.is_empty(),
-        "PDRS_BASELINE has uncommitted changes to tracked files:\n{tracked}"
-    );
-    for source in SOURCE_PATHS {
-        let spec = format!("{BASELINE_COMMIT}:{source}");
-        let committed = git(&["show", &spec]);
-        let actual = format!("{:x}", Sha256::digest(&committed));
-        assert_eq!(
-            actual,
-            text(field(hashes, source)),
-            "oracle hash for {source} does not match {BASELINE_COMMIT}"
-        );
-    }
 }
 
 /// Regenerates the oracle from the real TS modules and compares bytes.
@@ -388,9 +340,8 @@ fn model_cost_fixtures_regenerate_identically_from_ts() {
         std::env::var("PDRS_BASELINE").expect("set PDRS_BASELINE to the PilotDeck checkout"),
     );
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/model-cost");
-    let scratch = std::env::temp_dir().join(format!("pdrs-model-cost-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
-    std::fs::create_dir_all(&scratch).unwrap();
+    let scratch = std::env::temp_dir().join(format!("pdrs-model-cost-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&scratch).unwrap();
     let output = std::process::Command::new("node")
         .arg("--disable-warning=ExperimentalWarning")
         .arg("--import")

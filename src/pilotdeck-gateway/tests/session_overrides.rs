@@ -2,6 +2,8 @@
 //! TypeScript baseline (`tests/fixtures/session-overrides/generate.mts`).
 //! Every recorded outcome, size and state snapshot comes from the baseline
 //! classes; Rust does not hard-code expected values.
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::config::permission::{
     AllowRulesHandle, ConfiguredRuleSet, GatewaySessionPermissionModeRegistry,
     GatewaySessionPermissionRuleSetRegistry, Lease, PermissionMode,
@@ -10,12 +12,10 @@ use pilotdeck_gateway::config::session_overrides::{
     SessionConfigOverrides, UNATTENDED_SESSION_EXCLUDED_TOOLS,
 };
 use pilotdeck_gateway::config::session_value::SessionValue;
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
-use sha2::{Digest, Sha256};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::PathBuf,
 };
 
 const FIXTURES: &str = concat!(
@@ -132,13 +132,12 @@ fn oracle() -> JsValue {
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    parse_json(&text).expect("oracle.json parses")
+    baseline::oracle(&text)
 }
 
 fn assert_sources(oracle: &JsValue) {
     assert_eq!(text(field(oracle, "baselineCommit")), SOURCE_COMMIT);
     let hashes = field(oracle, "sourceSha256");
-    let baseline = std::env::var_os("PDRS_BASELINE").map(PathBuf::from);
     for (source, expected) in [
         (RULE_SET_SOURCE, RULE_SET_SHA256),
         (MODE_SOURCE, MODE_SHA256),
@@ -146,16 +145,6 @@ fn assert_sources(oracle: &JsValue) {
     ] {
         let recorded = text(field(hashes, source));
         assert_eq!(recorded, expected, "pinned source SHA-256 for {source}");
-        if let Some(baseline) = &baseline {
-            let path = baseline.join(source);
-            let bytes = fs::read(&path)
-                .unwrap_or_else(|error| panic!("read baseline source {}: {error}", path.display()));
-            assert_eq!(
-                recorded,
-                format!("{:x}", Sha256::digest(bytes)),
-                "oracle sourceSha256 must match PDRS_BASELINE for {source}"
-            );
-        }
     }
 }
 

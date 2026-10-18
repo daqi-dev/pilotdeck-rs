@@ -1,3 +1,4 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -10,12 +11,12 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline
 assert.ok(process.argv[2], 'provide the fixture directory or the Rust scratch root');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+const sourceCommit = assertBaseline(baseline);
 const sources = [
   'src/extension/skills/SkillManager.ts', 'src/extension/skills/types.ts',
   'src/composition/types.ts', 'src/cli/createLocalGateway.ts',
 ];
+const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const { SkillManager } = await import(pathToFileURL(join(baseline, sources[0])).href);
 const { isDisabledModuleBinding, isExternalModuleBinding } = await import(pathToFileURL(join(baseline, sources[2])).href);
 // localeCompare / toLocaleLowerCase follow the ICU default locale; Rust pins the same one.
@@ -856,7 +857,6 @@ try {
   ];
   assert.deepEqual(required.filter(c => !seen.has(c)), [], 'uncovered branches');
 
-  const sourceSha256 = Object.fromEntries(await Promise.all(sources.map(async s => [s, sha(await readFile(join(baseline, s)))])));
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, locale, scenarios, bindings, disabledError }, null, 2) + '\n';
   // Fixtures are machine-independent: no generation path survives in the oracle.
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

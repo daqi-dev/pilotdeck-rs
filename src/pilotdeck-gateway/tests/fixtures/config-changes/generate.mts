@@ -1,9 +1,8 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from the repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 // Inputs are built as real JavaScript snapshots (including NaN/undefined/-0) and
 // every recorded result comes from the fixed TypeScript baseline itself.
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
@@ -12,9 +11,9 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline
 assert.ok(process.argv[2], 'provide the fixture directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+const sourceCommit = assertBaseline(baseline);
 const source = 'src/pilot/config/classifyChanges.ts';
+const sourceSha256 = await baselineSourceHashes(baseline, [source]);
 const { diffConfigSnapshots, classifyConfigChanges, isRunPolicyOnlyChange } =
   await import(pathToFileURL(join(baseline, source)).href);
 const { mergeConfigSources } = await import(pathToFileURL(join(baseline, 'src/pilot/config/merge.ts')).href);
@@ -301,7 +300,6 @@ assert.deepEqual(byName.get('inputSchema-own-proto-empty').changedPaths, []);
 assert.deepEqual(byName.get('inputSchema-own-proto-x').changedPaths, ['modules.tools.tools[0].inputSchema.__proto__.x']);
 assert.deepEqual(byName.get('inputSchema-own-proto-x').changeClasses, ['restart-required']);
 
-const sourceSha256 = { [source]: createHash('sha256').update(await readFile(join(baseline, source))).digest('hex') };
 const oracle = JSON.stringify({ sourceCommit, sourceSha256, pairs, classify: cases }, null, 2) + '\n';
 for (const dir of [baseline, output]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
 await mkdir(output, { recursive: true });

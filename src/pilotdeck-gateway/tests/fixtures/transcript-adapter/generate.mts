@@ -1,17 +1,15 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { access, appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory or a cross-test scratch directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+const sourceCommit = assertBaseline(baseline);
 const SOURCES = [
   'src/gateway/storage/AsyncTranscriptStorageAdapter.ts',
   'src/session/transcript/JsonlTranscriptWriter.ts',
@@ -24,6 +22,7 @@ const SOURCES = [
   'src/session/projection/AgentTranscriptProjections.ts',
   'src/pilot/paths.ts',
 ];
+const sourceSha256 = await baselineSourceHashes(baseline, SOURCES);
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { createGatewayAsyncTranscriptStorageAdapter } = await load(SOURCES[0]);
 const { JsonlSessionPersistence } = await load('src/session/persistence/JsonlSessionPersistence.ts');
@@ -479,7 +478,6 @@ try {
     steps: [{ op: 'list' }],
   }, ['error:TypeError']);
 
-  const sourceSha256 = Object.fromEntries(await Promise.all(SOURCES.map(async (path) => [path, createHash('sha256').update(await readFile(join(baseline, path))).digest('hex')])));
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
   assert.ok(!new RegExp(UUID.source).test(oracle), 'oracle.json contains an unnormalized UUID');

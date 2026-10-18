@@ -1,3 +1,5 @@
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::host::{
     HostError, HostFuture, HostHandler, ModuleError,
     modules::{
@@ -386,7 +388,7 @@ impl PermissionDecision for Fake {
 
 #[tokio::test]
 async fn real_ts_capability_permission_responses_and_port_calls() {
-    let oracle = parse_json(include_str!("fixtures/host-capability/oracle.json")).unwrap();
+    let oracle = baseline::oracle(include_str!("fixtures/host-capability/oracle.json"));
     let cases = array(oracle.get("cases").unwrap());
     assert_eq!(cases.len(), 128);
     for case in cases {

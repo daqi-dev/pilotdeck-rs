@@ -45,10 +45,9 @@ fn fixture_router() -> ModuleRouter {
 }
 
 fn oracle() -> JsValue {
-    let value = parse_json(include_str!(
+    let value = crate::test_baseline::oracle(include_str!(
         "../../../tests/fixtures/host-modules/oracle.json"
-    ))
-    .unwrap();
+    ));
     assert_eq!(array(&value, "routing").len(), 863);
     assert_eq!(array(&value, "errors").len(), 11);
     assert_eq!(array(&value, "fields").len(), 90);

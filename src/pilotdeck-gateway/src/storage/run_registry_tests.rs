@@ -10,10 +10,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, atomic::Ordering},
     thread,
     time::{Duration, SystemTime},
 };
@@ -29,20 +26,13 @@ fn oracle() -> JsValue {
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    parse_json(&text).unwrap()
+    crate::test_baseline::oracle(&text)
 }
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../_tmp/20261018-a62-run/test-scratch")
-            .join(format!(
-                "{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = std::env::temp_dir().join(format!("pdrs-registry-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
         Self(dir)
     }
     fn path(&self) -> PathBuf {

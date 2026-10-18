@@ -170,7 +170,7 @@ fn replay_oracle() -> HashSet<String> {
         !ORACLE.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    let oracle = parse_json(ORACLE).unwrap();
+    let oracle = crate::test_baseline::oracle(ORACLE);
     let scratch = Scratch::new();
     let mut codes = HashSet::new();
     let mut operations = 0;
@@ -314,7 +314,7 @@ fn golden_store(project: &Path) -> Harness {
 
 #[test]
 fn upload_golden_bytes_match_ts_fixtures() {
-    let oracle = parse_json(ORACLE).unwrap();
+    let oracle = crate::test_baseline::oracle(ORACLE);
     let scratch = Scratch::new();
     let project = scratch.dir("golden");
     let h = golden_store(&project);
@@ -363,6 +363,7 @@ fn upload_golden_bytes_match_ts_fixtures() {
 /// Rust reads TS-written bytes and continues the upload (TS → Rust direction).
 #[test]
 fn upload_reads_ts_written_metadata_and_continues() {
+    crate::test_baseline::oracle(ORACLE);
     let scratch = Scratch::new();
     let project = scratch.dir("p");
     let task = project.join(".tmp/chat-uploads/upload-1");
@@ -490,7 +491,11 @@ fn task_dir_of(project: &Path) -> PathBuf {
     project.join(".tmp/chat-uploads/upload-1")
 }
 fn completed(h: &Harness) {
-    let manifest = parse_json(&compact(&value(&parse_json(ORACLE).unwrap(), "manifest"))).unwrap();
+    let manifest = parse_json(&compact(&value(
+        &crate::test_baseline::oracle(ORACLE),
+        "manifest",
+    )))
+    .unwrap();
     h.store.create("project", &manifest, None).unwrap();
     h.store
         .write_part("upload-1", "file-1", &b"hello"[..])
@@ -498,7 +503,7 @@ fn completed(h: &Harness) {
     h.store.complete("upload-1").unwrap();
 }
 fn created(h: &Harness) {
-    let manifest = value(&parse_json(ORACLE).unwrap(), "manifest");
+    let manifest = value(&crate::test_baseline::oracle(ORACLE), "manifest");
     h.store.create("project", &manifest, None).unwrap();
 }
 fn inject(h: &Harness, operation: &str, errno: i32) {
@@ -698,7 +703,7 @@ fn upload_concurrent_creates_respect_limit_and_idempotency() {
     let scratch = Scratch::new();
     let project = scratch.dir("p");
     let h = golden_store(&project);
-    let manifest = value(&parse_json(ORACLE).unwrap(), "manifest");
+    let manifest = value(&crate::test_baseline::oracle(ORACLE), "manifest");
     let run = |key: Option<&'static str>| {
         let store = h.store.clone();
         let manifest = manifest.clone();
@@ -899,7 +904,7 @@ fn upload_ts_reads_rust_written_upload_and_lease() {
     let scratch = Scratch::new();
     let project = scratch.dir("p");
     let h = golden_store(&project);
-    let manifest = value(&parse_json(ORACLE).unwrap(), "manifest");
+    let manifest = value(&crate::test_baseline::oracle(ORACLE), "manifest");
     h.store.create("project", &manifest, Some("once")).unwrap();
     h.store
         .write_part("upload-1", "file-1", &b"hello"[..])

@@ -15,10 +15,9 @@ use std::{
 };
 
 fn oracle() -> JsValue {
-    let value = parse_json(include_str!(
+    let value = crate::test_baseline::oracle(include_str!(
         "../../../tests/fixtures/host-model/oracle.json"
-    ))
-    .unwrap();
+    ));
     assert_eq!(
         text(&value, "commit"),
         "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"

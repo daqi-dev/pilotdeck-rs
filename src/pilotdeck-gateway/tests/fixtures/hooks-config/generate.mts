@@ -1,10 +1,9 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Execute the original pure functions; no source is copied or patched on disk.
 import assert from 'node:assert/strict';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
@@ -12,12 +11,10 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 assert.equal(process.version, 'v22.22.0');
 assert.equal(process.versions.unicode, '17.0');
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
+const sourceCommit = assertBaseline(baseline);
 const root = 'src/extension/hooks/';
 const files = ['config/parseHooksConfig.ts', 'config/matchHook.ts', 'config/matchHookCondition.ts', 'protocol/events.ts', 'protocol/input.ts', 'protocol/output.ts', 'protocol/settings.ts'].map(p => root + p);
-assert.equal(execFileSync('git', ['-C', baseline, 'diff', 'HEAD', '--', ...files], { encoding: 'utf8' }), '');
-const sourceSha256 = Object.fromEntries(await Promise.all(files.map(async p => [p, createHash('sha256').update(await readFile(join(baseline, p))).digest('hex')])));
+const sourceSha256 = await baselineSourceHashes(baseline, files);
 const load = (path: string) => import(pathToFileURL(join(baseline, root + path)).href);
 const { parseHooksConfig } = await load('config/parseHooksConfig.ts');
 const { matchHookMatcher } = await load('config/matchHook.ts');

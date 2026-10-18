@@ -1,11 +1,10 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real fixed-baseline oracle for the model module adapter.
 // The dispatcher's private SidecarTurnProtocol is exported in memory only;
 // baseline sources are never copied into this repository.
 import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,23 +13,20 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const commit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(commit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
+const commit = assertBaseline(baseline);
 const base = 'src/agent/modules/transport/';
 const clientFile = base + 'agentLoopSidecarClient.ts';
 const dispatcherFile = base + 'sidecarDefaultModuleDispatcher.ts';
 const portsFile = base + 'sidecarHostModulePorts.ts';
 const files = [clientFile, dispatcherFile, portsFile];
-assert.equal(execFileSync('git', ['-C', baseline, 'diff', 'HEAD', '--', ...files], { encoding: 'utf8' }), '');
 
 const requireBaseline = createRequire(join(baseline, 'package.json'));
 const requireTsx = createRequire(requireBaseline.resolve('tsx'));
 const { transformSync } = requireTsx('esbuild');
-const sources: Record<string, string> = {};
+const sources = await baselineSourceHashes(baseline, files);
 async function expose(source: string, names: string[]) {
   const path = join(baseline, source);
   const text = await readFile(path, 'utf8');
-  sources[source] = createHash('sha256').update(text).digest('hex');
   for (const name of names) assert.ok(text.includes(name), `missing private export ${name}`);
   const transformed = transformSync(text + '\nexport { ' + names.join(', ') + ' };\n', {
     loader: 'ts', format: 'esm', target: 'es2022', sourcefile: path,
@@ -45,8 +41,6 @@ async function expose(source: string, names: string[]) {
 const { SidecarTurnProtocol } = await expose(clientFile, ['SidecarTurnProtocol']);
 const { createSidecarDefaultModuleDispatcher } = await import(pathToFileURL(join(baseline, dispatcherFile)).href);
 const { createSidecarModuleComposition } = await import(pathToFileURL(join(baseline, portsFile)).href);
-sources[dispatcherFile] = createHash('sha256').update(await readFile(join(baseline, dispatcherFile))).digest('hex');
-sources[portsFile] = createHash('sha256').update(await readFile(join(baseline, portsFile))).digest('hex');
 
 const clone = (value: any): any => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 function specError(spec: any) {

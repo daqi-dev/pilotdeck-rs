@@ -1,8 +1,7 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Execute the real fixed-baseline dispatcher with deterministic, in-memory ports.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -10,11 +9,9 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const commit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(commit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
+const commit = assertBaseline(baseline);
 const source = 'src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts';
-assert.equal(execFileSync('git', ['-C', baseline, 'diff', 'HEAD', '--', source], { encoding: 'utf8' }), '');
-const sources = { [source]: createHash('sha256').update(await readFile(join(baseline, source))).digest('hex') };
+const sources = await baselineSourceHashes(baseline, [source]);
 const { createSidecarDefaultModuleDispatcher } = await import(pathToFileURL(join(baseline, source)).href);
 const json = (value: any) => JSON.parse(JSON.stringify(value));
 const basic = { fields: { name: 'read', description: 'Read fixture', kind: 'builtin', inputSchema: { type: 'object' }, private: 'catalog-only' } };
