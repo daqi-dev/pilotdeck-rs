@@ -14,6 +14,8 @@ import unittest
 
 check = runpy.run_path(str(Path(__file__).with_name('check-approval-provenance.py')))['check']
 NAMES = ('calibration-summary.json', 'review-glm.md', 'review-deepseek.md', 'driver.log')
+ARCHIVED = ('2026-10-14/calibration-summary.json', '2026-10-14/review-glm.md',
+            '2026-10-14/review-claude.md', '2026-10-14/driver.log', 'review-deepseek-r1.md')
 
 
 class ProvenanceControls(unittest.TestCase):
@@ -30,6 +32,12 @@ class ProvenanceControls(unittest.TestCase):
             (self.approval / name).write_bytes(content)
             lines.append(f'Approval-Source-SHA256: {hashlib.sha256(content).hexdigest()}  '
                          f'specs/ui-server-parity/approval/{name}')
+        (self.approval / '2026-10-14').mkdir()
+        for name in ARCHIVED:
+            content = ('archived:' + name).encode()
+            (self.approval / name).write_bytes(content)
+            lines.append(f'Approval-Archive-SHA256: {hashlib.sha256(content).hexdigest()}  '
+                         f'specs/ui-server-parity/approval/{name}')
         paths = ['specs/ui-server-parity/approval/' + name for name in NAMES]
         lines += ['Approval-Basis: ' + '; '.join(paths[:3]),
                   'Independent-Reviews: ' + '; '.join(paths[1:3]),
@@ -41,10 +49,10 @@ class ProvenanceControls(unittest.TestCase):
         self.assertEqual(check(self.root)['verdict'], 'FAIL')
 
     def test_four_originals_pass(self):
-        self.assertEqual(check(self.root), {'verdict': 'PASS', 'checkedSources': 4, 'errors': []})
+        self.assertEqual(check(self.root), {'verdict': 'PASS', 'checkedSources': 4, 'checkedArchive': 5, 'errors': []})
 
     def test_each_changed_original_fails(self):
-        for name in NAMES:
+        for name in NAMES + ARCHIVED:
             with self.subTest(name=name):
                 path = self.approval / name
                 content = path.read_bytes()
@@ -53,7 +61,7 @@ class ProvenanceControls(unittest.TestCase):
                 path.write_bytes(content)
 
     def test_each_missing_original_fails(self):
-        for name in NAMES:
+        for name in NAMES + ARCHIVED:
             with self.subTest(name=name):
                 path = self.approval / name
                 content = path.read_bytes()
@@ -71,6 +79,20 @@ class ProvenanceControls(unittest.TestCase):
         self.manifest.write_text(self.original + 'Approval-Source-SHA256: ' + 'a' * 64 + '  ../outside\n')
         self.rejected()
         self.manifest.write_text(self.original.replace('Approval-Source-SHA256: ', 'Approval-Source-SHA256: z', 1))
+        self.rejected()
+
+    def test_archive_registration_missing_unknown_or_cross_prefix_fails(self):
+        lines = self.original.splitlines()
+        archive = [line for line in lines if line.startswith('Approval-Archive-SHA256:')]
+        for dropped in archive:
+            with self.subTest(dropped=dropped):
+                self.manifest.write_text('\n'.join(line for line in lines if line != dropped) + '\n')
+                self.rejected()
+        self.manifest.write_text(self.original + 'Approval-Archive-SHA256: ' + 'a' * 64
+                                 + '  specs/ui-server-parity/approval/2026-10-14/extra.md\n')
+        self.rejected()
+        current = next(line for line in lines if line.startswith('Approval-Source-SHA256:'))
+        self.manifest.write_text(self.original + current.replace('Approval-Source-', 'Approval-Archive-') + '\n')
         self.rejected()
 
     def test_basis_and_review_references_cannot_bypass_hashed_sources(self):
