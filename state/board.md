@@ -1,19 +1,21 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 14:58 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6-X0 | impl | ready | 宿主 module 路由 + 错误投影 + 字段校验 + 轮级 dispose（wt-a6-x0，codex/a6-x0；codex 实现中）；A6.4~A6.7 适配 PR 的共用前置，host/modules/mod.rs 串行热点。拆单 `_tmp/20261018-a6-split/triage.md`
-- A6.3-pr1 | impl | ready | 配置 diff/classify 纯函数（wt-a63-pr1，deepseek/a63-pr1；DeepSeek dsh 试点实现中），评审 GLM + codex
-- A6.6-pr3 | impl | ready | WorkspaceSnapshot 存储与 recorder（wt-a66-pr3，glm/a66-pr3；GLM 实现中，生成器与测试由协调者跑），评审 DeepSeek + codex
-- D2-pr1 | review | ready | skills migrate（wt-d1-cli，codex/d2-skills-migrate）：15 场景按 TS 实录填期望，协调者复跑测试 + D0 TS 两轮 + Rust 轮中；然后 GLM + DeepSeek 评审
-- B2-94 | gate | ready | 重新冻结已提交（wt-a62-run，claude/b2-94 @1d379fa）：10-18 同日定标 TS 10/10、proxy PASS、26 钟全过，两家冻结评审同意；四角色闸门中 → PR（Closes #94）
-- F2-A34-pr2 | review | ready | 样板改写 #15、#5、#1（wt-f34b，claude/f2-a34-pr2）：第二轮修 --rules-only 已过，旧侧实跑等锁；然后 GLM + DeepSeek 评审；分母 68 待人复核
-- A6.3-pr6 | impl | ready | 会话权限规则/模式 registry + SessionConfigOverrides（不依赖 X0，新建文件）
-- A6.4-pr11 | impl | ready | SDK task budget JSONL 账本（纯存储，不依赖 X0）
+updated: 2026-10-18 17:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6-X0 | review | ready | 宿主 module 路由 + 错误投影（wt-a6-x0，codex/a6-x0 @8ee65db）：首轮三家 0/0，P2 当轮修完，增量确认中（GLM + DeepSeek）；缺省模块 Unsupported 登记 #258（前置于 A6.9）
+- A6.3-pr1 | gate | ready | 配置 diff/classify（wt-a63-pr1，deepseek/a63-pr1 @45c2595；DeepSeek dsh 试点）：首轮两家撞车 P1（原型链回落）已修，二轮 GLM 0/0、codex 0/0；四角色闸门中 → PR
+- D2-pr1 | review | ready | skills migrate（wt-d1-cli，codex/d2-skills-migrate @af5e952）：D0 正式轮 TS 自比较 PASS、Rust 对 TS PASS（28 场景）；跨流顺序按场景声明（卡见 decisions-20261017 末节）；GLM + DeepSeek 评审中
+- F2-A34-pr2 | review | ready | A 类样板 #15、#5、#1（wt-f34b，claude/f2-a34-pr2 @6070e59）：旧侧 3/3 PASS，基线零写入；GLM + DeepSeek 评审中；分母 68 待人复核
+- B2-94-archive | gate | ready | #257 合入时漏掉的归档哈希登记（wt-a62-run，claude/b2-94-archive）：闸门 P2 已修，gate5 + DeepSeek 确认中
+- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，glm/a66-pr3）：GLM 第三轮（生成器断言 + 测试 12 个编译错误）
+- A6.4-pr11 | impl | ready | SDK task budget JSONL 账本（wt-a64-pr11，codex/a64-pr11）：codex 实现中
+- #256-review | review | ready | 守护会话的看板标记脚本：三轮收敛 0/0/0，待作者入队
+- #259-review | review | ready | 人定资源上限 12 / 100 GiB / cargo ≤ 4：两轮收敛 0/0/0，待作者入队；合并前仍按 8 / 80
+- A6.3-pr6 | impl | ready | 会话权限规则/模式 registry + SessionConfigOverrides（不依赖 X0）
 - A6.7-pr3 | impl | ready | hooks 配置解析与匹配（纯函数，不依赖 X0）
 - A6.4-pr1 | impl | blocked | model module 适配；等 A6-X0 合并
 - A6.5-pr1 | impl | blocked | capability + permission 适配；等 A6-X0 合并
-- p2-sweep-4 | impl | ready | P2-跟进 26 个（>10）：下一批清账，codex；排在 A6 首批之后
+- p2-sweep-4 | impl | ready | P2-跟进 27 个（>10）：下一批清账，codex；排在 A6 首批之后
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -21,6 +23,10 @@ updated: 2026-10-18 14:58 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 17:10 · /loop 两小时交接（自 14:58 起）
+> 合并：#255（board）、#257（B2-94 重新冻结，Closes #94）。#257 入队「失败」后 auto-merge 仍开着，结果合入的是 dae2557，闸门 P2 修复 e6aa919 没进去。另开 claude/b2-94-archive 补上，教训记入 `state/memory/20261018-auto-merge-armed.md`。A6 首批：X0 三家首轮 0/0；A6.3-pr1（DeepSeek dsh 试点）首轮两家撞车 P1 一次修好，二轮 0/0。dsh 有工具后能自己实测 TS 再改，试点表现正常。A6.6-pr3（GLM，无 Bash）第一轮 1 小时超时，留下的代码编译不过，第三轮中，结论待收敛后记卡。D2 与 F2-A34-pr2 实测全过，进评审。新 P2-跟进 #253、#254、#258。外部定标 checkout 已核对哈希后删除，证据在 `_tmp/archive/b2-calibration-2026-10-18-a025aa97/`。worktree 8/8（主仓 + a62-run、d1-cli、f34b、a6-x0、a63-pr1、a66-pr3、a64-pr11），磁盘 52.2/80 GiB。
+> **持有人与后台**：协调者本会话。后台在跑：X0 增量确认、A6.3 闸门、D2 两家评审、F2 两家评审、B2-archive 闸门与确认、GLM A6.6 第三轮、codex A6.4-pr11；状态见各自 `_tmp/20261018-*/*.status`。**下一步**：评审收敛 → 闸门 → 入队（先 --disable-auto 再推修复）；X0 合并后放开 A6.4-pr1、A6.5-pr1；#259 合并后改按 12 / 100，开跑前跑 cargo-slots.sh。
 
 > ## 2026-10-18 14:58 · /loop
 > 合并：#248（F2-61b）、#250（memory：shell 文本改用 python）、#252（A6.8-pr4）。B2-94 完成 10-18 同日定标并重新冻结，已提交，闸门中；test_frozen 隔离用例写死 DRAFT 是既有问题，因定标绑定 ce77149 不在本 PR 改，登记 #253；GLM P2-1 登记 #254。人定（经守护会话）A6 重心：A6.3~A6.7 按计划 005 拆成 48 个小 PR，盘点与冲突文件见 `_tmp/20261018-a6-split/inventory.md`、`triage.md`；首批 X0（codex）、A6.3-pr1（DeepSeek dsh 试点）、A6.6-pr3（GLM）已开工。DeepSeek 试点结论已更正（无工具通道问题，不是模型问题）。主线（A6 + D）4 条 / 共 6 条；worktree 8/8（含外部定标 checkout，B2 合并后清）；磁盘 48.6/80 GiB。**下一步**：各路回来后协调者跑测试与夹具 → 两家评审 → 闸门 → 入队；X0 合并后放开 A6.4-pr1 / A6.5-pr1。
