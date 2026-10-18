@@ -65,6 +65,17 @@ pub fn pilot_home(env: &Env, cwd: &Path) -> Result<PathBuf, Failure> {
     Ok(resolve(cwd, Path::new(raw)))
 }
 
+/// resolveGatewayTokenPath (src/gateway/server/authToken.ts:12-15):
+/// `resolve(pilotHome || "~/.pilotdeck", "server-token")`, the default unexpanded.
+/// resolvePilotHome is "" only for PILOT_HOME="~" with an empty $HOME, because
+/// normalizeHomePath returns os.homedir() for "~" without resolving it.
+pub fn gateway_token_path(env: &Env, cwd: &Path) -> Result<PathBuf, Failure> {
+    if env.get("PILOT_HOME") == Some(OsStr::new("~")) && homedir(env)?.as_os_str().is_empty() {
+        return Ok(resolve(cwd, Path::new("~/.pilotdeck/server-token")));
+    }
+    Ok(pilot_home(env, cwd)?.join("server-token"))
+}
+
 /// ECMAScript WhiteSpace + LineTerminator, as used by String.prototype.trim.
 fn is_js_space(c: char) -> bool {
     matches!(
@@ -130,6 +141,36 @@ mod tests {
         assert!(matches!(pilot_home(&env, cwd), Ok(p) if p == Path::new("/w")));
         let env = Env::from_pairs(&[("PILOT_HOME", "rel/p")]);
         assert!(matches!(pilot_home(&env, cwd), Ok(p) if p == Path::new("/w/rel/p")));
+    }
+
+    #[test]
+    fn empty_home_matches_node_homedir_and_token_fallback() {
+        let cwd = Path::new("/w");
+        let home = |pilot: Option<&str>| {
+            let mut pairs = vec![("HOME", "")];
+            pairs.extend(pilot.map(|p| ("PILOT_HOME", p)));
+            Env::from_pairs(&pairs)
+        };
+        // resolve("", "x") and resolve("") both land on cwd.
+        assert!(matches!(pilot_home(&home(None), cwd), Ok(p) if p == Path::new("/w/.pilotdeck")));
+        assert!(matches!(pilot_home(&home(Some("~/x")), cwd), Ok(p) if p == Path::new("/w/x")));
+        assert!(matches!(pilot_home(&home(Some("~")), cwd), Ok(p) if p == Path::new("/w")));
+        assert!(matches!(pilot_home(&home(Some("~/")), cwd), Ok(p) if p == Path::new("/w")));
+        assert!(matches!(gateway_token_path(&home(Some("~/")), cwd),
+            Ok(p) if p == Path::new("/w/server-token")));
+        assert!(matches!(gateway_token_path(&home(None), cwd),
+            Ok(p) if p == Path::new("/w/.pilotdeck/server-token")));
+        // Only the raw "" pilotHome falls back to the literal default path.
+        assert!(matches!(gateway_token_path(&home(Some("~")), cwd),
+            Ok(p) if p == Path::new("/w/~/.pilotdeck/server-token")));
+        assert!(matches!(gateway_token_path(&home(Some("~/x")), cwd),
+            Ok(p) if p == Path::new("/w/x/server-token")));
+        assert!(matches!(gateway_token_path(&home(Some("")), cwd),
+            Ok(p) if p == Path::new("/w/server-token")));
+        let env = Env::from_pairs(&[("HOME", "/h"), ("PILOT_HOME", "~")]);
+        assert!(
+            matches!(gateway_token_path(&env, cwd), Ok(p) if p == Path::new("/h/server-token"))
+        );
     }
 
     #[test]

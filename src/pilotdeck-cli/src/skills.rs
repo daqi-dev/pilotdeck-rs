@@ -68,7 +68,12 @@ pub fn migrate_legacy_bundled_skill_copies(
     let user_root = pilot_home.join("skills");
     if user_root.exists() {
         const COPIES: &str = "migrating legacy bundled skill copies out of PilotHome/skills";
-        let entries = fs::read_dir(&user_root).map_err(|_| Failure::Todo(COPIES))?;
+        // readdirSync here is outside any try (migrateLegacyBundledSkills.ts:82-83), so
+        // ENOTDIR/EACCES escape createLocalGateway to main().catch.
+        let entries = fs::read_dir(&user_root).map_err(|error| {
+            paths::node_fs_message(&error, "scandir", &user_root)
+                .map_or(Failure::Todo(COPIES), Failure::Error)
+        })?;
         for entry in entries {
             let entry = entry.map_err(|_| Failure::Todo(COPIES))?;
             let is_dir = entry
@@ -163,6 +168,83 @@ mod tests {
         let result = migrate_legacy_bundled_skill_copies(&home, &root);
         assert!(matches!(result, Err(Failure::Todo(_))));
         assert!(!home.join(MARKER).exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn unreadable_bundled_root_is_the_missing_warning() {
+        let home = temp_home("root-errors");
+        let file_root = home.join("file-root");
+        fs::write(&file_root, "x").unwrap();
+        let warnings = migrate_legacy_bundled_skill_copies(&home, &file_root.join("sub"));
+        assert!(matches!(warnings, Ok(w) if w == vec![MISSING_ROOT_WARNING]));
+        let warnings = migrate_legacy_bundled_skill_copies(&home, &file_root);
+        assert!(matches!(warnings, Ok(w) if w == vec![MISSING_ROOT_WARNING]));
+        assert!(!home.join(MARKER).exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn unreadable_user_skills_root_is_thrown_like_readdir_sync() {
+        let home = temp_home("user-root-file");
+        let root = bundled_root(&home);
+        fs::write(home.join("skills"), "x").unwrap();
+        let message = match migrate_legacy_bundled_skill_copies(&home, &root) {
+            Err(Failure::Error(message)) => message,
+            _ => String::from("not an error"),
+        };
+        assert_eq!(
+            message,
+            format!(
+                "ENOTDIR: not a directory, scandir '{}'",
+                home.join("skills").display()
+            )
+        );
+        assert!(!home.join(MARKER).exists());
+
+        fs::remove_file(home.join("skills")).unwrap();
+        fs::create_dir_all(home.join("skills/docx")).unwrap();
+        fs::set_permissions(home.join("skills"), fs::Permissions::from_mode(0o000)).unwrap();
+        let result = migrate_legacy_bundled_skill_copies(&home, &root);
+        fs::set_permissions(home.join("skills"), fs::Permissions::from_mode(0o700)).unwrap();
+        let expected = format!(
+            "EACCES: permission denied, scandir '{}'",
+            home.join("skills").display()
+        );
+        assert!(matches!(result, Err(Failure::Error(m)) if m == expected));
+        assert!(!home.join(MARKER).exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    /// Cases recorded by probes/p4-skills-errors (Node v22.22.0, uid 502).
+    #[test]
+    fn unsearchable_skill_dirs_and_file_pilot_home_match_ts_probe() {
+        let home = temp_home("unsearchable");
+        let root = bundled_root(&home);
+        fs::set_permissions(root.join("docx"), fs::Permissions::from_mode(0o600)).unwrap();
+        let warnings = migrate_legacy_bundled_skill_copies(&home, &root);
+        fs::set_permissions(root.join("docx"), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(warnings, Ok(w) if w == vec![MISSING_ROOT_WARNING]));
+        assert!(!home.join(MARKER).exists());
+
+        // existsSync(<skill>/SKILL.md) is false under EACCES: not a legacy copy.
+        let skill = home.join("skills/docx");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "user\n").unwrap();
+        fs::set_permissions(&skill, fs::Permissions::from_mode(0o600)).unwrap();
+        let warnings = migrate_legacy_bundled_skill_copies(&home, &root);
+        fs::set_permissions(&skill, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(matches!(warnings, Ok(w) if w.is_empty()));
+        assert!(home.join(MARKER).exists());
+
+        let file_home = home.join("pilot-file");
+        fs::write(&file_home, "a file, not a directory\n").unwrap();
+        let warnings = migrate_legacy_bundled_skill_copies(&file_home, &root);
+        let expected = format!(
+            "[pilotdeck] Could not migrate legacy skill '__migration__': EEXIST: file already exists, mkdir '{}'",
+            file_home.display()
+        );
+        assert!(matches!(warnings, Ok(w) if w == vec![expected]));
         fs::remove_dir_all(home).unwrap();
     }
 

@@ -15,5 +15,8 @@ pilotdeck-protocol.workspace = true
 pilotdeck-yaml = { path = "../pilotdeck-yaml" }
 ryu-js.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

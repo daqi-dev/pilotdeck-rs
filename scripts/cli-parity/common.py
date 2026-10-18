@@ -131,6 +131,13 @@ def environment(runtime, scenario):
                PILOTDECK_SDK_GATEWAY_URL='ws://127.0.0.1:28999/ws')
     if scenario['token']:
         env['PILOTDECK_SDK_AUTH_TOKEN'] = TOKEN
+    # Scenario-specific variables naming a path under the runtime; they may add
+    # variables but never replace an isolation variable above.
+    for key, relative in scenario.get('envPaths', {}).items():
+        parts = Path(relative).parts
+        if key in env or not parts or Path(relative).is_absolute() or '..' in parts:
+            raise ValueError(f'invalid scenario envPaths entry: {key}')
+        env[key] = str(runtime / relative)
     return env
 
 

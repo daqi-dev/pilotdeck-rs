@@ -10,10 +10,11 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, environment, env_summary, hashes, initial_tree, snapshot
+from common import HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, digest, environment, env_summary, hashes, initial_tree, snapshot
 from policy import sandbox_profile
 
 RECORDING_ORIGIN = 'live-os-sandbox'
+PENDING = 'PENDING-TS-CALIBRATION'
 PROBE_CHECKS = ('homeMatches', 'outsideReadDenied', 'outsideWriteDenied', 'listenDenied',
                 'connectDenied', 'childDenied', 'runtimeWritable', 'outsideMetadataDenied', 'privateReadDenied')
 SQLITE_WARNING = re.compile(
@@ -131,6 +132,14 @@ def load_round(path):
             executed = provenance['stagedExecutable']
             require(executed == {'path': str(runtime.parent / 'rust-stage/bin/pilotdeck'),
                                  'sha256': provenance['executable']['sha256']}, 'round.rust-stage')
+            # Offline re-validation reads the copy's actual bytes, not only the recorded hash.
+            try:
+                staged = Path(executed['path'])
+                plain(staged)
+                on_disk = digest(staged)
+            except (OSError, ValueError):
+                on_disk = None
+            require(on_disk == provenance['executable']['sha256'], 'round.rust-stage-bytes')
         policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'])
         require(isolation['profileText'] == policy and isolation['profileSha256'] == hashlib.sha256(policy.encode()).hexdigest(),
                 'round.profile-binding')
@@ -180,7 +189,10 @@ def load_round(path):
             after = snapshot(folder / 'tree')
             require(before == initial_tree(), f'{name}.initial')
             require(after == json.loads((folder / 'final.json').read_text()), f'{name}.disk.manifest')
-            if run['side'] == 'ts':
+            if run['side'] == 'ts' and scenario.get('oracle') == PENDING:
+                # Registered but not yet calibrated from a real TS round: never a PASS.
+                require(False, f'{name}.oracle.pending')
+            elif run['side'] == 'ts':
                 require(record['exitCode'] == scenario['exit'], f'{name}.oracle.exit')
                 for channel, data in (('stdout', stdout), ('stderr', stderr)):
                     if channel in scenario:

@@ -1,0 +1,741 @@
+{
+ "node": "v22.22.0",
+ "v8": "12.4.254.21-node.33",
+ "cases": [
+  {
+   "input": "-",
+   "message": "No number after minus sign in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "-x",
+   "message": "No number after minus sign in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "--",
+   "message": "No number after minus sign in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "-.",
+   "message": "No number after minus sign in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "-0",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "-01",
+   "message": "Unexpected number in JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "01",
+   "message": "Unexpected number in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "1.",
+   "message": "Unterminated fractional number in JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "1.e3",
+   "message": "Unterminated fractional number in JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": ".5",
+   "message": "Unexpected token '.', \".5\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "1e",
+   "message": "Exponent part is missing a number in JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "1e+",
+   "message": "Exponent part is missing a number in JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "1E-x",
+   "message": "Exponent part is missing a number in JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "-Infinity",
+   "message": "No number after minus sign in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "+1",
+   "message": "Unexpected token '+', \"+1\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "0x10",
+   "message": "Unexpected non-whitespace character after JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": " ",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\t\n",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "undefined",
+   "message": "\"undefined\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[object Object]",
+   "message": "\"[object Object]\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "Infinity",
+   "message": "\"Infinity\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "NaN",
+   "message": "\"NaN\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "nan",
+   "message": "Unexpected token 'a', \"nan\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "True",
+   "message": "Unexpected token 'T', \"True\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "t",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "tx",
+   "message": "Unexpected token 'x', \"tx\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "tru",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "trux",
+   "message": "Unexpected token 'x', \"trux\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "nul",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "nulL",
+   "message": "Unexpected token 'L', \"nulL\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "fals",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "falsex",
+   "message": "Unexpected non-whitespace character after JSON at position 5 (line 1 column 6)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "nullnull",
+   "message": "Unexpected non-whitespace character after JSON at position 4 (line 1 column 5)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[tru]",
+   "message": "Unexpected token ']', \"[tru]\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[nul",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\":tr}",
+   "message": "Unexpected token '}', \"{\"a\":tr}\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{",
+   "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{}x",
+   "message": "Unexpected non-whitespace character after JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{} x",
+   "message": "Unexpected non-whitespace character after JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[]]",
+   "message": "Unexpected non-whitespace character after JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{,}",
+   "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\":1,}",
+   "message": "Expected double-quoted property name in JSON at position 7 (line 1 column 8)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[1,]",
+   "message": "Unexpected token ']', \"[1,]\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\"}",
+   "message": "Expected ':' after property name in JSON at position 4 (line 1 column 5)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\" \"b\"}",
+   "message": "Expected ':' after property name in JSON at position 5 (line 1 column 6)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{'a':1}",
+   "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{a:1}",
+   "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[1;2]",
+   "message": "Expected ',' or ']' after array element in JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[1 2]",
+   "message": "Expected ',' or ']' after array element in JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\":1 \"b\":2}",
+   "message": "Expected ',' or '}' after property value in JSON at position 7 (line 1 column 8)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\":1,\"b\"}",
+   "message": "Expected ':' after property name in JSON at position 10 (line 1 column 11)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\"a\" 1]",
+   "message": "Expected ',' or ']' after array element in JSON at position 5 (line 1 column 6)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\":{\"b\":[1,{]}}",
+   "message": "Expected property name or '}' in JSON at position 14 (line 1 column 15)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"abc",
+   "message": "Unterminated string in JSON at position 4 (line 1 column 5)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"a\\",
+   "message": "Unexpected end of JSON input",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\x\"",
+   "message": "Bad escaped character in JSON at position 2 (line 1 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\u12\"",
+   "message": "Bad Unicode escape in JSON at position 5 (line 1 column 6)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\u12G4\"",
+   "message": "Bad Unicode escape in JSON at position 5 (line 1 column 6)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\u\"",
+   "message": "Bad Unicode escape in JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\t\"",
+   "message": "Bad control character in string literal in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\u0000\"",
+   "message": "Bad control character in string literal in JSON at position 1 (line 1 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\uD800\"",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\"\\uDC00\" 1]",
+   "message": "Expected ',' or ']' after array element in JSON at position 10 (line 1 column 11)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": " {}",
+   "message": "Unexpected token ' ', \" {}\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "﻿{}",
+   "message": "Unexpected token '﻿', \"﻿{}\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": " []",
+   "message": "Unexpected token ' ', \" []\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\u000b1",
+   "message": "Unexpected token '\u000b', \"\u000b1\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\r\n1 2]",
+   "message": "Expected ',' or ']' after array element in JSON at position 5 (line 2 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\r1\n 2]",
+   "message": "Expected ',' or ']' after array element in JSON at position 5 (line 3 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\n\r1 2]",
+   "message": "Expected ',' or ']' after array element in JSON at position 5 (line 3 column 3)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\" \", 1 2]",
+   "message": "Expected ',' or ']' after array element in JSON at position 8 (line 1 column 9)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\"a b\"\n, 1 2]",
+   "message": "Expected ',' or ']' after array element in JSON at position 11 (line 2 column 5)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "{\"a\":1}\n x",
+   "message": "Unexpected non-whitespace character after JSON at position 9 (line 2 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\r\n\r\n{",
+   "message": "Expected property name or '}' in JSON at position 5 (line 3 column 2)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "111111111111111111111111111111x",
+   "message": "Unexpected non-whitespace character after JSON at position 30 (line 1 column 31)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,]",
+   "message": "Unexpected token ']', ...\"1,1,1,1,1,]\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "!abcdefghijklmnopqr",
+   "message": "Unexpected token '!', \"!abcdefghijklmnopqr\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[!abcdefghijklmnopq",
+   "message": "Unexpected token '!', \"[!abcdefghijklmnopq\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[!abcdefghij",
+   "message": "Unexpected token '!', \"[[[[[[[[!abcdefghij\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[!abcdefghi",
+   "message": "Unexpected token '!', \"[[[[[[[[[!abcdefghi\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[!abcdefgh",
+   "message": "Unexpected token '!', \"[[[[[[[[[[!abcdefgh\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[!abcdefg",
+   "message": "Unexpected token '!', \"[[[[[[[[[[[!abcdefg\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[!",
+   "message": "Unexpected token '!', \"[[[[[[[[[[[[[[[[[[!\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "!abcdefghijklmnopqrs",
+   "message": "Unexpected token '!', \"!abcdefghijklmnopqrs\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[!abcdefghijklmnopqr",
+   "message": "Unexpected token '!', \"[!abcdefghijklmnopqr\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[!abcdefghijk",
+   "message": "Unexpected token '!', \"[[[[[[[[!abcdefghijk\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[!abcdefghij",
+   "message": "Unexpected token '!', \"[[[[[[[[[!abcdefghij\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[!abcdefghi",
+   "message": "Unexpected token '!', \"[[[[[[[[[[!abcdefghi\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[!abcdefgh",
+   "message": "Unexpected token '!', \"[[[[[[[[[[[!abcdefgh\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[!",
+   "message": "Unexpected token '!', \"[[[[[[[[[[[[[[[[[[[!\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "!abcdefghijklmnopqrst",
+   "message": "Unexpected token '!', \"!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[!abcdefghijklmnopqrs",
+   "message": "Unexpected token '!', \"[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[!abcdefghijkl",
+   "message": "Unexpected token '!', \"[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[!abcdefghijk",
+   "message": "Unexpected token '!', \"[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[!abcdefghij",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[!abcdefghi",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[!abcdefgh",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefgh\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[[!",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "!abcdefghijklmnopqrstu",
+   "message": "Unexpected token '!', \"!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[!abcdefghijklmnopqrst",
+   "message": "Unexpected token '!', \"[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[!abcdefghijklm",
+   "message": "Unexpected token '!', \"[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[!abcdefghijkl",
+   "message": "Unexpected token '!', \"[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[!abcdefghijk",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[!abcdefghij",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[!abcdefghi",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[!abcdefgh",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefgh\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[[[!",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "!abcdefghijklmnopqrstuv",
+   "message": "Unexpected token '!', \"!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[!abcdefghijklmnopqrstu",
+   "message": "Unexpected token '!', \"[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[!abcdefghijklmn",
+   "message": "Unexpected token '!', \"[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[!abcdefghijklm",
+   "message": "Unexpected token '!', \"[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[!abcdefghijkl",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[!abcdefghijk",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[!abcdefghij",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[!abcdefghi",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[!abcdefgh",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefgh\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[[[[!",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "!abcdefghijklmnopqrstuvwxyz012",
+   "message": "Unexpected token '!', \"!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[!abcdefghijklmnopqrstuvwxyz01",
+   "message": "Unexpected token '!', \"[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[!abcdefghijklmnopqrstu",
+   "message": "Unexpected token '!', \"[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[!abcdefghijklmnopqrst",
+   "message": "Unexpected token '!', \"[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[!abcdefghijklmnopqrs",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[!abcdefghijklmnopqr",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[!abcdefghij",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\"... is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[[!abcdefghi",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefghi\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[[[!abcdefgh",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!abcdefgh\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[!",
+   "message": "Unexpected token '!', ...\"[[[[[[[[[[!\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\"😀\", 😀]",
+   "message": "Unexpected token '�', \"[\"😀\", 😀]\" is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "😀",
+   "message": "Unexpected token '�', \"😀\" is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "[\"😀😀😀😀😀😀\",!😀😀😀😀😀😀",
+   "message": "Unexpected token '!', ...\"😀😀😀😀\",!😀😀😀😀�\"... is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "!😀😀😀😀😀😀😀😀",
+   "message": "Unexpected token '!', \"!😀😀😀😀😀😀😀😀\" is not valid JSON",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[\"a😀😀😀😀😀😀\",!😀😀😀😀😀😀",
+   "message": "Unexpected token '!', ...\"😀😀😀😀\",!😀😀😀😀�\"... is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "😀!😀😀😀😀😀😀😀😀",
+   "message": "Unexpected token '�', \"😀!😀😀😀😀😀😀😀😀\" is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "[\"aa😀😀😀😀😀😀\",!😀😀😀😀😀😀",
+   "message": "Unexpected token '!', ...\"😀😀😀😀\",!😀😀😀😀�\"... is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "😀😀!😀😀😀😀😀😀😀😀",
+   "message": "Unexpected token '�', \"😀😀!😀😀�\"... is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "[\"aaa😀😀😀😀😀😀\",!😀😀😀😀😀😀",
+   "message": "Unexpected token '!', ...\"😀😀😀😀\",!😀😀😀😀�\"... is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "😀😀😀!😀😀😀😀😀😀😀😀",
+   "message": "Unexpected token '�', \"😀😀😀!😀�\"... is not valid JSON",
+   "loneSurrogateInMessage": true
+  },
+  {
+   "input": "{}",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "[]",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "0",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "-0.5e+3",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\"",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\u00e9\\uD83D\\uDE00\"",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": " {\"k\": [true, false, null]} ",
+   "message": null,
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\" \"",
+   "message": null,
+   "loneSurrogateInMessage": false
+  }
+ ]
+}
