@@ -31,6 +31,8 @@ if (pendingCatalog.baselineCommit !== BASELINE_COMMIT || pendingById.size !== 28
 const aCatalog = JSON.parse(await readFile(new URL('./a-identities.json', import.meta.url), 'utf8'));
 export const A_IDENTITIES = Object.freeze(aCatalog.tests.map(row => Object.freeze({ ...row })));
 export const aTitle = row => `[A:${row.file}:${row.title}]`;
+// Any title segment carrying the A marker, catalogued or not.
+const isARewrite = row => row.title.split(' › ').some(part => part.startsWith('[A:'));
 const aIds = new Set(A_IDENTITIES.map(caseId));
 if (aCatalog.baselineCommit !== BASELINE_COMMIT || aIds.size !== A_IDENTITIES.length || A_IDENTITIES.length !== 3
   || [...aIds].some(id => allowedSkipIds.has(id) || pendingById.has(id))) {
@@ -92,7 +94,9 @@ function reconcileSingle(inventory, report, testDir, { staleCascade = false } = 
     grouped.get(id).push(row);
   }
   const expectedIds = new Set(inventory.map(caseId));
-  for (const id of grouped.keys()) if (!expectedIds.has(id)) errors.push(`unknown result ${id}`);
+  for (const [id, [row]] of grouped) if (!expectedIds.has(id)) {
+    errors.push(isARewrite(row) ? `A rewrite result never credits this ledger (A-class has its own account): ${id}` : `unknown result ${id}`);
+  }
   const predecessors = inventory.filter(staleEntry).flatMap(registration => {
     const matches = grouped.get(caseId(registration));
     if (matches?.length !== 1 || matches[0].results.length !== 1) return [];

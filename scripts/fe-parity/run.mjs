@@ -40,7 +40,8 @@ All configs/spec selection are repository-owned. Real uses native supervisor + o
 Baseline profiles produce complete original 72-case JSONs; repeated report flags merge profiles.
 B/D have source-bound deployment partitions and separate execution accounting.
 Streaming and skeleton have separate denominators; they never credit the baseline 72.
-A-class rewrites are bound to a-identities.json (file, title); never credited to the 72 or the 37 ruler.
+A-class rewrites are bound to a-identities.json (file, title); never credited to the 72 or the 37 ruler
+(--suite a-class --reconcile is rejected; A rewrite results in any baseline/real report FAIL).
 Single-side PASS means calibration only. The probe's missing chat is FAIL, never skipped.
 --rules-only omits build-artifact checks (self-check only), never used by browser preflight.
 Mock-UI suites: 28376/28377/28378. Real: 3010/5180/18798, onboarding 3011/5181/18799, LLM 28379.
@@ -66,6 +67,8 @@ if (new Set(profiles).size !== profiles.length || profiles.some(profile => !PROF
 if ([values['self-check'], values['network-self-check'], values.reconcile].filter(Boolean).length > 1) throw new Error('Select one run mode');
 if (values['rules-only'] && !values['self-check']) throw new Error('--rules-only requires --self-check');
 if (!values.reconcile && (values['old-report'] || values['new-report'])) throw new Error('Reports require --reconcile');
+// --reconcile is the baseline 72 ledger; A rewrites are accounted only by their own suite run.
+if (values.suite === 'a-class' && values.reconcile) throw new Error('A-class has its own (file, title) account (a-identities.json); --reconcile is the baseline 72 ledger and never takes A-class reports. Run --suite a-class --frontends old|old,new instead');
 const base = resolve(root, '_tmp/fe-parity');
 if (isolatedSuite) await assertCanonicalAncestor(base);
 await mkdir(base, { recursive: true });

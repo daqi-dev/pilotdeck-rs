@@ -139,7 +139,8 @@ node scripts/fe-parity/run.mjs --network-self-check
 # 协调者先校准旧侧聊天，再观察新侧真实失败：
 node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old
 node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old,new
-# A 类改写样板（a-identities.json 绑定 (file, title)；独立账，不并入现行分母 37）：
+# A 类改写样板（a-identities.json 绑定 (file, title)；独立账，不并入现行分母 37；
+# `--suite a-class --reconcile` 直接拒绝，A 改写结果出现在基线/real 报告里一律 FAIL）：
 node scripts/fe-parity/run.mjs --suite a-class --frontends old
 # 基线完整三 profile / 两侧原始报告：
 node scripts/fe-parity/run.mjs --suite baseline --profiles staffdeck,minimal,replacement --frontends old,new
