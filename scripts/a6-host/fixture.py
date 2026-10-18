@@ -280,16 +280,25 @@ if mode.startswith('cancel-'):
 if mode in ('module-routing', 'module-errors'):
     oracle = json.loads((Path(__file__).resolve().parents[2] /
                          'src/pilotdeck-gateway/tests/fixtures/host-modules/oracle.json').read_text())
-    modules = {'model', 'budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event',
-               'checkpoint', 'skills', 'knowledge'}
-    cases = oracle['routing' if mode == 'module-routing' else 'errors']
-    cases = [case for case in cases if case['call']['module'] in modules]
+    key = 'routing' if mode == 'module-routing' else 'errors'
+    rejected_modules = {'unknown', '\ud800'}
+    source_cases = oracle[key]
+    rejected = [case for case in source_cases if case['call']['module'] in rejected_modules]
+    cases = [case for case in source_cases if case['call']['module'] not in rejected_modules]
+    assert {case['call']['module'] for case in rejected} <= rejected_modules
+    assert len(cases) + len(rejected) == len(source_cases)
+    assert len(cases) == oracle['stdioCounts'][key] > 0, (key, len(cases))
     expected = {case['call']['messageId']: case['response'] for case in cases}
-    for case in cases:
-        send(case['call'])
-    for _ in cases:
-        reply = read()
-        assert reply == expected.pop(reply['inReplyTo']), reply
+    assert len(expected) == len(cases), 'duplicate messageId'
+    # Keep multiple requests in flight, with a bounded window independent of
+    # oracle size so neither OS pipe nor the host callback queue can fill up.
+    for start in range(0, len(cases), 16):
+        batch = cases[start:start + 16]
+        for case in batch:
+            send(case['call'])
+        for _ in batch:
+            reply = read()
+            assert reply == expected.pop(reply['inReplyTo']), reply
     assert not expected
     send(event(final=True))
     assert sys.stdin.read() == ''

@@ -5,6 +5,9 @@ struct ResumeHandler {
     mode: String,
     receipt: PathBuf,
     calls: AtomicUsize,
+    active_calls: Arc<AtomicUsize>,
+    disposed: AtomicUsize,
+    calls_at_dispose: AtomicUsize,
     applied: Arc<Mutex<Vec<u64>>>,
     observations: Mutex<Vec<ReconnectObservation>>,
     resumed: Arc<Notify>,
@@ -16,6 +19,9 @@ impl ResumeHandler {
             mode: mode.to_owned(),
             receipt: receipt.0.clone(),
             calls: AtomicUsize::new(0),
+            active_calls: Arc::new(AtomicUsize::new(0)),
+            disposed: AtomicUsize::new(0),
+            calls_at_dispose: AtomicUsize::new(usize::MAX),
             applied: Arc::new(Mutex::new(Vec::new())),
             observations: Mutex::new(Vec::new()),
             resumed: Arc::new(Notify::new()),
@@ -44,6 +50,12 @@ impl ResumeHandler {
     }
 }
 impl HostHandler for ResumeHandler {
+    fn dispose(&self) -> HostFuture<()> {
+        self.calls_at_dispose
+            .store(self.active_calls.load(Ordering::SeqCst), Ordering::SeqCst);
+        self.disposed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    }
     fn module_call(&self, _call: JsValue) -> HostFuture<JsObject> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         std::fs::write(self.receipt.with_extension("call-started"), "started").unwrap();
@@ -56,7 +68,10 @@ impl HostHandler for ResumeHandler {
         );
         let budget_cache = self.mode.starts_with("reconnect-budget");
         let release = self.release_call.clone();
+        let active = self.active_calls.clone();
         Box::pin(async move {
+            active.fetch_add(1, Ordering::SeqCst);
+            let _guard = ActiveCall(active);
             if wait {
                 release.notified().await;
             }
@@ -80,7 +95,10 @@ impl HostHandler for ResumeHandler {
         let resumed = self.resumed.clone();
         let release = self.release_call.clone();
         let receipt = self.receipt.clone();
+        let active = self.active_calls.clone();
         Box::pin(async move {
+            active.fetch_add(1, Ordering::SeqCst);
+            let _guard = ActiveCall(active);
             if sequence == 1
                 && matches!(
                     mode.as_str(),
@@ -183,6 +201,8 @@ async fn accepted_but_unapplied_events_survive_resume_and_apply_once_in_order() 
         "{result:?}"
     );
     assert_eq!(*handler.applied.lock().unwrap(), vec![0, 1, 2, 3, 4]);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    assert_eq!(handler.calls_at_dispose.load(Ordering::SeqCst), 0);
     handler.assert_observations(2.0, true);
     receipt.assert_pass(mode);
     let state = state(&receipt);
@@ -240,6 +260,8 @@ async fn resume_replays_cached_or_pending_module_response_without_repeating_effe
             "{mode}: {result:?}"
         );
         assert_eq!(handler.calls.load(Ordering::SeqCst), 1, "{mode}");
+        assert_eq!(handler.disposed.load(Ordering::SeqCst), 1, "{mode}");
+        assert_eq!(handler.calls_at_dispose.load(Ordering::SeqCst), 0, "{mode}");
         let count = if mode == "reconnect-module-pending" {
             3
         } else {

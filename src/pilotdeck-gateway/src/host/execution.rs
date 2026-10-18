@@ -25,6 +25,7 @@ enum Completed {
 pub(super) struct TurnScope {
     callbacks: JoinSet<Completed>,
     handler: Option<Arc<dyn HostHandler>>,
+    runtime: tokio::runtime::Handle,
     timeout: Duration,
 }
 impl TurnScope {
@@ -32,6 +33,9 @@ impl TurnScope {
         Self {
             callbacks: JoinSet::new(),
             handler: Some(handler),
+            // Capture while execute is polled: its future may later be dropped
+            // on a plain thread even though this runtime is still alive.
+            runtime: tokio::runtime::Handle::current(),
             timeout,
         }
     }
@@ -42,8 +46,7 @@ impl TurnScope {
         let handler = self.handler.take()?;
         let mut callbacks = std::mem::take(&mut self.callbacks);
         let duration = self.timeout;
-        let runtime = tokio::runtime::Handle::try_current().ok()?;
-        Some(runtime.spawn(async move {
+        Some(self.runtime.spawn(async move {
             callbacks.shutdown().await;
             let _ = timeout(duration, async { handler.dispose().await }).await;
         }))

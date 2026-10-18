@@ -243,9 +243,10 @@ pub type HostFuture<T> = Pin<Box<dyn Future<Output = Result<T, HostError>> + Sen
 pub trait HostHandler: Send + Sync + 'static {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject>;
     /// One handler instance belongs to one execute/turn. Called once after all
-    /// callback futures have stopped, including on failure or dropped execute.
-    /// Cleanup is best-effort and bounded by close_timeout. Dropped executions
-    /// schedule cleanup on the live Tokio runtime; runtime/process shutdown
+    /// callback futures have stopped, including on failure or dropped, polled
+    /// execute. Callback shutdown requires cooperative cancellation; dispose
+    /// itself is best-effort and bounded by close_timeout. Dropped executions
+    /// schedule cleanup on the captured Tokio runtime; runtime/process shutdown
     /// cannot guarantee asynchronous cleanup. Errors do not replace a terminal.
     fn dispose(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
