@@ -6,12 +6,17 @@
 //! `RangeError: Maximum call stack size exceeded`. Conversion here is
 //! iterative and reports [`StackOverflow`] past [`MAX_ARRAY_DEPTH`] instead of
 //! exhausting the Rust stack.
+//!
+//! Measured (A6.8-pr4 review, Node 22): `String(a)` throws from depth 2516,
+//! both at top level and one call deeper. Known divergence: Rust's limit is a
+//! fixed constant, while V8's shrinks as the caller's stack grows, so the
+//! constant sits below the measured value and depths between it and V8's
+//! real limit throw here but convert in TS.
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsValue, stringify_json};
 
-/// Deepest array nesting that converts. 待实测: V8's real limit depends on the
-/// caller's stack; A6.8-pr4 RESULT.md lists the probe that pins this value.
-pub(crate) const MAX_ARRAY_DEPTH: usize = 4096;
+/// Deepest array nesting that converts; conservative against V8's 2515.
+pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;
 
 /// V8 `RangeError` from a too-deep `Array.prototype.join`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
