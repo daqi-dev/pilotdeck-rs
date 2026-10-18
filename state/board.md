@@ -1,17 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 17:35 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6-X0 | gate | ready | 宿主 module 路由（wt-a6-x0，codex/a6-x0 @8ee65db）：两轮收敛 0/0/0，四角色闸门中 → 立即入队（串行热点，插队）
-- A6.3-pr1 | impl | ready | 配置 diff/classify（wt-a63-pr1，DeepSeek dsh）：闸门 P2 transientRetry 覆盖当轮修中；另两条 P2 登记 #261
-- D2-pr1 | impl | ready | skills migrate（wt-d1-cli，codex）：GLM P1（目录权限未经过 umask，实测）修复中；DeepSeek 两条条件 P1 已用 TS 实录驳回
-- F2-A34-pr2 | impl | ready | A 类样板（wt-f34b，Claude）：GLM P1（turnOrder 漏检多余可见行，P2-b 升格）修复中；DeepSeek 两条 P1 已由实跑驳回
-- A6.4-pr11 | review | ready | SDK task budget 账本（wt-a64-pr11，codex @2580feb）：协调者复跑 317/0；GLM + DeepSeek 评审中
-- B2-94-archive | gate | ready | PR #262（归档哈希登记）：gate5 0/0/0、DeepSeek 0/0/0，入队中
-- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：第四轮，生成器第 8 个场景的断言（前 7 个已过）
-- A6.7-pr3 | impl | ready | hooks 配置解析与匹配（wt-a67-pr3，codex/a67-pr3）：codex 实现中
-- A6.3-pr6 | impl | ready | 会话权限规则/模式 registry（wt-a63-pr6，deepseek/a63-pr6）：DeepSeek dsh 实现中
-- p2-sweep-4 | impl | ready | P2-跟进清账（wt-p2-sweep-4，codex/p2-sweep-4）：开着的有 28 个，挑 ≤6 条近期前置的
+updated: 2026-10-18 18:01 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6-X0 | gate | ready | 宿主 module 路由（wt-a6-x0，codex/a6-x0 @bbc7a8f）：闸门 P1×1、P2×5 一轮修完，复跑 321/0；增量确认（DeepSeek dsh + Claude）与 gate2 并行，过了即入队（串行热点）
+- A6.3-pr1 | gate | ready | 配置 diff/classify（wt-a63-pr1 @92c325d，DeepSeek）：二轮 0/0，transientRetry 已补；gate2 中 → PR
+- A6.3-pr6 | review | ready | 会话权限 registry（wt-a63-pr6 @ae04160，DeepSeek）：复跑 325/0；codex + GLM 评审中
+- A6.7-pr3 | review | ready | hooks 配置解析与匹配（wt-a67-pr3 @dda1d79，codex）：复跑 318/0；DeepSeek dsh + GLM 评审中
+- A6.4-pr11 | impl | ready | task budget 账本（wt-a64-pr11，codex）：两家 0/0，便宜 P2 一轮修复中 → 闸门
+- D2-pr1 | impl | ready | skills migrate（wt-d1-cli，codex）：umask P1 经协调者实测驳回（异步 fs.cp 保留源 mode）；legacy-skills-current 按 TS 实录填期望中
+- F2-A34-pr2 | review | ready | A 类样板（wt-f34b @9faff3b，Claude）：行数断言已补，旧侧 r4 3/3 PASS、基线零写入；增量确认 DeepSeek dsh + codex
+- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：生成器已通过，回放 3/4（双向交叉通过），_FAILED.json 字节数差异第五轮
+- A6.4-pr2a | impl | ready | 定价 + 本地 token 估算纯函数（wt-a64-pr2a，DeepSeek dsh）：实现中
+- p2-sweep-4 | review | ready | P2 清账（wt-p2-sweep-4，codex）：修 #235、#251，复跑中 → DeepSeek dsh + GLM
 - A6.4-pr1 | impl | blocked | model module 适配；等 A6-X0 合并
 - A6.5-pr1 | impl | blocked | capability + permission 适配；等 A6-X0 合并
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
@@ -21,6 +21,9 @@ updated: 2026-10-18 17:35 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 18:01 · /loop
+> 合并：#262（B2 归档登记）、#263（board）。人定**模型分工 v2**（经守护会话转达）：规格单交 DeepSeek（dsh）实现；评审第一家 DeepSeek（dsh read-only），第二家 codex，难单加 Claude；四角色审查仍用 GLM。卡见 decisions-20261017 末节，memory 见 20261018-dsh-channel。从本轮起评审改用 `_tmp/20261018-a6-split/review.sh`（可组合 glm/codex/dsh/claude）。仲裁：D2 的 umask P1 经协调者最小实测驳回（`_tmp/20261018-d2-skills/arb/`）。worktree 12/12，cargo 槽 3/4。**下一步**：X0 过 gate2 和增量确认后立即入队，合入后当轮放出 A6.4-pr1 / A6.5-pr1。
 
 > ## 2026-10-18 17:35 · /loop（按新版 loop-prompt「先派满」）
 > 合并：#260（board + 两条 memory）。17:27 醒来发现所有后台任务都已结束、线全空，于是当轮派满：A6.7-pr3（codex，接在它交付 A6.4-pr11 之后）、A6.3-pr6（DeepSeek dsh）、p2-sweep-4（codex），另有五单进修复或评审轮。评审中被实测证据驳回的 P1 有四条（D2 两条看 TS 实录 exit 和事件流，F2 两条看旧侧实跑 PASS）。新 P2-跟进 #261。开 #262 补 B2 归档登记。worktree 11/12，磁盘约 53/100 GiB，cargo 槽 1/4。**下一步**：X0 闸门一过就入队，合入后当轮放出 A6.4-pr1、A6.5-pr1；其余按回调推进。
