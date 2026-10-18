@@ -1,19 +1,17 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 18:01 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6-X0 | gate | ready | 宿主 module 路由（wt-a6-x0，codex/a6-x0 @bbc7a8f）：闸门 P1×1、P2×5 一轮修完，复跑 321/0；增量确认（DeepSeek dsh + Claude）与 gate2 并行，过了即入队（串行热点）
-- A6.3-pr1 | gate | ready | 配置 diff/classify（wt-a63-pr1 @92c325d，DeepSeek）：二轮 0/0，transientRetry 已补；gate2 中 → PR
-- A6.3-pr6 | review | ready | 会话权限 registry（wt-a63-pr6 @ae04160，DeepSeek）：复跑 325/0；codex + GLM 评审中
-- A6.7-pr3 | review | ready | hooks 配置解析与匹配（wt-a67-pr3 @dda1d79，codex）：复跑 318/0；DeepSeek dsh + GLM 评审中
-- A6.4-pr11 | impl | ready | task budget 账本（wt-a64-pr11，codex）：两家 0/0，便宜 P2 一轮修复中 → 闸门
-- D2-pr1 | impl | ready | skills migrate（wt-d1-cli，codex）：umask P1 经协调者实测驳回（异步 fs.cp 保留源 mode）；legacy-skills-current 按 TS 实录填期望中
-- F2-A34-pr2 | review | ready | A 类样板（wt-f34b @9faff3b，Claude）：行数断言已补，旧侧 r4 3/3 PASS、基线零写入；增量确认 DeepSeek dsh + codex
-- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：生成器已通过，回放 3/4（双向交叉通过），_FAILED.json 字节数差异第五轮
-- A6.4-pr2a | impl | ready | 定价 + 本地 token 估算纯函数（wt-a64-pr2a，DeepSeek dsh）：实现中
-- p2-sweep-4 | review | ready | P2 清账（wt-p2-sweep-4，codex）：修 #235、#251，复跑中 → DeepSeek dsh + GLM
-- A6.4-pr1 | impl | blocked | model module 适配；等 A6-X0 合并
-- A6.5-pr1 | impl | blocked | capability + permission 适配；等 A6-X0 合并
+updated: 2026-10-18 18:30 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.4-pr1 | impl | ready | model module 适配（wt-a6-x0 复用，deepseek/a64-pr1）：X0 合入后当轮放出，DeepSeek dsh 实现中；评审 codex + GLM
+- A6.5-pr1 | impl | ready | capability + permission 适配（wt-a63-pr1 复用，codex/a65-pr1）：X0 合入后当轮放出，codex 实现中；评审 DeepSeek dsh + GLM
+- A6.3-pr6 | impl | ready | 会话权限 registry（wt-a63-pr6，DeepSeek）：codex P1（clone 切断共享规则数组）修复中
+- A6.7-pr3 | impl | ready | hooks 配置（wt-a67-pr3，codex）：两家撞上同一类 P1（V8 栈溢出边界），按卡 B（确定成功区上界 + TS 同结果失败）修复中，卡见 _tmp/20261018-a67-pr3/card.md，随 PR 入决策文件
+- A6.4-pr11 | gate | ready | task budget 账本（wt-a64-pr11，codex）：复跑 318/0，四角色闸门中 → PR
+- A6.4-pr2a | review | ready | 定价 + 本地 token 估算（wt-a64-pr2a @81d03e7，DeepSeek）：复跑 318/0、生成器确定；gitleaks 误报（公开源文件哈希）按精确值放行；codex + GLM 评审中
+- D2-pr1 | review | ready | skills migrate（wt-d1-cli @306c746，codex）：D0 正式轮 29 场景三项全 PASS；增量确认 DeepSeek dsh + GLM
+- F2-A34-pr2 | impl | ready | A 类样板（wt-f34b，Claude）：只数最外层 keyed row（防假 FAIL）已改，旧侧 r5 实跑排队中
+- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM）：回放 4/4 全过；第六轮修生成器 createdAt 不确定 + clippy 两条 + fmt
+- p2-sweep-4 | gate | ready | P2 清账 #235、#251（wt-p2-sweep-4，codex）：两家 0/0；闸门中 → PR
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -21,6 +19,9 @@ updated: 2026-10-18 18:01 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 18:30 · /loop
+> 合并：#264（board + 模型分工 v2）、**#266（A6-X0）**、**#267（A6.3-pr1，DeepSeek 第一单）**。X0 合入后当轮放出 A6.4-pr1（DeepSeek）和 A6.5-pr1（codex），复用已合并的两个 worktree，证据先归档到 `_tmp/archive/`。新 P2-跟进 #265（X0 遗留，前置于 A6.4-pr1 / A6.5-pr1，已写进两单任务书）。A6.7-pr3 两家撞上「V8 资源耗尽边界」P1，按卡 B 处理（AI 代批，待人复核）。A6.4-pr2a 的 gitleaks 误报按 `.gitleaks.toml` 现行做法以精确值放行。worktree 12/12。
 
 > ## 2026-10-18 18:01 · /loop
 > 合并：#262（B2 归档登记）、#263（board）。人定**模型分工 v2**（经守护会话转达）：规格单交 DeepSeek（dsh）实现；评审第一家 DeepSeek（dsh read-only），第二家 codex，难单加 Claude；四角色审查仍用 GLM。卡见 decisions-20261017 末节，memory 见 20261018-dsh-channel。从本轮起评审改用 `_tmp/20261018-a6-split/review.sh`（可组合 glm/codex/dsh/claude）。仲裁：D2 的 umask P1 经协调者最小实测驳回（`_tmp/20261018-d2-skills/arb/`）。worktree 12/12，cargo 槽 3/4。**下一步**：X0 过 gate2 和增量确认后立即入队，合入后当轮放出 A6.4-pr1 / A6.5-pr1。
