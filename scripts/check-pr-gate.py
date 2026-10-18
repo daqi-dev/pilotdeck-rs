@@ -79,7 +79,7 @@ class TrailerScanError(Exception):
 
 
 def trailer_families(base: str, head: str) -> set[str]:
-    """base..head 提交的 Co-Authored-By 署名对应的谱系。给了范围却读不到 → 抛 TrailerScanError（fail-closed）。"""
+    """base..head 提交的 Co-Authored-By 署名与 Agent:/Model: 标注对应的谱系。给了范围却读不到 → 抛 TrailerScanError（fail-closed）。"""
     if not base or not head:
         return set()
     # base..head 即「head 可达、base 不可达」的提交集合（多公共祖先时也正确，不另取 merge-base）
@@ -89,7 +89,8 @@ def trailer_families(base: str, head: str) -> set[str]:
     if cp.returncode != 0:
         raise TrailerScanError(cp.stderr.strip()[:200])
     out = set()
-    for m in re.finditer(r"(?im)^[ \t]*co-authored-by[ \t]*:[ \t]*(.*(?:\n[ \t]+\S.*)*)", cp.stdout):
+    # 也读 specs/README.md 规定的提交标注 Agent: / Model:（同源的机器可读谱系信号）
+    for m in re.finditer(r"(?im)^[ \t]*(?:co-authored-by|agent|model)[ \t]*:[ \t]*(.*(?:\n[ \t]+\S.*)*)", cp.stdout):
         out |= trailer_family_of(" ".join(m.group(1).split()))
     return out
 

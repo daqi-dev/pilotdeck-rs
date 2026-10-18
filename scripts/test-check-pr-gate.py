@@ -123,6 +123,15 @@ def main() -> int:
             got4 = gate.trailer_families("HEAD~1", "HEAD")
         finally:
             os.chdir(cwd)
+        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "h\n\nChange-By: ai\nAgent: opencode\nModel: glm-5.3\nCo-authored-by: 郑 <z@example.org>"], check=True)
+        os.chdir(td)
+        try:
+            got5 = gate.trailer_families("HEAD~1", "HEAD")
+        finally:
+            os.chdir(cwd)
+        good5 = got5 == {"glm"}
+        print(f"{'PASS' if good5 else 'FAIL'} 规约标注 Agent:/Model: 也计入作者 {sorted(got5)}")
+        fails += not good5
         good4 = got4 == {"claude"}
         print(f"{'PASS' if good4 else 'FAIL'} 折行署名（续行里的厂商域名）也识别 {sorted(got4)}")
         fails += not good4
@@ -200,7 +209,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 24} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 25} 例）")
     return 1 if fails else 0
 
 
