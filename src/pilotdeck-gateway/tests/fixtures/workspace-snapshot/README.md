@@ -1,6 +1,6 @@
 # Workspace snapshot TS fixtures
 
-固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，被测源码 `src/storage/workspaceSnapshot.ts`（SHA-256 记在 `oracle.json`）。所有快照目录、manifest 与步骤结果都由真实 TS 的 `ContentAddressedWorkspaceSnapshotRecorder` / `createWorkspaceSnapshotProvider` 产生，无实现源码复制；环境准备（Node v22、基线 lockfile 的 tsx、`PDRS_BASELINE`）同 `../run-registry/README.md`。
+固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，被测源码 `src/storage/workspaceSnapshot.ts`（SHA-256 记在 `oracle.json`）。所有快照目录、manifest 与步骤结果都由真实 TS 的 `ContentAddressedWorkspaceSnapshotRecorder` / `createWorkspaceSnapshotProvider` 产生，无实现源码复制；环境准备（Node v22、基线 lockfile 的 tsx、`PDRS_BASELINE`）同 `../run-registry/README.md`。每次运行用 `/tmp/pdrs-r10-*` 的 `mkdtemp` 独占目录，绝不使用固定的 `/tmp/pdrs-r9-*`；清理只删本次 `mkdtemp` 创建的树。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
@@ -9,12 +9,12 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/workspace-snapshot
 ```
 
-生成器先断言基线 HEAD，并对每个场景的关键结果做自检（提交/失败状态、缓存命中、marker 早退、排序、manifest 字节等于 `JSON.stringify(, 2)`、树内容），防止步骤引用写错导致断言全部落空。写 `oracle.json` 前断言其中不含临时目录、输出目录与基线路径；Rust 读取时断言不含 `.generate-`。生成器把进程时钟固定在 `2026-01-01T00:00:00Z`（`tick` 每次把假时钟推进 1 ms），因此唯一由真实时钟决定的 `createdAt` 也不再随运行变化，连跑两次 `oracle.json` 逐字节一致；Rust 回放仍用真实时钟，所以比较时继续对 `createdAt` 做 `<ts>` 掩码。
+生成器先断言基线 HEAD，并对每个场景的关键结果做自检（提交/失败状态、缓存命中、marker 早退、排序、manifest 字节等于 `JSON.stringify(, 2)`、树内容），防止步骤引用写错导致断言全部落空。`mkdtemp` 根目录预放 `pdrs-r9-linkout`/`pdrs-r9-path`/`pdrs-r9-target`/`ws-snapshot-scenario` 四个哨兵文件，全部场景跑完后断言仍在（固定路径 P0 负控）。写 `oracle.json` 前断言其中不含本次临时目录、输出目录与基线路径；Rust 读取时断言不含固定的 `/tmp/pdrs-*` 路径。生成器把进程时钟固定在 `2026-01-01T00:00:00Z`（`tick` 每次把假时钟推进 1 ms），因此唯一由真实时钟决定的 `createdAt` 也不再随运行变化，连跑两次 `oracle.json` 逐字节一致；Rust 回放仍用真实时钟，所以比较时继续对 `createdAt` 做 `<ts>` 掩码。临时目录保持 20 字符（`/tmp/pdrs-r10-` + 6），使含 NUL 的 `ERR_INVALID_ARG_VALUE` 引文落在 Node 的 128 UTF-16 单元 inspect 上限内；`nul-capture-root` 用 `dirName: '.'` 直接占用该 20 字符根目录。
 
 `oracle.json`：
 
 - `configCases`：`resolveWorkspaceSnapshotConfig` 的 env 表（cwd 屏蔽为 `<cwd>`）。
-- `scenarios[]`：`workspace`（起始工作区：文件 b64、符号链接、空目录、非 UTF-8 文件名字节）、`steps[]`（capture/list/get/restore 及对快照根与工作区的写删；`<dir>` 为场景目录占位）、`dynamicIds`（本场景由真实 recorder 写出的快照 ID）、`tree`（快照根完整树：路径+kind+大小+sha256）。
+- `scenarios[]`：`workspace`（起始工作区：文件 b64、符号链接、空目录、非 UTF-8 文件名字节）、`steps[]`（capture/list/get/restore 及对快照根与工作区的写删；`<dir>` 为场景目录占位，绝对目标同样落在本次 `mkdtemp` 下）、`dynamicIds`（本场景由真实 recorder 写出的快照 ID）、`tree`（快照根完整树：路径+kind+大小+sha256）。
   - **掩码范围**：只对 `dynamicIds` 对应分区的 `manifest.json` / `_FAILED.json` 顶层 `createdAt` 掩成 `<ts>`，marker 的 `error` 值内嵌的场景目录掩成 `<dir>`；`failureReason`、`entries.path`、`linkTarget`、手工 manifest 的固定时间、restore 出的用户 `.json` 一律原始比较。size 与 sha256 同取投影后字节（原始 size 含 scratch 路径长度，跨运行不可比）。生成器自检断言 `mask-scope` 的三处日期仍在投影结果里、用户 `.json` 的 sha256 等于原始字节，`provider-quirks` 的固定 `createdAt` 不被投影。
   - capture 默认用**最新** recorder（`recorder` 步骤让后续 capture 换新实例；completed 缓存连失败结果一起缓存，旧实例读不到磁盘上的 marker 变化）。
 - `cross`：normal 场景 TS 写出的快照树（文件 b64 + 目录表）与 list/get/restore 的 TS 结果，供 Rust 正向交叉（Rust 读 TS 写的快照）。
@@ -53,6 +53,11 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway worksp
 | nul-restore-link | entry 的 `linkTarget` 含 NUL：`symlink` 的 `ERR_INVALID_ARG_VALUE`（参数名 `target`） |
 | nul-restore-link-output | entry 的 `path` 含 NUL 且为 symlink：`symlink` 的 `ERR_INVALID_ARG_VALUE`（`path`） |
 | nul-restore-path | entry 的 `path` 含 NUL 且为 file：`writeFile` 的 `ERR_INVALID_ARG_VALUE`（`path`，在 readFile 成功之后） |
-| nul-capture-root | snapshotRoot 含 NUL：capture 在失败分区 `mkdir` 处 reject（TypeError），不落 marker |
+| nul-restore-link-existing | 目标已有输出文件且 `linkTarget` 含 NUL：TS 先 `rm(output)` 再 `symlink`，所以失败后旧文件已消失；同目录预置的 `sentinel` 必须保留（只删条目自己的输出，不递归删目录） |
+| nul-link-target-surrogate | `linkTarget="tar\ud800\0get"`：错误引文保留原始 UTF-16（`tar\ud800\x00get`），不折成 U+FFFD |
+| nul-output-surrogate | symlink 的 `path="a\ud800\0b"`：输出路径引文保留孤立代理项 |
+| nul-object-surrogate | `objectKey="obj\ud800\0key"`：readFile 的源路径引文保留孤立代理项 |
+| nul-file-output-surrogate | file 的 `path="a\ud800\0b.txt"`：readFile 成功后 writeFile 的引文保留孤立代理项 |
+| nul-capture-root | snapshotRoot 含 NUL：capture 在失败分区 `mkdir` 处 reject（TypeError），不落 marker；20 字符根目录使引文完整保留 64 位 digest |
 
 范围：只证明 WorkspaceSnapshot 存储契约（布局、字节、marker 语义与 TS 一致）；WS 入口与投影是 A6.6-pr4，本 PR 不接 host/gateway 方法。已知差异见 `src/storage/workspace_snapshot.rs` 文件头（未实测 errno 回落 Rust Display、同步 recorder）；磁盘回读的字符串保留原始 `JsString`，`createdAt` 含孤立代理项时的 `localeCompare` 按 R19 返回宿主边界错误（合法 Unicode 与 U+FFFD 仍原生排序）。并发共享：生成器用两条同键的并发 promise 自检真实 TS 的拒绝共享与事后重试；Rust 侧由 `hard_failure_is_shared_with_waiters_and_not_cached` 单元测试确定性覆盖等待者拿到同一 `Err` 且新调用重试，`panicking_leader_publishes_failure_to_waiters` 覆盖 leader panic 时 in-flight 条目仍会发布失败。

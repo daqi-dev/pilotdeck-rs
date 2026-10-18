@@ -55,7 +55,9 @@ if (process.argv[3] === '--verify-rust') {
       }
     }
   }
-  const restored = await provider.restore(list[0].snapshotId, join(output, '..', 'ts-restore'));
+  // Restore inside the Rust-owned snapshot root: the caller drops that whole
+  // per-run tree, so no fixed sibling path (the old `../ts-restore`) is needed.
+  const restored = await provider.restore(list[0].snapshotId, join(output, 'ts-restore'));
   assert.equal(restored.restored, true);
   console.log(`PASS: real TS listed ${list.length} Rust snapshots, verified manifest bytes, objects and restore`);
   process.exit(0);
@@ -136,8 +138,10 @@ type WorkspaceSpec = {
 };
 
 const scenarios: any[] = [];
-async function scenario(name: string, options: { workspace?: WorkspaceSpec; snapshotRoot?: string; steps?: any[] }) {
-  const dir = join(scratch, name);
+async function scenario(name: string, options: { workspace?: WorkspaceSpec; snapshotRoot?: string; dirName?: string; steps?: any[] }) {
+  // `dirName` lets the capture-root NUL case use the 20-character mkdtemp root
+  // itself: its quoted partition must stay under Node's 128-unit inspect limit.
+  const dir = join(scratch, options.dirName ?? name);
   const workspaceDir = join(dir, 'workspace');
   await mkdir(workspaceDir, { recursive: true });
   const spec = options.workspace ?? {};
@@ -224,9 +228,9 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
         const input = { ...step.input, workspaceDir: resolvePath(step.input.workspaceDir) };
         // A step-level snapshotRoot pins a config whose root carries a NUL
         // (capture then rejects in the marker-path mkdir, outside the try).
-        const currentConfig = step.snapshotRoot
-          ? { root: step.snapshotRoot, snapshotRoot: step.snapshotRoot }
-          : config;
+        // The recorded step keeps `<dir>` so the oracle never holds a run path.
+        const stepRoot = step.snapshotRoot ? resolvePath(step.snapshotRoot) : undefined;
+        const currentConfig = stepRoot ? { root: stepRoot, snapshotRoot: stepRoot } : config;
         try {
           // The latest recorder by default: 'recorder' steps opt the next
           // capture into fresh state (the completed map also caches failures,
@@ -283,7 +287,8 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
         done.snapshotId = snapshotId;
         // resolvePath keeps absolute targets absolute; join(dir, absolute)
         // would concatenate them (path.join does not reset on an absolute
-        // segment). NUL-target cases rely on the absolute short path.
+        // segment). Every absolute target is still under this run's mkdtemp
+        // `<dir>`; NUL cases spell it out because the error text quotes it.
         const target = resolvePath(step.target);
         try {
           const value = await provider().restore(snapshotId, target);
@@ -292,6 +297,9 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
           done.targetTree = await recordTree(target, dir, new Set());
         } catch (error: any) {
           done.outcome = { error: { name: error.name, message: maskDir(error.message) } };
+          // A failed restore may still have changed the target (rm before a
+          // rejected symlink); opt-in scenarios record the tree to prove it.
+          if (step.targetTreeOnError) done.targetTree = await recordTree(target, dir, new Set());
         }
         break;
       }
@@ -320,8 +328,16 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
 }
 
 await mkdir(output, { recursive: true });
-const scratch = await mkdtemp(join(output, '.generate-'));
+// A short per-run mkdtemp under /tmp: the masked `<dir>` text must stay short
+// enough for Node's 128-UTF-16-unit ERR_INVALID_ARG_VALUE quoting, and the
+// directory is exclusively this run's (never a fixed /tmp/pdrs-r9-* path).
+const scratch = await mkdtemp('/tmp/pdrs-r10-');
 try {
+  // Negative control for the fixed-path P0: sentinels carrying the old fixed
+  // names live in this run's own temp root. Nothing in the run may remove
+  // them; only per-scenario subtrees are touched.
+  const sentinels = ['pdrs-r9-linkout', 'pdrs-r9-path', 'pdrs-r9-target', 'ws-snapshot-scenario'];
+  for (const name of sentinels) await writeFile(join(scratch, name), 'keep\n');
   // Non-UTF-8 file names need a byte-transparent filesystem (Linux ext4 and
   // friends); APFS/HFS+ reject the bytes with EINVAL, so the scenario probes
   // first and both this generator and the Rust replay drop it where the name
@@ -896,7 +912,7 @@ try {
       {
         op: 'capture',
         phase: 'pre_user',
-        input: { workspaceId: 'w', sessionId: 's', turnId: 't', runId: 'r', workspaceDir: '/nul\u0000' },
+        input: { workspaceId: 'w', sessionId: 's', turnId: 't', runId: 'r', workspaceDir: '<dir>/nul-workspace\u0000' },
       },
     ],
   });
@@ -905,7 +921,7 @@ try {
     assert.equal(capture.state, 'failed');
     assert.match(
       capture.error,
-      /^The argument 'path' must be a string, Uint8Array, or URL without null bytes\. Received '\/nul\\x00'$/,
+      /^The argument 'path' must be a string, Uint8Array, or URL without null bytes\. Received '<dir>\/nul-workspace\\x00'$/,
     );
   }
 
@@ -998,14 +1014,14 @@ try {
     steps: [
       { op: 'tick' },
       { op: 'capture', as: 'pre', phase: 'pre_user', input: { workspaceId: 'w', sessionId: 's-nul-target', turnId: 't', runId: 'r', workspaceDir: '<dir>/workspace' } },
-      { op: 'restore', snapshotId: '$pre', target: '/tmp/pdrs-r9-target\u0000root' },
+      { op: 'restore', snapshotId: '$pre', target: '<dir>/nul-target\u0000root' },
     ],
   });
   {
     const outcome = nulRestoreTarget.steps.find((s: any) => s.op === 'restore')!.outcome;
     assert.deepEqual(outcome.error, {
       name: 'TypeError',
-      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-target\\x00root'",
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/nul-target\\x00root'",
     });
   }
 
@@ -1023,7 +1039,7 @@ try {
             turnId: 't',
             runId: 'r',
             phase: 'pre_user',
-            entries: [{ path: 'out.txt', entryType: 'file', objectKey: '/nul\u0000object' }],
+            entries: [{ path: 'out.txt', entryType: 'file', objectKey: 'nul-object\u0000key' }],
             createdAt: '2020-01-01T00:00:00.000Z',
           },
           null,
@@ -1037,7 +1053,7 @@ try {
     const outcome = nulRestoreObject.steps.find((s: any) => s.op === 'restore')!.outcome;
     assert.deepEqual(outcome.error, {
       name: 'TypeError',
-      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/nul\\x00object'",
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/snapshots/nul-object\\x00key'",
     });
   }
 
@@ -1094,15 +1110,14 @@ try {
           2,
         ),
       },
-      { op: 'restore', snapshotId: 'nul-link-out', target: '/tmp/pdrs-r9-linkout' },
-      { op: 'remove', path: '/tmp/pdrs-r9-linkout', recursive: true },
+      { op: 'restore', snapshotId: 'nul-link-out', target: '<dir>/nul-linkout' },
     ],
   });
   {
     const outcome = nulRestoreLinkOutput.steps.find((s: any) => s.op === 'restore')!.outcome;
     assert.deepEqual(outcome.error, {
       name: 'TypeError',
-      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-linkout/a\\x00b'",
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/nul-linkout/a\\x00b'",
     });
   }
 
@@ -1128,36 +1143,214 @@ try {
           2,
         ),
       },
-      { op: 'restore', snapshotId: 'nul-path', target: '/tmp/pdrs-r9-path' },
-      { op: 'remove', path: '/tmp/pdrs-r9-path', recursive: true },
+      { op: 'restore', snapshotId: 'nul-path', target: '<dir>/nul-path' },
     ],
   });
   {
     const outcome = nulRestorePath.steps.find((s: any) => s.op === 'restore')!.outcome;
     assert.deepEqual(outcome.error, {
       name: 'TypeError',
-      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-path/a\\x00b.txt'",
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/nul-path/a\\x00b.txt'",
+    });
+  }
+
+  // P1 round 3: TS runs `rm(output, { force: true })` before `symlink`
+  // validates `target`, so a pre-existing output file is gone even though the
+  // call rejects. The target directory also holds a pre-existing sentinel: the
+  // restore may remove only the entry's own output, never the directory.
+  const nulRestoreLinkExisting = await scenario('nul-restore-link-existing', {
+    workspace: {},
+    steps: [
+      { op: 'writeFile', path: 'restore-link-existing/link', b64: b64('old file\n') },
+      { op: 'writeFile', path: 'restore-link-existing/sentinel', b64: b64('keep\n') },
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-link-existing/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-link-existing',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'link', entryType: 'symlink', linkTarget: 'tar\u0000get' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-link-existing', target: 'restore-link-existing', targetTreeOnError: true },
+    ],
+  });
+  {
+    const step = nulRestoreLinkExisting.steps.find((s: any) => s.op === 'restore')!;
+    assert.deepEqual(step.outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'target' must be a string, Uint8Array, or URL without null bytes. Received 'tar\\x00get'",
+    });
+    assert.deepEqual(
+      step.targetTree.map((row: any) => row.path),
+      ['sentinel'],
+      'rm(output) ran before the rejected symlink; the pre-existing sentinel survives',
+    );
+    assert.equal(step.targetTree[0].size, 5);
+  }
+
+  // P1 round 3: a lone surrogate next to the NUL must stay in the quoted
+  // argument. Node reports `tar\ud800\x00get`, not `tar\uFFFD\x00get`.
+  const nulLinkTargetSurrogate = await scenario('nul-link-target-surrogate', {
+    workspace: {},
+    steps: [
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-link-surrogate/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-link-surrogate',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'link', entryType: 'symlink', linkTarget: 'tar\ud800\u0000get' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-link-surrogate', target: 'restore-link-surrogate' },
+    ],
+  });
+  {
+    const outcome = nulLinkTargetSurrogate.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'target' must be a string, Uint8Array, or URL without null bytes. Received 'tar\\ud800\\x00get'",
+    });
+  }
+
+  const nulOutputSurrogate = await scenario('nul-output-surrogate', {
+    workspace: {},
+    steps: [
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-output-surrogate/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-output-surrogate',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'a\ud800\u0000b', entryType: 'symlink', linkTarget: 'ok-target' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-output-surrogate', target: 'restore-output-surrogate' },
+    ],
+  });
+  {
+    const outcome = nulOutputSurrogate.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/restore-output-surrogate/a\\ud800\\x00b'",
+    });
+  }
+
+  const nulObjectSurrogate = await scenario('nul-object-surrogate', {
+    workspace: {},
+    steps: [
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-object-surrogate/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-object-surrogate',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'out.txt', entryType: 'file', objectKey: 'obj\ud800\u0000key' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-object-surrogate', target: 'restore-object-surrogate' },
+    ],
+  });
+  {
+    const outcome = nulObjectSurrogate.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/snapshots/obj\\ud800\\x00key'",
+    });
+  }
+
+  const nulFileOutputSurrogate = await scenario('nul-file-output-surrogate', {
+    workspace: {},
+    steps: [
+      { op: 'writeSnapshot', path: 'objects/sha256/00/00/nul-file-surrogate-object', text: 'ok\n' },
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-file-surrogate/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-file-surrogate',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'a\ud800\u0000b.txt', entryType: 'file', objectKey: 'objects/sha256/00/00/nul-file-surrogate-object' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-file-surrogate', target: 'restore-file-surrogate' },
+    ],
+  });
+  {
+    const outcome = nulFileOutputSurrogate.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '<dir>/restore-file-surrogate/a\\ud800\\x00b.txt'",
     });
   }
 
   const nulCaptureRoot = await scenario('nul-capture-root', {
+    dirName: '.',
     workspace: { files: [{ path: 'x.txt', bytes: Buffer.from('x\n') }] },
     steps: [
       { op: 'tick' },
       {
         op: 'capture',
-        snapshotRoot: '/nul\u0000root',
+        snapshotRoot: '<dir>/\u0000r',
         phase: 'pre_user',
-        input: { workspaceId: 'w', sessionId: 's-nul-root', turnId: 't-nul-root', runId: 'r', workspaceDir: '<dir>/workspace' },
+        input: { workspaceId: 'w', sessionId: 's', turnId: 't', runId: 'r', workspaceDir: '<dir>/workspace' },
       },
     ],
   });
   {
     const outcome = nulCaptureRoot.steps.find((s: any) => s.op === 'capture')!.outcome;
     assert.equal(outcome.error.name, 'TypeError');
+    // The quoted partition stays at 127 inspected units (mkdtemp dir 20 +
+    // `/\0r` 3 + partition 99 + quotes 2, NUL escaped +3), just under Node's
+    // 128-unit inspect limit, so the full digest survives.
     assert.match(
       outcome.error.message,
-      /^The argument 'path' must be a string, Uint8Array, or URL without null bytes\. Received '\/nul\\x00root\/workspaces\/w\/sessions\/s-nul-root\/snapshots\/[0-9a-f]{64}'$/,
+      /^The argument 'path' must be a string, Uint8Array, or URL without null bytes\. Received '<dir>\/\\x00r\/workspaces\/w\/sessions\/s\/snapshots\/[0-9a-f]{64}'$/,
     );
   }
 
@@ -1241,6 +1434,10 @@ try {
     input: normal.steps.find((s: any) => s.op === 'capture')!.input,
   };
   assert.ok(cross.preId && cross.postId);
+
+  for (const name of sentinels) {
+    assert.equal(await readFile(join(scratch, name), 'utf8'), 'keep\n', `sentinel ${name} was removed`);
+  }
 
   const oracle = { sourceCommit, sourceSha256, configCases, scenarios, hostBoundaryCases, cross };
   const json = JSON.stringify(oracle, null, 2);

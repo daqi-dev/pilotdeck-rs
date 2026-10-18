@@ -180,8 +180,10 @@ pub enum WorkspaceSnapshotError {
     Escape,
     /// Node `ERR_INVALID_ARG_VALUE` from `fs.validatePath` (a NUL byte in a
     /// path argument). Only raised outside the capture try block, where TS
-    /// rejects instead of writing a failed marker.
-    TypeError(String),
+    /// rejects instead of writing a failed marker. The message keeps the raw
+    /// UTF-16 units of the offending argument, so a lone surrogate next to
+    /// the NUL stays `\ud800` instead of becoming U+FFFD.
+    TypeError(JsString),
     /// R19 host boundary: the comparison needs Node's collator for unpaired
     /// surrogates. Callers wire this to the host instead of accepting a
     /// silently different order.
@@ -201,8 +203,10 @@ impl fmt::Display for WorkspaceSnapshotError {
             | Self::Syntax(message)
             | Self::Io(message)
             | Self::NotFound(message)
-            | Self::TypeError(message)
             | Self::HostRequired(message) => f.write_str(message),
+            // Display cannot carry a lone surrogate; callers that serialize an
+            // error to JSON use `TypeError`'s raw `JsString` instead.
+            Self::TypeError(message) => f.write_str(&String::from_utf16_lossy(message.units())),
             Self::UnsafePath => f.write_str("Snapshot contains an unsafe relative path."),
             Self::Escape => f.write_str("Snapshot path escapes target workspace."),
         }
@@ -348,7 +352,7 @@ impl WorkspaceSnapshotProvider {
         let destination = resolve(target_root)?;
         // Node path.resolve keeps NUL bytes; fs.validatePath rejects them at
         // the first syscall, so mkdir(destination) is where it surfaces.
-        validate_nul_path(&destination, "path")?;
+        validate_nul_path(&JsString::from(destination.as_str()), "path")?;
         fs::create_dir_all(&destination).map_err(|e| {
             WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(Path::new(&destination))))
         })?;
@@ -362,22 +366,32 @@ impl WorkspaceSnapshotProvider {
             let Some(path) = field(entry, "path").as_string() else {
                 return Err(WorkspaceSnapshotError::UnsafePath);
             };
-            let path = String::from_utf16_lossy(path.units());
             // TS checks the raw segments before resolving (workspaceSnapshot.ts:119).
-            if path.starts_with('/') || path.split('/').any(|part| part == "..") {
+            if path.units().first() == Some(&SLASH)
+                || path.units().split(|unit| *unit == SLASH).any(is_dot_dot)
+            {
                 return Err(WorkspaceSnapshotError::UnsafePath);
             }
-            let output = lexical_resolve(Path::new(&destination), &path);
-            let output = output.to_string_lossy().into_owned();
-            let prefix = format!("{destination}/");
-            if output != destination && !output.starts_with(&prefix) {
+            // path.resolve and startsWith compare the original JS string; keep
+            // its units so validatePath can quote a lone surrogate next to NUL.
+            let output_units = resolve_path_units(&destination, path);
+            let destination_units: Vec<u16> = destination.encode_utf16().collect();
+            let mut prefix_units = destination_units.clone();
+            prefix_units.push(SLASH);
+            if output_units.units() != destination_units.as_slice()
+                && !output_units.units().starts_with(&prefix_units)
+            {
                 return Err(WorkspaceSnapshotError::Escape);
             }
+            let output = String::from_utf16_lossy(output_units.units());
             let output_path = PathBuf::from(&output);
-            if let Some(parent) = output_path.parent() {
-                validate_nul_path(&parent.to_string_lossy(), "path")?;
-                fs::create_dir_all(parent)
-                    .map_err(|e| WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(parent))))?;
+            if let Some(parent_units) = parent_path_units(output_units.units()) {
+                let parent = JsString::from_utf16(parent_units.to_vec());
+                validate_nul_path(&parent, "path")?;
+                let parent = PathBuf::from(String::from_utf16_lossy(parent.units()));
+                fs::create_dir_all(&parent).map_err(|e| {
+                    WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(&parent)))
+                })?;
             }
             let entry_type = field(entry, "entryType");
             if entry_type
@@ -385,12 +399,15 @@ impl WorkspaceSnapshotProvider {
                 .is_some_and(|t| t.equals_str("symlink"))
                 && let Some(target) = field(entry, "linkTarget").as_string()
             {
-                let target = String::from_utf16_lossy(target.units());
-                // Node symlink validates `target` before `path`; rm(output)
-                // first swallows its own NUL rejection.
-                validate_nul_path(&target, "target")?;
-                validate_nul_path(&output, "path")?;
+                // TS: `await rm(output, { force: true }).catch(() => undefined)`
+                // runs before `symlink(target, output)`, so an existing output
+                // file is gone even when the target is rejected. The rm call's
+                // own validatePath rejection is swallowed with the catch.
                 let _ = fs::remove_file(&output_path);
+                // Node symlink validates `target` before `path`.
+                validate_nul_path(target, "target")?;
+                validate_nul_path(&output_units, "path")?;
+                let target = String::from_utf16_lossy(target.units());
                 symlink(&target, &output_path).map_err(|e| {
                     WorkspaceSnapshotError::Io(two_path_message(
                         &e,
@@ -402,10 +419,10 @@ impl WorkspaceSnapshotProvider {
             } else if entry_type.as_string().is_some_and(|t| t.equals_str("file"))
                 && let Some(object_key) = field(entry, "objectKey").as_string()
             {
-                let object_key = String::from_utf16_lossy(object_key.units());
-                let source = lexical_resolve(Path::new(&snapshot_root), &object_key);
-                let source_text = source.to_string_lossy();
-                validate_nul_path(&source_text, "path")?;
+                let source_units = resolve_path_units(&snapshot_root, object_key);
+                validate_nul_path(&source_units, "path")?;
+                let source_text = String::from_utf16_lossy(source_units.units());
+                let source = PathBuf::from(&source_text);
                 let contents = fs::read(&source).map_err(|error| {
                     crate::node_io::read_file(&error, &source_text)
                         .map(|(_, message)| WorkspaceSnapshotError::Io(message))
@@ -419,7 +436,7 @@ impl WorkspaceSnapshotProvider {
                 })?;
                 // writeFile(output) validates after readFile has succeeded,
                 // exactly the order of the TS expression.
-                validate_nul_path(&output, "path")?;
+                validate_nul_path(&output_units, "path")?;
                 fs::write(&output_path, contents).map_err(|e| {
                     WorkspaceSnapshotError::Io(io_error(&e, "open", Some(Path::new(&output))))
                 })?;
@@ -744,7 +761,7 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                 let _ = fs::remove_dir_all(&temporary_dir);
                 // This mkdir sits outside the TS catch: a NUL partition path
                 // rejects the capture promise instead of writing a marker.
-                validate_nul_path(&path_string(&paths.partition), "path")?;
+                validate_nul_path(&JsString::from(path_string(&paths.partition)), "path")?;
                 fs::create_dir_all(&paths.partition).map_err(|e| {
                     WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(&paths.partition)))
                 })?;
@@ -790,8 +807,11 @@ fn commit(
     if input.workspace_stable == Some(false) {
         return Err("Workspace did not become quiescent before snapshot capture.".into());
     }
-    if let Some(message) = nul_path_message(&temporary_dir.to_string_lossy(), "path") {
-        return Err(message);
+    if let Some(message) = nul_path_message(
+        &JsString::from(temporary_dir.to_string_lossy().as_ref()),
+        "path",
+    ) {
+        return Err(String::from_utf16_lossy(message.units()));
     }
     fs::create_dir_all(temporary_dir).map_err(|e| io_error(&e, "mkdir", Some(temporary_dir)))?;
     let workspace_dir = resolve(&input.workspace_dir).map_err(|e| e.to_string())?;
@@ -1150,20 +1170,68 @@ fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+const SLASH: u16 = b'/' as u16;
+const DOT: u16 = b'.' as u16;
+
+/// Node `path.resolve(base, value)` over raw UTF-16 units. A lone surrogate
+/// survives the lexical pass, so `fs.validatePath` can quote the original JS
+/// string instead of the U+FFFD a lossy conversion would show.
+fn resolve_path_units(base: &str, value: &JsString) -> JsString {
+    let mut source = Vec::new();
+    if value.units().first() != Some(&SLASH) {
+        source.extend(base.encode_utf16());
+        source.push(SLASH);
+    }
+    source.extend_from_slice(value.units());
+    let mut segments: Vec<&[u16]> = Vec::new();
+    for segment in source.split(|unit| *unit == SLASH) {
+        if segment.is_empty() || (segment.len() == 1 && segment[0] == DOT) {
+            continue;
+        }
+        if is_dot_dot(segment) {
+            segments.pop();
+        } else {
+            segments.push(segment);
+        }
+    }
+    let mut output = Vec::with_capacity(source.len().max(1));
+    output.push(SLASH);
+    for (index, segment) in segments.iter().enumerate() {
+        if index > 0 {
+            output.push(SLASH);
+        }
+        output.extend_from_slice(segment);
+    }
+    JsString::from_utf16(output)
+}
+
+fn is_dot_dot(segment: &[u16]) -> bool {
+    segment.len() == 2 && segment[0] == DOT && segment[1] == DOT
+}
+
+/// `Path::parent` on a resolved absolute path, without decoding the units.
+fn parent_path_units(path: &[u16]) -> Option<&[u16]> {
+    let slash = path.iter().rposition(|unit| *unit == SLASH)?;
+    if slash == 0 {
+        (path.len() > 1).then(|| &path[..1])
+    } else {
+        Some(&path[..slash])
+    }
+}
+
 /// Node `fs.validatePath`: a NUL byte rejects before any syscall with
 /// `ERR_INVALID_ARG_VALUE`, naming the fs call's own parameter (`path` for
 /// mkdir/readFile/writeFile, `target` for symlink's first argument).
-fn nul_path_message(path: &str, argument: &str) -> Option<String> {
-    if !path.contains('\0') {
+fn nul_path_message(path: &JsString, argument: &str) -> Option<JsString> {
+    if !path.units().contains(&0) {
         return None;
     }
-    let message = crate::node_io::nul_message_for(&JsString::from(path), argument);
-    Some(String::from_utf16_lossy(message.units()))
+    Some(crate::node_io::nul_message_for(path, argument))
 }
 
 /// The rejection form of [`nul_path_message`] for call sites that must throw
 /// (restore's public shape) rather than turn the message into a failed marker.
-fn validate_nul_path(path: &str, argument: &str) -> Result<()> {
+fn validate_nul_path(path: &JsString, argument: &str) -> Result<()> {
     match nul_path_message(path, argument) {
         Some(message) => Err(WorkspaceSnapshotError::TypeError(message)),
         None => Ok(()),
