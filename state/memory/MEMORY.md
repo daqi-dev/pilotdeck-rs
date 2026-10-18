@@ -30,3 +30,4 @@
 - [clone-author-email](20261018-clone-author-email.md) — 仓外 clone 不共享主仓的 noreply 邮箱，提交前先设 user.email；空邮箱进 main 后无法改写
 - [dsh-channel](20261018-dsh-channel.md) — DeepSeek 首选 dsh：实现 workspace-write、评审 read-only；人定 10-18 起 DeepSeek 担实现与第一家评审大头，codex 守第二家评审与难单
 - [quote-review-findings](20261018-quote-review-findings.md) — 修复任务书里的评审结论只能从原文机械摘取，不凭记忆转述
+- [glm-concurrency](20261018-glm-concurrency.md) — ZAI key 全局并发≈10、超限立即 429 并被退避拖成超时；四角色闸门同时最多 2 个，GLM 评审另留余量

@@ -1,15 +1,13 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 21:08 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- D2-pr1 | gate | ready | PR #279（skills migrate）：两家 0/0、闸门 P0/P1=0，已入队
-- A6.5-pr1 | gate | ready | capability + permission 适配（wt-a63-pr1 @43b6685，codex）：确认轮 DeepSeek 0/0/0、GLM 0/0/0；排在串行闸门队列里
-- A6.4-pr1 | gate | ready | model module 适配（wt-a6-x0 @e159dd5，DeepSeek→codex）：确认轮 DeepSeek 0/0/1、GLM 0/0/0；闸门中
-- F2-A34-pr2 | gate | ready | A 类样板（wt-f34b @c8eeb42，Claude）：确认轮 DeepSeek 0/0/0、codex 0/0/1；闸门排队
-- A6.4-pr2a | impl | ready | 定价 + 本地 token 估算（wt-a64-pr2a，DeepSeek）：闸门 P0 驳回（oracle 已入提交树，是闸门排除了它）；P1「生成器不核基线工作树干净」修复中，同类遗漏登记 #280
-- A6.3-pr6 | review | blocked | 会话权限 registry（wt-a63-pr6，DeepSeek→codex 重设计，未提交）：GLM 0/0/0；作者已含 DeepSeek、codex、Claude，缺第二家非作者评审——等用户确认署名口径 B（`_tmp/20261018-a6-split/attribution-question.md`）
-- A6.6-pr3 | impl | blocked | WorkspaceSnapshot（wt-a66-pr3，GLM→DeepSeek，未提交）：codex P1×5 修复中；作者含 GLM、DeepSeek、Claude，第二家评审同样等署名口径 B
-- #275-review | review | ready | 守护会话：合并闸门机器校验「谁写谁不审」，增量确认（dsh + codex）中
+updated: 2026-10-18 22:40 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- D2-pr1 | gate | ready | PR #279：main 每动一次 decisions 文件，分支就冲突一次；22:34 再次 rebase（4c9f924），gate4 中 → 更新结果块 → 入队
+- A6.4-pr2a | gate | ready | PR #286 已入队（gate2 唯一的 P1 是 upload 生成器的同类遗漏，降为 P2 并入 #280）
+- #275 | review | ready | 合并闸门机器校验「谁写谁不审」（协调者接手）：gate 报 P0（折行 author 少算）、P1（跨行注释里的 ``` 被当围栏），已修（9f820a2），第六轮增量 dsh + codex 中
+- A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，GLM→DeepSeek @9ccb606+）：codex 第三轮 P0（夹具对固定 /tmp 目录递归删除）+ P1×2，DeepSeek 已修，协调者复跑中
+- A6.4-pr1 | review | blocked | model module 适配（wt-a6-x0 @304ed1f）：GLM 0/0/0；早先提交带 Claude 署名，作者含 DeepSeek、codex、Claude，缺第二家——待用户答复是否 squash 改实署名
+- A6.3-pr6 | review | blocked | 会话权限 registry（wt-a63-pr6 @475d3a6）：GLM 0/0/0；同上，待 squash 答复
 - A6.9 | impl | blocked | manifest 合成与退役；按人定后排，等 A6.3~A6.7 适配齐
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
@@ -17,6 +15,9 @@ updated: 2026-10-18 21:08 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 22:40 · /loop
+> 合并：#278（A6.7-pr3）、#281（board）、#282（署名口径 B，用户本人在协调者会话确认，已写入 CLAUDE.md）、#284（F2-A34-pr2）、#285（A6.5-pr1）。入队中：#279（D2）、#286（A6.4-pr2a）。#275 由守护会话移交给协调者：评审多轮在同一类 Markdown 绕过上来回，改成结构性规则（标记须顶格、独占一行、不在围栏或缩进代码块里，author 只多算不少算）。A6.6-pr3 的 codex 评审抓到一个 P0：夹具会递归删除固定的 /tmp 目录；main 上同类排查无命中。**用户定闸门并行 ≤2**：四角色闸门同时最多 2 个，GLM 评审另留最多 2 个余量（共用 ZAI key 全局并发约 10，超限立即 429，见 `state/memory/20261018-glm-concurrency.md`），排队用 `_tmp/20261018-a6-split/gate-serial.sh`。待用户答复：A6.4-pr1、A6.3-pr6 是否 squash 成实署名的单提交（不碰 main 历史），以便 Claude 当第二家评审。新 P2-跟进 #280、#283。
 
 > ## 2026-10-18 21:08 · /loop
 > 合并：#276（board）、#278（A6.7-pr3 hooks 配置，含 V8 资源边界卡 B，卡已入 decisions）。GLM 第二家评审改走 claude -p 智谱通道之后不再超时；闸门改为串行并排除 oracle.json（会招来「oracle 未入库」的误报，已两次用 ls-tree 和 ls-files 驳回）。换人实现：A6.6-pr3 GLM→DeepSeek（GLM 没有 Bash，第六轮超时）；A6.3-pr6 DeepSeek 修三轮仍未收敛，挂起该线，改由 codex 重设计。#275 落地后作者谱系包含 Co-Authored-By，协调者提交的单 Claude 都算作者，有两单因此缺第二家评审：署名口径 B 等用户本人在本会话确认（守护会话转达的不算）。协调者的一次过失：修复任务书里凭记忆写了评审 P1 标题，与原文不符，发现后停掉重发，教训写进 memory。新 P2-跟进 #277、#280。worktree 12/12。
