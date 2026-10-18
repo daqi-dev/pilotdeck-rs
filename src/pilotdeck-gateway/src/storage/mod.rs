@@ -81,3 +81,6 @@ mod run_registry_tests;
 mod tests;
 #[cfg(test)]
 mod transcript_adapter_tests;
+
+mod task_budget;
+pub use task_budget::{TaskBudgetError, TaskBudgetScope, TaskBudgetState, TaskBudgetStore};
