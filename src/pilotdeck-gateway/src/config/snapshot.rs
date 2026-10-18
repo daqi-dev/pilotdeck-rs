@@ -4,7 +4,7 @@
 //! The existing validators decide whether a load succeeds and which diagnostics
 //! are emitted. This module only projects the already-validated raw document
 //! into the snapshot's normalized value shape; it never changes validation.
-use super::{Env, model::Provider, value::*};
+use super::{Env, model::Provider, sections::valid_timezone, value::*};
 use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
@@ -1618,21 +1618,6 @@ fn cron(raw: &JsValue) -> Option<JsValue> {
     Some(JsValue::Object(o))
 }
 
-fn valid_timezone(s: &str) -> bool {
-    static ZONES: OnceLock<Vec<String>> = OnceLock::new();
-    let zones =
-        ZONES.get_or_init(|| serde_json::from_str(include_str!("timezones.json")).expect("zones"));
-    if s.is_ascii() && zones.binary_search(&s.to_lowercase()).is_ok() {
-        return true;
-    }
-    let re = regex::Regex::new(r"^[+-]([0-9]{2})(?::?([0-9]{2}))?$").unwrap();
-    re.captures(s).is_some_and(|c| {
-        c[1].parse::<u32>().unwrap() < 24
-            && c.get(2)
-                .is_none_or(|m| m.as_str().parse::<u32>().unwrap() < 60)
-    })
-}
-
 fn tools(raw: &JsValue) -> Option<JsValue> {
     let t = field(raw, "tools").as_object()?;
     let web = t.get("webSearch")?;
@@ -2783,4 +2768,35 @@ fn sop_module(value: Option<&JsValue>, home: &Path, env: &Env) -> Option<JsValue
         put(&mut out, "frontendModule", JsValue::String(v));
     }
     Some(JsValue::Object(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::array_index_key;
+    use pilotdeck_protocol::JsString;
+
+    #[test]
+    fn array_index_key_matches_ecmascript_boundaries() {
+        for (key, expected) in [
+            ("0", Some(0)),
+            ("12", Some(12)),
+            ("4294967294", Some(u32::MAX - 1)),
+        ] {
+            assert_eq!(array_index_key(&JsString::from(key)), expected, "{key:?}");
+        }
+        for key in [
+            "4294967295",
+            "",
+            "01",
+            "-1",
+            "+1",
+            "1.0",
+            "1e2",
+            " 1",
+            "0x10",
+            "١",
+        ] {
+            assert_eq!(array_index_key(&JsString::from(key)), None, "{key:?}");
+        }
+    }
 }

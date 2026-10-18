@@ -7,15 +7,17 @@
 
 ## 目录与条数
 
-`oracle.json` 共 **157** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **169** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言：
 
-- 82 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
+- 94 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
   合并、provider/模型目录、credential、modules、SOP、proxy 迁移；其中 28 条为
   第二轮新增（第一轮评审反例：router 冲突、API key 字面量、清扫周期、tier 键序、
-  深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖），本轮新增 1 条
-  既有错误用例 `diag-1-empty`（输入 `{}`，`error.code` 与首条诊断的
-  `diagnosticCode` 不同）；
+  深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖），1 条为既有错误
+  用例 `diag-1-empty`（输入 `{}`，`error.code` 与首条诊断的
+  `diagnosticCode` 不同），第四轮新增 12 条边界探针：`memory.schedule` 嵌套/平铺
+  `.inf`（嵌套报错、平铺保留 Infinity）、非串 `memory.model`、`gateway.port` 的
+  0/越界/小数/负数、多斜杠 `agent.subagents.default` 引用与含斜杠 model id；
 - 18 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
 - 57 条来自既有 `tests/fixtures/config/diagnostics.json` 中 `load.ok` 的确定性
   抽样（按成功用例顺序每 18 条取 1 条）。

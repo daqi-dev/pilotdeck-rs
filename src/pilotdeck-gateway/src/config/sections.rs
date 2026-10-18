@@ -666,7 +666,7 @@ pub(super) fn always_on(raw: &JsValue, d: &mut Diagnostics) -> Result<(), Error>
     }
     Ok(())
 }
-fn valid_timezone(s: &str) -> bool {
+pub(super) fn valid_timezone(s: &str) -> bool {
     // Node 22 accepts case-insensitive ICU zone IDs plus UTC offset identifiers.
     static ZONES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let zones = ZONES.get_or_init(|| {
