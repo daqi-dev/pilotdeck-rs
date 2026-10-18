@@ -1,13 +1,12 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 13:02 · by 协调者(Claude Code 交互·opus-5.5·/loop)
-- A6.8-pr4 | review | ready | SkillManager import/scan + binding 选择 + 清 #226 剩余项（wt-a68-skills，claude/a68-pr4）：本地 310/0、TS 227 步；DeepSeek 0/0，GLM 评审中
-- B2-94 | review | ready | #94.1/#94.2 冻结装置变更（wt-a62-run，claude/b2-94）：单测全过、FROZEN 置待定标；DeepSeek 0/0，GLM 评审中；收敛后跑同日 20/5/1 真实定标（拿锁，串行）再重冻结
-- F2-61b | review | ready | #61.2 node_modules 完整性（wt-f61，deepseek/f2-61b；DeepSeek 试点三轮挂起，持有人收尾）：codex P1×2 已修（版本绑定锁文件、必查集合取自 manifest），确认轮 codex+GLM 中
-- F2-A34-pr1 | review | ready | A 类 34 例处置清单（wt-f58a，claude/f2-a34）：两家 0/0（DeepSeek P1 经身份正本实测驳回），增量确认轮中；**分母 68 待人复核**
-- F2-A34-pr2 | impl | ready | 样板改写 #15、#5、#1（pr1 合并后）
-- p2-sweep-3 | impl | ready | P2-跟进仍 21 个（>10）：下一批清账，codex
+updated: 2026-10-18 14:23 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.8-pr4 | gate | ready | SkillManager import/scan + binding + 清 #226 剩余项（wt-a68-skills，claude/a68-pr4）：闸门第二轮 P1（三处递归 JS 转换，已接 dispatch 的 project_file_read 实测会 SIGABRT）已修，第三轮闸门与两家确认中
+- B2-94 | calib | ready | #94 冻结装置重冻结（仓外 checkout /Users/da/ws/pdrs-b2cal-20261018，持锁）：同日 20/5/1 定标续跑中（ref16 时钟回退 REFUSED 已按程序重采）；完成后补 FROZEN 审批、去草稿、开 PR
+- F2-A34-pr2 | impl | ready | A 类样板改写 #15、#5、#1（pr1 已合 #240；分母 68 **待人复核**）
+- D1-pr4 | impl | ready | CLI 有效配置默认流（本地 Gateway + CliChannel）；前置 #213 已清，#231 剩中间目录 symlink 一项
+- p2-sweep-4 | impl | ready | P2-跟进仍多（>10），下一批清账
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
 - #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
@@ -17,6 +16,9 @@ updated: 2026-10-18 13:02 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 
 > ## 2026-10-18 13:02 · /loop
 > 合并：#234（GLM 试点 #226 夹具）、#233（交接）、#236（#230 host resume CI 不稳定：codex 定位根因为夹具小响应不触发 EPIPE）、#238（p2-sweep-2：#55/#119 关单，其余 5 单核销已修项并注明前置节点）。人定提速（经守护会话）：B/F 装置提前做、并行增至 5–6 条；triage `_tmp/20261018-bf-triage/triage.md`（#47 的 S3/S4、#53/#59/#80/#76、B 类部署矩阵已完成，真正剩 B2-94、F2-61b、F2-A34）。DeepSeek 实现试点（F2-61b）：hunk 头行数写错、无工具时上下文靠猜，三轮未能完整应用，按规则挂起由持有人收尾；结论待记入决策卡。新 P2-跟进 #235、#237。worktree 6/8；磁盘 44.8/80 GiB。**下一步**：四单评审收敛→闸门→串行合并；B2-94 收敛后拿锁做定标复算。
+
+> ## 2026-10-18 14:23 · /loop
+> 仓库已迁至 daqi-dev，并开启 merge queue（守护会话执行；规则见 CLAUDE.md「合并闸门」）。迁移后首批经队列合入：#240（F2-A34-pr1 A 类处置清单）、#246（p2-sweep-3，关 #237）、#248（F2-61b：node_modules 闸门，145 个直接依赖按锁文件绑定，pnpm 目录名编码按真实基线验证）。队列入队需要仓库开启 Allow auto-merge，已由守护会话打开。B2-94 定标装置的磁盘上限对齐到人定 80 GiB（决策卡，AI 代批，待人复核）。DeepSeek、GLM 两个实现试点结论已入决策卡。新 P2-跟进 #241 #244 #245 #247。新记忆：shell-text-edits。worktree 5/8；磁盘 47.9/80 GiB。**下一步**：A6.8-pr4 闸门通过后入队；B2-94 定标完成后重冻结；F2-A34-pr2 与 D1-pr4 开工。
 
 > ## 2026-10-18 08:30 · /loop 两小时交接（自 06:32 起）
 > 合并：#212（board）、#217（A6.2-pr2 RunRegistry，真实 TS 夹具 25 场景）、#220（D1-pr1 CLI 首批，D0 Rust 轮 10/10）。D1 首轮两家判「内置技能 Packaged 恒真」P0，改为真实探测 + D0 rust-stage 布局；A6.2 生成器默认参数让 quirk 场景没打到目标（GLM P1），加命中断言后重生成。新 P2-跟进：#213 #214 #215 #218 #219（D1）、#216（RunRegistry 抢陈旧锁竞态，与 TS 一致，前置于 A7）。worktree：主仓 + wt-a62-run（已合并，证据在其 _tmp，待清）+ wt-d1-cli（复用为 D1-pr2）+ wt-a68-skills；磁盘 38.6/80 GiB。后台：Claude 实现 A6.8-pr3 与 D1-pr2（各自 claude.status 写 exit= 即结束）。**下一步**：两路实现回来后协调者跑测试/定标→两家评审→闸门→串行合并；空档 triage A6.2-pr3。
