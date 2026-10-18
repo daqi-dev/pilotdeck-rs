@@ -5,7 +5,7 @@ use super::steer::{SteerMailbox, SteerMessage};
 use crate::host::{HostError, HostFuture, ModuleError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex, Weak},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -131,6 +131,10 @@ struct State {
     // Vec preserves registration order for expire_for_turn's event stream.
     pending: Vec<Arc<Pending>>,
     outcomes: HashMap<JsString, Arc<Outcome>>,
+    // Events are queued in settlement order under this lock and handed to the
+    // sink by one drainer at a time (see `flush`).
+    events: VecDeque<(JsString, JsObject)>,
+    emitting: bool,
 }
 impl State {
     fn pending(&self, id: &JsString) -> Option<Arc<Pending>> {
@@ -156,6 +160,15 @@ struct Inner {
 /// Gateway-owned registry. Lookup supplies the current run and its existing
 /// steer mailbox; no alternate message queue is introduced. Invoke operations
 /// within a Tokio runtime. Submissions keep running if their future is dropped.
+///
+/// Event sink: TS settles and emits in one synchronous step, so events reach
+/// the sink in settlement order and the last event for an id matches its
+/// stored outcome. Here each settlement queues its event under the state lock
+/// and a single drainer calls the sink outside every registry lock, one call
+/// at a time and in queue order. The sink may therefore re-enter the registry
+/// (no deadlock); events raised meanwhile are delivered after the current call
+/// returns. When another thread is draining, an operation can return before
+/// its event has reached the sink.
 #[derive(Clone)]
 pub struct AsyncHookRegistry(Arc<Inner>);
 impl AsyncHookRegistry {
@@ -285,7 +298,7 @@ impl AsyncHookRegistry {
                 self.settle_locked(&mut state, &pending, AsyncHookStatus::Delivered);
                 drop(state);
                 drop(in_flight);
-                self.emit(&pending, AsyncHookStatus::Delivered);
+                self.flush();
                 AsyncHookStatus::Delivered
             } else {
                 // Keep admission held so no other submit settles in between;
@@ -331,7 +344,7 @@ impl AsyncHookRegistry {
             let outcome = match delivery.await {
                 Ok(result) if result.accepted => {
                     registry.settle(&pending, AsyncHookStatus::Delivered);
-                    registry.emit(&pending, AsyncHookStatus::Delivered);
+                    registry.flush();
                     Ok(AsyncHookResult {
                         invocation_id,
                         status: AsyncHookStatus::Delivered,
@@ -355,19 +368,20 @@ impl AsyncHookRegistry {
         wait_for_delivery(receiver, false)
     }
     pub fn expire_for_turn(&self, session_key: &JsString, run_id: &JsString) {
-        let entries = self
-            .0
-            .state
-            .lock()
-            .unwrap()
+        // TS expires the whole turn in one synchronous loop; settle every
+        // entry under one lock so no other settlement interleaves the burst.
+        let mut state = self.0.state.lock().unwrap();
+        let entries = state
             .pending
             .iter()
             .filter(|p| &p.input.session_key == session_key && &p.run_id == run_id)
             .cloned()
             .collect::<Vec<_>>();
-        for pending in entries {
-            self.expire(&pending);
+        for pending in &entries {
+            self.settle_locked(&mut state, pending, AsyncHookStatus::Expired);
         }
+        drop(state);
+        self.flush();
     }
     /// Expires `pending` if it still owns its id. Returns what a repeated
     /// submission from the same session would observe under the same lock:
@@ -382,7 +396,7 @@ impl AsyncHookRegistry {
         }
         self.settle_locked(&mut state, pending, AsyncHookStatus::Expired);
         drop(state);
-        self.emit(pending, AsyncHookStatus::Expired);
+        self.flush();
         AsyncHookStatus::Expired
     }
     fn settle(&self, pending: &Arc<Pending>, status: AsyncHookStatus) {
@@ -420,8 +434,7 @@ impl AsyncHookRegistry {
         state
             .outcomes
             .insert(pending.input.invocation_id.clone(), outcome);
-    }
-    fn emit(&self, pending: &Pending, status: AsyncHookStatus) {
+        // Every TS settlement is followed by its event in the same sync step.
         if pending.input.include_hook_events {
             let event = object([
                 ("type", "hook_async_result".into()),
@@ -436,10 +449,48 @@ impl AsyncHookRegistry {
                 ),
                 ("status", status.as_str().into()),
             ]);
-            (self.0.emit)(
-                &pending.input.session_key,
+            state.events.push_back((
+                pending.input.session_key.clone(),
                 event.as_object().unwrap().clone(),
-            );
+            ));
+        }
+    }
+    /// Hands queued events to the sink in order. Only one caller drains at a
+    /// time; a caller that finds a drainer active leaves its events to it.
+    fn flush(&self) {
+        struct Draining<'a>(&'a Mutex<State>);
+        impl Drop for Draining<'_> {
+            fn drop(&mut self) {
+                // Also runs if the sink panics, so later events still drain.
+                if let Ok(mut state) = self.0.lock() {
+                    state.emitting = false;
+                }
+            }
+        }
+        {
+            let mut state = self.0.state.lock().unwrap();
+            if state.emitting || state.events.is_empty() {
+                return;
+            }
+            state.emitting = true;
+        }
+        let draining = Draining(&self.0.state);
+        loop {
+            let next = {
+                let mut state = self.0.state.lock().unwrap();
+                let next = state.events.pop_front();
+                if next.is_none() {
+                    // Release in the same critical section that saw the queue
+                    // empty, or a concurrent enqueue could be stranded.
+                    state.emitting = false;
+                }
+                next
+            };
+            let Some((session, event)) = next else {
+                std::mem::forget(draining);
+                return;
+            };
+            (self.0.emit)(&session, event);
         }
     }
 }

@@ -1,7 +1,7 @@
 # Gateway async hooks · 真实 TS 序列
 
 来源为固定基线 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。
-`generate.mts` 直接 import `InProcessGateway` 与 `SteerMailbox`，运行真实注册、提交、过期、结算、保留清理和 steer 方法；36 个场景、261 个操作的返回值、事件与持久化 mutation 均来自这次 TS 执行。Rust 回放精确断言场景数、操作数和完整输出。
+`generate.mts` 直接 import `InProcessGateway` 与 `SteerMailbox`，运行真实注册、提交、过期、结算、保留清理和 steer 方法；37 个场景、270 个操作的返回值、事件与持久化 mutation 均来自这次 TS 执行。Rust 回放精确断言场景数、操作数和完整输出。
 
 ## 装配取舍
 
@@ -23,7 +23,7 @@
 
 ## 覆盖与安全
 
-期限、delivered 保留、expired 保留均覆盖到点前 1 ms、恰好到点、到点后；另测回调未调度、默认/零/负数/小数 timeout、同轮重登不延期、保留 timer 替换、跨会话 unknown、并发 duplicate、失败共享与重试、旧 run（提交前/持久化中）、关闭 mailbox、按轮过期、事件开关、payload 错误优先级及 UTF-16 字符串。
+期限、delivered 保留、expired 保留均覆盖到点前 1 ms、恰好到点、到点后；另测回调未调度、默认/零/负数/小数 timeout（含不推进 timer、只推墙钟时期限被钳到 1 ms）、同轮重登不延期、保留 timer 替换、跨会话 unknown、并发 duplicate、失败共享与重试、旧 run（提交前/持久化中）、关闭 mailbox、按轮过期、事件开关、payload 错误优先级及 UTF-16 字符串。
 
 生成前后调用共享 `bindSourceTree`，校验固定 commit 和整个 tracked src 的实际字节，并断言整棵 tracked 树干净（`git status --porcelain --untracked-files=no` 为空，同 `workspace-snapshot/generate.mts`）；`sourceSha256` 记三个入口的相对 import 传递闭包（650 个文件，均取固定 commit 的 blob 并核工作区字节）。回放经 `common/baseline.rs::oracle`，设置 `PDRS_BASELINE` 时再核本地 checkout。每次生成用 `mkdtemp` 独占目录并切入其中，finally 恢复 cwd/clock/timer；删除前核对临时父目录及所有权前缀。无固定路径清理，也不读用户配置。
 
@@ -44,5 +44,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline -p pilotdeck-gatewa
 测试另将真实 TS `concurrent-empty` 的双返回值和事件流用两条 Rust 线程重放 64 次；生产 Tokio timer 用 paused time 验证登记时就固定 deadline 及 drop 取消。真实运行时不会等待 hook timer 保活，timer 与 registry 之间用弱引用，registry 释放时取消剩余 timer（`dropping_registry_cancels_pending_and_retention_timers`：释放后 pending 期限与 outcome 保留两个 timer 任务均被 abort，推进时钟无回调、无事件）。
 
 TS 的 submit 同步前缀（outcome → pending → deadline → expire）不可打断；Rust 的过期分支在状态锁下返回实际结算结果（自己结算为 expired，否则按已存 outcome 映射 delivered→duplicate），旧 run 分支持有 admission 锁直到过期完成。两条多线程测试分别复现期限分支与旧 run 分支的竞态。
+
+事件顺序：TS 结算与发事件在同一同步段。Rust 在状态锁内把事件按结算顺序入队，再由单一排空者在所有 registry 锁之外逐个、按序调用 sink；`expire_for_turn` 在一次加锁内结算整轮。sink 可以重入 registry（不会死锁，重入产生的事件排在当前调用之后）；另一线程正在排空时，操作可能先于自身事件返回。多线程测试 `expiry_event_precedes_delivery_that_settled_after_it`、`expire_for_turn_burst_is_not_interleaved` 把排空者卡在 sink 内并在另一线程结算，要求 TS 顺序；`sink_may_reenter_registry_without_deadlock` 覆盖重入。
 
 本轮负控与完整自证原始输出在任务交接 `RESULT.md` 所引目录中；负控只改 Rust 实现，不改 oracle。

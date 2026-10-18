@@ -2647,6 +2647,159 @@
       "mutations": []
     },
     {
+      "name": "minimum-timeout-deadline-check",
+      "steps": [
+        {
+          "op": "start",
+          "run": "r",
+          "session": "s",
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 0
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": -4
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "register",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "c",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "includeHookEvents": true,
+            "timeoutMs": 0.5
+          },
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "a",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "a",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "now",
+          "ms": 0.5,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "b",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "b",
+              "status": "delivered"
+            }
+          }
+        },
+        {
+          "op": "now",
+          "ms": 0.5,
+          "result": {
+            "ok": true,
+            "value": null
+          }
+        },
+        {
+          "op": "submit",
+          "input": {
+            "sessionKey": "s",
+            "invocationId": "c",
+            "output": {}
+          },
+          "result": {
+            "ok": true,
+            "value": {
+              "invocationId": "c",
+              "status": "expired"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "a",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "b",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "delivered"
+          }
+        },
+        {
+          "session": "s",
+          "event": {
+            "type": "hook_async_result",
+            "invocationId": "c",
+            "hookName": "hook",
+            "hookEvent": "PreToolUse",
+            "status": "expired"
+          }
+        }
+      ],
+      "mutations": []
+    },
+    {
       "name": "fractional-timer-fires-before-expiry",
       "steps": [
         {
