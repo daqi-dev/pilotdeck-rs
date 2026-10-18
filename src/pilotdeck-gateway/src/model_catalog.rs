@@ -18,7 +18,11 @@ fn truthy(v: &JsValue) -> bool {
         _ => true,
     }
 }
-fn lower(s: &JsString, locale: &icu_locale_core::LanguageIdentifier, substring: bool) -> JsString {
+pub(crate) fn lower(
+    s: &JsString,
+    locale: &icu_locale_core::LanguageIdentifier,
+    substring: bool,
+) -> JsString {
     // Node's Latin-1 fast path is selected for the complete string, not each
     // Unicode run separated by an isolated surrogate.
     let sliced = substring && s.len_utf16() >= 13;
