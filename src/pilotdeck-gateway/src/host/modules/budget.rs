@@ -163,7 +163,7 @@ fn response(key: &str, value: JsValue) -> JsObject {
     result.insert(key.into(), value);
     result
 }
-fn canonical_request(value: Option<&JsValue>) -> Result<JsObject, HostError> {
+pub(super) fn canonical_request(value: Option<&JsValue>) -> Result<JsObject, HostError> {
     value
         .and_then(JsValue::as_object)
         .filter(|request| {

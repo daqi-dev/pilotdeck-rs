@@ -65,6 +65,15 @@ pub trait ModelExecution: Send + Sync {
     fn stream(&self, input: StreamInput) -> ModelFuture<Box<dyn ModelStream>>;
 }
 
+/// Reapply an already selected provider route without invoking routing again.
+pub trait RequestMaterializer: Send + Sync {
+    fn materialize(
+        &self,
+        prepared: PreparedInvocation,
+        candidate: JsObject,
+    ) -> ModelFuture<JsValue>;
+}
+
 /// Push-style view of one canonical model event iterator. `next` returns
 /// `Ok(None)` exactly when the TS iterator reports `done`.
 pub trait ModelStream: Send {
@@ -289,12 +298,15 @@ impl StreamPhase {
 
 /// Turn-owned model handler. The router constructs one instance per turn, so
 /// `preparations`/`streams` are naturally scoped to that turn.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Handler {
     execution: Option<Arc<dyn ModelExecution>>,
     metadata: Option<Arc<dyn ModelMetadata>>,
     turn: TurnContext,
     state: Arc<Mutex<State>>,
+    /// Optional host materializer captured by `materialize_prepared_request`
+    /// and by the context module's compaction candidate request.
+    pub materializer: Option<Arc<dyn RequestMaterializer>>,
 }
 impl Handler {
     /// `metadata` stays `None` when composition installs no lookup at all,
@@ -309,7 +321,12 @@ impl Handler {
             metadata,
             turn,
             state: Arc::new(Mutex::new(State::default())),
+            materializer: None,
         }
+    }
+
+    pub(super) fn preparation(&self, id: &JsString) -> Option<PreparedInvocation> {
+        self.state.lock().unwrap().preparation(id)
     }
 
     pub fn call(&self, call: JsValue) -> HostFuture<JsObject> {
@@ -318,6 +335,7 @@ impl Handler {
         let metadata_port = self.metadata.clone();
         let turn = self.turn.clone();
         let state = self.state.clone();
+        let materializer = self.materializer.clone();
         Box::pin(async move {
             let payload = call.get("payload").and_then(JsValue::as_object);
             let operation = wire::string_field(payload, "operation")?.clone();
@@ -363,10 +381,15 @@ impl Handler {
                     .preparation(&preparation_id)
                     .ok_or_else(|| unknown_preparation(&preparation_id))?;
                 let candidate = canonical_request(payload.and_then(|p| p.get("request")))?;
-                // No host materializer is installed before A6.4-pr4. The fixed
-                // dispatcher falls back to prepared routing plus candidate
-                // messages (:96-104).
-                let request = materialize_fallback(&prepared, &candidate);
+                // With no injected materializer, preserve the fixed dispatcher
+                // fallback: prepared routing plus candidate messages (:96-104).
+                let request = if let Some(materializer) = &materializer {
+                    let candidate = super::budget::canonical_request(Some(&candidate))?;
+                    let result = materializer.materialize(prepared, candidate).await?;
+                    super::budget::canonical_request(Some(&result))?
+                } else {
+                    materialize_fallback(&prepared, &candidate)
+                };
                 let request = canonical_request(Some(&JsValue::Object(request)))?;
                 let mut response = JsObject::new();
                 response.insert("request".into(), request);

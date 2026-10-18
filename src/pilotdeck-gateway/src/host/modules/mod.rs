@@ -41,7 +41,7 @@ impl HostHandler for ModuleRouter {
             return self.permission.call(call);
         }
         if module.equals_str("context") {
-            return self.context.call(call);
+            return self.context.call(call, &self.budget, &self.model);
         }
         if module.equals_str("turn") {
             return self.turn.call(call);
