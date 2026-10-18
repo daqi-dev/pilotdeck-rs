@@ -9,6 +9,7 @@ pub mod http_proxy;
 mod js_value;
 mod metadata;
 mod model_catalog;
+pub mod model_cost;
 mod native_archive;
 mod node_io;
 mod pairing;
