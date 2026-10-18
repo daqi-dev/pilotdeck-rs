@@ -138,7 +138,8 @@ if mode == 'no-streaming':
     methods[0]['profiles'] = ['unary']
 if mode == 'close-hang':
     import signal
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    assert receipt is not None
+    signal.signal(signal.SIGTERM, lambda *_: receipt.with_suffix('.term').write_text('TERM\n'))
 if mode == 'close-term-cleanup':
     import signal
 
@@ -149,7 +150,7 @@ if mode == 'close-term-cleanup':
 
     signal.signal(signal.SIGTERM, cleanup)
 send(response(capabilities, **binding, payload=dict(capabilitiesVersion='v1', methods=methods)))
-if mode == 'close-term-cleanup':
+if mode in ('close-term-cleanup', 'close-hang'):
     assert sys.stdin.read() == ''
     receipt.with_suffix('.eof').write_text('EOF\n')
     while True:
@@ -160,7 +161,7 @@ if mode == 'cancel-pre-execute':
     sys.exit(0)
 if mode == 'grandchild-exit':
     sys.exit(0)
-if mode in ('close-hang', 'grandchild-close'):
+if mode == 'grandchild-close':
     # Dedicated kill-path test: ignore stdin EOF and never produce a receipt.
     time.sleep(60)
 execute = read()
@@ -209,6 +210,7 @@ if mode.startswith('cancel-before-'):
         readable, _, _ = select.select([sys.stdin], [], [], 0.05)
         assert not readable, 'host wrote bytes before execute acceptance'
     if mode == 'cancel-before-timeout':
+        receipt.with_suffix('.ready').write_text('module response received\n')
         assert sys.stdin.read() == ''  # no acceptance, hence never send cancel
         write_receipt()
         sys.exit(0)
@@ -255,6 +257,7 @@ if mode.startswith('cancel-'):
         sys.stderr.write('CANCEL-DISCONNECT-TAIL\n')
         sys.exit(0)
     if mode == 'cancel-timeout':
+        receipt.with_suffix('.ready').write_text('ACK and cancel received\n')
         time.sleep(60)
     if mode == 'cancel-duplicate-acceptance':
         send(response(execute, requestId=execute['requestId'], streamId='stream'))

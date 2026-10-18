@@ -20,26 +20,29 @@ spec.loader.exec_module(run)
 
 
 class ReviewRegressions(unittest.TestCase):
-    def test_missing_driver_client_is_rejected_before_evidence_or_processes(self):
-        client = 'dist/src/gateway/client/GatewayWsClient.js'
-        with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
-            baseline, output = directory / 'baseline', directory / 'evidence'
-            for name in ('dist/src/cli/pilotdeck.js', 'node_modules/tsx/dist/loader.mjs', 'ui/server/index.js'):
-                path = baseline / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.touch()
-            stderr = io.StringIO()
-            with patch.object(sys, 'argv', ['run.py', '--baseline', str(baseline)]), \
-                    patch.object(run, 'OUT', output), patch.object(run, 'start') as start, \
-                    patch.object(run.socket, 'socket') as socket, contextlib.redirect_stderr(stderr):
-                with self.assertRaises(SystemExit) as error:
-                    run.main()
-            self.assertEqual(error.exception.code, 2)
-            self.assertIn(client, stderr.getvalue())
-            self.assertFalse(output.exists())
-            start.assert_not_called()
-            socket.assert_not_called()
+    def test_each_missing_artifact_is_rejected_before_evidence_or_processes(self):
+        artifacts = ('dist/src/cli/pilotdeck.js', 'node_modules/tsx/dist/loader.mjs',
+                     'ui/server/index.js', 'dist/src/gateway/client/GatewayWsClient.js')
+        for missing in artifacts:
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                baseline, output = directory / 'baseline', directory / 'evidence'
+                for name in artifacts:
+                    if name != missing:
+                        path = baseline / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.touch()
+                stderr = io.StringIO()
+                with patch.object(sys, 'argv', ['run.py', '--baseline', str(baseline)]), \
+                        patch.object(run, 'OUT', output), patch.object(run, 'start') as start, \
+                        patch.object(run.socket, 'socket') as socket, contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit) as error:
+                        run.main()
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn(missing, stderr.getvalue())
+                self.assertFalse(output.exists())
+                start.assert_not_called()
+                socket.assert_not_called()
 
     def test_started_descendant_belongs_to_owned_process_group(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(run, 'OUT', Path(directory)), \

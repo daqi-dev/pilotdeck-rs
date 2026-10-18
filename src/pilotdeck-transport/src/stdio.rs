@@ -1280,28 +1280,34 @@ mod reconciliation_tests {
         }
     }
 
+    // A FIFO sentinel ends the real writer after it examines every queued
+    // packet; no waiter can remove one before writer admission.
+    struct UntilSentinel<'a> {
+        owner: &'a ConnectionOwner,
+        bytes: &'a mut Vec<u8>,
+    }
+    const SENTINEL: &[u8] = b"\"writer-drained\"\n";
+    impl Write for UntilSentinel<'_> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            if self.bytes.ends_with(SENTINEL) {
+                self.owner.close();
+            }
+            Ok(())
+        }
+    }
+
     #[test]
     fn queued_abort_capture_rechecks_retirement_before_writer_dispatch() {
-        // A FIFO sentinel ends the real writer after it has examined the queued
-        // capture. No waiter can remove that packet before writer admission.
-        struct UntilSentinel<'a> {
-            owner: &'a ConnectionOwner,
-            bytes: &'a mut Vec<u8>,
-        }
-        const SENTINEL: &[u8] = b"\"writer-drained\"\n";
-        impl Write for UntilSentinel<'_> {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                self.bytes.extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                if self.bytes.ends_with(SENTINEL) {
-                    self.owner.close();
-                }
-                Ok(())
-            }
-        }
-        for module in ["model", "capability"] {
+        for (module, operation) in [
+            ("model", "stream_next"),
+            ("model", "stream"),
+            ("capability", "execute_batch"),
+            ("capability", "plan_todo"),
+        ] {
             for hard_stop in [
                 None,
                 Some(CancelCause::OwnerRetired),
@@ -1312,11 +1318,7 @@ mod reconciliation_tests {
                     .start(
                         &execution,
                         module,
-                        if module == "model" {
-                            "stream_next"
-                        } else {
-                            "execute_batch"
-                        },
+                        operation,
                         CallEffect::SideEffect,
                         JsObject::new(),
                     )
@@ -1391,6 +1393,123 @@ mod reconciliation_tests {
                 );
                 assert!(owner.check_known_uncertainty(&original_identity).is_err());
             }
+        }
+    }
+
+    #[test]
+    fn deadline_and_abort_capture_agree_on_original_operation_eligibility() {
+        for module in ["model", "capability", "event"] {
+            for operation in [
+                "stream_next",
+                "stream",
+                "execute_batch",
+                "plan_todo",
+                "prepare",
+                "dispatch",
+            ] {
+                let (owner, execution, mut exchange) = fixture();
+                let original = exchange
+                    .start(
+                        &execution,
+                        module,
+                        operation,
+                        CallEffect::SideEffect,
+                        JsObject::new(),
+                    )
+                    .unwrap();
+                mark_sent(&original);
+                reply(&owner, &original.message_id, true);
+                execution.cancellation.cancel(CancelCause::Deadline);
+                let cleanup = CallControl {
+                    cancellation: execution.cancellation.cleanup_scope(),
+                    deadline: Some(Instant::now() + Duration::from_secs(5)),
+                };
+                let mut capture = owner.call_record(&original.message_id).unwrap();
+                capture.identity.request_id = "capture".into();
+                capture.module = "context";
+                capture.operation = "capture_turn";
+                capture.abort_capture_payload = true;
+                let expected = matches!(
+                    (module, operation),
+                    ("model", "stream_next" | "stream")
+                        | ("capability", "execute_batch" | "plan_todo")
+                );
+                let state = owner.0.state.lock().unwrap();
+                assert_eq!(
+                    deadline_cleanup(&state, &capture),
+                    expected,
+                    "deadline: {module}/{operation}"
+                );
+                assert_eq!(
+                    owned_abort_capture(
+                        &state,
+                        &capture.identity,
+                        "context",
+                        "capture_turn",
+                        &cleanup,
+                        true
+                    ),
+                    expected,
+                    "capture: {module}/{operation}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn queued_owned_close_reaches_writer_after_hard_stop() {
+        for hard_stop in [CancelCause::OwnerRetired, CancelCause::TransportClosed] {
+            let (owner, execution, mut exchange) = fixture();
+            let mut payload = JsObject::new();
+            payload.insert("preparationId".into(), "owned-handle".into());
+            let original = exchange
+                .start(
+                    &execution,
+                    "model",
+                    "stream_next",
+                    CallEffect::Advance,
+                    payload.clone(),
+                )
+                .unwrap();
+            mark_sent(&original);
+            reply(&owner, &original.message_id, true);
+            let original_identity = owner.call_record(&original.message_id).unwrap().identity;
+            execution
+                .cancellation
+                .cancel(CancelCause::Requested("stop".into()));
+            let cleanup = CallControl {
+                cancellation: execution.cancellation.cleanup_scope(),
+                deadline: Some(Instant::now() + Duration::from_secs(5)),
+            };
+            let close = exchange
+                .start(
+                    &cleanup,
+                    "model",
+                    "close_stream",
+                    CallEffect::Advance,
+                    payload,
+                )
+                .unwrap();
+            let queued = owner.call_record(&close.message_id).unwrap();
+            assert_eq!(queued.phase, DispatchPhase::Queued);
+            execution.cancellation.cancel(hard_stop);
+            owner
+                .send_cached_stream(&JsValue::from("writer-drained"))
+                .unwrap();
+            let mut written = Vec::new();
+            owner
+                .drive_writer(UntilSentinel {
+                    owner: &owner,
+                    bytes: &mut written,
+                })
+                .unwrap();
+            assert_eq!(written, [queued.request_line.as_bytes(), SENTINEL].concat());
+            let sent = owner.call_record(&close.message_id).unwrap();
+            assert_eq!(sent.phase, DispatchPhase::Sent);
+            assert!(sent.admission_rejected.is_none());
+            assert!(
+                matches!(owner.check_known_uncertainty(&original_identity), Err(PortError::AcceptedUnknown { identity, .. }) if *identity == original_identity)
+            );
         }
     }
 

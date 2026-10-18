@@ -6975,15 +6975,26 @@ mod pre_model_abort_tests {
     }
     fn assert_capture_cancellation_policy(path: AbortPath) {
         for deadline in [false, true] {
-            for cause in [
-                CancelCause::Deadline,
-                CancelCause::Requested("local cancel".into()),
-                CancelCause::OwnerRetired,
-                CancelCause::TransportClosed,
+            for capture_error in [
+                PortError::Cancelled {
+                    cause: CancelCause::Deadline,
+                },
+                PortError::Cancelled {
+                    cause: CancelCause::Requested("local cancel".into()),
+                },
+                PortError::Cancelled {
+                    cause: CancelCause::OwnerRetired,
+                },
+                PortError::Cancelled {
+                    cause: CancelCause::TransportClosed,
+                },
+                unknown(),
             ] {
                 let hard_stop = matches!(
-                    cause,
-                    CancelCause::OwnerRetired | CancelCause::TransportClosed
+                    capture_error,
+                    PortError::Cancelled {
+                        cause: CancelCause::OwnerRetired | CancelCause::TransportClosed
+                    }
                 );
                 let (result, log) = run_path(
                     path,
@@ -6995,9 +7006,7 @@ mod pre_model_abort_tests {
                         },
                     },
                     None,
-                    Some(PortError::Cancelled {
-                        cause: cause.clone(),
-                    }),
+                    Some(capture_error.clone()),
                 );
                 assert!(log.contains(&"capture_false"));
                 if deadline && !hard_stop {
@@ -7007,9 +7016,28 @@ mod pre_model_abort_tests {
                     assert_eq!(output.messages.len(), 2);
                     assert_eq!(log.last(), Some(&"completed"));
                 } else {
-                    assert!(
-                        matches!(result, Err(PortError::Cancelled { cause: actual }) if actual == cause)
-                    );
+                    match (result, capture_error) {
+                        (
+                            Err(PortError::Cancelled { cause }),
+                            PortError::Cancelled { cause: expected },
+                        ) => assert_eq!(cause, expected),
+                        (
+                            Err(PortError::AcceptedUnknown {
+                                identity,
+                                last_applied_sequence,
+                            }),
+                            PortError::AcceptedUnknown {
+                                identity: expected,
+                                last_applied_sequence: sequence,
+                            },
+                        ) => {
+                            assert_eq!(identity, expected);
+                            assert_eq!(last_applied_sequence, sequence);
+                        }
+                        (actual, expected) => {
+                            panic!("capture error changed: {actual:?}; expected {expected:?}")
+                        }
+                    }
                     assert!(!log.contains(&"completed"));
                 }
             }

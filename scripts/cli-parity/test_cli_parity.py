@@ -18,7 +18,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, baseline_path, environment, env_summary, fixture,
                     digest_plain, read_plain, hashes, initial_tree, output_path, parity_lock, save, snapshot, staged_skills_identity)
-from compare import coalesce, compare, comparison_view, PROBE_CHECKS
+from compare import coalesce, compare, comparison_view, load_round, PROBE_CHECKS
 from controls import run_controls
 from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile, stage_rust
 
@@ -451,11 +451,15 @@ class ContractTests(unittest.TestCase):
         shutil.copytree(source, target)
         expected = as_rust(target)
         case = target / 'cases/help-long'
-        paths = [target / 'round.json', self.root / 'rust-stage/bin/pilotdeck']
-        paths += [case / name for name in ('record.json', 'stdout.bin', 'stderr.bin',
-                                           'events.json', 'initial.json', 'final.json')]
-        paths += [self.root / 'rust-stage/skills/docx/SKILL.md']
         real_open = os.open
+        # Derive victims from the actual reader, including snapshot(tree) and
+        # staged artifacts. New read points automatically join this regression.
+        with patch('common.os.open', wraps=real_open) as opened:
+            _, _, errors = load_round(target)
+        self.assertEqual(errors, [])
+        paths = list(dict.fromkeys(Path(call.args[0]) for call in opened.call_args_list))
+        self.assertTrue(paths)
+        self.assertTrue(any(path.is_relative_to(case / 'tree') for path in paths))
         for victim in paths:
             with self.subTest(victim=victim):
                 original = victim.read_bytes()
