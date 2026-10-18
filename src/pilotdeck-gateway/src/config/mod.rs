@@ -18,8 +18,8 @@ use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_yaml::{Options, parse_document};
 use std::collections::HashMap;
-pub(crate) use value::string_coercible;
 use value::*;
+pub(crate) use value::{builtin_property, string_coercible};
 pub type Env = HashMap<String, String>;
 pub struct Config {
     pub(crate) providers: Vec<model::Provider>,

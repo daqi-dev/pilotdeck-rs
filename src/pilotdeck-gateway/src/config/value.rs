@@ -136,7 +136,7 @@ impl From<JsString> for DiagnosticText {
         Self(s)
     }
 }
-pub(super) fn builtin_property(s: &JsString) -> bool {
+pub(crate) fn builtin_property(s: &JsString) -> bool {
     [
         "__proto__",
         "constructor",
