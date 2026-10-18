@@ -112,6 +112,12 @@ for (const materialized of [U,null,{provider:'p',model:'m',messages:[],extra:'ma
   add(`model-materialize-${specs.length}`,'materialize_prepared_request',{}, {module:'model',prepared:true,materializer:true,...(materialized===U?{}:{materialized})});
   specs.at(-1).payload={operation:'materialize_prepared_request',preparationId:'known',request};
 }
+// An explicit budgetStage wins; budgetProjection only fills an undefined stage.
+for (const [stage, projected] of [['pre_route','recovery'],['recovery','pre_route'],['routed','pre_route'],['bad','recovery']] as const) compact(`stage-projection-${specs.length}`,{budgetStage:stage,budgetProjection:{stage:projected}});
+// String(error) for non-iterable preview tools and null elements is V8-owned.
+for (const tools of [{},7,U,null,[null,{name:'a'}],[{name:'a'},null],[null,{}]]) compact(`cache-tools-${specs.length}`,{}, {preview:{cachePlan:{generation:0},tools}});
+// Valid budgetRequest, budget module present but no evaluateRequestBudget port: still removes the field and succeeds.
+compact('without-budget-valid',{}, {budget:false});
 const cases=[];
 for(const raw of specs) {
   const spec=decode(raw), calls:any[]=[];
