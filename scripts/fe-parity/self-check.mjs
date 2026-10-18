@@ -5,7 +5,7 @@ import { baselineStaleSelfCheck, staleControlAttempt } from './baseline-stale-se
 import { staleEntry } from './baseline-stale.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { verifyBaseline } from './baseline.mjs';
+import { verifyBaseline, lockedImporterVersions, REQUIRED_PACKAGES, ROOT_PACKAGES, UNBOUND_PACKAGES } from './baseline.mjs';
 import { readFile, readdir, stat, mkdtemp, writeFile, symlink, link, rm, mkdir } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { resolve, dirname } from 'node:path';
@@ -242,6 +242,19 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       await mkdir(resolve(fixture, 'copy')); await assert.rejects(() => verifyBaseline(resolve(fixture, 'copy'), head, GIT_ONLY), /not an untracked copy/);
     } finally { await rm(fixture, { recursive: true }); }
   });
+  await check('baseline node_modules gate binds every package the runner requireUI()s', async () => {
+    const used = new Set();
+    for (const file of await readdir(resolve(root, 'scripts/fe-parity'))) {
+      if (!file.endsWith('.mjs')) continue;
+      const text = await readFile(resolve(root, 'scripts/fe-parity', file), 'utf8');
+      for (const m of text.matchAll(/requireUI\(['"]([^'"]+)['"]/g)) {
+        const [first, second] = m[1].split('/');
+        used.add(first.startsWith('@') ? `${first}/${second}` : first);
+      }
+    }
+    const bound = new Set([...REQUIRED_PACKAGES, ...ROOT_PACKAGES, ...UNBOUND_PACKAGES]);
+    assert.deepEqual([...used].filter(name => !bound.has(name)).sort(), []);
+  });
   await check('baseline node_modules gate rejects missing/diverged lockfile and links outside .pnpm', async () => {
     assert.equal((await verifyBaseline(baseline)).status, 'PASS');
     const fixture = await mkdtemp(resolve(root, '_tmp/fe-parity/baseline-nm-control-'));
@@ -261,6 +274,12 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
         ['ws@8.21.0', 'ws', '8.21.0'],
         ['@playwright+test@1.60.0', '@playwright/test', '1.60.0'],
         ['@xterm+xterm@5.5.0', '@xterm/xterm', '5.5.0'],
+        ['react@18.3.1', 'react', '18.3.1'],
+        ['react-dom@18.3.1_react@18.3.1', 'react-dom', '18.3.1'],
+        ['typescript@5.9.3', 'typescript', '5.9.3'],
+        ['yaml@2.9.0', 'yaml', '2.9.0'],
+        ['yaml@2.8.0', 'yaml', '2.9.0'], // directory name right, package.json version wrong below
+        ['jsonrepair@3.14.0', 'jsonrepair', '3.14.0'],
       ]) {
         const dirPath = await pkg(dir, name);
         await writeFile(resolve(dirPath, 'package.json'), JSON.stringify({ name, version }));
@@ -274,19 +293,28 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       await link('ws', 'ws@8.21.0');
       await link('@playwright/test', '@playwright+test@1.60.0');
       await link('@xterm/xterm', '@xterm+xterm@5.5.0');
+      for (const [name, dir] of [['react', 'react@18.3.1'], ['react-dom', 'react-dom@18.3.1_react@18.3.1'],
+        ['typescript', 'typescript@5.9.3'], ['yaml', 'yaml@2.9.0']]) await link(name, dir);
+      // Root importer packages resolve from <repo>/node_modules (requireUI walks up from ui).
+      await symlink(resolve(store, 'jsonrepair@3.14.0', 'node_modules', 'jsonrepair'), resolve(fixture, 'node_modules', 'jsonrepair'));
       // Manifest and lockfile pin the wanted set; versions bind the links (#61.2).
-      await writeFile(resolve(ui, 'package.json'), JSON.stringify({ dependencies: { ws: '^8', '@xterm/xterm': '^5' },
-        devDependencies: { vite: '^7', '@playwright/test': '^1' } }));
+      const uiManifest = { dependencies: { ws: '^8', '@xterm/xterm': '^5', react: '^18', 'react-dom': '^18', yaml: '^2' },
+        devDependencies: { vite: '^7', '@playwright/test': '^1', typescript: '^5' } };
+      await writeFile(resolve(ui, 'package.json'), JSON.stringify(uiManifest));
+      await writeFile(resolve(fixture, 'package.json'), JSON.stringify({ dependencies: { jsonrepair: '^3' } }));
       const entry = (name, version) => `      ${name.startsWith('@') ? `'${name}'` : name}:\n        specifier: x\n        version: ${version}\n`;
-      const lock = 'lockfileVersion: 9\n\nimporters:\n\n  ui:\n    dependencies:\n' + entry('@xterm/xterm', '5.5.0') + entry('ws', '8.21.0')
-        + '    devDependencies:\n' + entry('@playwright/test', '1.60.0') + entry('vite', '7.3.3(aaa@1.0.0)') + '\npackages:\n';
+      const lockOf = ({ dropYaml = false } = {}) => 'lockfileVersion: 9\n\nimporters:\n\n  .:\n    dependencies:\n' + entry('jsonrepair', '3.14.0')
+        + '\n  ui:\n    dependencies:\n' + entry('@xterm/xterm', '5.5.0') + entry('react', '18.3.1') + entry('react-dom', '18.3.1(react@18.3.1)')
+        + entry('ws', '8.21.0') + (dropYaml ? '' : entry('yaml', '2.9.0'))
+        + '    devDependencies:\n' + entry('@playwright/test', '1.60.0') + entry('typescript', '5.9.3') + entry('vite', '7.3.3(aaa@1.0.0)') + '\npackages:\n';
+      const lock = lockOf();
       await writeFile(resolve(fixture, 'pnpm-lock.yaml'), lock);
       const modulesYaml = max => writeFile(resolve(fixture, 'node_modules', '.modules.yaml'),
         JSON.stringify({ nodeLinker: 'isolated', virtualStoreDir: '.pnpm', virtualStoreDirMaxLength: max }));
       await mkdir(resolve(fixture, 'node_modules'), { recursive: true }); await modulesYaml(120);
       // Like the real baseline, installed modules are untracked.
       await writeFile(resolve(fixture, '.gitignore'), 'node_modules/\n');
-      git(['init', '-q']); git(['add', 'ui', '.gitignore', 'pnpm-lock.yaml']); git(['add', 'pnpm-lock.yaml']);
+      git(['init', '-q']); git(['add', 'ui', '.gitignore', 'pnpm-lock.yaml', 'package.json']);
       git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline nm fixture']);
       const head = git(['rev-parse', 'HEAD']);
       // Missing node_modules/.pnpm/lock.yaml
@@ -304,7 +332,23 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       await rm(resolve(ui, 'node_modules', 'ws')); await link('ws', 'ws@8.21.0');
       // The well-formed fixture passes and reports every package, @xterm included.
       const good = await verifyBaseline(ui, head);
-      assert.deepEqual(good.nodeModules.packages.map(p => p.name), ['vite', 'ws', '@playwright/test', '@xterm/xterm']);
+      assert.deepEqual(good.nodeModules.packages.map(p => p.name),
+        ['vite', 'ws', '@playwright/test', 'react', 'react-dom', 'typescript', 'yaml', '@xterm/xterm', 'jsonrepair']);
+      // Store directory name right but the package inside reports another version.
+      await writeFile(resolve(store, 'yaml@2.8.0', 'node_modules', 'yaml', 'package.json'), JSON.stringify({ name: 'yaml', version: '2.9.0' }));
+      await writeFile(resolve(store, 'yaml@2.9.0', 'node_modules', 'yaml', 'package.json'), JSON.stringify({ name: 'yaml', version: '2.8.0' }));
+      await assert.rejects(() => verifyBaseline(ui, head), /yaml version mismatch: 2\.8\.0 != 2\.9\.0/);
+      await writeFile(resolve(store, 'yaml@2.9.0', 'node_modules', 'yaml', 'package.json'), JSON.stringify({ name: 'yaml', version: '2.9.0' }));
+      // Unsupported layouts and malformed limits are refused.
+      await writeFile(resolve(fixture, 'node_modules', '.modules.yaml'), JSON.stringify({ nodeLinker: 'hoisted', virtualStoreDir: '.pnpm', virtualStoreDirMaxLength: 120 }));
+      await assert.rejects(() => verifyBaseline(ui, head), /layout unsupported/);
+      await writeFile(resolve(fixture, 'node_modules', '.modules.yaml'), JSON.stringify({ nodeLinker: 'isolated', virtualStoreDir: '.pnpm', virtualStoreDirMaxLength: '120' }));
+      await assert.rejects(() => verifyBaseline(ui, head), /hashed store directory/);
+      await modulesYaml(120);
+      // Lockfile reader fails closed on a missing name, a duplicate, or a missing importer.
+      assert.throws(() => lockedImporterVersions(lockOf({ dropYaml: true }), 'ui', ['yaml']), /importers\.ui does not resolve yaml/);
+      assert.throws(() => lockedImporterVersions(lock.replace(entry('ws', '8.21.0'), entry('ws', '8.21.0') + entry('ws', '8.21.0')), 'ui', ['ws']), /lists ws twice/);
+      assert.throws(() => lockedImporterVersions(lock, 'apps/desktop', []), /no importers\.apps\/desktop section/);
       // A layout whose store names would be hashed is refused explicitly.
       await modulesYaml(10);
       await assert.rejects(() => verifyBaseline(ui, head), /hashed store directory for vite/);
