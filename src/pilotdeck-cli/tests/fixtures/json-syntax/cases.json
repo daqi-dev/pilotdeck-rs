@@ -278,6 +278,36 @@
    "loneSurrogateInMessage": false
   },
   {
+   "input": "\"\\u",
+   "message": "Bad Unicode escape in JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\u1",
+   "message": "Bad Unicode escape in JSON at position 4 (line 1 column 5)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\u12",
+   "message": "Bad Unicode escape in JSON at position 5 (line 1 column 6)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\u123",
+   "message": "Bad Unicode escape in JSON at position 6 (line 1 column 7)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"\\uZ",
+   "message": "Bad Unicode escape in JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
+   "input": "\"a\\x",
+   "message": "Bad escaped character in JSON at position 3 (line 1 column 4)",
+   "loneSurrogateInMessage": false
+  },
+  {
    "input": "\"abc",
    "message": "Unterminated string in JSON at position 4 (line 1 column 5)",
    "loneSurrogateInMessage": false

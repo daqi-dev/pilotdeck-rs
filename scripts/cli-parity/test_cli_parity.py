@@ -400,7 +400,8 @@ class ContractTests(unittest.TestCase):
     def test_registered_scenarios_are_calibrated(self):
         import compare as compare_module
         self.assertEqual([s['id'] for s in SCENARIOS if s.get('oracle') == compare_module.PENDING], [])
-        self.assertGreaterEqual(len(SCENARIOS), 11)
+        # specs/cli-parity/scenarios.md registers exactly this many; dropping one must fail here.
+        self.assertEqual(len(SCENARIOS), 13)
         for scenario in SCENARIOS:
             with self.subTest(scenario=scenario['id']):
                 self.assertIn('exit', scenario)
