@@ -148,23 +148,37 @@ pub(crate) fn build<F: Files>(
         JsValue::Array(diagnostics.iter().map(snapshot_diagnostic).collect()),
     );
     snapshot.insert("config".into(), config);
-    JsValue::Object(snapshot)
+    js_order(&JsValue::Object(snapshot))
 }
 
 fn snapshot_diagnostic(value: &JsValue) -> JsValue {
     let JsValue::Object(object) = value else {
         return value.clone();
     };
-    let mut out = object.clone();
-    let router_issue = out
+    let router_issue = object
         .get("code")
         .and_then(|v| v.as_string())
         .is_some_and(|code| {
             code.units()
                 .starts_with("ROUTER_".encode_utf16().collect::<Vec<_>>().as_slice())
         });
-    if router_issue && out.get("hint").is_none() {
-        out.insert("hint".into(), JsValue::Undefined);
+    // loadPilotConfig builds diagnostics in this order: code, severity, message,
+    // path, [source], [hint], recoverable. Router issues always carry `hint`,
+    // even when its value is undefined.
+    let mut out = JsObject::new();
+    for key in ["code", "severity", "message", "path", "source"] {
+        if let Some(v) = object.get(key) {
+            out.insert(key.into(), v.clone());
+        }
+    }
+    if router_issue || object.get("hint").is_some() {
+        out.insert(
+            "hint".into(),
+            object.get("hint").cloned().unwrap_or(JsValue::Undefined),
+        );
+    }
+    if let Some(v) = object.get("recoverable") {
+        out.insert("recoverable".into(), v.clone());
     }
     JsValue::Object(out)
 }
@@ -211,6 +225,36 @@ fn put(o: &mut JsObject, key: &str, value: JsValue) {
 fn put_key(o: &mut JsObject, key: JsString, value: JsValue) {
     if !key.equals_str("__proto__") {
         o.insert(key, value);
+    }
+}
+/// Canonical array-index key: decimal form of `0..=2^32-2` without leading
+/// zeros. `Object.keys` enumerates these first in ascending numeric order.
+fn array_index_key(key: &JsString) -> Option<u32> {
+    let text = key.to_utf8().ok()?;
+    let value: u32 = text.parse().ok()?;
+    (value != u32::MAX && value.to_string() == text).then_some(value)
+}
+/// `Object.entries` order: canonical array-index keys ascending first, then the
+/// remaining own keys in insertion order.
+fn js_entries(object: &JsObject) -> Vec<(&JsString, &JsValue)> {
+    let mut entries: Vec<_> = object.entries().iter().map(|(k, v)| (k, v)).collect();
+    entries.sort_by_key(|(key, _)| array_index_key(key).map_or((1, 0), |n| (0, n)));
+    entries
+}
+/// Rebuild a value with JavaScript property enumeration order. JSON encoding
+/// and deep equality in the fixture recorder both follow `Object.keys`, which
+/// moves canonical array-index keys before the other keys.
+fn js_order(value: &JsValue) -> JsValue {
+    match value {
+        JsValue::Array(items) => JsValue::Array(items.iter().map(js_order).collect()),
+        JsValue::Object(object) => {
+            let mut out = JsObject::new();
+            for (key, value) in js_entries(object) {
+                out.insert(key.clone(), js_order(value));
+            }
+            JsValue::Object(out)
+        }
+        other => other.clone(),
     }
 }
 fn undefined() -> JsValue {
@@ -272,6 +316,11 @@ fn redact(value: &JsValue) -> JsValue {
         JsValue::Object(o) => {
             let mut out = JsObject::new();
             for (key, value) in o.entries() {
+                // `output[key] = ...` on a plain object cannot create an own
+                // `__proto__` key; it only rewrites the prototype.
+                if key.equals_str("__proto__") {
+                    continue;
+                }
                 if secret(key) {
                     out.insert(key.clone(), string("<redacted>"));
                 } else {
@@ -342,12 +391,10 @@ fn agent(raw: &JsValue, providers: &[Provider], selection: &(JsString, JsString)
     let a = field(raw, "agent");
     let mut out = obj();
     let mut model = obj();
-    let id = field(a, "model").as_string().cloned().unwrap_or_else(|| {
-        let mut units = selection.0.units().to_vec();
-        units.push(47);
-        units.extend_from_slice(selection.1.units());
-        JsString::from_utf16(units)
-    });
+    let id = field(a, "model")
+        .as_string()
+        .cloned()
+        .unwrap_or_else(|| selection_id(selection));
     put(&mut model, "id", JsValue::String(id));
     put(&mut model, "provider", JsValue::String(selection.0.clone()));
     put(&mut model, "model", JsValue::String(selection.1.clone()));
@@ -459,9 +506,11 @@ fn extension(raw: &JsValue) -> JsValue {
     let mut hook = JsValue::Bool(false);
     if let Some(e) = field(raw, "extension").as_object() {
         if let Some(b) = e.get("builtinPluginsEnabled").and_then(|v| v.as_object()) {
+            // loadPilotConfig uses Object.fromEntries here, which creates own
+            // data properties (including `__proto__`) instead of assigning.
             for (k, v) in b.entries() {
                 if let Some(v) = v.as_bool() {
-                    put_key(&mut plugins, k.clone(), JsValue::Bool(v));
+                    plugins.insert(k.clone(), JsValue::Bool(v));
                 }
             }
         }
@@ -777,50 +826,41 @@ fn provider_credential(
     } else {
         value.clone()
     };
-    let source = if effective.as_string().is_some_and(|s| {
-        let t = trim(s);
-        let u = t.units();
-        u.first() == Some(&36)
-            && u.get(1) == Some(&123)
-            && u.last() == Some(&125)
-            && u.len() > 3
-            && String::from_utf16_lossy(&u[2..u.len() - 1])
-                .chars()
-                .enumerate()
-                .all(|(i, c)| {
-                    if i == 0 {
-                        c.is_ascii_alphabetic() || c == '_'
-                    } else {
-                        c.is_ascii_alphanumeric() || c == '_'
-                    }
-                })
-    }) {
+    let source = if effective.as_string().and_then(env_reference).is_some() {
         "environment"
     } else {
         "literal"
     };
     let resolved = match effective.as_string() {
-        Some(s) => {
-            let t = trim(s);
-            let units = t.units();
-            if units.first() == Some(&36)
-                && units.get(1) == Some(&123)
-                && units.last() == Some(&125)
-                && units.len() > 3
-            {
-                let name = String::from_utf16_lossy(&units[2..units.len() - 1]);
-                env.get(&name)
-                    .map(|v| crate::metadata::js_trim(v))
-                    .filter(|v| !v.is_empty())
-                    .unwrap_or_default()
-                    .into()
-            } else {
-                t
-            }
-        }
+        Some(s) => match env_reference(s) {
+            Some(name) => env
+                .get(&String::from_utf16_lossy(name.units()))
+                .map(|v| crate::metadata::js_trim(v))
+                .filter(|v| !v.is_empty())
+                .unwrap_or_default()
+                .into(),
+            None => trim(s),
+        },
         None => JsString::default(),
     };
     (resolved, source.into())
+}
+
+/// `ENV_REFERENCE_PATTERN` from the baseline: only `${NAME}` with a JavaScript
+/// identifier name is an environment reference; everything else is a literal.
+fn env_reference(value: &JsString) -> Option<JsString> {
+    let t = trim(value);
+    let units = t.units();
+    if units.len() < 4 || units[0] != 36 || units[1] != 123 || units[units.len() - 1] != 125 {
+        return None;
+    }
+    let name = &units[2..units.len() - 1];
+    let first = |c: u16| c == 95 || (65..=90).contains(&c) || (97..=122).contains(&c);
+    let rest = |c: u16| first(c) || (48..=57).contains(&c);
+    if !first(*name.first()?) || !name[1..].iter().copied().all(rest) {
+        return None;
+    }
+    Some(JsString::from_utf16(name.to_vec()))
 }
 
 fn model_definition(
@@ -1186,7 +1226,11 @@ fn gateway(raw: &JsValue) -> Option<JsValue> {
         "idleSessionTimeoutMinutes",
         num(finite(g.get("idleSessionTimeoutMinutes").unwrap_or(&undefined())).unwrap_or(30.0)),
     );
-    put(&mut o, "idleSweepIntervalSeconds", num(60.0));
+    put(
+        &mut o,
+        "idleSweepIntervalSeconds",
+        num(finite(g.get("idleSweepIntervalSeconds").unwrap_or(&undefined())).unwrap_or(60.0)),
+    );
     put(
         &mut o,
         "memoryDiagnostics",
@@ -1484,12 +1528,10 @@ fn always_on(raw: &JsValue, cwd: &Path) -> Option<JsValue> {
             let Some(v) = value.as_object() else {
                 continue;
             };
-            let key = crate::metadata::resolve(cwd, &root.to_utf8().unwrap_or_default())
-                .to_string_lossy()
-                .into_owned();
-            put(
+            let key = resolve_js_path(cwd, root);
+            put_key(
                 &mut projects,
-                &key,
+                key,
                 object([(
                     "enabled",
                     JsValue::Bool(bool_field(v.get("enabled").unwrap_or(&undefined()), false)),
@@ -1506,6 +1548,41 @@ fn always_on(raw: &JsValue, cwd: &Path) -> Option<JsValue> {
         put(&mut out, "language", JsValue::String(lang.clone()));
     }
     Some(JsValue::Object(out))
+}
+
+/// `path.resolve(cwd, value)` for a JavaScript string. Project keys may hold
+/// lone UTF-16 surrogates, so the POSIX normalization is done on code units
+/// instead of converting through UTF-8.
+fn resolve_js_path(cwd: &Path, value: &JsString) -> JsString {
+    let absolute = value.units().first() == Some(&47) || cwd.is_absolute();
+    let mut input = if value.units().first() == Some(&47) {
+        value.units().to_vec()
+    } else {
+        let mut input: Vec<u16> = cwd.to_string_lossy().encode_utf16().collect();
+        input.push(47);
+        input.extend_from_slice(value.units());
+        input
+    };
+    if input.first() != Some(&47) {
+        input.insert(0, 47);
+    }
+    let mut stack: Vec<Vec<u16>> = Vec::new();
+    for segment in input.split(|unit| *unit == 47) {
+        if segment.is_empty() || segment == [46] {
+            continue;
+        }
+        if segment == [46, 46] {
+            stack.pop();
+            continue;
+        }
+        stack.push(segment.to_vec());
+    }
+    let mut units = Vec::new();
+    if absolute {
+        units.push(47);
+    }
+    units.extend(stack.join(&47u16));
+    JsString::from_utf16(units)
 }
 
 fn cron(raw: &JsValue) -> Option<JsValue> {
@@ -1737,10 +1814,23 @@ fn nonneg_int(v: &JsValue) -> Option<f64> {
         .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0)
 }
 
+fn selection_id(selection: &(JsString, JsString)) -> JsString {
+    let mut units = selection.0.units().to_vec();
+    units.push(47);
+    units.extend_from_slice(selection.1.units());
+    JsString::from_utf16(units)
+}
+fn selection_reference(selection: &(JsString, JsString)) -> JsValue {
+    let mut o = obj();
+    put(&mut o, "id", JsValue::String(selection_id(selection)));
+    put(&mut o, "provider", JsValue::String(selection.0.clone()));
+    put(&mut o, "model", JsValue::String(selection.1.clone()));
+    JsValue::Object(o)
+}
 fn router(
     raw: &JsValue,
     providers: &[Provider],
-    _selection: &(JsString, JsString),
+    selection: &(JsString, JsString),
 ) -> Option<JsValue> {
     let r = field(raw, "router").as_object()?;
     if !enabled(r.get("enabled"), true) {
@@ -1748,13 +1838,22 @@ fn router(
     }
     let mut out = obj();
     put(&mut out, "enabled", JsValue::Bool(true));
-    if let Some(scenarios) = r
+    if let Some(default_ref) = r
         .get("scenarios")
         .and_then(|v| v.as_object())
         .and_then(|s| s.get("default"))
         .and_then(|v| reference(v, providers))
     {
-        put(&mut out, "scenarios", scenarios);
+        // loadPilotConfig rewrites a disagreeing scenarios.default to agent.model
+        // and emits CONFIG_MODEL_CONFLICT; the diagnostic is produced by the
+        // existing router validator, so only the value is corrected here.
+        let corrected = match default_ref.get("id").and_then(|v| v.as_string()) {
+            Some(id) if id != &selection_id(selection) => selection_reference(selection),
+            _ => default_ref,
+        };
+        let mut scenarios = obj();
+        put(&mut scenarios, "default", corrected);
+        put(&mut out, "scenarios", JsValue::Object(scenarios));
     }
     put(
         &mut out,
@@ -1893,7 +1992,7 @@ fn router_token_saver(raw: Option<&JsValue>, providers: &[Provider]) -> Option<J
         return None;
     }
     let mut tiers = obj();
-    for (name, body) in tiers_raw.entries() {
+    for (name, body) in js_entries(tiers_raw) {
         let Some(b) = body.as_object() else {
             continue;
         };
@@ -2154,20 +2253,13 @@ fn router_stats(raw: Option<&JsValue>, providers: &[Provider]) -> Option<JsValue
 
 fn resolve_api_key(value: &JsValue, env: &Env) -> Option<JsString> {
     let value = trim(value.as_string()?);
-    let units = value.units();
-    if units.first() == Some(&36)
-        && units.get(1) == Some(&123)
-        && units.last() == Some(&125)
-        && units.len() > 3
-    {
-        let name = String::from_utf16_lossy(&units[2..units.len() - 1]);
-        return env
-            .get(&name)
-            .map(|v| crate::metadata::js_trim(v))
-            .filter(|v| !v.is_empty())
-            .map(Into::into);
-    }
-    Some(value)
+    let Some(name) = env_reference(&value) else {
+        return Some(value);
+    };
+    env.get(&String::from_utf16_lossy(name.units()))
+        .map(|v| crate::metadata::js_trim(v))
+        .filter(|v| !v.is_empty())
+        .map(Into::into)
 }
 
 const CORE_MODULES: &[&str] = &[
@@ -2221,13 +2313,21 @@ fn modules(raw: &JsValue, home: &Path, env: &Env) -> Option<JsValue> {
     }
     let sop = sop_module(m.get("sop"), home, env);
     let mut out = obj();
+    let mut knowledge = None;
     for (slot, value) in core {
+        if slot == "knowledge" {
+            knowledge = value;
+            continue;
+        }
         if let Some(v) = value {
             put(&mut out, slot, v);
         }
     }
     if let Some(v) = sop {
         put(&mut out, "sop", v);
+    }
+    if let Some(v) = knowledge {
+        put(&mut out, "knowledge", v);
     }
     Some(JsValue::Object(out))
 }
@@ -2284,6 +2384,9 @@ fn nonempty_js(v: Option<&JsValue>) -> Option<JsString> {
         .map(trim)
         .filter(|s| !s.is_empty())
 }
+fn has_leading_slash(value: &JsString) -> bool {
+    value.units().first() == Some(&47)
+}
 fn string_array(value: Option<&JsValue>) -> Option<Vec<JsValue>> {
     let JsValue::Array(items) = value? else {
         return None;
@@ -2298,11 +2401,10 @@ fn string_array(value: Option<&JsValue>) -> Option<Vec<JsValue>> {
         if s.is_empty() {
             return None;
         }
-        let text = s.to_utf8().ok()?;
-        if !seen.insert(text.clone()) {
+        if !seen.insert(s.clone()) {
             return None;
         }
-        out.push(string(&text));
+        out.push(JsValue::String(s));
     }
     Some(out)
 }
@@ -2437,7 +2539,7 @@ fn external_module(slot: &str, r: &JsObject) -> Option<JsValue> {
     }
     let manifest = manifest.unwrap_or_else(|| "/module-manifest".into());
     let call = call.unwrap_or_else(|| "/v2/module/call".into());
-    if !manifest.to_utf8().ok()?.starts_with('/') || !call.to_utf8().ok()?.starts_with('/') {
+    if !has_leading_slash(&manifest) || !has_leading_slash(&call) {
         return None;
     }
     let implementation = implementation?;
@@ -2662,7 +2764,7 @@ fn sop_module(value: Option<&JsValue>, home: &Path, env: &Env) -> Option<JsValue
         return None;
     }
     let manifest = nonempty_js(r.get("manifestPath")).unwrap_or_else(|| "/healthz".into());
-    if !manifest.to_utf8().ok()?.starts_with('/') {
+    if !has_leading_slash(&manifest) {
         return None;
     }
     let mut out = obj();

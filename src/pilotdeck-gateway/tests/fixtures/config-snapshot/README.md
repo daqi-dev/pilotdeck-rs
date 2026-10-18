@@ -7,11 +7,13 @@
 
 ## 目录与条数
 
-`oracle.json` 共 **128** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **156** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言：
 
-- 53 条手写用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project 合并、
-  provider/模型目录、credential、modules、SOP、proxy 迁移等；
+- 81 条手写用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project 合并、
+  provider/模型目录、credential、modules、SOP、proxy 迁移；其中 28 条为本轮
+  新增（第一轮评审反例：router 冲突、API key 字面量、清扫周期、tier 键序、
+  深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖）；
 - 20 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
 - 55 条来自既有 `tests/fixtures/config/diagnostics.json` 中 `load.ok` 的确定性
   抽样（按成功用例顺序每 18 条取 1 条）。

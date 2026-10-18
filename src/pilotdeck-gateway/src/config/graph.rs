@@ -167,26 +167,20 @@ fn child(role: Role, key: &str) -> Role {
     }
 }
 pub(super) fn inspect_sops(g: &ValueGraph) -> JsValue {
-    convert(g, &g.root, Role::SopBundle, &mut vec![], 0)
+    convert(g, &g.root, Role::SopBundle, &mut vec![])
 }
 pub(super) fn inspect(g: &ValueGraph) -> JsValue {
-    convert(g, &g.root, Role::Root, &mut vec![], 0)
+    convert(g, &g.root, Role::Root, &mut vec![])
 }
 /// Materialize every reachable value. Used only for the executable snapshot;
 /// validator-observed loads keep the cheaper role-limited projection.
 pub(super) fn inspect_full(g: &ValueGraph) -> JsValue {
-    convert(g, &g.root, Role::Full, &mut vec![], 0)
+    convert(g, &g.root, Role::Full, &mut vec![])
 }
-fn convert(
-    g: &ValueGraph,
-    v: &Value,
-    role: Role,
-    active: &mut Vec<usize>,
-    depth: usize,
-) -> JsValue {
-    if depth > 256 {
-        return JsValue::Undefined;
-    }
+/// Depth is already bounded by `pilotdeck-yaml`'s V8-stack measurements during
+/// parse/conversion. A second arbitrary cap here silently truncated deep
+/// configuration and changed the existing `inspect` path (review round 1).
+fn convert(g: &ValueGraph, v: &Value, role: Role, active: &mut Vec<usize>) -> JsValue {
     match v {
         Value::Null => JsValue::Null,
         Value::Bool(b) => JsValue::Bool(*b),
@@ -207,7 +201,7 @@ fn convert(
                         JsValue::Undefined
                     } else {
                         let key = k.to_utf8().unwrap_or_default();
-                        convert(g, v, child(role, &key), active, depth + 1)
+                        convert(g, v, child(role, &key), active)
                     };
                     o.insert(k.clone(), value);
                 }
@@ -226,10 +220,7 @@ fn convert(
                 } else {
                     Role::Opaque
                 };
-                let a = items
-                    .iter()
-                    .map(|v| convert(g, v, role, active, depth + 1))
-                    .collect();
+                let a = items.iter().map(|v| convert(g, v, role, active)).collect();
                 active.pop();
                 JsValue::Array(a)
             }
