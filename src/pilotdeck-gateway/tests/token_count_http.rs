@@ -90,8 +90,8 @@ fn regenerate_http_twice_identically() {
         let metadata: serde_json::Value =
             serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
         assert_eq!(metadata["transport"], "loopback HTTP");
-        assert_eq!(metadata["cases"], 149);
-        assert_eq!(metadata["requests"], 324);
+        assert_eq!(metadata["cases"], 152);
+        assert_eq!(metadata["requests"], 327);
         generated.push(
             std::fs::read(
                 std::path::Path::new(metadata["output"].as_str().unwrap()).join("http-oracle.json"),

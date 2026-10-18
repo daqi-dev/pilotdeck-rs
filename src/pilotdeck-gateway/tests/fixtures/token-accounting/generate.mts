@@ -71,6 +71,14 @@ add('anthropic-cache-markers', [step({ ...rich, messages: [0, 1, 2, 3].map(n => 
 add('headers-and-path', [step()], { providers: { p: { ...provider, url: '$MOCK/v1/', headers: { 'x-api-key': 'overridden', 'anthropic-version': 'fixture-version', 'x-fixture': 'yes', 'content-type': 'application/custom' } } } });
 for (const protocol of ['openai', 'google', 'openai-responses']) add(`unsupported-${protocol}`, [step()], { providers: { p: { ...provider, protocol } } });
 add('unknown-provider-model', [step({ ...baseRequest, provider: 'unknown' }), step({ ...baseRequest, model: 'unknown' })], providerConfig);
+// The baseline indexes the plain provider/model records, so inherited
+// `Object.prototype` members are truthy finds rather than misses. Keep the
+// provider and model names separate: each one reaches a different read in
+// `countWithProvider`.
+add('prototype-lookup', [
+  ...['__proto__', 'constructor', 'toString'].map(key => step({ ...baseRequest, provider: key })),
+  ...['__proto__', 'constructor', 'toString'].map(key => step({ ...baseRequest, model: key })),
+], providerConfig);
 for (const protocol of ['anthropic', 'openai-responses']) {
   const p = { ...provider, protocol, url: protocol === 'anthropic' ? '$MOCK' : 'https://api.openai.com/v1/' };
   add(`${protocol}-counts`, [{ input_tokens: 0, inputTokens: 99 }, { input_tokens: -2.5 }, { input_tokens: '3', inputTokens: 4.25 }, { inputTokens: null, tokens: 5 }, {}, null, []].map(reply => step(baseRequest, {}, { reply })), { providers: { p } }, { cacheSize: 0 });

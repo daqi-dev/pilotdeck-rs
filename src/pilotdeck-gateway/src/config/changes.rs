@@ -176,7 +176,7 @@ const ARRAY_PROTOTYPE_METHODS: &[&str] = &[
 /// `Array.prototype` expose distinct functions under the same names, and
 /// `Object.is` distinguishes them.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum BuiltinPrototype {
+pub(crate) enum BuiltinPrototype {
     Object,
     Array,
 }
@@ -184,9 +184,10 @@ enum BuiltinPrototype {
 /// A property read result. The wire model stores JSON values but not the
 /// inherited function members of `Object.prototype`/`Array.prototype`, nor
 /// `Object.prototype` itself; those are represented here so `diff_values` can
-/// apply the baseline's `Object.is` rules to them.
+/// apply the baseline's `Object.is` rules to them. Shared with the runtime's
+/// provider-count lookup, which needs the same JavaScript index semantics.
 #[derive(Clone, Copy)]
-enum Operand<'a> {
+pub(crate) enum Operand<'a> {
     Value(&'a JsValue),
     Number(f64),
     Function(BuiltinPrototype),
@@ -298,7 +299,8 @@ fn number_is(left: f64, right: f64) -> bool {
 /// (and `Array.prototype` when an array appears in the chain). A `None`
 /// prototype means the implicit `Object.prototype`; an explicit `Null`
 /// prototype (for example `Object.create(null)`) has no builtin fallback.
-fn get_property<'a>(operand: Operand<'a>, key: &JsString) -> Option<Operand<'a>> {
+/// Shared with the runtime's provider-count lookup rather than duplicated.
+pub(crate) fn get_property<'a>(operand: Operand<'a>, key: &JsString) -> Option<Operand<'a>> {
     match operand {
         Operand::Value(JsValue::Object(object)) => object_property(object, key),
         Operand::ObjectPrototype => object_prototype_property(key),

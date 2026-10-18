@@ -156,7 +156,7 @@ pub async fn replay(exchange: Arc<Mutex<Exchange>>, transport: Arc<dyn ProviderC
     let JsValue::Array(cases) = fixture.get("cases").unwrap() else {
         panic!("cases")
     };
-    assert_eq!(cases.len(), 149);
+    assert_eq!(cases.len(), 152);
     let mut names = std::collections::HashSet::new();
     let mut request_count = 0;
     for case in cases {
@@ -189,9 +189,15 @@ pub async fn replay(exchange: Arc<Mutex<Exchange>>, transport: Arc<dyn ProviderC
         let runtime = TokenAccountingRuntime::new(config.as_object().unwrap().clone())
             .with_cache_size(0)
             .with_transport(transport.clone());
+        let mut request = fixture.get("request").unwrap().as_object().unwrap().clone();
+        if let Some(overrides) = case.get("request").and_then(JsValue::as_object) {
+            for (key, value) in overrides.entries() {
+                request.insert(key.clone(), value.clone());
+            }
+        }
         let snapshot = runtime
             .evaluate_request_budget(
-                fixture.get("request").unwrap().as_object().unwrap().clone(),
+                request,
                 super::EvaluationOptions {
                     max_context_tokens: 100.0,
                     reserved_output_tokens: None,
@@ -217,7 +223,7 @@ pub async fn replay(exchange: Arc<Mutex<Exchange>>, transport: Arc<dyn ProviderC
         assert_eq!(json!(exchange.requests), expected, "HTTP trace: {name}");
         request_count += exchange.requests.len();
     }
-    assert_eq!(request_count, 324);
+    assert_eq!(request_count, 327);
 }
 
 // Both callers import this trait, making runtime's public method available.

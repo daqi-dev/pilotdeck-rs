@@ -188,15 +188,15 @@ async fn replay(http: bool) {
         panic!("cases")
     };
     // Exact population is deliberately fixed: truncation cannot pass a replay.
-    assert_eq!(cases.len(), 51);
+    assert_eq!(cases.len(), 52);
     assert_eq!(
         cases
             .iter()
             .map(|case| case["steps"].as_array().unwrap().len())
             .collect::<Vec<_>>(),
         [
-            6, 51, 141, 18, 2, 7, 3, 1, 1, 1, 1, 2, 7, 2, 8, 3, 3, 3, 3, 3, 3, 7, 2, 8, 3, 3, 3, 3,
-            3, 3, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+            6, 51, 141, 18, 2, 7, 3, 1, 1, 1, 1, 2, 6, 7, 2, 8, 3, 3, 3, 3, 3, 3, 7, 2, 8, 3, 3, 3,
+            3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
         ]
     );
     let mut steps = 0;
@@ -282,7 +282,7 @@ async fn replay(http: bool) {
             );
         }
     }
-    assert_eq!(steps, 343);
+    assert_eq!(steps, 349);
 }
 #[tokio::test]
 async fn real_ts_accounting_and_provider_projection() {

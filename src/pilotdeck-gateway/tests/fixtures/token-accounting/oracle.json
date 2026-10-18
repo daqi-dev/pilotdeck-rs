@@ -14000,6 +14000,338 @@
       ]
     },
     {
+      "name": "prototype-lookup",
+      "config": {
+        "providers": {
+          "p": {
+            "id": "p",
+            "protocol": "anthropic",
+            "url": "$MOCK",
+            "apiKey": " fixture-key ",
+            "headers": {},
+            "models": {
+              "m": {
+                "id": "claude-sonnet-4-6",
+                "capabilities": {
+                  "maxOutputTokens": 4096,
+                  "contextWindow": 200000
+                }
+              }
+            }
+          }
+        }
+      },
+      "settings": {},
+      "steps": [
+        {
+          "request": {
+            "provider": "__proto__",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'm')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "constructor",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'm')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "toString",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'm')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "__proto__",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'maxOutputTokens')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "constructor",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'maxOutputTokens')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'maxOutputTokens')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        }
+      ]
+    },
+    {
       "name": "anthropic-counts",
       "config": {
         "providers": {

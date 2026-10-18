@@ -25,7 +25,7 @@ const config = { providers: { p: { id: 'p', protocol: 'anthropic', url: '$MOCK',
 const selectedHeaders = ['authorization', 'proxy-authorization', 'cookie', 'content-type', 'content-encoding',
   'content-language', 'content-location', 'x-api-key', 'anthropic-version', 'x-fixture'];
 type Reply = { status?: number; location?: string; locations?: string[]; text?: string; bytes?: number[] };
-const specs: { name: string; responses: Reply[]; provider?: Record<string, any> }[] = [];
+const specs: { name: string; responses: Reply[]; provider?: Record<string, any>; request?: Record<string, any> }[] = [];
 const add = (name: string, responses: Reply[]) => specs.push({ name, responses });
 for (const status of [301, 302, 303, 307, 308]) {
   for (const [name, location] of Object.entries({ relative: '../final?x=1#fragment', root: '/final',
@@ -69,6 +69,13 @@ for (const [name, value] of [['number', 5], ['true', true], ['false', false], ['
 }
 for (const [name, url] of [['invalid', 'invalid'], ['credentials', 'http://fixture:fixture@127.0.0.1:1']] as const) {
   specs.push({ name: `initial-url-${name}`, responses: [], provider: { url } });
+}
+// `models[name]` finds inherited Object.prototype members. With the request's
+// maxOutputTokens supplied, the baseline's `??` short-circuits and the
+// provider request is actually sent with that inherited value treated as a
+// model with no own fields.
+for (const model of ['__proto__', 'constructor', 'toString']) {
+  specs.push({ name: `prototype-model-${model}`, responses: [{}], request: { ...request, model, maxOutputTokens: 10 } });
 }
 let origins = ['http://127.0.0.1:41001', 'http://127.0.0.1:41002'];
 const materialize = (text: string) => text.replaceAll('$MOCK_AUTHORITY', new URL(origins[0]).host)
@@ -129,7 +136,7 @@ try {
         } else assert.ok(origins.includes(new URL(String(url)).origin), 'no external providers');
         return fetch(url, capture ? { ...init, dispatcher } : init);
       } });
-    const snapshot = await runtime.evaluateRequestBudget(request, options);
+    const snapshot = await runtime.evaluateRequestBudget({ ...request, ...spec.request }, options);
     if (spec.provider?.url !== undefined) {
       assert.equal(snapshot.source, 'local');
       assert.ok(snapshot.estimatorError, `${spec.name}: fetch must reject before transport`);
@@ -139,10 +146,14 @@ try {
       assert.equal(snapshot.source, 'provider', `${spec.name}: redirect must reach valid JSON`);
       assert.equal(snapshot.tokens, 73);
     }
+    if (spec.name.startsWith('prototype-model-')) {
+      assert.equal(snapshot.source, 'provider', `${spec.name}: inherited model must reach provider`);
+      assert.equal(snapshot.tokens, 73);
+    }
     cases.push({ ...spec, requests, snapshot });
   }
-  assert.equal(cases.length, 149);
-  assert.equal(cases.reduce((n, c) => n + c.requests.length, 0), 324);
+  assert.equal(cases.length, 152);
+  assert.equal(cases.reduce((n, c) => n + c.requests.length, 0), 327);
   assertBaseline(baseline);
   assert.deepEqual(await baselineSourceHashes(baseline, sources), sourceSha256);
   await writeFile(join(output, 'http-oracle.json'), JSON.stringify({ sourceCommit, sourceSha256,
