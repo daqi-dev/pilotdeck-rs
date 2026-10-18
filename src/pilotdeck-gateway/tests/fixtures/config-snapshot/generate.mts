@@ -387,6 +387,33 @@ model:
 alwaysOn: {language: en}
 `);
 
+// Review round 4 boundary probes. The fixed baseline decides each outcome;
+// the Rust projection is aligned to whatever is recorded here.
+add('memory-schedule-nested-inf-auto-index', BASE + `memory: {schedule: {autoIndexIntervalMinutes: .inf}}\n`);
+add('memory-schedule-nested-inf-auto-dream', BASE + `memory: {schedule: {autoDreamIntervalMinutes: .inf}}\n`);
+add('memory-schedule-flat-inf-auto-index', BASE + `memory: {autoIndexIntervalMinutes: .inf}\n`);
+add('memory-schedule-flat-inf-auto-dream', BASE + `memory: {autoDreamIntervalMinutes: .inf}\n`);
+add('memory-model-number', BASE + `memory: {model: 7}\n`);
+add('memory-model-boolean', BASE + `memory: {model: true}\n`);
+for (const [suffix, port] of [['above-range', 70000], ['zero', 0], ['fractional', 1.5], ['negative', -1]] as const) {
+  add(`gateway-port-${suffix}`, BASE + `gateway: {port: ${port}}\n`);
+}
+add('agent-subagent-multislash-ref', BASE.replace(
+  'agent: {model: parity/deterministic}',
+  `agent: {model: parity/deterministic, subagents: {default: parity/a/b}}`,
+));
+add('model-id-with-slashes', `schemaVersion: 1
+agent: {model: vendor/gpt/4}
+model:
+  providers:
+    vendor:
+      protocol: openai
+      url: http://127.0.0.1:28794/v1
+      apiKey: mock-only
+      models:
+        gpt/4: {}
+`);
+
 function encode(value: unknown): unknown {
   if (value === undefined) return { $: 'undefined' };
   if (value instanceof Date) return FIXED_LOADED_AT;

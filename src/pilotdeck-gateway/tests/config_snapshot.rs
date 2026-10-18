@@ -1,5 +1,7 @@
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::config::{Env, load_project, load_snapshot, snapshot::content_hash};
-use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -10,9 +12,10 @@ const ORACLE: &str = include_str!("fixtures/config-snapshot/oracle.json");
 
 #[test]
 fn complete_config_snapshot_replays_real_typescript_oracle() {
-    // The protocol parser preserves lone UTF-16 surrogates, which the existing
-    // config corpus intentionally contains.
-    let oracle = parse_json(ORACLE).expect("oracle json");
+    // The shared guard parses with the protocol parser, which preserves lone
+    // UTF-16 surrogates; when PDRS_BASELINE is set it also recomputes every
+    // recorded source hash.
+    let oracle = baseline::oracle(ORACLE);
     let JsValue::Array(cases) = oracle.get("cases").expect("cases") else {
         panic!("cases array")
     };
@@ -20,7 +23,7 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         oracle.get("count").and_then(JsValue::as_number),
         Some(cases.len() as f64)
     );
-    assert_eq!(cases.len(), 157, "fixture count changed");
+    assert_eq!(cases.len(), 169, "fixture count changed");
     let sources = oracle
         .get("sources")
         .and_then(JsValue::as_object)
