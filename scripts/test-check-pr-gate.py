@@ -56,6 +56,9 @@ CASES = [
     ("行内代码里引用标记写法不算标记", BASE + "<!-- author: claude -->\n说明：写法是 `<!-- author: A,B -->`\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
     ("代码块里的 reviewers 不算标记", BASE + "```\n<!-- reviewers: claude,glm -->\n```\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
     ("结果块放进代码围栏也照样查 runner", "```\n" + GLM_BLOCK + "```\n<!-- reviewers: codex,deepseek -->", "glm/x", False, "runner=zai"),
+    ("注释里的 ``` 不能吞掉后面的真 author", BASE + "<!-- explanation: ``` -->\n<!-- author: codex,claude -->\n<!-- end explanation: ``` -->\n<!-- reviewers: claude,glm -->", "codex/repro", False, "谁写谁不审"),
+    ("~~~ 围栏里的标记不算", BASE + "~~~\n<!-- reviewers: claude,glm -->\n~~~\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
+    ("双反引号行内代码里的标记不算", BASE + "<!-- author: claude -->\n写法 `` <!-- author: A,B --> ``\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
     ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
     ("GLM 写、四角色用 GLM 以外：放行", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
      + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", True, ""),
@@ -115,6 +118,15 @@ def main() -> int:
             got3 = gate.trailer_families("HEAD~1", "HEAD")
         finally:
             os.chdir(cwd)
+        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "f\n\nCo-Authored-By: Bot\n <noreply@anthropic.com>"], check=True)
+        os.chdir(td)
+        try:
+            got4 = gate.trailer_families("HEAD~1", "HEAD")
+        finally:
+            os.chdir(cwd)
+        good4 = got4 == {"claude"}
+        print(f"{'PASS' if good4 else 'FAIL'} 折行署名（续行里的厂商域名）也识别 {sorted(got4)}")
+        fails += not good4
         good3 = got3 == {"claude"}
         print(f"{'PASS' if good3 else 'FAIL'} 署名不在末段也识别 {sorted(got3)}")
         fails += not good3
@@ -123,25 +135,6 @@ def main() -> int:
         fails += not good
         print(f"{'PASS' if bad_range_raised else 'FAIL'} 给了范围但读不到 → 抛错（fail-closed）")
         fails += not bad_range_raised
-    with tempfile.TemporaryDirectory() as td:
-        g = ["git", "-C", td, "-c", "user.email=t@t", "-c", "user.name=t"]
-        subprocess.run([*g, "init", "-q", "-b", "main"], check=True)
-        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "root"], check=True)
-        old_base = subprocess.run([*g, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "main later\n\nCo-Authored-By: GLM-5.3 <noreply@zhipu.com>"], check=True)
-        subprocess.run([*g, "switch", "-q", "-c", "codex/x"], check=True)
-        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "pr\n\nCo-Authored-By: Codex <noreply@openai.com>"], check=True)
-        subprocess.run([*g, "switch", "-q", "main"], check=True)
-        subprocess.run([*g, "commit", "-q", "--allow-empty", "-m", "main newest\n\nCo-Authored-By: DeepSeek <d@deepseek.com>"], check=True)
-        main_head = subprocess.run([*g, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-        cwd = os.getcwd(); os.chdir(td)
-        try:
-            got = gate.trailer_families(main_head, "codex/x")  # base=最新 main，PR 分叉点更早
-        finally:
-            os.chdir(cwd)
-        good = got == {"codex"}
-        print(f"{'PASS' if good else 'FAIL'} 从 merge-base 起算，不把 main 上别家提交算进作者 {sorted(got)}")
-        fails += not good
     # 署名误识别负例：普通人的邮箱/缩写不算模型
     for line, want in [("David Smith <ds@example.org>", set()), ("Alex <alex@gpt.example.org>", set()),
                        ("Claude Opus 5.5 <noreply@anthropic.com>", {"claude"}), ("Bot <ci@openai.com>", {"codex"}),

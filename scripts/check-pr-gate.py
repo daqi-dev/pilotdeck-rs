@@ -79,26 +79,61 @@ def trailer_families(base: str, head: str) -> set[str]:
     """base..head 提交的 Co-Authored-By 署名对应的谱系。给了范围却读不到 → 抛 TrailerScanError（fail-closed）。"""
     if not base or not head:
         return set()
-    # 从 merge-base 起算：PR rebase 过 main 时 base.sha 可能是旧点，直接 base..head 会把 main 上别家的提交算进来
-    mb = subprocess.run(["git", "merge-base", base, head], capture_output=True, text=True)
-    if mb.returncode != 0:
-        raise TrailerScanError(mb.stderr.strip()[:200] or "merge-base 失败")
-    # 扫完整提交消息里任意位置的 Co-Authored-By 行：git 的 trailer 解析只认末段，署名后再跟一段说明就会漏
-    cp = subprocess.run(["git", "log", f"{mb.stdout.strip()}..{head}", "--format=%B%x00"], capture_output=True, text=True)
+    # base..head 即「head 可达、base 不可达」的提交集合（多公共祖先时也正确，不另取 merge-base）
+    # 扫完整提交消息里任意位置的 Co-Authored-By 行：git 的 trailer 解析只认末段，署名后再跟一段说明就会漏；
+    # 续行（下一行以空白开头）按 git trailer 语义拼回同一行
+    cp = subprocess.run(["git", "log", f"{base}..{head}", "--format=%B%x00"], capture_output=True, text=True)
     if cp.returncode != 0:
         raise TrailerScanError(cp.stderr.strip()[:200])
     out = set()
-    for m in re.finditer(r"(?im)^\s*co-authored-by\s*:\s*(.+)$", cp.stdout):
-        out |= trailer_family_of(m.group(1))
+    for m in re.finditer(r"(?im)^[ \t]*co-authored-by[ \t]*:[ \t]*(.*(?:\n[ \t]+\S.*)*)", cp.stdout):
+        out |= trailer_family_of(" ".join(m.group(1).split()))
     return out
 
 
-CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _strip_inline(line: str) -> str:
+    """去掉行内代码（CommonMark：开闭反引号串等长）；HTML 注释内的反引号不当代码开头。"""
+    out, i, n = [], 0, len(line)
+    while i < n:
+        if line.startswith("<!--", i):
+            j = line.find("-->", i + 4)
+            j = n if j < 0 else j + 3
+            out.append(line[i:j]); i = j
+        elif line[i] == "`":
+            j = i
+            while j < n and line[j] == "`":
+                j += 1
+            run = line[i:j]
+            k = line.find(run, j)
+            while k >= 0 and k + len(run) < n and line[k + len(run)] == "`":
+                k = line.find(run, k + len(run) + 1)
+            if k < 0:
+                out.append(run); i = j
+            else:
+                i = k + len(run)
+        else:
+            out.append(line[i]); i += 1
+    return "".join(out)
 
 
 def strip_code(body: str) -> str:
-    """去掉行内代码与代码块：文档里引用标记写法（如 `<!-- author: A,B -->`）不算标记。"""
-    return CODE.sub("", body)
+    """去掉代码块（行首 ``` 或 ~~~ 围栏）与行内代码：文档里引用的标记写法不算标记。
+    围栏只认行首（≤3 空格缩进），所以 HTML 注释里出现的 ``` 不会吞掉后面的真标记。"""
+    lines, fence = [], None
+    for line in body.splitlines():
+        m = FENCE.match(line)
+        if fence:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = None
+            continue
+        if m:
+            fence = m.group(1)
+            continue
+        lines.append(_strip_inline(line))
+    return "\n".join(lines)
 
 
 def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
