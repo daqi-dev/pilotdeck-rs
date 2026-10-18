@@ -6,6 +6,7 @@
 //! the host or gateway methods either.
 mod ledger;
 mod projection;
+pub mod recorder;
 mod run_registry;
 mod transcript;
 mod transcript_adapter;

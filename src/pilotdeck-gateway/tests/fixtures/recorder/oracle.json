@@ -1,0 +1,976 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/session/AgentSessionEventRecorder.ts": "4d8311f564a5d45bdbacaf7953f8a9d6fbae366c086ecf96162bdad027667ada",
+    "src/agent/modules/llm/durableModelInvokerPort.ts": "9eed716eeab74154c1623ea1443fd19b66aefc7d8b47327f5889d69bad023720",
+    "src/agent/modules/capability/durableToolPort.ts": "98248055392d008eff029998a8b158c1f41cb7f06f8588907afa5708f162ac68",
+    "src/session/transcript/JsonlTranscriptWriter.ts": "28cd4788ff4465be4594edf7fb59762299362ac867ef9a50c24732ab212a4678",
+    "src/session/transcript/TranscriptEntry.ts": "bb08243c27e218b25d5e69e45470aa32dae79518697a749ad4611d1a2d0b53c8",
+    "src/session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead",
+    "src/session/events/SessionRuntime.ts": "b7fa7a9a6e7395dc29464a2c2f539a3c1b17ac13fd71a3b243ba93c78fc316ec",
+    "src/session/events/SessionEventLogValidation.ts": "56712300dae1794cc59814c425cf4291cc88109a7af4590ae41218ef84216ca4",
+    "src/session/events/SessionDomainValidation.ts": "64763871d039acb7fcc279c741f344c53568cd0a310726e0f74ff58f1d06d47c",
+    "src/session/persistence/JsonlSessionPersistence.ts": "721c720f36f0fb0f2b6bd77bd2490d181182dfa909c3bd85e80d2ca3df643124"
+  },
+  "node": "v22.22.0",
+  "now": "2026-10-18T00:00:00.000Z",
+  "sessionId": "s1",
+  "scenarios": [
+    {
+      "name": "model",
+      "steps": [
+        {
+          "op": "startTurn",
+          "turnId": "turn-1",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": " first "
+                  }
+                ]
+              }
+            ],
+            "raw": {
+              "preserved": true
+            },
+            "temperature": 0.25
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "text_delta",
+            "delta": "a",
+            "raw": {
+              "secret": 1
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "usage",
+            "usage": {
+              "inputTokens": 1,
+              "outputTokens": 2
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "second"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 2
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "text_delta",
+            "delta": "b"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 10,
+            "diagnostics": 0,
+            "sequence": 10
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" first \"}]}],\"raw\":{\"preserved\":true},\"temperature\":0.25},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"text_delta\",\"delta\":\"a\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"usage\",\"usage\":{\"inputTokens\":1,\"outputTokens\":2}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"step_started\",\"step\":2,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"model_request\",\"step\":2,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":9,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"model_stream_event\",\"step\":2,\"event\":{\"type\":\"text_delta\",\"delta\":\"b\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":10,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n"
+      }
+    },
+    {
+      "name": "tools",
+      "steps": [
+        {
+          "op": "startTurn",
+          "turnId": "turn-1",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "tools"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-1",
+          "calls": [
+            {
+              "id": "call-a",
+              "name": "read_file",
+              "input": {
+                "path": "call-a.txt"
+              },
+              "raw": {
+                "dropped": {
+                  "nested": true
+                }
+              }
+            },
+            {
+              "id": "call-b",
+              "name": "read_file",
+              "input": {
+                "path": "b",
+                "raw": "kept inside input"
+              },
+              "raw": [
+                1,
+                2,
+                3
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "call-a",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result call-a"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z",
+              "raw": {
+                "dropped": true
+              },
+              "metadata": {
+                "raw": "kept",
+                "n": 1
+              }
+            },
+            {
+              "type": "error",
+              "toolCallId": "call-b",
+              "toolName": "read_file",
+              "content": [],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z",
+              "error": {
+                "code": "E",
+                "message": "no",
+                "raw": {
+                  "dropped": true
+                }
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 8,
+            "diagnostics": 0,
+            "sequence": 8
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "empty results"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 2
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 11,
+            "diagnostics": 0,
+            "sequence": 11
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"tools\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"call-a\",\"name\":\"read_file\",\"input\":{\"path\":\"call-a.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"call-b\",\"name\":\"read_file\",\"input\":{\"path\":\"b\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"call-a\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result call-a\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\",\"metadata\":{\"n\":1}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"error\",\"toolCallId\":\"call-b\",\"toolName\":\"read_file\",\"content\":[],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\",\"error\":{\"code\":\"E\",\"message\":\"no\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"step_started\",\"step\":2,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":9,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"model_request\",\"step\":2,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"empty results\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":10,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n{\"type\":\"step_completed\",\"step\":2,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":11,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-11>\",\"parentEntryId\":\"<id-10>\"}\n"
+      }
+    },
+    {
+      "name": "raw",
+      "steps": [
+        {
+          "op": "startTurn",
+          "turnId": "turn-1",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "raw": {
+              "request": "kept"
+            },
+            "nested": {
+              "raw": "inside request kept"
+            },
+            "list": [
+              {
+                "raw": 1,
+                "keep": 2
+              }
+            ]
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "tool_call",
+            "raw": {
+              "top": true
+            },
+            "nested": {
+              "raw": [
+                1,
+                2
+              ],
+              "keep": "yes"
+            },
+            "list": [
+              {
+                "raw": "gone",
+                "keep": {
+                  "raw": "gone too",
+                  "keep": 1
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-1",
+          "calls": [
+            {
+              "id": "raw-call",
+              "raw": {
+                "top": true
+              },
+              "input": {
+                "raw": "kept inside input",
+                "nested": {
+                  "raw": "gone",
+                  "keep": 1
+                }
+              },
+              "list": [
+                {
+                  "raw": "gone",
+                  "keep": 2
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "raw-call",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "x",
+                  "raw": "gone"
+                }
+              ],
+              "raw": {
+                "top": true
+              },
+              "metadata": {
+                "raw": "gone",
+                "keep": 3
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 7,
+            "diagnostics": 0,
+            "sequence": 7
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"raw\":{\"request\":\"kept\"},\"nested\":{\"raw\":\"inside request kept\"},\"list\":[{\"raw\":1,\"keep\":2}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"tool_call\",\"nested\":{\"keep\":\"yes\"},\"list\":[{\"keep\":{\"keep\":1}}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"raw-call\",\"input\":{\"nested\":{\"keep\":1}},\"list\":[{\"keep\":2}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"raw-call\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}],\"metadata\":{\"keep\":3}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n"
+      }
+    },
+    {
+      "name": "errors",
+      "steps": [
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Durable turn turn-1 has not started."
+            }
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-1",
+          "calls": [
+            {
+              "id": "x",
+              "name": "read_file",
+              "input": {
+                "path": "x.txt"
+              }
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Durable turn turn-1 has not started."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "x",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result x"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Durable turn turn-1 has not started."
+            }
+          }
+        },
+        {
+          "op": "startTurn",
+          "turnId": "turn-1",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "startTurn",
+          "turnId": "turn-1",
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_turn_start",
+              "message": "Turn turn-1 has already started."
+            }
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Durable turn turn-1 has no open step."
+            }
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "errors"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "missing",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result missing"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "tool_result_without_call",
+              "message": "Tool result missing has no open call in step 1."
+            }
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-1",
+          "calls": [
+            {
+              "id": "a",
+              "name": "read_file",
+              "input": {
+                "path": "a.txt"
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-1",
+          "calls": [
+            {
+              "id": "a",
+              "name": "read_file",
+              "input": {
+                "path": "a.txt"
+              }
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "duplicate_tool_call",
+              "message": "Tool call a is already open."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "a",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result a"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "second step"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 2
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-1",
+          "calls": [
+            {
+              "id": "b",
+              "name": "read_file",
+              "input": {
+                "path": "b.txt"
+              }
+            },
+            {
+              "id": "c",
+              "name": "read_file",
+              "input": {
+                "path": "c.txt"
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "b",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result b"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "step_has_open_tool_calls",
+              "message": "Step 2 completed with unresolved tool calls."
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "c",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result c"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Durable turn turn-1 has no open step."
+            }
+          }
+        },
+        {
+          "op": "startTurn",
+          "turnId": "turn-2",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-2",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "second turn"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-2",
+          "calls": [
+            null
+          ],
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'id')"
+            }
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-2",
+          "results": [
+            null
+          ],
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'toolCallId')"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 16,
+            "diagnostics": 0,
+            "sequence": 16
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"errors\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"a\",\"name\":\"read_file\",\"input\":{\"path\":\"a.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"a\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result a\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"step_started\",\"step\":2,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"model_request\",\"step\":2,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second step\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"tool_call\",\"step\":2,\"call\":{\"id\":\"b\",\"name\":\"read_file\",\"input\":{\"path\":\"b.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":9,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"tool_call\",\"step\":2,\"call\":{\"id\":\"c\",\"name\":\"read_file\",\"input\":{\"path\":\"c.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":10,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n{\"type\":\"tool_result\",\"step\":2,\"result\":{\"type\":\"success\",\"toolCallId\":\"b\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result b\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":11,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-11>\",\"parentEntryId\":\"<id-10>\"}\n{\"type\":\"tool_result\",\"step\":2,\"result\":{\"type\":\"success\",\"toolCallId\":\"c\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result c\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":12,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-12>\",\"parentEntryId\":\"<id-11>\"}\n{\"type\":\"step_completed\",\"step\":2,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":13,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-13>\",\"parentEntryId\":\"<id-12>\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":14,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-14>\",\"parentEntryId\":\"<id-13>\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":15,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-15>\",\"parentEntryId\":\"<id-14>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"second turn\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":16,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-16>\",\"parentEntryId\":\"<id-15>\"}\n"
+      }
+    },
+    {
+      "name": "restart",
+      "steps": [
+        {
+          "op": "startTurn",
+          "turnId": "turn-1",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-1",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "before restart"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-1",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-1",
+          "calls": [
+            {
+              "id": "r",
+              "name": "read_file",
+              "input": {
+                "path": "r.txt"
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-1",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "r",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result r"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "reopen",
+          "outcome": {
+            "entries": 7,
+            "sequence": 7
+          }
+        },
+        {
+          "op": "startTurn",
+          "turnId": "turn-2",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "modelRequest",
+          "turnId": "turn-2",
+          "request": {
+            "model": "fixture-model",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "after restart"
+                  }
+                ]
+              }
+            ]
+          },
+          "outcome": {
+            "step": 1
+          }
+        },
+        {
+          "op": "modelEvent",
+          "turnId": "turn-2",
+          "event": {
+            "type": "done"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolCalls",
+          "turnId": "turn-2",
+          "calls": [
+            {
+              "id": "r2",
+              "name": "read_file",
+              "input": {
+                "path": "r2.txt"
+              }
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "toolResults",
+          "turnId": "turn-2",
+          "results": [
+            {
+              "type": "success",
+              "toolCallId": "r2",
+              "toolName": "read_file",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "result r2"
+                }
+              ],
+              "startedAt": "2026-10-18T00:00:00.000Z",
+              "completedAt": "2026-10-18T00:00:00.000Z"
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 14,
+            "diagnostics": 0,
+            "sequence": 14
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 14,
+            "lastEntryId": "<id-1>"
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":null}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"before restart\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"r\",\"name\":\"read_file\",\"input\":{\"path\":\"r.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"r\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result r\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":8,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"step_started\",\"step\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":9,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n{\"type\":\"model_request\",\"step\":1,\"request\":{\"model\":\"fixture-model\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"after restart\"}]}]},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":10,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-11>\",\"parentEntryId\":\"<id-10>\"}\n{\"type\":\"model_stream_event\",\"step\":1,\"event\":{\"type\":\"done\"},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":11,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-12>\",\"parentEntryId\":\"<id-11>\"}\n{\"type\":\"tool_call\",\"step\":1,\"call\":{\"id\":\"r2\",\"name\":\"read_file\",\"input\":{\"path\":\"r2.txt\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":12,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-13>\",\"parentEntryId\":\"<id-12>\"}\n{\"type\":\"tool_result\",\"step\":1,\"result\":{\"type\":\"success\",\"toolCallId\":\"r2\",\"toolName\":\"read_file\",\"content\":[{\"type\":\"text\",\"text\":\"result r2\"}],\"startedAt\":\"2026-10-18T00:00:00.000Z\",\"completedAt\":\"2026-10-18T00:00:00.000Z\"},\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":13,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-14>\",\"parentEntryId\":\"<id-13>\"}\n{\"type\":\"step_completed\",\"step\":1,\"outcome\":\"completed\",\"sessionId\":\"s1\",\"turnId\":\"turn-2\",\"sequence\":14,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"<id-14>\"}\n"
+      }
+    }
+  ]
+}
