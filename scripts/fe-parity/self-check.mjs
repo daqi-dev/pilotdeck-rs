@@ -224,20 +224,84 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
     assert.equal((await verifyBaseline(baseline)).status, 'PASS');
     const fixture = await mkdtemp(resolve(root, '_tmp/fe-parity/baseline-control-'));
     const git = args => execFileSync('git', ['-C', fixture, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } }).trim();
+    // This fixture has no pnpm install; node_modules is covered by the next check.
+    const GIT_ONLY = { checkNodeModules: false };
     try {
       const ui = resolve(fixture, 'ui'); await mkdir(resolve(ui, 'e2e'), { recursive: true });
       await writeFile(resolve(ui, 'e2e/example.mjs'), 'original');
       git(['init', '-q']); git(['add', 'ui']);
       git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline fixture']);
       const head = git(['rev-parse', 'HEAD']);
-      await assert.rejects(() => verifyBaseline(ui), /Baseline commit mismatch/);
-      assert.equal((await verifyBaseline(ui, head)).status, 'PASS');
+      await assert.rejects(() => verifyBaseline(ui, undefined, GIT_ONLY), /Baseline commit mismatch/);
+      assert.equal((await verifyBaseline(ui, head, GIT_ONLY)).status, 'PASS');
       await writeFile(resolve(ui, 'e2e/example.mjs'), 'edited');
-      await assert.rejects(() => verifyBaseline(ui, head), /tracked source differs/);
+      await assert.rejects(() => verifyBaseline(ui, head, GIT_ONLY), /tracked source differs/);
       await writeFile(resolve(ui, 'e2e/example.mjs'), 'original');
       await writeFile(resolve(ui, 'e2e/extra.spec.mjs'), 'untracked');
-      await assert.rejects(() => verifyBaseline(ui, head), /untracked e2e/);
-      await mkdir(resolve(fixture, 'copy')); await assert.rejects(() => verifyBaseline(resolve(fixture, 'copy'), head), /not an untracked copy/);
+      await assert.rejects(() => verifyBaseline(ui, head, GIT_ONLY), /untracked e2e/);
+      await mkdir(resolve(fixture, 'copy')); await assert.rejects(() => verifyBaseline(resolve(fixture, 'copy'), head, GIT_ONLY), /not an untracked copy/);
+    } finally { await rm(fixture, { recursive: true }); }
+  });
+  await check('baseline node_modules gate rejects missing/diverged lockfile and links outside .pnpm', async () => {
+    assert.equal((await verifyBaseline(baseline)).status, 'PASS');
+    const fixture = await mkdtemp(resolve(root, '_tmp/fe-parity/baseline-nm-control-'));
+    const git = args => execFileSync('git', ['-C', fixture, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } }).trim();
+    try {
+      const ui = resolve(fixture, 'ui'); await mkdir(resolve(ui, 'e2e'), { recursive: true });
+      await writeFile(resolve(ui, 'e2e/example.mjs'), 'original');
+      const store = resolve(fixture, 'node_modules', '.pnpm');
+      const pkg = async (dir, name) => {
+        const dirPath = resolve(store, dir, 'node_modules', name);
+        await mkdir(dirPath, { recursive: true });
+        return dirPath;
+      };
+      for (const [dir, name, version] of [
+        ['vite@7.3.3_aaa', 'vite', '7.3.3'],
+        ['ws@8.21.0', 'ws', '8.21.0'],
+        ['@playwright+test@1.60.0', '@playwright/test', '1.60.0'],
+        ['@xterm+xterm@5.5.0', '@xterm/xterm', '5.5.0'],
+      ]) {
+        const dirPath = await pkg(dir, name);
+        await writeFile(resolve(dirPath, 'package.json'), JSON.stringify({ name, version }));
+      }
+      // Same shape as the real baseline: ui/node_modules/<name> -> <repo>/node_modules/.pnpm/<dir>/node_modules/<name>.
+      const link = async (name, dir) => {
+        await mkdir(dirname(resolve(ui, 'node_modules', name)), { recursive: true });
+        await symlink(resolve(store, dir, 'node_modules', name), resolve(ui, 'node_modules', name));
+      };
+      await link('vite', 'vite@7.3.3_aaa');
+      await link('ws', 'ws@8.21.0');
+      await link('@playwright/test', '@playwright+test@1.60.0');
+      await link('@xterm/xterm', '@xterm+xterm@5.5.0');
+      const lock = 'lockfileVersion: 9\n'; await writeFile(resolve(fixture, 'pnpm-lock.yaml'), lock);
+      // Like the real baseline, installed modules are untracked.
+      await writeFile(resolve(fixture, '.gitignore'), 'node_modules/\n');
+      git(['init', '-q']); git(['add', 'ui', '.gitignore']); git(['add', 'pnpm-lock.yaml']);
+      git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline nm fixture']);
+      const head = git(['rev-parse', 'HEAD']);
+      // Missing node_modules/.pnpm/lock.yaml
+      await assert.rejects(() => verifyBaseline(ui, head), /node_modules lockfile missing/);
+      // Diverged node_modules/.pnpm/lock.yaml
+      await writeFile(resolve(store, 'lock.yaml'), 'lockfileVersion: 8\n');
+      await assert.rejects(() => verifyBaseline(ui, head), /lockfile differs/);
+      await writeFile(resolve(store, 'lock.yaml'), lock);
+      // Package link points outside .pnpm
+      const stray = resolve(fixture, 'stray-ws'); await mkdir(resolve(stray, 'node_modules', 'ws'), { recursive: true });
+      await writeFile(resolve(stray, 'node_modules', 'ws', 'package.json'), JSON.stringify({ name: 'ws', version: '8.21.0' }));
+      await rm(resolve(ui, 'node_modules', 'ws'));
+      await (await import('node:fs/promises')).symlink(resolve(stray, 'node_modules', 'ws'), resolve(ui, 'node_modules', 'ws'));
+      await assert.rejects(() => verifyBaseline(ui, head), /resolves outside \.pnpm/);
+      await rm(resolve(ui, 'node_modules', 'ws')); await link('ws', 'ws@8.21.0');
+      // The well-formed fixture passes and reports every package, @xterm included.
+      const good = await verifyBaseline(ui, head);
+      assert.deepEqual(good.nodeModules.packages.map(p => p.name), ['vite', 'ws', '@playwright/test', '@xterm/xterm']);
+      // An @xterm link outside the store is rejected, not skipped.
+      const strayXterm = resolve(fixture, 'stray-xterm', 'node_modules', '@xterm', 'xterm');
+      await mkdir(strayXterm, { recursive: true });
+      await writeFile(resolve(strayXterm, 'package.json'), JSON.stringify({ name: '@xterm/xterm', version: '5.5.0' }));
+      await rm(resolve(ui, 'node_modules', '@xterm', 'xterm'));
+      await symlink(strayXterm, resolve(ui, 'node_modules', '@xterm', 'xterm'));
+      await assert.rejects(() => verifyBaseline(ui, head), /@xterm\/xterm resolves outside \.pnpm/);
     } finally { await rm(fixture, { recursive: true }); }
   });
   await check('report files must differ: same path, symlink and hardlink rejected', async () => {
