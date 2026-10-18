@@ -1,0 +1,4498 @@
+{
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/agent/modules/checkpoint/hostToolCheckpoint.ts": "0e437ecd537ad13e17383598aa7863afd0250ac58d326f1b17a6641ab5e969ea",
+    "src/agent/modules/checkpoint/seedStateProjection.ts": "b52bcf6fb2a9a61c4a0e215c379ad12ad8fdcc973d8f79ee26c97459e65cdb45",
+    "src/agent/modules/transport/sidecarToolContext.ts": "ea3d5900092cdb34ab659cba19cd2bef565b6d9bb58a8d8ffab96cc28b9d73e4",
+    "src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts": "77a492b9a1a01cad44a6c7feb51fddaaf1d26a5a28de939abf3ed6310216424e",
+    "src/agent/turn/TurnEnvironment.ts": "8bcaa6b026358b2e2f406f034d02f18dae4a2b8fcf0cf9d2da3ca42b37664109"
+  },
+  "cases": [
+    {
+      "kind": "seed",
+      "name": "missing",
+      "input": {
+        "$undefined": true
+      },
+      "maps": false,
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "null",
+      "input": null,
+      "maps": false,
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "empty",
+      "input": {},
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {},
+          "readKeys": [],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "array",
+      "input": [],
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState: expected an object."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "number",
+      "input": 3,
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState: expected an object."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "string",
+      "input": "x",
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState: expected an object."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "false",
+      "input": false,
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState: expected an object."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "nonplain",
+      "input": {
+        "$nonplain": true
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState: expected an object."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "nullproto",
+      "input": {
+        "$nullPrototype": true
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {},
+          "readKeys": [],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "ignored",
+      "input": {
+        "extra": 1
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {},
+          "readKeys": [],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "allowed-null",
+      "input": {
+        "allowedReadFiles": null
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.allowedReadFiles."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "allowed-3",
+      "input": {
+        "allowedReadFiles": 3
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.allowedReadFiles."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "allowed-\"x\"",
+      "input": {
+        "allowedReadFiles": "x"
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.allowedReadFiles."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "allowed-{}",
+      "input": {
+        "allowedReadFiles": {}
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.allowedReadFiles."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "allowed-[\"ok\",3]",
+      "input": {
+        "allowedReadFiles": [
+          "ok",
+          3
+        ]
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.allowedReadFiles."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "allowed-[\"a\",\"a\",\"\",\"\\ud800\"]",
+      "input": {
+        "allowedReadFiles": [
+          "a",
+          "a",
+          "",
+          "\ud800"
+        ]
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "allowedReadFiles": [
+              "a",
+              "a",
+              "",
+              "\ud800"
+            ]
+          },
+          "readKeys": [],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "allowed-[]",
+      "input": {
+        "allowedReadFiles": []
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "allowedReadFiles": []
+          },
+          "readKeys": [],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "read-kind-text",
+      "input": {
+        "readFileState": {
+          "file": {
+            "mtimeMs": 1,
+            "kind": "text",
+            "offset": 0,
+            "limit": -2,
+            "pages": "1-3",
+            "extra": 1
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "readFileState": {
+              "file": {
+                "mtimeMs": 1,
+                "kind": "text",
+                "offset": 0,
+                "limit": -2,
+                "pages": "1-3"
+              }
+            }
+          },
+          "readKeys": [
+            "file"
+          ],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "read-kind-image",
+      "input": {
+        "readFileState": {
+          "file": {
+            "mtimeMs": 1,
+            "kind": "image",
+            "offset": 0,
+            "limit": -2,
+            "pages": "1-3",
+            "extra": 1
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "readFileState": {
+              "file": {
+                "mtimeMs": 1,
+                "kind": "image",
+                "offset": 0,
+                "limit": -2,
+                "pages": "1-3"
+              }
+            }
+          },
+          "readKeys": [
+            "file"
+          ],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "read-kind-pdf",
+      "input": {
+        "readFileState": {
+          "file": {
+            "mtimeMs": 1,
+            "kind": "pdf",
+            "offset": 0,
+            "limit": -2,
+            "pages": "1-3",
+            "extra": 1
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "readFileState": {
+              "file": {
+                "mtimeMs": 1,
+                "kind": "pdf",
+                "offset": 0,
+                "limit": -2,
+                "pages": "1-3"
+              }
+            }
+          },
+          "readKeys": [
+            "file"
+          ],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "read-kind-notebook",
+      "input": {
+        "readFileState": {
+          "file": {
+            "mtimeMs": 1,
+            "kind": "notebook",
+            "offset": 0,
+            "limit": -2,
+            "pages": "1-3",
+            "extra": 1
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "readFileState": {
+              "file": {
+                "mtimeMs": 1,
+                "kind": "notebook",
+                "offset": 0,
+                "limit": -2,
+                "pages": "1-3"
+              }
+            }
+          },
+          "readKeys": [
+            "file"
+          ],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "read-kind-bad",
+      "input": {
+        "readFileState": {
+          "file": {
+            "mtimeMs": 1,
+            "kind": "bad",
+            "offset": 0,
+            "limit": -2,
+            "pages": "1-3",
+            "extra": 1
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid readFileState entry: file."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "read-kind-null",
+      "input": {
+        "readFileState": {
+          "file": {
+            "mtimeMs": 1,
+            "kind": null,
+            "offset": 0,
+            "limit": -2,
+            "pages": "1-3",
+            "extra": 1
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid readFileState entry: file."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "readFileState-null",
+      "input": {
+        "readFileState": null
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.readFileState."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "readFileState-[]",
+      "input": {
+        "readFileState": []
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.readFileState."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "readFileState-3",
+      "input": {
+        "readFileState": 3
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.readFileState."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "readFileState-{\"file\":null}",
+      "input": {
+        "readFileState": {
+          "file": null
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid readFileState entry: file."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "writeSnapshots-null",
+      "input": {
+        "writeSnapshots": null
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.writeSnapshots."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "writeSnapshots-[]",
+      "input": {
+        "writeSnapshots": []
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.writeSnapshots."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "writeSnapshots-3",
+      "input": {
+        "writeSnapshots": 3
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState.writeSnapshots."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "writeSnapshots-{\"file\":null}",
+      "input": {
+        "writeSnapshots": {
+          "file": null
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid writeSnapshots entry: file."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "read-option-filter",
+      "input": {
+        "readFileState": {
+          "file": {
+            "mtimeMs": 1,
+            "kind": "text",
+            "offset": "bad",
+            "limit": null,
+            "pages": 3,
+            "extra": true
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "readFileState": {
+              "file": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            }
+          },
+          "readKeys": [
+            "file"
+          ],
+          "writeKeys": []
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "write-full",
+      "input": {
+        "writeSnapshots": {
+          "file": {
+            "absolutePath": "",
+            "mtimeMs": 0,
+            "contentHash": "",
+            "offset": -1,
+            "limit": 0,
+            "extra": 3
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "writeSnapshots": {
+              "file": {
+                "absolutePath": "",
+                "mtimeMs": 0,
+                "contentHash": "",
+                "offset": -1,
+                "limit": 0
+              }
+            }
+          },
+          "readKeys": [],
+          "writeKeys": [
+            "file"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "write-invalid",
+      "input": {
+        "writeSnapshots": {
+          "file": {
+            "absolutePath": "file",
+            "mtimeMs": "1",
+            "contentHash": "hash"
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid writeSnapshots entry: file."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "number-nonfinite",
+      "input": {
+        "readFileState": {
+          "\ud800": {
+            "mtimeMs": {
+              "$number": "nan"
+            },
+            "kind": "text",
+            "offset": {
+              "$number": "infinity"
+            }
+          }
+        },
+        "writeSnapshots": {
+          "f": {
+            "absolutePath": "f",
+            "mtimeMs": {
+              "$number": "negativeInfinity"
+            },
+            "contentHash": "h"
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "readFileState": {
+              "\ud800": {
+                "mtimeMs": null,
+                "kind": "text",
+                "offset": null
+              }
+            },
+            "writeSnapshots": {
+              "f": {
+                "absolutePath": "f",
+                "mtimeMs": null,
+                "contentHash": "h"
+              }
+            }
+          },
+          "readKeys": [
+            "\ud800"
+          ],
+          "writeKeys": [
+            "f"
+          ],
+          "nonfinite": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "native-maps",
+      "input": {
+        "readFileState": {
+          "2": {
+            "mtimeMs": 2,
+            "kind": "pdf"
+          },
+          "10": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        },
+        "writeSnapshots": {
+          "f": {
+            "absolutePath": "f",
+            "mtimeMs": 0,
+            "contentHash": "h"
+          }
+        }
+      },
+      "maps": true,
+      "expected": {
+        "ok": true,
+        "value": {
+          "projection": {
+            "readFileState": {
+              "2": {
+                "mtimeMs": 2,
+                "kind": "pdf"
+              },
+              "10": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "writeSnapshots": {
+              "f": {
+                "absolutePath": "f",
+                "mtimeMs": 0,
+                "contentHash": "h"
+              }
+            }
+          },
+          "readKeys": [
+            "10",
+            "2"
+          ],
+          "writeKeys": [
+            "f"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "nonplain-seed",
+      "input": {
+        "$prototype": {
+          "allowedReadFiles": [
+            "inherited"
+          ]
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid sidecar seedState: expected an object."
+      }
+    },
+    {
+      "kind": "seed",
+      "name": "nonplain-entry",
+      "input": {
+        "readFileState": {
+          "file": {
+            "$nonplain": true
+          }
+        }
+      },
+      "maps": false,
+      "expected": {
+        "ok": false,
+        "error": "Invalid readFileState entry: file."
+      }
+    },
+    {
+      "kind": "checkpoint",
+      "name": "empty",
+      "seed": {},
+      "allowed": [],
+      "ops": [],
+      "expected": {
+        "before": {
+          "readFileState": {},
+          "writeSnapshots": {},
+          "allowedReadFiles": []
+        },
+        "after": {
+          "readFileState": {},
+          "writeSnapshots": {},
+          "allowedReadFiles": []
+        },
+        "detached": {
+          "allowedReadFiles": [],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        "snapshot": {
+          "allowedReadFiles": [],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        "readKeys": [],
+        "snapshotReadKeys": [],
+        "sameRead": true,
+        "sameWrite": true
+      }
+    },
+    {
+      "kind": "checkpoint",
+      "name": "ordered-grants",
+      "seed": {
+        "allowedReadFiles": [
+          "b",
+          "a",
+          "b"
+        ]
+      },
+      "allowed": [
+        "a",
+        "c"
+      ],
+      "ops": [
+        {
+          "op": "allow",
+          "paths": [
+            "d",
+            "b",
+            ""
+          ]
+        },
+        {
+          "op": "allow",
+          "paths": []
+        }
+      ],
+      "expected": {
+        "before": {
+          "readFileState": {},
+          "writeSnapshots": {},
+          "allowedReadFiles": [
+            "b",
+            "a",
+            "c"
+          ]
+        },
+        "after": {
+          "readFileState": {},
+          "writeSnapshots": {},
+          "allowedReadFiles": [
+            "b",
+            "a",
+            "c",
+            "d",
+            ""
+          ]
+        },
+        "detached": {
+          "allowedReadFiles": [
+            "b",
+            "a",
+            "c"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        "snapshot": {
+          "allowedReadFiles": [
+            "b",
+            "a",
+            "c",
+            "d",
+            ""
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        "readKeys": [],
+        "snapshotReadKeys": [],
+        "sameRead": true,
+        "sameWrite": true
+      }
+    },
+    {
+      "kind": "checkpoint",
+      "name": "shared-maps-detached-grants",
+      "seed": {
+        "readFileState": {
+          "f": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        }
+      },
+      "allowed": [
+        "a"
+      ],
+      "ops": [
+        {
+          "op": "read",
+          "path": "g",
+          "value": {
+            "mtimeMs": 2,
+            "kind": "image",
+            "extra": "drop"
+          }
+        },
+        {
+          "op": "write",
+          "path": "w",
+          "value": {
+            "absolutePath": "/w",
+            "mtimeMs": 3,
+            "contentHash": "h",
+            "extra": true
+          }
+        },
+        {
+          "op": "allow",
+          "paths": [
+            "b"
+          ]
+        }
+      ],
+      "expected": {
+        "before": {
+          "readFileState": {
+            "f": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "g": {
+              "mtimeMs": 2,
+              "kind": "image",
+              "extra": "drop"
+            }
+          },
+          "writeSnapshots": {
+            "w": {
+              "absolutePath": "/w",
+              "mtimeMs": 3,
+              "contentHash": "h",
+              "extra": true
+            }
+          },
+          "allowedReadFiles": [
+            "a"
+          ]
+        },
+        "after": {
+          "readFileState": {
+            "f": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "g": {
+              "mtimeMs": 2,
+              "kind": "image",
+              "extra": "drop"
+            }
+          },
+          "writeSnapshots": {
+            "w": {
+              "absolutePath": "/w",
+              "mtimeMs": 3,
+              "contentHash": "h",
+              "extra": true
+            }
+          },
+          "allowedReadFiles": [
+            "a",
+            "b"
+          ]
+        },
+        "detached": {
+          "allowedReadFiles": [
+            "a"
+          ],
+          "readFileState": {
+            "f": {
+              "mtimeMs": 1,
+              "kind": "text"
+            }
+          },
+          "writeSnapshots": {}
+        },
+        "snapshot": {
+          "allowedReadFiles": [
+            "a",
+            "b"
+          ],
+          "readFileState": {
+            "f": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "g": {
+              "mtimeMs": 2,
+              "kind": "image"
+            }
+          },
+          "writeSnapshots": {
+            "w": {
+              "absolutePath": "/w",
+              "mtimeMs": 3,
+              "contentHash": "h"
+            }
+          }
+        },
+        "readKeys": [
+          "f",
+          "g"
+        ],
+        "snapshotReadKeys": [
+          "f",
+          "g"
+        ],
+        "sameRead": true,
+        "sameWrite": true
+      }
+    },
+    {
+      "kind": "checkpoint",
+      "name": "numeric-map-order",
+      "seed": {},
+      "allowed": [],
+      "ops": [
+        {
+          "op": "read",
+          "path": "b",
+          "value": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        },
+        {
+          "op": "read",
+          "path": "10",
+          "value": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        },
+        {
+          "op": "read",
+          "path": "2",
+          "value": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        },
+        {
+          "op": "read",
+          "path": "01",
+          "value": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        },
+        {
+          "op": "read",
+          "path": "4294967295",
+          "value": {
+            "mtimeMs": 1,
+            "kind": "text"
+          }
+        }
+      ],
+      "expected": {
+        "before": {
+          "readFileState": {
+            "2": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "10": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "b": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "01": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "4294967295": {
+              "mtimeMs": 1,
+              "kind": "text"
+            }
+          },
+          "writeSnapshots": {},
+          "allowedReadFiles": []
+        },
+        "after": {
+          "readFileState": {
+            "2": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "10": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "b": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "01": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "4294967295": {
+              "mtimeMs": 1,
+              "kind": "text"
+            }
+          },
+          "writeSnapshots": {},
+          "allowedReadFiles": []
+        },
+        "detached": {
+          "allowedReadFiles": [],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        "snapshot": {
+          "allowedReadFiles": [],
+          "readFileState": {
+            "2": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "10": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "b": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "01": {
+              "mtimeMs": 1,
+              "kind": "text"
+            },
+            "4294967295": {
+              "mtimeMs": 1,
+              "kind": "text"
+            }
+          },
+          "writeSnapshots": {}
+        },
+        "readKeys": [
+          "b",
+          "10",
+          "2",
+          "01",
+          "4294967295"
+        ],
+        "snapshotReadKeys": [
+          "2",
+          "10",
+          "b",
+          "01",
+          "4294967295"
+        ],
+        "sameRead": true,
+        "sameWrite": true
+      }
+    },
+    {
+      "kind": "checkpoint",
+      "name": "native-seed-map",
+      "nativeSeedMaps": true,
+      "seed": {
+        "readFileState": {
+          "2": {
+            "mtimeMs": 2,
+            "kind": "text"
+          },
+          "10": {
+            "mtimeMs": 10,
+            "kind": "pdf"
+          }
+        }
+      },
+      "allowed": [],
+      "ops": [],
+      "expected": {
+        "before": {
+          "readFileState": {
+            "2": {
+              "mtimeMs": 2,
+              "kind": "text"
+            },
+            "10": {
+              "mtimeMs": 10,
+              "kind": "pdf"
+            }
+          },
+          "writeSnapshots": {},
+          "allowedReadFiles": []
+        },
+        "after": {
+          "readFileState": {
+            "2": {
+              "mtimeMs": 2,
+              "kind": "text"
+            },
+            "10": {
+              "mtimeMs": 10,
+              "kind": "pdf"
+            }
+          },
+          "writeSnapshots": {},
+          "allowedReadFiles": []
+        },
+        "detached": {
+          "allowedReadFiles": [],
+          "readFileState": {
+            "2": {
+              "mtimeMs": 2,
+              "kind": "text"
+            },
+            "10": {
+              "mtimeMs": 10,
+              "kind": "pdf"
+            }
+          },
+          "writeSnapshots": {}
+        },
+        "snapshot": {
+          "allowedReadFiles": [],
+          "readFileState": {
+            "2": {
+              "mtimeMs": 2,
+              "kind": "text"
+            },
+            "10": {
+              "mtimeMs": 10,
+              "kind": "pdf"
+            }
+          },
+          "writeSnapshots": {}
+        },
+        "readKeys": [
+          "2",
+          "10"
+        ],
+        "snapshotReadKeys": [
+          "2",
+          "10"
+        ],
+        "sameRead": true,
+        "sameWrite": true
+      }
+    },
+    {
+      "kind": "context",
+      "name": "minimal",
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "all-services",
+      "ports": true,
+      "planTodo": true,
+      "oneShot": true,
+      "abort": true,
+      "config": {
+        "includeToolProgress": true
+      },
+      "input": {
+        "canElicit": true,
+        "canPrompt": false,
+        "execution": {
+          "operationDeadline": 100
+        }
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": false,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "abortSignal": {
+              "handle": "abort"
+            }
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation",
+            "operationDeadline": 100,
+            "abortSignal": {
+              "handle": "abort"
+            }
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "abortSignal": {
+              "handle": "abort"
+            },
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": false,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": true,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "progress": true,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "model": {
+              "handle": "bound-model"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "subagent": {
+              "handle": "subagent"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "planTodo": {
+              "handle": "plan"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "model",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "projectPath": "/fixture/project"
+          }
+        },
+        {
+          "event": "directory"
+        },
+        {
+          "event": "fork",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn"
+          },
+          "sameRead": true,
+          "sameWrite": true
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "progress",
+          "value": {
+            "type": "tool_progress",
+            "sessionId": "session",
+            "turnId": "turn",
+            "toolCallId": "c",
+            "toolName": "read",
+            "message": "working",
+            "metadata": {
+              "percent": 50
+            },
+            "createdAt": "now"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "permission-services",
+      "ports": true,
+      "view": "permission",
+      "abort": true,
+      "config": {
+        "includeToolProgress": true
+      },
+      "input": {
+        "canElicit": true
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "abortSignal": {
+              "handle": "abort"
+            },
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": true,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "progress": true,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "directory"
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "progress",
+          "value": {
+            "type": "tool_progress",
+            "sessionId": "session",
+            "turnId": "turn",
+            "toolCallId": "c",
+            "toolName": "read",
+            "message": "working",
+            "metadata": {
+              "percent": 50
+            },
+            "createdAt": "now"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "identity-service",
+      "ports": true,
+      "view": "identity",
+      "abort": true,
+      "remote": {
+        "sessionId": "spoof",
+        "cwd": "spoof",
+        "extra": 1,
+        "abortSignal": "remote"
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "identity": {
+            "sessionId": "session",
+            "cwd": "/fixture/project",
+            "extra": 1,
+            "abortSignal": {
+              "handle": "abort"
+            },
+            "turnId": "turn",
+            "permissionMode": "default",
+            "runMode": "agent"
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "runtime-service",
+      "ports": true,
+      "view": "runtime",
+      "oneShot": true,
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "model": {
+              "handle": "bound-model"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "subagent": {
+              "handle": "subagent"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "model",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "projectPath": "/fixture/project"
+          }
+        },
+        {
+          "event": "directory"
+        },
+        {
+          "event": "fork",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn"
+          },
+          "sameRead": true,
+          "sameWrite": true
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "aux-disabled",
+      "ports": true,
+      "aux": false,
+      "oneShot": true,
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "subagent": {
+              "handle": "subagent"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "directory"
+        },
+        {
+          "event": "fork",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn"
+          },
+          "sameRead": true,
+          "sameWrite": true
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "model-fallback",
+      "ports": true,
+      "modelFallback": true,
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "model": {
+              "handle": "model"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "model",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "projectPath": "/fixture/project"
+          }
+        },
+        {
+          "event": "directory"
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "plan-empty",
+      "ports": true,
+      "emptyPlan": true,
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "model": {
+              "handle": "bound-model"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "model",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "projectPath": "/fixture/project"
+          }
+        },
+        {
+          "event": "directory"
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "progress-disabled",
+      "ports": true,
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "model": {
+              "handle": "bound-model"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "model",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "projectPath": "/fixture/project"
+          }
+        },
+        {
+          "event": "directory"
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "identity-remote-abort",
+      "remote": {
+        "abortSignal": "remote",
+        "custom": 1,
+        "sessionId": "spoof"
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "abortSignal": "remote",
+            "custom": 1,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "remote-authority",
+      "ports": true,
+      "remote": {
+        "sessionId": "evil",
+        "turnId": "evil",
+        "cwd": "evil",
+        "permissionMode": "bypass",
+        "permissionContext": {},
+        "env": {
+          "EVIL": "1"
+        },
+        "allowedReadFiles": [
+          "evil"
+        ],
+        "model": "evil",
+        "subagent": "evil",
+        "currentToolCallId": "call",
+        "outputTruncated": false
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {},
+            "env": {
+              "EVIL": "1"
+            },
+            "allowedReadFiles": [
+              "evil"
+            ],
+            "model": "evil",
+            "subagent": "evil",
+            "currentToolCallId": "call",
+            "outputTruncated": false,
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "currentToolCallId": "call",
+            "outputTruncated": false,
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "model": {
+              "handle": "bound-model"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "model",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "projectPath": "/fixture/project"
+          }
+        },
+        {
+          "event": "directory"
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "output-null",
+      "remote": {
+        "outputTruncated": null
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": false,
+        "error": "Sidecar tool context outputTruncated must be a boolean."
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "output-false",
+      "remote": {
+        "outputTruncated": false
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "outputTruncated": false,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "outputTruncated": false,
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "output-true",
+      "remote": {
+        "outputTruncated": true
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "outputTruncated": true,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "outputTruncated": true,
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "output-0",
+      "remote": {
+        "outputTruncated": 0
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": false,
+        "error": "Sidecar tool context outputTruncated must be a boolean."
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "output-\"\"",
+      "remote": {
+        "outputTruncated": ""
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": false,
+        "error": "Sidecar tool context outputTruncated must be a boolean."
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "output-[]",
+      "remote": {
+        "outputTruncated": []
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": false,
+        "error": "Sidecar tool context outputTruncated must be a boolean."
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "output-{}",
+      "remote": {
+        "outputTruncated": {}
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": false,
+        "error": "Sidecar tool context outputTruncated must be a boolean."
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "output-{\"$undefined\":true}",
+      "remote": {
+        "outputTruncated": {
+          "$undefined": true
+        }
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "call-id-null",
+      "remote": {
+        "currentToolCallId": null
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "currentToolCallId": null,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "call-id-7",
+      "remote": {
+        "currentToolCallId": 7
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "currentToolCallId": 7,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "call-id-\"\"",
+      "remote": {
+        "currentToolCallId": ""
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "currentToolCallId": "",
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "currentToolCallId": "",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "call-id-\"\\ud800\"",
+      "remote": {
+        "currentToolCallId": "\ud800"
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "currentToolCallId": "\ud800",
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "currentToolCallId": "\ud800",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "remote-null",
+      "remote": null,
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "remote-[]",
+      "remote": [],
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "remote-\"x\"",
+      "remote": "x",
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "remote-4",
+      "remote": 4,
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "config-optional-0",
+      "config": {
+        "subagentTimeoutMs": 0,
+        "maxResultBytes": 0,
+        "maxOutputTokens": 0,
+        "subagentDepth": 0,
+        "modelMultimodal": 0,
+        "toolAliases": 0,
+        "runMode": 0
+      },
+      "input": {
+        "canPrompt": 0,
+        "execution": {
+          "operationDeadline": 0
+        }
+      },
+      "call": {
+        "idempotencyKey": 0
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": 0,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": 0
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": 0,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": 0,
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "subagentDepth": 0,
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "config-optional--1",
+      "config": {
+        "subagentTimeoutMs": -1,
+        "maxResultBytes": -1,
+        "maxOutputTokens": -1,
+        "subagentDepth": -1,
+        "modelMultimodal": -1,
+        "toolAliases": -1,
+        "runMode": -1
+      },
+      "input": {
+        "canPrompt": -1,
+        "execution": {
+          "operationDeadline": -1
+        }
+      },
+      "call": {
+        "idempotencyKey": -1
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": -1,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": -1
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation",
+            "idempotencyKey": -1,
+            "operationDeadline": -1
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "subagentTimeoutMs": -1,
+            "toolAliases": -1,
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": -1,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": -1,
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "maxResultBytes": -1,
+            "subagentDepth": -1,
+            "modelMultimodal": -1,
+            "maxOutputTokens": -1,
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "config-optional-null",
+      "config": {
+        "subagentTimeoutMs": null,
+        "maxResultBytes": null,
+        "maxOutputTokens": null,
+        "subagentDepth": null,
+        "modelMultimodal": null,
+        "toolAliases": null,
+        "runMode": null
+      },
+      "input": {
+        "canPrompt": null,
+        "execution": {
+          "operationDeadline": null
+        }
+      },
+      "call": {
+        "idempotencyKey": null
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "subagentDepth": null,
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "empty-objects-truthy",
+      "config": {
+        "toolAliases": {},
+        "modelMultimodal": {},
+        "runMode": ""
+      },
+      "call": {
+        "idempotencyKey": "key"
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": ""
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation",
+            "idempotencyKey": "key"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "toolAliases": {},
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "modelMultimodal": {},
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "elicitation-not-true",
+      "ports": true,
+      "input": {
+        "canElicit": 1
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7,
+              "planDirectoryPath": "/plans"
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "auditRecorder": {
+              "handle": "audit"
+            },
+            "now": "fixture-now",
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "model": {
+              "handle": "bound-model"
+            },
+            "elicitation": {
+              "handle": "elicitation"
+            },
+            "userDialog": {
+              "handle": "dialog"
+            },
+            "fileHistory": {
+              "handle": "history"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {},
+            "fileUpdateNotifier": {
+              "handle": "notifier"
+            },
+            "goal": {
+              "handle": "goal"
+            },
+            "planDirectory": {
+              "path": "/plans",
+              "resolve": "/fixture/project/x",
+              "read": "plan-content"
+            }
+          }
+        }
+      },
+      "trace": [
+        {
+          "event": "model",
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "projectPath": "/fixture/project"
+          }
+        },
+        {
+          "event": "directory"
+        },
+        {
+          "event": "goal",
+          "sessionId": "session"
+        },
+        {
+          "event": "resolve",
+          "path": "x",
+          "cwd": "/fixture/project"
+        },
+        {
+          "event": "read",
+          "path": "x",
+          "cwd": "/fixture/project"
+        }
+      ]
+    },
+    {
+      "kind": "context",
+      "name": "elicitation-unavailable",
+      "input": {
+        "canElicit": true
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "default-environment",
+      "config": {
+        "env": {
+          "$undefined": true
+        }
+      },
+      "input": {
+        "sessionId": "...中文...",
+        "turnId": "Ａ／B"
+      },
+      "call": {
+        "idempotencyKey": ""
+      },
+      "environment": {
+        "FIXTURE_DEFAULT": "yes",
+        "PILOTDECK_SESSION_ID": "...中文...",
+        "PILOTDECK_TURN_ID": "Ａ／B",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/unknown/A-B"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": "...中文...",
+            "turnId": "Ａ／B",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "...中文...",
+            "turnId": "Ａ／B",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "...中文...",
+            "turnId": "Ａ／B",
+            "messageId": "Ａ／B",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "FIXTURE_DEFAULT": "yes",
+              "PILOTDECK_SESSION_ID": "...中文...",
+              "PILOTDECK_TURN_ID": "Ａ／B",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/unknown/A-B"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "environment-unicode",
+      "input": {
+        "sessionId": " Á..foo ",
+        "turnId": "ＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺ"
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": " Á..foo ",
+        "PILOTDECK_TURN_ID": "ＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺ",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/foo/ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "sessionId": " Á..foo ",
+            "turnId": "ＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺ",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": " Á..foo ",
+            "turnId": "ＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺ",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": " Á..foo ",
+            "turnId": "ＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺ",
+            "messageId": "ＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺ",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": " Á..foo ",
+              "PILOTDECK_TURN_ID": "ＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺＺ",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/foo/ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "context",
+      "name": "remote-prototype",
+      "remote": {
+        "$prototype": {
+          "currentToolCallId": "inherited",
+          "outputTruncated": true,
+          "permissionMode": "spoof"
+        },
+        "custom": "own"
+      },
+      "environment": {
+        "BASE": "value",
+        "PILOTDECK_SESSION_ID": "session",
+        "PILOTDECK_TURN_ID": "turn",
+        "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+      },
+      "expected": {
+        "ok": true,
+        "value": {
+          "permission": {
+            "canPrompt": true,
+            "rules": [
+              {
+                "allow": "read"
+              }
+            ],
+            "cwd": "/fixture/project",
+            "mode": "default",
+            "custom": 7
+          },
+          "identity": {
+            "custom": "own",
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          },
+          "execution": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "runId": "run",
+            "operationId": "operation"
+          },
+          "runtime": {
+            "sessionId": "session",
+            "turnId": "turn",
+            "messageId": "turn",
+            "cwd": "/fixture/project",
+            "currentToolCallId": "inherited",
+            "outputTruncated": true,
+            "permissionMode": "default",
+            "permissionContext": {
+              "canPrompt": true,
+              "rules": [
+                {
+                  "allow": "read"
+                }
+              ],
+              "cwd": "/fixture/project",
+              "mode": "default",
+              "custom": 7
+            },
+            "runMode": "agent",
+            "canElicit": false,
+            "env": {
+              "BASE": "value",
+              "PILOTDECK_SESSION_ID": "session",
+              "PILOTDECK_TURN_ID": "turn",
+              "PILOTDECK_WORK_DIR": "/fixture/project/.pilotdeck/work/session/turn"
+            },
+            "readFileState": {
+              "f": {
+                "mtimeMs": 1,
+                "kind": "text"
+              }
+            },
+            "allowedReadFiles": [
+              "seed"
+            ],
+            "writeSnapshots": {}
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "kind": "steer",
+      "name": "unknown",
+      "messages": [],
+      "apply": [
+        "missing"
+      ],
+      "expected": [
+        {
+          "allowedReadFiles": [
+            "seed"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        {
+          "allowedReadFiles": [
+            "seed"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        }
+      ]
+    },
+    {
+      "kind": "steer",
+      "name": "delayed-repeated",
+      "messages": [
+        {
+          "itemId": "a",
+          "allowedReadFiles": [
+            "x",
+            "x",
+            3,
+            "y"
+          ]
+        }
+      ],
+      "apply": [
+        "missing",
+        "a",
+        "a"
+      ],
+      "expected": [
+        {
+          "allowedReadFiles": [
+            "seed"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        {
+          "allowedReadFiles": [
+            "seed"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        {
+          "allowedReadFiles": [
+            "seed",
+            "x",
+            "y"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        {
+          "allowedReadFiles": [
+            "seed",
+            "x",
+            "y"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        }
+      ]
+    },
+    {
+      "kind": "steer",
+      "name": "overwrite-empty-preserves",
+      "messages": [
+        {
+          "itemId": "a",
+          "allowedReadFiles": [
+            "old"
+          ]
+        },
+        {
+          "itemId": "a",
+          "allowedReadFiles": [
+            "new"
+          ]
+        },
+        {
+          "itemId": "a",
+          "allowedReadFiles": []
+        }
+      ],
+      "apply": [
+        "a"
+      ],
+      "expected": [
+        {
+          "allowedReadFiles": [
+            "seed"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        },
+        {
+          "allowedReadFiles": [
+            "seed",
+            "new"
+          ],
+          "readFileState": {},
+          "writeSnapshots": {}
+        }
+      ]
+    }
+  ]
+}
