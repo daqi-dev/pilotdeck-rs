@@ -41,6 +41,10 @@ const sourceSha256 = await baselineSourceHashes(baseline, sourcePaths);
 const { loadPilotConfig } = await import(pathToFileURL(join(baseline, 'src/pilot/config/loadPilotConfig.ts')).href);
 const { stableStringify, sha256 } = await import(pathToFileURL(join(baseline, 'src/pilot/config/hash.ts')).href);
 const { redactConfig } = await import(pathToFileURL(join(baseline, 'src/pilot/config/redact.ts')).href);
+// stableStringify / redactConfig order keys via localeCompare, which follows
+// the ICU default locale; Rust pins the same one.
+const locale = new Intl.Collator().resolvedOptions().locale;
+assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8 (see README.md)');
 
 const BASE = `schemaVersion: 1
 agent: {model: parity/deterministic}
@@ -413,6 +417,35 @@ model:
       models:
         gpt/4: {}
 `);
+
+// Review round 5 boundary probes. `ENV_REFERENCE_PATTERN` in the baseline is
+// ASCII-only and does not allow `$` or Unicode identifier starts, so env vars
+// are supplied here to prove the values stay literal instead of resolving.
+for (const [suffix, reference] of [['dollar', '${$X}'], ['unicode', '${密钥变量}']] as const) {
+  add(`model-apikey-env-${suffix}-name`,
+    BASE.replace('apiKey: mock-only', `apiKey: '${reference}'`),
+    { env: { ['$X']: ' env-dollar ', 密钥变量: ' env-unicode ' } });
+}
+// The baseline's positive/non-negative readers compare before Math.floor, so
+// (0,1) inputs produce 0 for subagents but stay fractional for providers.
+add('agent-subagent-fractional-limits', BASE.replace(
+  'agent: {model: parity/deterministic}',
+  `agent: {model: parity/deterministic, subagents: {timeoutMs: 0.5, maxDepth: 0.5}}`,
+));
+add('model-provider-fractional-timeout', BASE.replace(
+  '      apiKey: mock-only',
+  '      apiKey: mock-only\n      timeoutMs: 0.5',
+));
+// `headers` is built by assignment (drops an own `__proto__` key), while
+// `sanitizeProviderBody` uses object rest (keeps it as an own data property).
+add('model-provider-headers-proto', BASE.replace(
+  '      apiKey: mock-only',
+  '      apiKey: mock-only\n      headers: {__proto__: x, h: y}',
+));
+add('model-provider-extrabody-proto', BASE.replace(
+  '      apiKey: mock-only',
+  '      apiKey: mock-only\n      extraBody: {__proto__: {x: 1}, temperature: 0.7, keep: 1}',
+));
 
 function encode(value: unknown): unknown {
   if (value === undefined) return { $: 'undefined' };

@@ -1,5 +1,15 @@
 use super::{Diagnostics, Error, model::Provider, value::*};
 use pilotdeck_protocol::{JsString, JsValue};
+
+/// `runPolicy.failureGuard.toolFailureLimits` / `toolLabels` key pattern,
+/// shared by validation here and snapshot projection in `snapshot.rs`.
+const TOOL_KEY_PATTERN: &str = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$";
+
+pub(super) fn tool_key_regex() -> &'static regex::Regex {
+    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    PATTERN.get_or_init(|| regex::Regex::new(TOOL_KEY_PATTERN).unwrap())
+}
+
 fn shape(raw: &JsValue, d: &mut Diagnostics, code: &str, msg: &str, path: &str) -> bool {
     if raw.is_undefined() {
         false
@@ -964,7 +974,7 @@ pub(super) fn run_policy(raw: &JsValue, d: &mut Diagnostics) {
                 "runPolicy.failureGuard.modelFailureLimit",
             );
         }
-        let regex = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$").unwrap();
+        let regex = tool_key_regex();
         for (key, root_code, key_code, value_code, label) in [
             (
                 "toolFailureLimits",
