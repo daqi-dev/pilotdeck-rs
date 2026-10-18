@@ -90,8 +90,17 @@ def trailer_families(base: str, head: str) -> set[str]:
     return out
 
 
+CODE = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+
+
+def strip_code(body: str) -> str:
+    """去掉行内代码与代码块：文档里引用标记写法（如 `<!-- author: A,B -->`）不算标记。"""
+    return CODE.sub("", body)
+
+
 def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
+    body = strip_code(body)
     am = [x.strip() for x in AUTHOR.findall(body)]
     if len(am) > 1:
         return [f"有 {len(am)} 个 author 标记；只许一个（多家写成 author: A,B）"]

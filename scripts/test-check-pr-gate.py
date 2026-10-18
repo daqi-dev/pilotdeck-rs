@@ -53,6 +53,8 @@ CASES = [
     ("author 正文含 > 不得被忽略（未知谱系）", BASE + "<!-- author: gemini > -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "未知谱系"),
     ("空 author 标记", BASE + "<!-- author: -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "空的"),
     ("只有逗号的 author 标记", BASE + "<!-- author: , , -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "空的"),
+    ("行内代码里引用标记写法不算标记", BASE + "<!-- author: claude -->\n说明：写法是 `<!-- author: A,B -->`\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
+    ("代码块里的 reviewers 不算标记", BASE + "```\n<!-- reviewers: claude,glm -->\n```\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
     ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
     ("GLM 写、四角色用 GLM 以外：放行", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
      + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", True, ""),
