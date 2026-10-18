@@ -13711,6 +13711,249 @@
         "reservedOutputTokens": 0,
         "estimatorError": "Request cannot be constructed from a URL that includes credentials: http://fixture:fixture@127.0.0.1:1/v1/messages/count_tokens"
       }
+    },
+    {
+      "name": "prototype-model-__proto__",
+      "responses": [
+        {}
+      ],
+      "request": {
+        "provider": "p",
+        "model": "__proto__",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello 世界"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 10
+      },
+      "requests": [
+        {
+          "origin": "$MOCK",
+          "path": "/v1/messages/count_tokens",
+          "method": "POST",
+          "headers": {
+            "anthropic-version": "2023-06-01",
+            "authorization": "Bearer fixture",
+            "content-encoding": "identity",
+            "content-language": "zh",
+            "content-location": "/body",
+            "content-type": "application/json",
+            "cookie": "fixture=1",
+            "proxy-authorization": "Basic fixture",
+            "x-api-key": "fixture-key",
+            "x-fixture": "kept"
+          },
+          "body": {
+            "model": "__proto__",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshot": {
+        "tokens": 73,
+        "localEstimateTokens": 6,
+        "estimateSource": "usage",
+        "usageTokens": 73,
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.73,
+        "source": "provider",
+        "exact": true,
+        "reservedOutputTokens": 0
+      }
+    },
+    {
+      "name": "prototype-model-constructor",
+      "responses": [
+        {}
+      ],
+      "request": {
+        "provider": "p",
+        "model": "constructor",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello 世界"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 10
+      },
+      "requests": [
+        {
+          "origin": "$MOCK",
+          "path": "/v1/messages/count_tokens",
+          "method": "POST",
+          "headers": {
+            "anthropic-version": "2023-06-01",
+            "authorization": "Bearer fixture",
+            "content-encoding": "identity",
+            "content-language": "zh",
+            "content-location": "/body",
+            "content-type": "application/json",
+            "cookie": "fixture=1",
+            "proxy-authorization": "Basic fixture",
+            "x-api-key": "fixture-key",
+            "x-fixture": "kept"
+          },
+          "body": {
+            "model": "constructor",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshot": {
+        "tokens": 73,
+        "localEstimateTokens": 6,
+        "estimateSource": "usage",
+        "usageTokens": 73,
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.73,
+        "source": "provider",
+        "exact": true,
+        "reservedOutputTokens": 0
+      }
+    },
+    {
+      "name": "prototype-model-toString",
+      "responses": [
+        {}
+      ],
+      "request": {
+        "provider": "p",
+        "model": "toString",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello 世界"
+              }
+            ]
+          }
+        ],
+        "maxOutputTokens": 10
+      },
+      "requests": [
+        {
+          "origin": "$MOCK",
+          "path": "/v1/messages/count_tokens",
+          "method": "POST",
+          "headers": {
+            "anthropic-version": "2023-06-01",
+            "authorization": "Bearer fixture",
+            "content-encoding": "identity",
+            "content-language": "zh",
+            "content-location": "/body",
+            "content-type": "application/json",
+            "cookie": "fixture=1",
+            "proxy-authorization": "Basic fixture",
+            "x-api-key": "fixture-key",
+            "x-fixture": "kept"
+          },
+          "body": {
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "snapshot": {
+        "tokens": 73,
+        "localEstimateTokens": 6,
+        "estimateSource": "usage",
+        "usageTokens": 73,
+        "breakdown": {
+          "source": "local_estimate",
+          "total": 6,
+          "system": 0,
+          "tools": 0,
+          "messages": 6,
+          "mcp": 0,
+          "memory": 0
+        },
+        "totalContextTokens": 100,
+        "maxContextTokens": 100,
+        "effectiveContextTokens": 100,
+        "maxOutputTokens": 0,
+        "warningRatio": 0.8,
+        "blockingRatio": 0.9,
+        "state": "ok",
+        "ratio": 0.73,
+        "source": "provider",
+        "exact": true,
+        "reservedOutputTokens": 0
+      }
     }
   ]
 }

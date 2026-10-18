@@ -1,5 +1,6 @@
 //! Provider count request projection (no generation-only fields).
 use super::CountHttpRequest;
+use crate::config::changes::{Operand, get_property};
 use crate::host::{HostError, ModuleError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
@@ -51,60 +52,97 @@ fn cache_control() -> JsValue {
     object([("type", "ephemeral".into()), ("ttl", "5m".into())])
 }
 
+fn reading_error(receiver: &str, request: &JsObject, key: &str) -> HostError {
+    ModuleError::new(format!(
+        "Cannot read properties of {receiver} (reading '{}')",
+        text(request.get(key).unwrap_or(&UNDEFINED))
+    ))
+    .into()
+}
+
 pub(super) fn count_request(
     config: &JsObject,
     request: &JsObject,
 ) -> Result<Option<CountHttpRequest>, HostError> {
-    if config.get("providers").is_none_or(|v| !present(v)) {
-        let receiver = if matches!(config.get("providers"), Some(JsValue::Null)) {
+    let Some(providers) = config.get("providers") else {
+        return Err(reading_error("undefined", request, "provider"));
+    };
+    if !present(providers) {
+        let receiver = if matches!(providers, JsValue::Null) {
             "null"
         } else {
             "undefined"
         };
-        return Err(ModuleError::new(format!(
-            "Cannot read properties of {receiver} (reading '{}')",
-            text(request.get("provider").unwrap_or(&UNDEFINED))
-        ))
-        .into());
+        return Err(reading_error(receiver, request, "provider"));
     }
-    let Some(provider) = config
-        .get("providers")
-        .and_then(JsValue::as_object)
-        .and_then(|p| {
-            request
-                .get("provider")
-                .and_then(JsValue::as_string)
-                .and_then(|key| p.get_key(key))
-        })
+    // The baseline indexes `providers[request.provider]` and then reads
+    // `provider?.models[request.model]` on a plain object. Reuse the config
+    // diff's JavaScript lookup so `Object.prototype` members are visible here
+    // too instead of silently behaving like an own-property miss.
+    let Some(provider) = request
+        .get("provider")
+        .and_then(JsValue::as_string)
+        .and_then(|key| get_property(Operand::Value(providers), key))
     else {
         return Ok(None);
     };
-    if !present(provider) {
-        return Ok(None);
-    }
+    let provider = match provider {
+        Operand::Value(JsValue::Undefined | JsValue::Null) => {
+            return Ok(None);
+        }
+        Operand::Value(value @ JsValue::Object(_)) => value,
+        // `Object.prototype`/its function members and non-nullish primitives
+        // all have an undefined `models`, which the baseline immediately
+        // indexes with `request.model` and therefore throws.
+        Operand::Value(_)
+        | Operand::Number(_)
+        | Operand::Function(_)
+        | Operand::ObjectPrototype => {
+            return Err(reading_error("undefined", request, "model"));
+        }
+    };
     if !present(field(provider, "models")) {
         let receiver = if matches!(field(provider, "models"), JsValue::Null) {
             "null"
         } else {
             "undefined"
         };
-        return Err(ModuleError::new(format!(
-            "Cannot read properties of {receiver} (reading '{}')",
-            text(request.get("model").unwrap_or(&UNDEFINED))
-        ))
-        .into());
+        return Err(reading_error(receiver, request, "model"));
     }
-    let Some(model) = field(provider, "models").as_object().and_then(|m| {
-        request
-            .get("model")
-            .and_then(JsValue::as_string)
-            .and_then(|key| m.get_key(key))
-    }) else {
+    let Some(model) = request
+        .get("model")
+        .and_then(JsValue::as_string)
+        .and_then(|key| get_property(Operand::Value(field(provider, "models")), key))
+    else {
         return Ok(None);
     };
-    if !truthy(model) {
-        return Ok(None);
-    }
+    let prototype_model;
+    let model = match model {
+        Operand::Value(value) if truthy(value) => value,
+        Operand::Value(_) => return Ok(None),
+        // An inherited `Object.prototype` member is truthy. On the baseline's
+        // body builders, `request.maxOutputTokens ?? model.capabilities...`
+        // throws for these members because the function/`Object.prototype`
+        // value has no `capabilities`; when the request supplies the token
+        // limit, the same member is otherwise treated as a model with no own
+        // fields and the request is sent.
+        Operand::Function(_) | Operand::ObjectPrototype | Operand::Number(_) => {
+            if !present(request.get("maxOutputTokens").unwrap_or(&UNDEFINED)) {
+                return Err(ModuleError::new(
+                    "Cannot read properties of undefined (reading 'maxOutputTokens')",
+                )
+                .into());
+            }
+            if request.get("speed").unwrap_or(&UNDEFINED) != &JsValue::Undefined {
+                return Err(ModuleError::new(
+                    "Cannot read properties of undefined (reading 'capabilities')",
+                )
+                .into());
+            }
+            prototype_model = JsValue::Object(JsObject::new());
+            &prototype_model
+        }
+    };
     let anthropic = is(field(provider, "protocol"), "anthropic");
     let base = text(field(provider, "url"));
     let url = if anthropic {

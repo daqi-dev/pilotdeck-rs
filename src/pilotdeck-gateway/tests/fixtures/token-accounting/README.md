@@ -2,7 +2,7 @@
 
 固定基线 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`。生成器通过 `../_shared/baseline.mts` 检查整个 tracked checkout 干净，生成前后对选定源码复算 `sourceSha256` 并与固定 commit 的 blob 对照。仅调用真实 TS 的 TokenAccountingRuntime、TokenBudgetManager 和 budget dispatcher，不复制 TS 实现。
 
-**第三轮证据状态**：两份候选均重新调用真实 TS 双录，原 41 组 / 323 步与原 HTTP 143 例的数据保持不变。本轮增加异常 provider body、thinking efforts、headers 和初始 URL 用例；当前沙箱禁止监听，新增部分仍需协调者执行下列默认 HTTP 双录与 socket 回放。capture 模式的来源与覆盖界限不变，不能代替 HTTP 验收。
+**第三轮证据状态**：两份候选均重新调用真实 TS 双录，原 41 组 / 323 步与原 HTTP 143 例的数据保持不变。本轮增加异常 provider body、thinking efforts、headers 和初始 URL 用例；第三轮录制时沙箱禁止监听，该批新增部分当时仍需协调者执行下列默认 HTTP 双录与 socket 回放。capture 模式的来源与覆盖界限不变，不能代替 HTTP 验收。
 
 默认生成器创建只监听 `127.0.0.1:0` 的 HTTP 服务。真实 TS 与 Rust 回放分别向同协议 mock 发送请求；官方 Responses 的逻辑目标保留为 `https://api.openai.com/v1/responses/input_tokens`，测试 transport 仅把它重路由到独占本地服务。其他地址不得连接外网。记录包含 method、path、业务 headers、完整请求体、逻辑 URL、TS 快照及错误。HTTP Host/Content-Length 等 transport 自动字段不属于请求投影断言。
 
@@ -14,7 +14,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 输出父目录默认系统临时目录。每次 `mkdtemp` 建独占子目录，stdout 最后一行包含 `output`、`transport` 和精确条数；生成器不覆盖仓库候选、不删除固定路径。仅在无法监听时，可显式追加 `--capture-transport` 生成非 HTTP 候选；日志明确标 `injected (HTTP not verified)`。
 
-精确人口：51 组 / 343 步（各组长度也固定断言）、42 个 snapshot、20 个各 operation 自有必填字段/值域用例、3 个直接 provider-count 错误。覆盖本地拆分、工具/多媒体、浅校验允许的深层异常、校准匹配和限幅、provider 字段优先与有限负数/小数、HTTP 状态失败、官方 URL 判定、headers、缓存命中/淘汰/禁用、thinking、schema normalization、cache markers、UTF-16、schema prototype。local-composition/local-shallow-boundary 只从已有金样复用输入，每个期望都重新调用真实 TS。
+精确人口：52 组 / 349 步（各组长度也固定断言）、42 个 snapshot、20 个各 operation 自有必填字段/值域用例、3 个直接 provider-count 错误。覆盖本地拆分、工具/多媒体、浅校验允许的深层异常、校准匹配和限幅、provider 字段优先与有限负数/小数、HTTP 状态失败、官方 URL 判定、headers、缓存命中/淘汰/禁用、thinking、schema normalization、cache markers、UTF-16、schema prototype、provider/model 原型链查找。local-composition/local-shallow-boundary 只从已有金样复用输入，每个期望都重新调用真实 TS。
 
 Rust 回放通过 protocol 的 JsValue 保留对象次序及孤立 surrogate；比较视图对孤立 surrogate 使用 `$utf16` 测试载体，不把它替换成 U+FFFD。每次回放始终检查 commit/hash 格式；设置 `PDRS_BASELINE` 时逐个检查固定 blob 与实际源码。临时文件与 HTTP 服务均每次运行独占，无固定路径清理。
 
@@ -29,7 +29,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline \
 
 ## 第二轮：fetch 重定向与 JSON 错误
 
-`generate-http.mts` 单独维护 HTTP 语料，第三轮由 143 例 / 320 次请求扩为 149 例 / 324 次请求。默认创建两个独占 `127.0.0.1:0` 服务，第二个端口提供不同 origin；无真实 provider 请求。`http-oracle.json` 保存每个响应脚本、逐跳 method/path/origin/headers/body 和真实 TokenAccountingRuntime 最终快照，包括失败后的本地回退及 `estimatorError`。完整人口和唯一名称在回放中断言，生成器另核请求次数和成功重定向确实返回 provider count。
+`generate-http.mts` 单独维护 HTTP 语料，第三轮由 143 例 / 320 次请求扩为 149 例 / 324 次请求，第四轮再增 3 例 model 原型链请求至 152 例 / 327 次请求。默认创建两个独占 `127.0.0.1:0` 服务，第二个端口提供不同 origin；无真实 provider 请求。`http-oracle.json` 保存每个响应脚本、逐跳 method/path/origin/headers/body 和真实 TokenAccountingRuntime 最终快照，包括失败后的本地回退及 `estimatorError`。完整人口和唯一名称在回放中断言，生成器另核请求次数和成功重定向确实返回 provider count。
 
 覆盖 301/302/303/307/308、相对/根/绝对/query/空 Location、跨域及返回原域、循环、20/21 跳边界、缺失/非法/重复 Location、凭据和禁用端口；逐跳核 POST→GET、body 与 body headers 清除，以及 Authorization/Cookie/Proxy-Authorization 清除和 x-api-key 保留。用户 Host 由实际目标 URL 替换。另有未结束重定向 body 不得阻塞跟随的 Rust 回归。
 
@@ -68,3 +68,9 @@ cargo test --manifest-path src/Cargo.toml --locked --offline \
 ```
 
 另增两种协议的 efforts 字符串命中/substring 命中、null、缺失、数字，共 10 组 / 20 步；HTTP 语料增加 header 值 5/true/false/null 的字符串转换，以及初始 URL 非法和含凭据的错误。初始 URL 两例在 fetch 构造阶段失败、请求数为零；重定向侧仍沿用已有语料中的 `fetch failed`。HTTP 生成器的 provider 覆盖项逐例记录并由 Rust 回放应用，非法 URL 的测试放行仅限两个固定字符串。
+
+## 第四轮：provider/model 原型链查找
+
+真实 TS 的 `this.modelConfig.providers[request.provider]` 与 `provider.models[request.model]` 是普通对象下标，键为 `__proto__`、`constructor`、`toString` 时会命中 `Object.prototype`，不是未命中。非 HTTP 语料新增 `prototype-lookup` 6 步：provider 三个键均使 `provider.models` 为 `undefined`，随后 `[request.model]` 抛 `Cannot read properties of undefined (reading 'm')`；model 三个键得到 truthy 的继承成员，请求未给 `maxOutputTokens` 时在 `model.capabilities.maxOutputTokens` 处抛 `Cannot read properties of undefined (reading 'maxOutputTokens')`。两种情况都回退本地估算，快照带 `estimatorError`，且零次 transport 调用。
+
+HTTP 语料另加 `prototype-model-{__proto__,constructor,toString}` 3 例：请求带 `maxOutputTokens` 时 `??` 短路，真实 TS 会实际发出 count 请求，快照 `source=provider`。金样记录完整请求体与响应快照，Rust 回放逐字节比较。默认 HTTP 生成器的逐例 `request` 覆盖项也由 Rust 回放应用。
