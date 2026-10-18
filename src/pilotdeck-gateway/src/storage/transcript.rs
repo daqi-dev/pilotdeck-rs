@@ -39,11 +39,18 @@ pub struct WriterState {
 }
 
 pub fn read_transcript(path: impl AsRef<Path>) -> Result<TranscriptRead> {
-    Ok(load(path.as_ref())?.1)
+    Ok(load(path.as_ref(), MAX_BYTES)?.1)
 }
-fn load(path: &Path) -> Result<(Vec<u8>, TranscriptRead)> {
+/// TS `readTranscript(path, { maxBytes })`; `None` is the 50 MiB default.
+pub fn read_transcript_limited(
+    path: impl AsRef<Path>,
+    max_bytes: Option<u64>,
+) -> Result<TranscriptRead> {
+    Ok(load(path.as_ref(), max_bytes.unwrap_or(MAX_BYTES))?.1)
+}
+fn load(path: &Path, max_bytes: u64) -> Result<(Vec<u8>, TranscriptRead)> {
     let bytes = match fs::metadata(path) {
-        Ok(meta) if meta.len() > MAX_BYTES => {
+        Ok(meta) if meta.len() > max_bytes => {
             return Ok((
                 vec![],
                 TranscriptRead {
@@ -53,7 +60,7 @@ fn load(path: &Path) -> Result<(Vec<u8>, TranscriptRead)> {
                         severity: "error",
                         line: None,
                         message: format!(
-                            "Transcript {} is larger than {MAX_BYTES} bytes.",
+                            "Transcript {} is larger than {max_bytes} bytes.",
                             path.display()
                         ),
                     }],
@@ -222,7 +229,7 @@ impl JsonlLedgerStore {
             fs::TryLockError::Error(error) => error.into(),
         })?;
         let lock = LedgerLock(lock);
-        let (bytes, read) = load(&path)?;
+        let (bytes, read) = load(&path, MAX_BYTES)?;
         // Reading too-large transcripts returns diagnostics, as TS does. Opening
         // a writer must not mistake that empty projection for a fresh session.
         if read
@@ -285,17 +292,8 @@ impl JsonlLedgerStore {
                 "Transcript changed outside its owner; reopen before writing.",
             ));
         }
-        let mut next = self.bytes.clone();
-        if !next.is_empty() && next.last() != Some(&b'\n') {
-            next.push(b'\n');
-        }
-        next.extend_from_slice(appended);
-        let temporary = self.path.with_file_name(format!(".ledger-{}.tmp", uuid()?));
-        let mut file = private_open()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        let cleanup = Temporary(temporary);
+        let next = after_debris(&self.bytes, appended);
+        let (mut file, cleanup) = create_temporary(&self.path)?;
         #[cfg(test)]
         if std::mem::take(&mut self.fail_write) {
             file.write_all(&next[..next.len() / 2])?;
@@ -412,13 +410,32 @@ fn valid_id(value: &JsValue) -> Result<&JsString> {
         .filter(|v| !js_trim(&String::from_utf16_lossy(v.units())).is_empty())
         .ok_or_else(|| invalid("Session event entryId must be a non-empty string."))
 }
-fn private_open() -> OpenOptions {
+/// JsonlSessionPersistence.prepareTail: crash debris without a final LF is kept,
+/// but the next record must not join it.
+pub(super) fn after_debris(current: &[u8], appended: &[u8]) -> Vec<u8> {
+    let mut next = current.to_vec();
+    if !next.is_empty() && next.last() != Some(&b'\n') {
+        next.push(b'\n');
+    }
+    next.extend_from_slice(appended);
+    next
+}
+/// Private sibling for an atomic replace; removed on drop unless renamed away.
+pub(super) fn create_temporary(path: &Path) -> Result<(File, Temporary)> {
+    let temporary = path.with_file_name(format!(".ledger-{}.tmp", uuid()?));
+    let file = private_open()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    Ok((file, Temporary(temporary)))
+}
+pub(super) fn private_open() -> OpenOptions {
     let mut options = OpenOptions::new();
     #[cfg(unix)]
     options.mode(0o600);
     options
 }
-fn private_dirs(dir: &Path) -> io::Result<()> {
+pub(super) fn private_dirs(dir: &Path) -> io::Result<()> {
     let mut dirs = fs::DirBuilder::new();
     dirs.recursive(true);
     #[cfg(unix)]

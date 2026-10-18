@@ -1,0 +1,5309 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/gateway/storage/AsyncTranscriptStorageAdapter.ts": "1071059df586535fccd459afe1cb0b0e14c209f46038da0d964fe260c6cdb423",
+    "src/session/transcript/JsonlTranscriptWriter.ts": "28cd4788ff4465be4594edf7fb59762299362ac867ef9a50c24732ab212a4678",
+    "src/session/events/SessionRuntime.ts": "b7fa7a9a6e7395dc29464a2c2f539a3c1b17ac13fd71a3b243ba93c78fc316ec",
+    "src/session/events/SessionEventLogValidation.ts": "56712300dae1794cc59814c425cf4291cc88109a7af4590ae41218ef84216ca4",
+    "src/session/events/SessionDomainValidation.ts": "64763871d039acb7fcc279c741f344c53568cd0a310726e0f74ff58f1d06d47c",
+    "src/session/storage/ProjectSessionStorage.ts": "51aae89cf30959264f67e09d21051bb4ff58aa83135480337027599032a52d95",
+    "src/session/persistence/JsonlSessionPersistence.ts": "721c720f36f0fb0f2b6bd77bd2490d181182dfa909c3bd85e80d2ca3df643124",
+    "src/session/transcript/TranscriptReader.ts": "d6969105e412de26df28707d848884a6a079060bc839ce0fbbf7bbbac3cfaead",
+    "src/session/projection/AgentTranscriptProjections.ts": "445fb2c246d599235bd5bf24b1f048937242b6ba3e8439384043711a39519279",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a"
+  },
+  "node": "v22.22.0",
+  "now": "2026-10-18T00:00:00.000Z",
+  "projectRoot": "/pdrs-fixture/project",
+  "scenarios": [
+    {
+      "name": "normal",
+      "store": {
+        "caps": [
+          "has",
+          "delete",
+          "deleteSession",
+          "replace"
+        ]
+      },
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": [
+              "transcriptExists",
+              "deleteTranscript",
+              "deleteSessionTranscripts",
+              "replaceTranscript"
+            ]
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_missing",
+                "severity": "warning",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl does not exist."
+              }
+            ],
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        },
+        {
+          "op": "has",
+          "outcome": {
+            "exists": false
+          }
+        },
+        {
+          "op": "accepted",
+          "turnId": "turn-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": " hello "
+                }
+              ]
+            }
+          ],
+          "metadata": {},
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "T",
+            "tag": "x"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "status",
+          "turnId": "turn-1",
+          "status": {
+            "event": "e",
+            "kind": "status",
+            "text": "x",
+            "detail": {}
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "turnResult",
+          "turnId": "turn-1",
+          "result": {
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": []
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 4,
+              "lastEntryId": "<id-1>"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": " hello "
+                      }
+                    ]
+                  }
+                ],
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": null
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "T",
+                  "tag": "x"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-3>",
+                "parentEntryId": "<id-2>"
+              },
+              {
+                "type": "agent_status_message",
+                "event": "e",
+                "kind": "status",
+                "text": "x",
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 3,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-4>",
+                "parentEntryId": "<id-3>"
+              },
+              {
+                "type": "turn_result",
+                "result": {
+                  "sessionId": "s1",
+                  "turnId": "turn-1",
+                  "status": "completed",
+                  "usage": {
+                    "inputTokens": 1
+                  },
+                  "permissionDenials": []
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 4,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": "<id-4>"
+              }
+            ],
+            "diagnostics": []
+          }
+        },
+        {
+          "op": "has",
+          "outcome": {
+            "exists": true
+          }
+        },
+        {
+          "op": "readAt",
+          "path": "s1/subagents/none.jsonl",
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_missing",
+                "severity": "warning",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1/subagents/none.jsonl does not exist."
+              }
+            ]
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "has",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": " hello "
+                  }
+                ]
+              }
+            ],
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "T",
+              "tag": "x"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-3>",
+            "parentEntryId": "<id-2>"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "agent_status_message",
+            "event": "e",
+            "kind": "status",
+            "text": "x",
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-4>",
+            "parentEntryId": "<id-3>"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "turn_result",
+            "result": {
+              "sessionId": "s1",
+              "turnId": "turn-1",
+              "status": "completed",
+              "usage": {
+                "inputTokens": 1
+              },
+              "permissionDenials": []
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 4,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": "<id-4>"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "has",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents/none.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" hello \"}]}],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":null}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"T\",\"tag\":\"x\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"agent_status_message\",\"event\":\"e\",\"kind\":\"status\",\"text\":\"x\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"turn_result\",\"result\":{\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"status\":\"completed\",\"usage\":{\"inputTokens\":1},\"permissionDenials\":[]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"<id-4>\"}\n"
+      }
+    },
+    {
+      "name": "restart",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "accepted",
+          "turnId": "turn-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "A"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ]
+                  }
+                ],
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "A"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": "<id-1>"
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 2,
+              "lastEntryId": "<id-2>"
+            }
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "aiTitle": "B"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 3,
+              "lastEntryId": "<id-3>"
+            }
+          }
+        },
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "tag": "no-restore"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "sequence_not_increasing",
+              "message": "Session event sequence must increase strictly: received 1 after 1."
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ]
+              }
+            ],
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "A"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": "<id-1>"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "aiTitle": "B"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-3>",
+            "parentEntryId": "<id-2>"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "tag": "no-restore"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-4>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"a\"}]}],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"A\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"aiTitle\":\"B\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"tag\":\"no-restore\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "append-failure",
+      "store": {
+        "failBefore": [
+          2
+        ]
+      },
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_missing",
+                "severity": "warning",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl does not exist."
+              }
+            ],
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        },
+        {
+          "op": "accepted",
+          "turnId": "turn-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "lost"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "injected append failure 2"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "<id-1>"
+            }
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "kept"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 2,
+              "lastEntryId": "<id-2>"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ]
+                  }
+                ],
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "kept"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": "<id-1>"
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ]
+              }
+            ],
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "lost"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-3>",
+            "parentEntryId": "<id-1>"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "kept"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": "<id-1>"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"a\"}]}],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"kept\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n"
+      }
+    },
+    {
+      "name": "append-uncertain",
+      "store": {
+        "failAfter": [
+          1
+        ]
+      },
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "accepted",
+          "turnId": "turn-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "written then failed"
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "injected append failure 1 after write"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "second"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "written then failed"
+                      }
+                    ]
+                  }
+                ],
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "second"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        },
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "sequence_not_increasing",
+              "message": "Session event sequence must increase strictly: received 1 after 1."
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "written then failed"
+                  }
+                ]
+              }
+            ],
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "second"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"written then failed\"}]}],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"second\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "concurrent",
+      "store": {
+        "failBefore": [
+          2
+        ]
+      },
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "concurrent",
+          "steps": [
+            {
+              "op": "accepted",
+              "turnId": "turn-1",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "one"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "metadata",
+              "turnId": "turn-1",
+              "metadata": {
+                "title": "two"
+              }
+            },
+            {
+              "op": "status",
+              "turnId": "turn-1",
+              "status": {
+                "event": "e",
+                "kind": "error",
+                "text": "three",
+                "detail": {
+                  "n": 3
+                }
+              }
+            },
+            {
+              "op": "turnResult",
+              "turnId": "turn-1",
+              "result": {
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "status": "completed",
+                "usage": {
+                  "inputTokens": 1
+                },
+                "permissionDenials": []
+              }
+            }
+          ],
+          "outcome": {
+            "outcomes": [
+              {
+                "ok": true
+              },
+              {
+                "error": {
+                  "name": "Error",
+                  "message": "injected append failure 2"
+                }
+              },
+              {
+                "ok": true
+              },
+              {
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "one"
+                      }
+                    ]
+                  }
+                ],
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "agent_status_message",
+                "event": "e",
+                "kind": "error",
+                "text": "three",
+                "detail": {
+                  "n": 3
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": "<id-1>"
+              },
+              {
+                "type": "turn_result",
+                "result": {
+                  "sessionId": "s1",
+                  "turnId": "turn-1",
+                  "status": "completed",
+                  "usage": {
+                    "inputTokens": 1
+                  },
+                  "permissionDenials": []
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 3,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-3>",
+                "parentEntryId": "<id-2>"
+              }
+            ],
+            "diagnostics": []
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 3,
+              "lastEntryId": "<id-3>"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "one"
+                  }
+                ]
+              }
+            ],
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "two"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-4>",
+            "parentEntryId": "<id-1>"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "agent_status_message",
+            "event": "e",
+            "kind": "error",
+            "text": "three",
+            "detail": {
+              "n": 3
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": "<id-1>"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "turn_result",
+            "result": {
+              "sessionId": "s1",
+              "turnId": "turn-1",
+              "status": "completed",
+              "usage": {
+                "inputTokens": 1
+              },
+              "permissionDenials": []
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-3>",
+            "parentEntryId": "<id-2>"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"one\"}]}],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"agent_status_message\",\"event\":\"e\",\"kind\":\"error\",\"text\":\"three\",\"detail\":{\"n\":3},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"turn_result\",\"result\":{\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"status\":\"completed\",\"usage\":{\"inputTokens\":1},\"permissionDenials\":[]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n"
+      }
+    },
+    {
+      "name": "bad-tail",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-1\",\"parentEntryId\":null,\"metadata\":{}}\n{\"type\":1}\n{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-2\",\"parentEntryId\":\"seed-1\",\"metadata\":{}}\n{\"type\":\"session_metadata\",\"sess"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "seed-1",
+                "parentEntryId": null,
+                "metadata": {}
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "seed-2",
+                "parentEntryId": "seed-1",
+                "metadata": {}
+              }
+            ],
+            "diagnostics": [
+              {
+                "code": "transcript_entry_invalid",
+                "severity": "error",
+                "line": 2,
+                "message": "Transcript entry has an invalid shape."
+              },
+              {
+                "code": "transcript_line_invalid",
+                "severity": "error",
+                "line": 4
+              }
+            ],
+            "state": {
+              "sequence": 2,
+              "lastEntryId": "seed-2"
+            }
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "after debris"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "seed-1",
+                "parentEntryId": null,
+                "metadata": {}
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "seed-2",
+                "parentEntryId": "seed-1",
+                "metadata": {}
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "after debris"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 3,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": "seed-2"
+              }
+            ],
+            "diagnostics": [
+              {
+                "code": "transcript_entry_invalid",
+                "severity": "error",
+                "line": 2,
+                "message": "Transcript entry has an invalid shape."
+              },
+              {
+                "code": "transcript_line_invalid",
+                "severity": "error",
+                "line": 4
+              }
+            ]
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "after debris"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": "seed-2"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-1\",\"parentEntryId\":null,\"metadata\":{}}\n{\"type\":1}\n{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-2\",\"parentEntryId\":\"seed-1\",\"metadata\":{}}\n{\"type\":\"session_metadata\",\"sess\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"after debris\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"seed-2\"}\n"
+      }
+    },
+    {
+      "name": "legacy",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"metadata\":{\"title\":\"old\"}}\n{\"type\":\"session_metadata\",\"sessionId\":\"other-session\",\"turnId\":\"\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "old"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "metadata": {
+                  "title": "old"
+                }
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "other-session",
+                "turnId": "",
+                "sequence": 3,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "metadata": {}
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 3,
+              "lastEntryId": null
+            }
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "tag": "new"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "old"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "metadata": {
+                  "title": "old"
+                }
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "other-session",
+                "turnId": "",
+                "sequence": 3,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "metadata": {}
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "tag": "new"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 4,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "tag": "new"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 4,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"old\"}]}]}\n{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"metadata\":{\"title\":\"old\"}}\n{\"type\":\"session_metadata\",\"sessionId\":\"other-session\",\"turnId\":\"\",\"sequence\":3,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"metadata\":{}}\n{\"type\":\"session_metadata\",\"metadata\":{\"tag\":\"new\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "restore-seq-zero",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":0,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-0\",\"parentEntryId\":\"seed--1\",\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event sequence must be a positive safe integer: 0."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":0,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-0\",\"parentEntryId\":\"seed--1\",\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-seq-negative-zero",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"t\",\"sequence\":-0,\"createdAt\":\"2026-10-18T00:00:00.000Z\"}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event sequence must be a positive safe integer: 0."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"t\",\"sequence\":-0,\"createdAt\":\"2026-10-18T00:00:00.000Z\"}\n"
+      }
+    },
+    {
+      "name": "restore-seq-fraction",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1.5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-1.5\",\"parentEntryId\":\"seed-0.5\",\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event sequence must be a positive safe integer: 1.5."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1.5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-1.5\",\"parentEntryId\":\"seed-0.5\",\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-seq-unsafe",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":9007199254740992,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-9007199254740992\",\"parentEntryId\":\"seed-9007199254740991\",\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event sequence must be a positive safe integer: 9007199254740992."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":9007199254740992,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-9007199254740992\",\"parentEntryId\":\"seed-9007199254740991\",\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-entry-id-blank",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\" 　\",\"parentEntryId\":null,\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_entry_id",
+              "message": "Session event entryId must be a non-empty string when present."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\" 　\",\"parentEntryId\":null,\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-entry-id-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":null,\"parentEntryId\":null,\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_entry_id",
+              "message": "Session event entryId must be a non-empty string when present."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":null,\"parentEntryId\":null,\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-parent-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-1\",\"parentEntryId\":5,\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_parent_entry_id",
+              "message": "Session event parentEntryId must be null or a non-empty string when present."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"seed-1\",\"parentEntryId\":5,\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-self-parent",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"a\",\"parentEntryId\":\"a\",\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "self_parent",
+              "message": "Session event a cannot reference itself as parent."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"a\",\"parentEntryId\":\"a\",\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-duplicate-id",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"a\",\"parentEntryId\":null,\"metadata\":{}}\n{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"a\",\"parentEntryId\":\"a-parent\",\"metadata\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "duplicate_entry_id",
+              "message": "Session event entryId must be unique: a."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"a\",\"parentEntryId\":null,\"metadata\":{}}\n{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"turn-0\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"a\",\"parentEntryId\":\"a-parent\",\"metadata\":{}}\n"
+      }
+    },
+    {
+      "name": "record-entry",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_missing",
+                "severity": "warning",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl does not exist."
+              }
+            ],
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        },
+        {
+          "op": "entry",
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "r-5",
+            "parentEntryId": null,
+            "metadata": {
+              "title": "R"
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 5,
+              "lastEntryId": "r-5"
+            }
+          }
+        },
+        {
+          "op": "entry",
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "r-6",
+            "parentEntryId": null,
+            "metadata": {
+              "title": "R"
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "sequence_not_increasing",
+              "message": "Recorded session event sequence 5 must be greater than current sequence 5."
+            }
+          }
+        },
+        {
+          "op": "entry",
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": 6,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "r-5",
+            "parentEntryId": null,
+            "metadata": {
+              "title": "R"
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "duplicate_entry_id",
+              "message": "Session event entryId must be unique: r-5."
+            }
+          }
+        },
+        {
+          "op": "entry",
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": "7",
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "r-7",
+            "parentEntryId": null,
+            "metadata": {
+              "title": "R"
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event sequence must be a positive safe integer: 7."
+            }
+          }
+        },
+        {
+          "op": "entry",
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": 7,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "",
+            "parentEntryId": null,
+            "metadata": {
+              "title": "R"
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_entry_id",
+              "message": "Session event entryId must be a non-empty string when present."
+            }
+          }
+        },
+        {
+          "op": "entry",
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": 7,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "z",
+            "parentEntryId": "z",
+            "metadata": {
+              "title": "R"
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "self_parent",
+              "message": "Session event z cannot reference itself as parent."
+            }
+          }
+        },
+        {
+          "op": "entry",
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": 7,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "r-7",
+            "parentEntryId": 3,
+            "metadata": {
+              "title": "R"
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_parent_entry_id",
+              "message": "Session event parentEntryId must be null or a non-empty string when present."
+            }
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "after recorded"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 6,
+              "lastEntryId": "<id-1>"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "t",
+                "sequence": 5,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "r-5",
+                "parentEntryId": null,
+                "metadata": {
+                  "title": "R"
+                }
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "after recorded"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 6,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": "r-5"
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "sessionId": "s1",
+            "turnId": "t",
+            "sequence": 5,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "r-5",
+            "parentEntryId": null,
+            "metadata": {
+              "title": "R"
+            }
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "after recorded"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 6,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": "r-5"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"s1\",\"turnId\":\"t\",\"sequence\":5,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"r-5\",\"parentEntryId\":null,\"metadata\":{\"title\":\"R\"}}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"after recorded\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"r-5\"}\n"
+      }
+    },
+    {
+      "name": "restore-state",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restoreState",
+          "sequence": -1,
+          "lastEntryId": null,
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event store sequence must be a non-negative safe integer: -1."
+            }
+          }
+        },
+        {
+          "op": "restoreState",
+          "sequence": 1.5,
+          "lastEntryId": null,
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_sequence",
+              "message": "Session event store sequence must be a non-negative safe integer: 1.5."
+            }
+          }
+        },
+        {
+          "op": "restoreState",
+          "sequence": 3,
+          "lastEntryId": "",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_entry_id",
+              "message": "Session event store lastEntryId must be null or a non-empty string."
+            }
+          }
+        },
+        {
+          "op": "restoreState",
+          "sequence": 3,
+          "lastEntryId": "  ",
+          "outcome": {
+            "error": {
+              "name": "SessionEventValidationError",
+              "code": "invalid_entry_id",
+              "message": "Session event store lastEntryId must be null or a non-empty string."
+            }
+          }
+        },
+        {
+          "op": "restoreState",
+          "sequence": 3,
+          "lastEntryId": "x",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 3,
+              "lastEntryId": "x"
+            }
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "four"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "restoreState",
+          "sequence": 0,
+          "lastEntryId": null,
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "one"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "one"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "four"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 4,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": "x"
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "four"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 4,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": "x"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "one"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"four\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"x\"}\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"one\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "closed",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "before close"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "close",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "after close"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "<id-1>"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "before close"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "before close"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"before close\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "sidechain",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "web:s/1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/web:s-1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "sidechain",
+          "subagentId": "sub/a",
+          "as": "sub",
+          "outcome": {
+            "subagentId": "sub/a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a.jsonl",
+            "relative": "web:s-1/subagents/sub-a.jsonl"
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "tag": "child"
+          },
+          "writer": "sub",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "state",
+          "writer": "sub",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "<id-1>"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        },
+        {
+          "op": "sidechain",
+          "subagentId": "n/x",
+          "as": "nested",
+          "writer": "sub",
+          "outcome": {
+            "subagentId": "n/x",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a/subagents/n/x.jsonl",
+            "relative": "sub-a/subagents/n/x.jsonl"
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "tag": "grandchild"
+          },
+          "writer": "nested",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "sidechain",
+          "subagentId": "sub/a",
+          "as": "again",
+          "outcome": {
+            "subagentId": "sub/a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a.jsonl",
+            "relative": "web:s-1/subagents/sub-a.jsonl"
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "tag": "fresh writer"
+          },
+          "writer": "again",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "readAt",
+          "path": "web:s-1/subagents/sub-a.jsonl",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "tag": "child"
+                },
+                "sessionId": "web:s/1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "tag": "fresh writer"
+                },
+                "sessionId": "web:s/1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        },
+        {
+          "op": "readAt",
+          "path": "web:s-1/subagents/sub-a/subagents/n/x.jsonl",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "tag": "grandchild"
+                },
+                "sessionId": "web:s/1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-3>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "web:s/1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "tag": "child"
+            },
+            "sessionId": "web:s/1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "web:s/1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a/subagents/n/x.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "tag": "grandchild"
+            },
+            "sessionId": "web:s/1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-3>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "web:s/1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "tag": "fresh writer"
+            },
+            "sessionId": "web:s/1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "web:s/1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "web:s/1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a/subagents/n/x.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a/subagents/n/x.jsonl": "{\"type\":\"session_metadata\",\"metadata\":{\"tag\":\"grandchild\"},\"sessionId\":\"web:s/1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":null}\n",
+        "home/projects/pdrs-fixture-project/chats/web:s-1/subagents/sub-a.jsonl": "{\"type\":\"session_metadata\",\"metadata\":{\"tag\":\"child\"},\"sessionId\":\"web:s/1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"session_metadata\",\"metadata\":{\"tag\":\"fresh writer\"},\"sessionId\":\"web:s/1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "domain",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "event",
+          "turnId": "turn-1",
+          "event": {
+            "type": "durable_message"
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'metadata')"
+            }
+          }
+        },
+        {
+          "op": "event",
+          "turnId": "turn-1",
+          "event": {
+            "type": "durable_message",
+            "message": null
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'metadata')"
+            }
+          }
+        },
+        {
+          "op": "event",
+          "turnId": "turn-1",
+          "event": {
+            "type": "durable_message",
+            "message": {
+              "role": "user",
+              "content": [],
+              "metadata": {
+                "queueItemId": "q"
+              }
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "turnResult",
+          "turnId": "legacy-turn",
+          "result": {
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "status": "completed",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": []
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "durable_message",
+                "message": {
+                  "role": "user",
+                  "content": [],
+                  "metadata": {
+                    "queueItemId": "q"
+                  }
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "turn_result",
+                "result": {
+                  "sessionId": "s1",
+                  "turnId": "turn-1",
+                  "status": "completed",
+                  "usage": {
+                    "inputTokens": 1
+                  },
+                  "permissionDenials": []
+                },
+                "sessionId": "s1",
+                "turnId": "legacy-turn",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": "<id-1>"
+              }
+            ],
+            "diagnostics": []
+          }
+        },
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "durable_message",
+                "message": {
+                  "role": "user",
+                  "content": [],
+                  "metadata": {
+                    "queueItemId": "q"
+                  }
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              },
+              {
+                "type": "turn_result",
+                "result": {
+                  "sessionId": "s1",
+                  "turnId": "turn-1",
+                  "status": "completed",
+                  "usage": {
+                    "inputTokens": 1
+                  },
+                  "permissionDenials": []
+                },
+                "sessionId": "s1",
+                "turnId": "legacy-turn",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-2>",
+                "parentEntryId": "<id-1>"
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 2,
+              "lastEntryId": "<id-2>"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "durable_message",
+            "message": {
+              "role": "user",
+              "content": [],
+              "metadata": {
+                "queueItemId": "q"
+              }
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "turn_result",
+            "result": {
+              "sessionId": "s1",
+              "turnId": "turn-1",
+              "status": "completed",
+              "usage": {
+                "inputTokens": 1
+              },
+              "permissionDenials": []
+            },
+            "sessionId": "s1",
+            "turnId": "legacy-turn",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": "<id-1>"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"durable_message\",\"message\":{\"role\":\"user\",\"content\":[],\"metadata\":{\"queueItemId\":\"q\"}},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"turn_result\",\"result\":{\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"status\":\"completed\",\"usage\":{\"inputTokens\":1},\"permissionDenials\":[]},\"sessionId\":\"s1\",\"turnId\":\"legacy-turn\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n"
+      }
+    },
+    {
+      "name": "no-capabilities",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "list",
+          "outcome": {
+            "absent": true
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_missing",
+                "severity": "warning",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl does not exist."
+              }
+            ],
+            "state": {
+              "sequence": 0,
+              "lastEntryId": null
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {}
+    },
+    {
+      "name": "replace-delete",
+      "store": {
+        "caps": [
+          "has",
+          "delete",
+          "deleteSession",
+          "replace"
+        ]
+      },
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": [
+              "transcriptExists",
+              "deleteTranscript",
+              "deleteSessionTranscripts",
+              "replaceTranscript"
+            ]
+          }
+        },
+        {
+          "op": "accepted",
+          "turnId": "turn-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "replace",
+          "entries": [
+            {
+              "type": "session_metadata",
+              "sessionId": "s1",
+              "turnId": "turn-0",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "rep-1",
+              "parentEntryId": null,
+              "metadata": {}
+            },
+            {
+              "type": "session_metadata",
+              "sessionId": "s1",
+              "turnId": "turn-0",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "rep-2",
+              "parentEntryId": "rep-1",
+              "metadata": {}
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "rep-1",
+                "parentEntryId": null,
+                "metadata": {}
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "rep-2",
+                "parentEntryId": "rep-1",
+                "metadata": {}
+              }
+            ],
+            "diagnostics": []
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "after replace"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "rep-1",
+                "parentEntryId": null,
+                "metadata": {}
+              },
+              {
+                "type": "session_metadata",
+                "sessionId": "s1",
+                "turnId": "turn-0",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "rep-2",
+                "parentEntryId": "rep-1",
+                "metadata": {}
+              },
+              {
+                "type": "session_metadata",
+                "metadata": {
+                  "title": "after replace"
+                },
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 2,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": "<id-2>"
+              }
+            ],
+            "diagnostics": []
+          }
+        },
+        {
+          "op": "has",
+          "outcome": {
+            "exists": true
+          }
+        },
+        {
+          "op": "delete",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "has",
+          "outcome": {
+            "exists": false
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "title": "recreated"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "sidechain",
+          "subagentId": "kid",
+          "as": "kid",
+          "outcome": {
+            "subagentId": "kid",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents/kid.jsonl",
+            "relative": "s1/subagents/kid.jsonl"
+          }
+        },
+        {
+          "op": "metadata",
+          "turnId": "turn-1",
+          "metadata": {
+            "tag": "kid"
+          },
+          "writer": "kid",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "deleteSession",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "has",
+          "outcome": {
+            "exists": false
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_missing",
+                "severity": "warning",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl does not exist."
+              }
+            ]
+          }
+        },
+        {
+          "op": "readAt",
+          "path": "s1/subagents/kid.jsonl",
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_missing",
+                "severity": "warning",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1/subagents/kid.jsonl does not exist."
+              }
+            ]
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ]
+              }
+            ],
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-2>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "replace",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entries": [
+            {
+              "type": "session_metadata",
+              "sessionId": "s1",
+              "turnId": "turn-0",
+              "sequence": 1,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "rep-1",
+              "parentEntryId": null,
+              "metadata": {}
+            },
+            {
+              "type": "session_metadata",
+              "sessionId": "s1",
+              "turnId": "turn-0",
+              "sequence": 2,
+              "createdAt": "2026-10-18T00:00:00.000Z",
+              "entryId": "rep-2",
+              "parentEntryId": "rep-1",
+              "metadata": {}
+            }
+          ]
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "after replace"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": "<id-2>"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "has",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "delete",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "has",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "title": "recreated"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-3>",
+            "parentEntryId": "<id-1>"
+          }
+        },
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents/kid.jsonl"
+          },
+          "entry": {
+            "type": "session_metadata",
+            "metadata": {
+              "tag": "kid"
+            },
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-4>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "deleteSession",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "has",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents/kid.jsonl"
+          }
+        }
+      ],
+      "files": {}
+    },
+    {
+      "name": "read-limit",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "accepted",
+          "turnId": "turn-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "a"
+                }
+              ]
+            }
+          ],
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "maxBytes": 10,
+          "outcome": {
+            "entries": [],
+            "diagnostics": [
+              {
+                "code": "transcript_too_large",
+                "severity": "error",
+                "message": "Transcript <dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl is larger than 10 bytes."
+              }
+            ]
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "a"
+                      }
+                    ]
+                  }
+                ],
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "a"
+                  }
+                ]
+              }
+            ],
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "options": {
+            "maxBytes": 10
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"a\"}]}],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "list",
+      "store": {
+        "list": [
+          {
+            "sessionId": "b",
+            "lastModified": 200,
+            "fileSize": 10
+          },
+          {
+            "sessionId": "a",
+            "lastModified": 100
+          },
+          {
+            "sessionId": "missing",
+            "lastModified": 300
+          },
+          {
+            "sessionId": "bad",
+            "lastModified": 400
+          },
+          {
+            "sessionId": "meta",
+            "lastModified": 150
+          },
+          {
+            "sessionId": "nodate",
+            "lastModified": 150
+          },
+          {
+            "sessionId": "blank",
+            "lastModified": 500
+          }
+        ]
+      },
+      "initialFiles": {
+        "a.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" second \"}]}]}\n",
+        "b.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"metadata\":{\"title\":\"  \",\"aiTitle\":\"AI\",\"tag\":\"t\",\"parentSessionId\":\"p\",\"forkedFromTurnId\":\"f\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"b prompt\"}]}]}\n",
+        "meta.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"metadata\":{\"title\":\"Custom\"}}\n{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"metadata\":{\"title\":null,\"aiTitle\":null,\"tag\":null}}\n",
+        "bad.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"bad\"}]}]}\n{bad\n",
+        "nodate.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"not-a-date\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"no date\"}]}]}\n",
+        "blank.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" \\n \"},{\"type\":\"image\",\"source\":\"x\"}]}]}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "list",
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "b",
+                "summary": "AI",
+                "lastModified": 200,
+                "fileSize": 10,
+                "customTitle": "  ",
+                "aiTitle": "AI",
+                "firstPrompt": "b prompt",
+                "tag": "t",
+                "createdAt": 1792281600000,
+                "parentSessionId": "p",
+                "forkedFromTurnId": "f"
+              },
+              {
+                "sessionId": "meta",
+                "summary": "Custom",
+                "lastModified": 150,
+                "customTitle": "Custom",
+                "aiTitle": null,
+                "tag": null,
+                "createdAt": 1792281600000
+              },
+              {
+                "sessionId": "nodate",
+                "summary": "no date",
+                "lastModified": 150,
+                "firstPrompt": "no date",
+                "createdAt": null
+              },
+              {
+                "sessionId": "a",
+                "summary": "second",
+                "lastModified": 100,
+                "firstPrompt": "first",
+                "createdAt": 1792281600000
+              }
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "limit": 1,
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "b",
+                "summary": "AI",
+                "lastModified": 200,
+                "fileSize": 10,
+                "customTitle": "  ",
+                "aiTitle": "AI",
+                "firstPrompt": "b prompt",
+                "tag": "t",
+                "createdAt": 1792281600000,
+                "parentSessionId": "p",
+                "forkedFromTurnId": "f"
+              }
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "offset": 1,
+          "limit": 2,
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "meta",
+                "summary": "Custom",
+                "lastModified": 150,
+                "customTitle": "Custom",
+                "aiTitle": null,
+                "tag": null,
+                "createdAt": 1792281600000
+              },
+              {
+                "sessionId": "nodate",
+                "summary": "no date",
+                "lastModified": 150,
+                "firstPrompt": "no date",
+                "createdAt": null
+              }
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "limit": 0,
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "b",
+                "summary": "AI",
+                "lastModified": 200,
+                "fileSize": 10,
+                "customTitle": "  ",
+                "aiTitle": "AI",
+                "firstPrompt": "b prompt",
+                "tag": "t",
+                "createdAt": 1792281600000,
+                "parentSessionId": "p",
+                "forkedFromTurnId": "f"
+              },
+              {
+                "sessionId": "meta",
+                "summary": "Custom",
+                "lastModified": 150,
+                "customTitle": "Custom",
+                "aiTitle": null,
+                "tag": null,
+                "createdAt": 1792281600000
+              },
+              {
+                "sessionId": "nodate",
+                "summary": "no date",
+                "lastModified": 150,
+                "firstPrompt": "no date",
+                "createdAt": null
+              },
+              {
+                "sessionId": "a",
+                "summary": "second",
+                "lastModified": 100,
+                "firstPrompt": "first",
+                "createdAt": 1792281600000
+              }
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "offset": -3,
+          "limit": -1,
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "b",
+                "summary": "AI",
+                "lastModified": 200,
+                "fileSize": 10,
+                "customTitle": "  ",
+                "aiTitle": "AI",
+                "firstPrompt": "b prompt",
+                "tag": "t",
+                "createdAt": 1792281600000,
+                "parentSessionId": "p",
+                "forkedFromTurnId": "f"
+              },
+              {
+                "sessionId": "meta",
+                "summary": "Custom",
+                "lastModified": 150,
+                "customTitle": "Custom",
+                "aiTitle": null,
+                "tag": null,
+                "createdAt": 1792281600000
+              },
+              {
+                "sessionId": "nodate",
+                "summary": "no date",
+                "lastModified": 150,
+                "firstPrompt": "no date",
+                "createdAt": null
+              }
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "offset": 1.7,
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "meta",
+                "summary": "Custom",
+                "lastModified": 150,
+                "customTitle": "Custom",
+                "aiTitle": null,
+                "tag": null,
+                "createdAt": 1792281600000
+              },
+              {
+                "sessionId": "nodate",
+                "summary": "no date",
+                "lastModified": 150,
+                "firstPrompt": "no date",
+                "createdAt": null
+              },
+              {
+                "sessionId": "a",
+                "summary": "second",
+                "lastModified": 100,
+                "firstPrompt": "first",
+                "createdAt": 1792281600000
+              }
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "limit": 2.5,
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "b",
+                "summary": "AI",
+                "lastModified": 200,
+                "fileSize": 10,
+                "customTitle": "  ",
+                "aiTitle": "AI",
+                "firstPrompt": "b prompt",
+                "tag": "t",
+                "createdAt": 1792281600000,
+                "parentSessionId": "p",
+                "forkedFromTurnId": "f"
+              },
+              {
+                "sessionId": "meta",
+                "summary": "Custom",
+                "lastModified": 150,
+                "customTitle": "Custom",
+                "aiTitle": null,
+                "tag": null,
+                "createdAt": 1792281600000
+              }
+            ]
+          }
+        },
+        {
+          "op": "list",
+          "offset": 5,
+          "outcome": {
+            "sessions": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "missing",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/missing.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "bad",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/bad.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "meta",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/meta.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "nodate",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/nodate.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "blank",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/blank.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/a.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" second \"}]}]}\n",
+        "home/projects/pdrs-fixture-project/chats/b.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"metadata\":{\"title\":\"  \",\"aiTitle\":\"AI\",\"tag\":\"t\",\"parentSessionId\":\"p\",\"forkedFromTurnId\":\"f\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"b prompt\"}]}]}\n",
+        "home/projects/pdrs-fixture-project/chats/bad.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"bad\"}]}]}\n{bad\n",
+        "home/projects/pdrs-fixture-project/chats/blank.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" \\n \"},{\"type\":\"image\",\"source\":\"x\"}]}]}\n",
+        "home/projects/pdrs-fixture-project/chats/meta.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"metadata\":{\"title\":\"Custom\"}}\n{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"metadata\":{\"title\":null,\"aiTitle\":null,\"tag\":null}}\n",
+        "home/projects/pdrs-fixture-project/chats/nodate.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"not-a-date\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"no date\"}]}]}\n"
+      }
+    },
+    {
+      "name": "list-read-failure",
+      "store": {
+        "list": [
+          {
+            "sessionId": "a",
+            "lastModified": 1
+          },
+          {
+            "sessionId": "b",
+            "lastModified": 2
+          }
+        ],
+        "failRead": [
+          2
+        ]
+      },
+      "initialFiles": {
+        "a.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" second \"}]}]}\n",
+        "b.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"metadata\":{\"title\":\"  \",\"aiTitle\":\"AI\",\"tag\":\"t\",\"parentSessionId\":\"p\",\"forkedFromTurnId\":\"f\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"b prompt\"}]}]}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "list",
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "injected read failure 2"
+            }
+          }
+        },
+        {
+          "op": "list",
+          "outcome": {
+            "sessions": [
+              {
+                "sessionId": "b",
+                "summary": "AI",
+                "lastModified": 2,
+                "customTitle": "  ",
+                "aiTitle": "AI",
+                "firstPrompt": "b prompt",
+                "tag": "t",
+                "createdAt": 1792281600000,
+                "parentSessionId": "p",
+                "forkedFromTurnId": "f"
+              },
+              {
+                "sessionId": "a",
+                "summary": "second",
+                "lastModified": 1,
+                "firstPrompt": "first",
+                "createdAt": 1792281600000
+              }
+            ]
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        },
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "a",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/a.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "b",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/b.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/a.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"first\"}]}]}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\" second \"}]}]}\n",
+        "home/projects/pdrs-fixture-project/chats/b.jsonl": "{\"type\":\"session_metadata\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"metadata\":{\"title\":\"  \",\"aiTitle\":\"AI\",\"tag\":\"t\",\"parentSessionId\":\"p\",\"forkedFromTurnId\":\"f\"}}\n{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"b prompt\"}]}]}\n"
+      }
+    },
+    {
+      "name": "node-only-turn-started",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "event",
+          "turnId": "turn-1",
+          "event": {
+            "type": "turn_started"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "turn_started",
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "turn_started",
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "node-only-malformed-restore",
+      "store": {},
+      "initialFiles": {},
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "accepted",
+          "turnId": "turn-1",
+          "messages": "oops",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "accepted_input",
+                "messages": "oops",
+                "sessionId": "s1",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "<id-1>",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "<id-1>"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "append",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          },
+          "entry": {
+            "type": "accepted_input",
+            "messages": "oops",
+            "sessionId": "s1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-10-18T00:00:00.000Z",
+            "entryId": "<id-1>",
+            "parentEntryId": null
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"accepted_input\",\"messages\":\"oops\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "node-only-list-shape",
+      "store": {
+        "list": [
+          {
+            "sessionId": "x",
+            "lastModified": 1
+          }
+        ]
+      },
+      "initialFiles": {
+        "x.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}\n{\"type\":\"turn_result\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"result\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "list",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'usage')"
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "list",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "x",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/x.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/x.jsonl": "{\"type\":\"accepted_input\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}]}\n{\"type\":\"turn_result\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-2\",\"parentEntryId\":\"l-1\",\"result\":null}\n"
+      }
+    }
+  ]
+}

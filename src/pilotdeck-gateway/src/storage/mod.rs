@@ -8,16 +8,25 @@ mod ledger;
 mod projection;
 mod run_registry;
 mod transcript;
+mod transcript_adapter;
 
 pub use run_registry::{
     FileRunRegistry, RunAcceptInput, RunAccepted, RunRecord, RunRef, RunRegistryError, RunState,
+};
+pub use transcript_adapter::{
+    AdapterError, AdapterResult, AsyncTranscriptAdapter, Clock, JsonlTranscriptStore, ProjectKey,
+    SessionStorage, SessionStorageInput, StoreResult, StoredSession, SubagentHandle, TranscriptKey,
+    TranscriptStore, TranscriptWriter, sanitize_session_id,
 };
 
 pub use ledger::{
     KnownTerminal, OperationIdentity, OperationRecovery, OperationResolution,
     SessionOperationLedger, TranscriptSink, UnknownTerminal,
 };
-pub use transcript::{Diagnostic, JsonlLedgerStore, TranscriptRead, WriterState, read_transcript};
+pub use transcript::{
+    Diagnostic, JsonlLedgerStore, TranscriptRead, WriterState, read_transcript,
+    read_transcript_limited,
+};
 
 use std::{fmt, io};
 
@@ -70,3 +79,5 @@ fn invalid(message: impl Into<String>) -> LedgerError {
 mod run_registry_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod transcript_adapter_tests;
