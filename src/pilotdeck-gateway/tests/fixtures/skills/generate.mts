@@ -19,16 +19,36 @@ const locale = new Intl.Collator().resolvedOptions().locale;
 assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8 (see README.md)');
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-// Inputs carry "<dir>" for the scenario root and "<cursor:K>" for step K's nextCursor.
+// Inputs carry "<dir>" for the scenario root and "<cursor:K>" for step K's nextCursor;
+// "<cursor:K:how>" additionally feeds that cursor through mangleCursor().
+const CURSOR_RE = /^<cursor:(\d+)(?::([a-z-]+))?>$/;
 function substitute(value: any, root: string, cursors: (string | undefined)[] = []): any {
   if (typeof value === 'string') {
-    const m = /^<cursor:(\d+)>$/.exec(value);
-    if (m) { assert.ok(cursors[Number(m[1])], `step ${m[1]} returned no cursor`); return cursors[Number(m[1])]; }
+    const m = CURSOR_RE.exec(value);
+    if (m) {
+      const raw = cursors[Number(m[1])];
+      assert.ok(raw, `step ${m[1]} returned no cursor`);
+      return m[2] ? mangleCursor(raw, m[2]) : raw;
+    }
     return value.split('<dir>').join(root);
   }
   if (Array.isArray(value)) return value.map(v => substitute(v, root, cursors));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, substitute(v, root, cursors)]));
   return value;
+}
+// Node's base64 decoding is character-set lenient: "+" decodes like "-", "=" ends
+// the payload, and unrelated junk is skipped. Each named probe mangles a cursor
+// the manager itself produced, so the real decoder decides the outcome. No
+// alphabet-swap probe exists: cursors are base64url of pure-ASCII JSON, which
+// yields sextet 62/63 only from a 3-byte group's third byte ('>' '?' '~' DEL in
+// ASCII) — bytes the cursor's JSON never contains — so a real cursor cannot
+// carry '-'/'_' and the swap would be a no-op (that '+'/'/' equals '-'/'_' is
+// pinned by the Rust base64_lenient unit tests instead).
+function mangleCursor(raw: string, how: string): string {
+  const half = Math.floor(raw.length / 2);
+  if (how === 'plus-prefix') return `+${raw}`;
+  if (how === 'equals-middle') return `${raw.slice(0, half)}=${raw.slice(half)}zzzz`;
+  throw new Error(`unknown cursor mangle ${how}`);
 }
 // Outputs: root -> "<dir>", mtime -> "<mtime>" (unless kept), nextCursor decoded.
 // Object.fromEntries keeps an own "__proto__" key, as yaml's toJS does.
@@ -125,6 +145,19 @@ async function runSteps(manager: any, steps: any[], root: string, keepMtime = fa
   try {
     for (const step of steps) out.push({ ...step, outcome: await runStep(manager, step, root, cursors, keepMtime) });
   } finally { process.env.HOME = savedHome; }
+  // Mangled cursors record as literals, like portable nextCursor.raw values; the
+  // probes keep projectKey null so no machine path can survive here.
+  for (const step of steps) {
+    const input = step.input;
+    if (!input || typeof input.cursor !== 'string') continue;
+    const m = /^<cursor:(\d+):([a-z-]+)>$/.exec(input.cursor);
+    if (!m) continue;
+    const raw = cursors[Number(m[1])];
+    assert.ok(raw, `step ${m[1]} returned no cursor`);
+    const mangled = mangleCursor(raw, m[2]);
+    assert.ok(!mangled.includes(root), `${m[2]} cursor embeds the scenario root`);
+    input.cursor = mangled;
+  }
   return out;
 }
 
@@ -185,7 +218,8 @@ async function scenario(name: string, spec: { options?: Options; setup?: Entry[]
   const root = join(scratch, name);
   await mkdir(root, { recursive: true });
   await setupTree(root, spec.setup ?? []);
-  const steps = await runSteps(makeManager(root, spec.options ?? {}), spec.steps, root);
+  const manager = makeManager(root, spec.options ?? {});
+  const steps = await runSteps(manager, spec.steps, root);
   scenarios.push({ name, options: spec.options ?? {}, setup: spec.setup ?? [], steps, tree: await snapshotTree(root) });
   console.log(`${name}: steps=${steps.length}`);
 }
@@ -263,6 +297,11 @@ try {
       // Non-string query reaches .trim(); an array cursor goes through Buffer.from(array).
       op('list', { query: 5 }),
       op('list', { cursor: [8, 109] }),
+      // Node's lenient base64url decoding, probed on real cursors (projectKey stays
+      // null so the recorded literals carry no machine path).
+      op('list', { query: 'a', limit: 5 }),
+      op('list', { query: 'a', limit: 5, cursor: '<cursor:30:plus-prefix>' }),
+      op('list', { query: 'a', limit: 5, cursor: '<cursor:30:equals-middle>' }),
     ],
   });
   {
@@ -270,6 +309,7 @@ try {
       'list:17', 'list:10+', 'list:14', 'list:14', 'list:4', 'list:10', 'list:3', 'list:0', 'list:3',
       'list:5+', 'list:5+', 'list:5+', 'list:2', ...times(11, 'invalid_input'), 'list:17', 'list:10+', 'list:0', 'list:0',
       'TypeError', 'invalid_input',
+      'list:5+', 'invalid_input', 'invalid_input',
     ]);
     // The projectKey "" quirk: echoed, yet no project listing.
     assert.equal(o[3].result.projectPath, '');
@@ -464,6 +504,11 @@ try {
   // validate { sourcePath }: every disk-side hard fail and warning.
   const ok = (dir: string, description = 'A complete skill with every kind of file') => skill(dir, 'Good', description);
   const goodKind = 'ok:|file_large,risky_extension,contains_symlink,risky_extension,risky_extension';
+  // The caps compare with `>`: a bundle landing exactly on 50 MiB stays legal, so
+  // the SKILL.md is sized to make the walked total hit the boundary exactly.
+  const totalEqMd = md('name: Good\ndescription: Total exactly on the fifty MiB cap');
+  const totalEqSlack = 50 * 1048576 - 4 * 10 * 1048576 - Buffer.byteLength(totalEqMd);
+  assert.ok(totalEqSlack > 1048576 && totalEqSlack <= 10 * 1048576, `slack ${totalEqSlack}`);
   await scenario('validate-disk', {
     setup: [
       ok('src/good'),
@@ -485,10 +530,17 @@ try {
       file('src/compat/SKILL.md', '---\nname: Compat: broken\ndescription: Parsed by the compatibility fallback\n---\n'),
       ok('src/huge'),
       { path: 'src/huge/huge.bin', kind: 'file', size: 11 * 1048576 },
+      ok('src/exact10'),
+      { path: 'src/exact10/exact.bin', kind: 'file', size: 10 * 1048576 },
       ok('src/total'),
       ...[0, 1, 2, 3, 4, 5].map(i => ({ path: `src/total/t${i}.bin`, kind: 'file' as const, size: 9 * 1048576 })),
+      file('src/total-eq/SKILL.md', totalEqMd),
+      ...[0, 1, 2, 3].map(i => ({ path: `src/total-eq/t${i}.bin`, kind: 'file' as const, size: 10 * 1048576 })),
+      { path: 'src/total-eq/slack.bin', kind: 'file', size: totalEqSlack },
       ok('src/many'),
       { path: 'src/many', kind: 'bulk', count: 501 },
+      ok('src/many500'),
+      { path: 'src/many500', kind: 'bulk', count: 499 },
       { path: 'src/linkroot', kind: 'symlink', target: 'good' },
     ],
     steps: [
@@ -514,6 +566,10 @@ try {
       op('validate', {}),
       op('validate', null),
       op('validate', { sourcePath: 5, files: [{ relativePath: 'SKILL.md', size: 1 }], skillMdContent: md('name: M\ndescription: Manifest after a non-string path') }),
+      // Boundary equals: exactly 10 MiB per file, 50 MiB total and 500 files stay legal.
+      op('validate', { sourcePath: '<dir>/src/exact10' }),
+      op('validate', { sourcePath: '<dir>/src/total-eq' }),
+      op('validate', { sourcePath: '<dir>/src/many500' }),
     ],
   });
   {
@@ -524,10 +580,14 @@ try {
       `fail:total_too_large|${times(6, 'file_large').join(',')}`, 'fail:too_many_files|',
       goodKind, 'ok:|description_short', 'fail:no_skill_md|', 'ok:|description_short', goodKind,
       'invalid_input', 'invalid_input', 'TypeError', 'ok:|',
+      'ok:|file_large', `ok:|${times(5, 'file_large').join(',')}`, 'ok:|',
     ]);
     assert.deepEqual(o[0].result.stats, { fileCount: 8, totalBytes: o[0].result.stats.totalBytes });
     assert.equal(o[12].result.stats.fileCount, 501);
     assert.equal(o[14].result.sourcePath, '<dir>/src/short');
+    assert.equal(o[22].result.stats.fileCount, 2);
+    assert.equal(o[23].result.stats.totalBytes, 50 * 1048576);
+    assert.equal(o[24].result.stats.fileCount, 500);
   }
 
   // validate { skillMdContent, files }: manifest checks and frontmatter shapes.
