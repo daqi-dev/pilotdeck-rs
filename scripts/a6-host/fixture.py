@@ -23,7 +23,7 @@ known_modes = {
     'no-streaming', 'malformed', 'duplicate-same', 'callback-progress',
     'wrong-call', 'callback-disconnect', 'callback-timeout', 'handshake-hang',
     'oversized', 'close-hang', 'execute-request-mismatch',
-    'hello-rejected', 'capabilities-rejected',
+    'hello-rejected', 'capabilities-rejected', 'module-routing', 'module-errors',
 }
 known_modes.update({
     'ack-disabled', 'resume-support-missing', 'resume-support-unary',
@@ -277,6 +277,24 @@ if mode.startswith('cancel-'):
     assert sys.stdin.read() == ''  # no duplicate cancel, no final ACK
     write_receipt()
     sys.exit(0)
+if mode in ('module-routing', 'module-errors'):
+    oracle = json.loads((Path(__file__).resolve().parents[2] /
+                         'src/pilotdeck-gateway/tests/fixtures/host-modules/oracle.json').read_text())
+    modules = {'model', 'budget', 'capability', 'permission', 'context', 'turn', 'lifecycle', 'event'}
+    cases = oracle['routing' if mode == 'module-routing' else 'errors']
+    cases = [case for case in cases if case['call']['module'] in modules]
+    expected = {case['call']['messageId']: case['response'] for case in cases}
+    for case in cases:
+        send(case['call'])
+    for _ in cases:
+        reply = read()
+        assert reply == expected.pop(reply['inReplyTo']), reply
+    assert not expected
+    send(event(final=True))
+    assert sys.stdin.read() == ''
+    write_receipt()
+    sys.exit(0)
+
 if mode.startswith('grandchild-'):
     send(module_call())
     time.sleep(60)

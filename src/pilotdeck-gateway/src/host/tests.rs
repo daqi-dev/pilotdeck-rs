@@ -3,10 +3,13 @@ use pilotdeck_protocol::parse_json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::Instant};
 
+mod modules;
 mod resume;
 
 struct Handler {
     calls: AtomicUsize,
+    disposed: AtomicUsize,
+    calls_at_dispose: AtomicUsize,
     events: AtomicUsize,
     applied_events: Arc<AtomicUsize>,
     turn_completed_events: AtomicUsize,
@@ -25,6 +28,8 @@ impl Handler {
     fn new(mode: &str) -> Arc<Self> {
         Arc::new(Self {
             calls: AtomicUsize::new(0),
+            disposed: AtomicUsize::new(0),
+            calls_at_dispose: AtomicUsize::new(usize::MAX),
             active_calls: Arc::new(AtomicUsize::new(0)),
             events: AtomicUsize::new(0),
             applied_events: Arc::new(AtomicUsize::new(0)),
@@ -59,6 +64,12 @@ impl Handler {
     }
 }
 impl HostHandler for Handler {
+    fn dispose(&self) -> HostFuture<()> {
+        self.calls_at_dispose
+            .store(self.active_calls.load(Ordering::SeqCst), Ordering::SeqCst);
+        self.disposed.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    }
     fn module_call(&self, _call: JsValue) -> HostFuture<JsObject> {
         if self.cancel_from_module
             && let Some(cancel) = &self.cancellation
