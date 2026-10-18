@@ -1,0 +1,1038 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/cli/ProjectMemoryBundle.ts": "bf9dc96b15de4ac07d230f22c81bb569fc88ebd9523411407b78648a825368bd",
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/gateway/dialog/errors.ts": "20668c4b0074c1cd2b9d375b11a3a8c93c47faddf8264844b6a6206f1630804c"
+  },
+  "bundleCases": [
+    {
+      "name": "factory-success",
+      "factory": "success",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        },
+        "agentModel": "test/model"
+      },
+      "factoryOptions": {
+        "projectRoot": "/pdrs-fixture/project",
+        "agentModel": "test/model",
+        "hasProviderFactory": true,
+        "hasCreateProvider": false,
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        }
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [
+              "memory",
+              "memoryManagement",
+              "memoryService"
+            ],
+            "memory": true,
+            "maintenance": true,
+            "management": true
+          }
+        },
+        {
+          "op": "stage-again",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "ProjectMemoryBundle.stage called more than once."
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "factory",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "factory",
+            "after-dispose-call",
+            "dispose",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "factory",
+        "after-dispose-call",
+        "dispose",
+        "after-await"
+      ]
+    },
+    {
+      "name": "factory-throws",
+      "factory": "throws",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        },
+        "agentModel": null
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "factory boom"
+          }
+        },
+        {
+          "op": "stage-again",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "ProjectMemoryBundle.stage called more than once."
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "factory",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "factory",
+            "after-dispose-call",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "factory",
+        "after-dispose-call",
+        "after-await"
+      ]
+    },
+    {
+      "name": "dispose-before-stage",
+      "factory": "undefined",
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": null,
+        "agentModel": null
+      },
+      "factoryCalls": 0,
+      "steps": [
+        {
+          "op": "dispose-call"
+        },
+        {
+          "op": "stage",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "ProjectMemoryBundle is already disposing."
+          }
+        },
+        {
+          "op": "dispose-await",
+          "beforeAwaitEvents": [
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "after-dispose-call",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "after-dispose-call",
+        "after-await"
+      ]
+    },
+    {
+      "name": "factory-undefined",
+      "factory": "undefined",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": false,
+          "provider": "edgeclaw"
+        },
+        "agentModel": null
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [],
+            "memory": false,
+            "maintenance": false,
+            "management": false
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "factory",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "factory",
+            "after-dispose-call",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "factory",
+        "after-dispose-call",
+        "after-await"
+      ]
+    },
+    {
+      "name": "native-unconfigured",
+      "factory": "none",
+      "factoryCalls": 0,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": null,
+        "agentModel": null
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [],
+            "memory": false,
+            "maintenance": false,
+            "management": false
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "after-dispose-call",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "after-dispose-call",
+        "after-await"
+      ]
+    },
+    {
+      "name": "native-create-provider",
+      "factory": "native",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        },
+        "agentModel": "test/model"
+      },
+      "nativeOptions": {
+        "projectRoot": "/pdrs-fixture/project",
+        "agentModel": "test/model",
+        "hasProviderFactory": false,
+        "hasCreateProvider": false,
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        }
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [
+              "memory",
+              "memoryManagement",
+              "memoryService"
+            ],
+            "memory": true,
+            "maintenance": true,
+            "management": true
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "create",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "create",
+            "after-dispose-call",
+            "close",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "create",
+        "after-dispose-call",
+        "close",
+        "after-await"
+      ]
+    },
+    {
+      "name": "provider-factory-preferred",
+      "factory": "preferred",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        },
+        "agentModel": null
+      },
+      "factoryOptions": {
+        "projectRoot": "/pdrs-fixture/project",
+        "agentModel": null,
+        "hasProviderFactory": true,
+        "hasCreateProvider": true,
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        }
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [
+              "memory",
+              "memoryManagement",
+              "memoryService"
+            ],
+            "memory": true,
+            "maintenance": false,
+            "management": false
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "factory",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "factory",
+            "after-dispose-call",
+            "dispose",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "factory",
+        "after-dispose-call",
+        "dispose",
+        "after-await"
+      ]
+    },
+    {
+      "name": "memory-only-provider",
+      "factory": "memory-only",
+      "factoryCalls": 1,
+      "options": {
+        "projectRoot": "/pdrs-fixture/project",
+        "config": {
+          "enabled": true,
+          "provider": "edgeclaw"
+        },
+        "agentModel": null
+      },
+      "steps": [
+        {
+          "op": "stage",
+          "result": {
+            "keys": [
+              "memory",
+              "memoryManagement",
+              "memoryService"
+            ],
+            "memory": true,
+            "maintenance": false,
+            "management": false
+          }
+        },
+        {
+          "op": "dispose",
+          "beforeAwaitEvents": [
+            "factory",
+            "after-dispose-call"
+          ],
+          "afterAwaitEvents": [
+            "factory",
+            "after-dispose-call",
+            "after-await"
+          ]
+        }
+      ],
+      "events": [
+        "factory",
+        "after-dispose-call",
+        "after-await"
+      ]
+    }
+  ],
+  "projectionCases": [
+    {
+      "name": "list-filter",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "steps": [
+        {
+          "op": "list",
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"b\",\"title\":\"no-session\"},{\"id\":\"c\",\"sourceSessionKey\":\"s2\"},{\"id\":\"d\",\"sourceSessionKey\":1},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"},{\"id\":\"f\",\"sourceSessionKey\":\"\"}]}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "list",
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"}]}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": "s1"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "list",
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"}]}",
+          "input": {
+            "sessionKey": "s1"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/fallback"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/fallback"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "list",
+          "resultJson": "{\"items\":[{\"id\":\"a\",\"sourceSessionKey\":\"s1\",\"title\":\"one\"},{\"id\":\"b\",\"title\":\"no-session\"},{\"id\":\"c\",\"sourceSessionKey\":\"s2\"},{\"id\":\"d\",\"sourceSessionKey\":1},{\"id\":\"e\",\"sourceSessionKey\":\"s1\"},{\"id\":\"f\",\"sourceSessionKey\":\"\"}]}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": ""
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "list",
+          "resultJson": "{\"items\":[]}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": "missing"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        },
+        {
+          "op": "list",
+          "resultJson": "{\"items\":[]}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "sessionKey": " "
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "wipe-branches",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "steps": [
+        {
+          "op": "wipe",
+          "resultJson": "{\"wiped\":true,\"scope\":\"session\"}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session",
+            "sessionKey": "s1"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clearSession",
+              "sessionKey": "s1"
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "resultJson": "{\"wiped\":true,\"scope\":\"session\"}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session",
+            "sessionKey": "  s1  "
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clearSession",
+              "sessionKey": "  s1  "
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_MEMORY_SCOPE",
+            "message": "sessionKey is required for a session-scoped wipe."
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session",
+            "sessionKey": "   "
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "INVALID_MEMORY_SCOPE",
+            "message": "sessionKey is required for a session-scoped wipe."
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "resultJson": "{\"wiped\":true,\"scope\":\"project\"}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "project"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clear",
+              "scope": "current_project"
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "resultJson": "{\"wiped\":true,\"scope\":\"project\"}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clear",
+              "scope": "current_project"
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "resultJson": "{\"wiped\":true,\"scope\":\"project\"}",
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "SESSION",
+            "sessionKey": "s1"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clear",
+              "scope": "current_project"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "capability-unavailable",
+      "management": "unavailable",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "steps": [
+        {
+          "op": "list",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway memory provider is unavailable."
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway memory provider is unavailable."
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session",
+            "sessionKey": "   "
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            }
+          ]
+        },
+        {
+          "op": "wipe",
+          "error": {
+            "name": "DialogGatewayError",
+            "code": "CAPABILITY_UNAVAILABLE",
+            "message": "Gateway memory provider is unavailable."
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "project"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "list-provider-throws",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "fail": {
+        "op": "list",
+        "message": "list exploded"
+      },
+      "steps": [
+        {
+          "op": "list",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "list exploded"
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "list",
+              "limit": 100
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "clear-session-throws",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "fail": {
+        "op": "clearSession",
+        "message": "clear session exploded"
+      },
+      "steps": [
+        {
+          "op": "wipe",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "clear session exploded"
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "session",
+            "sessionKey": "s1"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clearSession",
+              "sessionKey": "s1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "clear-project-throws",
+      "management": "available",
+      "items": [
+        {
+          "id": "a",
+          "sourceSessionKey": "s1",
+          "title": "one"
+        },
+        {
+          "id": "b",
+          "title": "no-session"
+        },
+        {
+          "id": "c",
+          "sourceSessionKey": "s2"
+        },
+        {
+          "id": "d",
+          "sourceSessionKey": 1
+        },
+        {
+          "id": "e",
+          "sourceSessionKey": "s1"
+        },
+        {
+          "id": "f",
+          "sourceSessionKey": ""
+        }
+      ],
+      "fail": {
+        "op": "clear",
+        "message": "clear project exploded"
+      },
+      "steps": [
+        {
+          "op": "wipe",
+          "error": {
+            "name": "Error",
+            "code": null,
+            "message": "clear project exploded"
+          },
+          "input": {
+            "projectKey": "/pdrs-fixture/project",
+            "scope": "project"
+          },
+          "calls": [
+            {
+              "op": "resolveProjectKey",
+              "key": "/pdrs-fixture/project"
+            },
+            {
+              "op": "resolve",
+              "key": "resolved:/pdrs-fixture/project"
+            },
+            {
+              "op": "clear",
+              "scope": "current_project"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
