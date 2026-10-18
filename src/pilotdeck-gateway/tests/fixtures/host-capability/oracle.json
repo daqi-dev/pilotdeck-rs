@@ -7902,6 +7902,174 @@
           }
         }
       ]
+    },
+    {
+      "name": "capability-payload-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-121",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": []
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-payload-string",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-122",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": "x"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-payload-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-123",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": 7
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "capability-payload-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-124",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "capability",
+        "payload": null
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-payload-array",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-125",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": []
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-payload-string",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-126",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": "x"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-payload-number",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-127",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": 7
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
+    },
+    {
+      "name": "permission-payload-null",
+      "config": {},
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "cap-128",
+        "requestId": "callback",
+        "runId": "run",
+        "operationId": "operation",
+        "module": "permission",
+        "payload": null
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "message": "Sidecar payload field operation must be a non-empty string."
+        }
+      },
+      "trace": []
     }
   ]
 }

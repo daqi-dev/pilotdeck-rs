@@ -1,8 +1,48 @@
 use super::*;
 use crate::host::{
     execution::module_response,
-    modules::{ModuleRouter, wire},
+    modules::{ModuleRouter, capability, wire},
 };
+
+// The TS X0 fixture installs an execution port whose catalog is empty. This
+// differs from a host that forgot to install the required capability port.
+struct EmptyCapabilityPort;
+impl capability::ToolCatalog for EmptyCapabilityPort {
+    fn list(&self) -> HostFuture<Vec<Arc<dyn capability::ToolDefinition>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+}
+impl capability::ToolContext for EmptyCapabilityPort {
+    fn prepare(&self, _call: JsValue) -> HostFuture<capability::ToolInvocationContext> {
+        Box::pin(async {
+            Ok(capability::ToolInvocationContext {
+                runtime: Arc::new(()),
+                execution: Arc::new(()),
+            })
+        })
+    }
+}
+impl capability::ToolExecution for EmptyCapabilityPort {
+    fn execute_all(
+        &self,
+        _calls: Vec<capability::ToolCall>,
+        _context: capability::ToolInvocationContext,
+    ) -> HostFuture<Vec<JsObject>> {
+        Box::pin(async { panic!("X0 calls must fail validation before execution") })
+    }
+}
+impl capability::CapabilityResultObserver for EmptyCapabilityPort {
+    fn on_capability_results(&self, _results: Vec<JsObject>) -> HostFuture<()> {
+        Box::pin(async { panic!("X0 calls must not reach the observer") })
+    }
+}
+fn fixture_router() -> ModuleRouter {
+    let port = Arc::new(EmptyCapabilityPort);
+    ModuleRouter {
+        capability: capability::Handler::new(port.clone(), port.clone(), port),
+        ..ModuleRouter::default()
+    }
+}
 
 fn oracle() -> JsValue {
     let value = parse_json(include_str!(
@@ -48,7 +88,7 @@ fn module_error(case: &JsValue) -> HostError {
 #[tokio::test]
 async fn real_ts_module_routing_and_error_projection() {
     let oracle = oracle();
-    let router = ModuleRouter::default();
+    let router = fixture_router();
     for case in array(&oracle, "routing") {
         let call = case.get("call").unwrap();
         let response = module_response(call, router.module_call(call.clone()).await);
@@ -149,7 +189,7 @@ async fn stdio_routes_multiple_modules_and_projects_error_details() {
     for (mode, handler) in [
         (
             "module-routing",
-            Arc::new(ModuleRouter::default()) as Arc<dyn HostHandler>,
+            Arc::new(fixture_router()) as Arc<dyn HostHandler>,
         ),
         (
             "module-errors",

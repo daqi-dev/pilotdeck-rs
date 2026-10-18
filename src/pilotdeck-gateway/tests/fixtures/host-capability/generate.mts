@@ -81,6 +81,10 @@ for (const [label, value] of [['missing', undefined], ['null', null], ['false', 
 for (const tool of [null, [], 'read', undefined]) add(`permission-tool-${JSON.stringify(tool)}`, 'permission', { ...permission, tool });
 for (const failure of ['catalog', 'permission-context', 'decide']) add(`permission-fail-${failure}`, 'permission', permission, { failure });
 add('permission-context-before-id', 'permission', { ...permission, toolCallId: undefined }, { failure: 'permission-context' });
+const nonObjectPayloads = [['array', []], ['string', 'x'], ['number', 7], ['null', null]] as const;
+for (const module of ['capability', 'permission']) {
+  for (const [label, payload] of nonObjectPayloads) add(`${module}-payload-${label}`, module, payload);
+}
 
 const cases = [];
 for (const spec of specs) {
@@ -158,7 +162,14 @@ for (const name of ['batch-length-0', 'batch-length-2', 'batch-empty-extra', 'ex
 }
 assert.equal(get('permission-ok').trace.find(e => e.event === 'decide').tool.private, 'catalog-only');
 assert.deepEqual(get('execute-first-only').trace.find(e => e.event === 'observer').results, [{ first: 1 }]);
-assert.ok(cases.length >= 120);
+for (const module of ['capability', 'permission']) {
+  for (const [label] of nonObjectPayloads) {
+    const test = get(`${module}-payload-${label}`);
+    assert.deepEqual(test.response, { ok: false, error: { message: 'Sidecar payload field operation must be a non-empty string.' } });
+    assert.deepEqual(test.trace, [], 'operation validation must precede all domain port calls');
+  }
+}
+assert.equal(cases.length, 128);
 await mkdir(output, { recursive: true });
 await writeFile(join(output, 'oracle.json'), JSON.stringify({ commit, sources, cases }, null, 2) + '\n');
 console.log(`HOST_CAPABILITY_ORACLE_PASS cases=${cases.length}`);
