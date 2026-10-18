@@ -4,12 +4,14 @@ mod json_syntax;
 mod paths;
 mod sdk;
 mod skills;
+mod skills_migrate;
 
 use paths::Env;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+#[derive(Debug)]
 pub enum Failure {
     /// A thrown Error: TS main().catch prints its message and sets exit code 1.
     Error(String),
@@ -68,7 +70,7 @@ fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         }
         Some("cron") => Err(Failure::Todo("pilotdeck cron")),
         Some("update") => Err(Failure::Todo("pilotdeck update")),
-        Some("skills") => Err(Failure::Todo("pilotdeck skills")),
+        Some("skills") => skills_migrate::run(&argv[1..], env, cwd),
         Some("chat") => Err(Failure::Todo("pilotdeck chat")),
         Some("tui") => {
             if !std::io::stdin().is_terminal() {
@@ -91,7 +93,11 @@ fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
         .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
     let exe_dir = exe.as_deref().and_then(Path::parent);
     let builtin_root = skills::builtin_skills_root(env, cwd, exe_dir)?;
-    for warning in skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root)? {
+    let migration = skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root)?;
+    if let Some(notice) = migration.notice {
+        stdout_line(&notice);
+    }
+    for warning in migration.warnings {
         stderr_line(&warning);
     }
     config::check(env, cwd, &pilot_home)?;

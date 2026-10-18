@@ -133,3 +133,9 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **人定**：B。正本写入 CLAUDE.md「当前协作与持续推进」。旧提交不改历史。
 - **原则**：**署名反映谁写了代码，评审资格由署名决定，所以署名必须如实。**
 
+## 卡 · D0 跨流顺序不可观察场景按流比较（2026-10-18，自决 · 待复核，AI 代批）
+- **卡在哪**：D2-pr1 的 legacy-skills-mixed 在 TS 里同时写 stdout（迁移摘要，createLocalGateway.ts:671-679）和 stderr（gateway/配置报错，CliChannel.ts:25-45）。两轮真实 TS 的跨流先后相反（`_build/wt-d1-cli/_tmp/20261018-d2-skills/d0-final/`：ts-1 stdout→stderr，ts-2 stderr→stdout），自比较 FAIL。补合法配置仍会写 stderr，去不掉。
+- **谁受影响**：只影响声明了的场景的跨流顺序这一维；各流字节仍逐字节比较。**能否撤回**：能（删掉声明即可恢复）。**动不动尺子**：动 D0 装置（未冻结），用真实 TS 两轮复算。
+- **选项**：A 按场景声明 `streamOrder: per-stream` + 证据理由，只免除跨流顺序；B 拆成函数探针，改变验收类型，工作量大；C 删掉该场景，丢覆盖。
+- **建议 / 执行**：A。
+- **原则**：**两轮真实 TS 自身不一致的维度不是可观察行为，不拿它判 Rust；豁免必须按场景声明、附实证、只免这一维。** 断言：test_cli_parity 的四个负控（声明后字节不同→FAIL；未声明顺序不同→FAIL；缺理由或值非法→装置错误；声明后仅顺序不同→PASS）。

@@ -1,6 +1,6 @@
 """Contract tests use clearly synthetic recordings, never calibration evidence."""
 import hashlib
-from contextlib import nullcontext, redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stdout
 import io
 import json
 import os
@@ -17,8 +17,8 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, baseline_path, environment, env_summary, fixture,
-                    digest_plain, read_plain, hashes, initial_tree, output_path, parity_lock, save, snapshot, staged_skills_identity)
-from compare import coalesce, compare, comparison_view, load_round, PROBE_CHECKS
+                    digest_plain, read_plain, hashes, initial_tree, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
+from compare import coalesce, compare, comparison_view, expected_stdout, load_round, PROBE_CHECKS
 from controls import run_controls
 from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile, stage_rust
 
@@ -33,6 +33,11 @@ def bind_policy(run):
     iso['probeProfileSha256'] = hashlib.sha256(sandbox_profile(
         Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts').encode()).hexdigest()
 
+
+REGISTERED_SCENARIOS = SCENARIOS
+CALIBRATED_SCENARIOS = [s for s in SCENARIOS if s.get('oracle') != 'PENDING-TS-CALIBRATION']
+CORE_SCENARIOS = REGISTERED_SCENARIOS[:13]
+SKILLS_SCENARIOS = REGISTERED_SCENARIOS[13:]
 
 SYNTHETIC_RUST = b'synthetic rust candidate\n'
 
@@ -109,7 +114,8 @@ def synthetic_round(path, runtime):
         save(folder / 'final.json', snapshot(folder / 'tree'))
         events = []
         for stream in ('stdout', 'stderr'):
-            data = scenario.get(stream, scenario.get(stream + 'Prefix', '') + 'synthetic\n').encode()
+            data = (expected_stdout(scenario, runtime) if stream == 'stdout' and 'stdout' in scenario
+                    else scenario.get(stream, scenario.get(stream + 'Prefix', '') + 'synthetic\n').encode())
             if stream == 'stdout' and scenario['id'].startswith('help-'):
                 data = (SCRIPT / 'help.txt').read_bytes()
             (folder / f'{stream}.bin').write_bytes(data)
@@ -134,6 +140,12 @@ class ContractTests(unittest.TestCase):
         # Production has no fixture acceptance switch, including in either CLI.
         self.origin_patch = patch('compare.RECORDING_ORIGIN', 'synthetic-unit-fixture')
         self.origin_patch.start()
+        # Legacy synthetic fixtures cover the original 13 cases; they do not
+        # recreate D2's real historical blob. Production always uses all 28.
+        for module in ('compare', 'run_round', __name__):
+            patcher = patch.object(sys.modules[module], 'SCENARIOS', CORE_SCENARIOS)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def tearDown(self):
         self.origin_patch.stop()
@@ -143,6 +155,107 @@ class ContractTests(unittest.TestCase):
         source = self.root / 'source'
         synthetic_round(source, self.root / 'fixed-runtime')
         return source
+
+    @contextmanager
+    def mixed_stream_rounds(self, side, declared=True):
+        cases = [{'id': name, 'argv': [], 'stdinHex': '', 'token': False, 'exit': 1,
+                  'stdout': 'migration summary\n', 'stderr': 'configuration error\n'}
+                 for name in ('mixed', 'strict')]
+        if declared:
+            cases[0].update(streamOrder='per-stream', streamOrderReason='Synthetic unit fixture only.')
+        with patch('compare.SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
+            source, target = self.root / (side + '-source'), self.root / (side + '-target')
+            synthetic_round(source, self.root / 'fixed-runtime')
+            shutil.copytree(source, target)
+            expected = as_rust(target) if side == 'rust' else None
+            yield source, target, expected
+
+    def test_per_stream_allows_only_declared_cross_stream_reordering(self):
+        for side in ('ts', 'rust'):
+            with self.subTest(side=side), self.mixed_stream_rounds(side) as (source, target, expected):
+                events = target / 'cases/mixed/events.json'
+                save(events, list(reversed(json.loads(events.read_text()))))
+                raw = events.read_bytes()
+                self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+                self.assertEqual(events.read_bytes(), raw)
+                # The exception is local to mixed, not a switch for the round.
+                strict = target / 'cases/strict/events.json'
+                save(strict, list(reversed(json.loads(strict.read_text()))))
+                result = compare(source, target, expected)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertEqual({r['rule'] for r in result['failures']}, {'strict.order'})
+
+    def test_undeclared_cross_stream_reordering_fails_comparison(self):
+        for side in ('ts', 'rust'):
+            with self.subTest(side=side), self.mixed_stream_rounds(side, declared=False) as (source, target, expected):
+                events = target / 'cases/mixed/events.json'
+                save(events, list(reversed(json.loads(events.read_text()))))
+                result = compare(source, target, expected)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertEqual({r['rule'] for r in result['failures']}, {'mixed.order'})
+
+    def test_per_stream_keeps_exact_bytes_and_independent_ts_oracle(self):
+        for side in ('ts', 'rust'):
+            with self.mixed_stream_rounds(side) as (source, target, expected):
+                left, right = source / 'cases/mixed', target / 'cases/mixed'
+                for channel in ('stdout', 'stderr'):
+                    with self.subTest(side=side, channel=channel):
+                        original = (left / (channel + '.bin')).read_bytes()
+                        changed = original + b'\x00\xff'
+                        # Keep events coherent so the semantic byte guard must fail.
+                        write_stream(right, channel, changed)
+                        result = compare(source, target, expected)
+                        self.assertEqual(result['status'], 'FAIL')
+                        rules = {r['rule'] for r in result['failures']}
+                        self.assertIn('mixed.' + channel, rules)
+                        if side == 'ts':
+                            self.assertIn('mixed.oracle.' + channel, rules)
+                        # Identical drift on both sides still fails TS vs its oracle.
+                        write_stream(left, channel, changed)
+                        result = compare(source, target, expected)
+                        self.assertEqual(result['status'], 'FAIL')
+                        self.assertEqual({r['rule'] for r in result['failures']}, {'mixed.oracle.' + channel})
+                        write_stream(left, channel, original)
+                        write_stream(right, channel, original)
+
+    def test_per_stream_keeps_raw_event_integrity_check(self):
+        for side in ('ts', 'rust'):
+            with self.mixed_stream_rounds(side) as (source, target, expected):
+                for channel in ('stdout', 'stderr'):
+                    with self.subTest(side=side, channel=channel):
+                        path = target / 'cases/mixed' / (channel + '.bin')
+                        original = path.read_bytes()
+                        path.write_bytes(b'')
+                        result = compare(source, target, expected)
+                        self.assertEqual(result['status'], 'FAIL')
+                        self.assertIn('mixed.' + channel + '.events', {r['rule'] for r in result['failures']})
+                        path.write_bytes(original)
+
+    def test_invalid_stream_order_declarations_are_apparatus_errors(self):
+        invalid = [{'streamOrder': 'per-stream'}, {'streamOrderReason': 'orphan reason'}]
+        invalid += [{'streamOrder': value, 'streamOrderReason': 'synthetic evidence'}
+                    for value in ('', 'strict', 'ignore', None, True, 1, [], {})]
+        invalid += [{'streamOrder': 'per-stream', 'streamOrderReason': value}
+                    for value in ('', ' \n\t', None, True, 1, [], {})]
+        for declaration in invalid:
+            with self.subTest(declaration=declaration), patch('compare.SCENARIOS', [{'id': 'bad', **declaration}]), \
+                 patch('compare.load_round') as load:
+                result = compare(self.root / 'left', self.root / 'right')
+                self.assertEqual(result['status'], 'BLOCKED')
+                self.assertEqual(result['failures'][0]['rule'], 'apparatus.stream-order')
+                load.assert_not_called()
+
+    def test_runner_rejects_invalid_stream_order_before_launch(self):
+        output = self.root / 'invalid-registry'
+        with patch('run_round.SCENARIOS', [{'id': 'bad', 'streamOrder': 'per-stream'}]), \
+             patch('run_round.output_path', return_value=output), \
+             patch('run_round.baseline_path') as baseline, \
+             patch('sys.argv', ['run_round.py']), redirect_stdout(io.StringIO()):
+            self.assertEqual(main(), 2)
+        baseline.assert_not_called()
+        summary = json.loads((output / 'summary.json').read_text())
+        self.assertEqual(summary['status'], 'BLOCKED')
+        self.assertIn('apparatus.stream-order', summary['error'])
 
     def test_empty_scenario_registry_cannot_pass(self):
         import compare as compare_module
@@ -540,16 +653,114 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(result['status'], 'FAIL')
         self.assertIn('pending.oracle.pending', [r['rule'] for r in result['failures']])
 
-    def test_registered_scenarios_are_calibrated(self):
+    def test_registry_has_calibrated_core_and_skills_batch(self):
+        self.assertEqual(len(CALIBRATED_SCENARIOS), 28)
+        self.assertEqual(len(REGISTERED_SCENARIOS), 28)
+        for scenario in CALIBRATED_SCENARIOS:
+            self.assertIn('exit', scenario)
+            self.assertTrue('stderr' in scenario or 'stderrSha256' in scenario)
+        self.assertEqual(len(SKILLS_SCENARIOS), 15)
+        for scenario in SKILLS_SCENARIOS:
+            self.assertNotIn('oracle', scenario)
+            self.assertIn('stdout', scenario)
+            before = initial_tree(scenario)
+            removals = scenario.get('diskRemovals', [])
+            additions = scenario.get('diskAdditions', {})
+            self.assertEqual(len(removals), len(set(removals)))
+            self.assertLessEqual(set(removals), before.keys())
+            self.assertNotIn('.', removals)
+            self.assertFalse((before.keys() - set(removals)) & additions.keys())
+        self.assertEqual(sum('stdoutRuntime' in s for s in SKILLS_SCENARIOS), 12)
+        self.assertEqual(per_stream_scenarios(REGISTERED_SCENARIOS), {'legacy-skills-mixed'})
+        for scenario in SKILLS_SCENARIOS:
+            if scenario['id'] == 'legacy-skills-mixed':
+                self.assertIn('d0-final/ts-1/cases/legacy-skills-mixed/events.json', scenario['streamOrderReason'])
+                self.assertIn('d0-final/ts-2/cases/legacy-skills-mixed/events.json', scenario['streamOrderReason'])
+            else:
+                self.assertNotIn('streamOrder', scenario)
+                self.assertNotIn('streamOrderReason', scenario)
+                self.assertEqual(sum(bool(scenario[channel]) for channel in ('stdout', 'stderr')), 1)
+
+    def test_scenario_files_have_independent_initial_inventory(self):
+        scenario = next(s for s in REGISTERED_SCENARIOS if s['id'] == 'skills-custom-execute')
+        runtime = self.root / 'skill-fixture'
+        fixture(runtime, scenario)
+        self.assertEqual(snapshot(runtime), initial_tree(scenario))
+        (runtime / 'imports/sample/assets/info.txt').write_text('mutated')
+        self.assertNotEqual(snapshot(runtime), initial_tree(scenario))
+        for invalid in ('../escape', '/absolute', 'pilot/pilotdeck.yaml', 'home'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                fixture(self.root / 'invalid', {'fixtureFiles': {invalid: 'bad'}})
+        self.assertFalse((self.root / 'invalid').exists())
+
+    def test_historical_blob_requires_registered_bytes(self):
+        scenario = {'fixtureBlobs': {'pilot/skills/a/SKILL.md': {
+            'revision': 'a' * 40, 'path': 'skills/a/SKILL.md', 'size': 7,
+            'sha256': hashlib.sha256(b'fixture').hexdigest()}}}
+        with patch('common.subprocess.check_output', return_value=b'fixture'):
+            fixture(self.root / 'blob', scenario, Path('/synthetic/baseline'))
+        self.assertEqual(snapshot(self.root / 'blob'), initial_tree(scenario))
+        with patch('common.subprocess.check_output', return_value=b'changed'), self.assertRaises(ValueError):
+            fixture(self.root / 'bad-blob', scenario, Path('/synthetic/baseline'))
+
+    def test_registered_pending_scenarios_cannot_self_compare_to_pass(self):
         import compare as compare_module
-        self.assertEqual([s['id'] for s in SCENARIOS if s.get('oracle') == compare_module.PENDING], [])
-        # specs/cli-parity/scenarios.md registers exactly this many; dropping one must fail here.
-        self.assertEqual(len(SCENARIOS), 13)
-        for scenario in SCENARIOS:
-            with self.subTest(scenario=scenario['id']):
-                self.assertIn('exit', scenario)
-                # Every stderr is pinned exactly, not by prefix only.
-                self.assertTrue('stderr' in scenario or 'stderrSha256' in scenario)
+        # Reintroduce missing calibration on the actual batch IDs/argv. This
+        # guard must survive filling the registry, rather than become vacuous.
+        cases = [{**{k: s[k] for k in ('id', 'argv', 'stdinHex', 'token')},
+                  'oracle': compare_module.PENDING} for s in SKILLS_SCENARIOS]
+        self.assertEqual(len(cases), 15)
+        with patch.object(compare_module, 'SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
+            source = self.root / 'pending-batch'
+            synthetic_round(source, self.root / 'pending-runtime')
+            result = compare_module.compare(source, source)
+        self.assertEqual(result['status'], 'FAIL')
+        rules = {row['rule'] for row in result['failures']}
+        for scenario in cases:
+            self.assertIn(scenario['id'] + '.oracle.pending', rules)
+
+    def test_runtime_bound_oracle_preserves_exact_output_and_paths(self):
+        import compare as compare_module
+        runtime = self.root / 'runtime "quoted" \\ 中文'
+        cases = [
+            {'id': 'text', 'argv': [], 'stdinHex': '', 'token': False, 'exit': 0,
+             'stdout': 'Target: {runtime}/pilot/skills\n', 'stdoutRuntime': 'text', 'stderr': ''},
+            {'id': 'json', 'argv': [], 'stdinHex': '', 'token': False, 'exit': 0,
+             'stdout': '{\n  "path": "{runtime}/pilot/skills"\n}\n', 'stdoutRuntime': 'json', 'stderr': ''}]
+        actual = {'text': f'Target: {runtime}/pilot/skills\n'.encode(),
+                  'json': (json.dumps({'path': str(runtime) + '/pilot/skills'}, ensure_ascii=False, indent=2) + '\n').encode()}
+        with patch.object(compare_module, 'SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
+            source = self.root / 'runtime-binding'
+            synthetic_round(source, runtime)
+            for scenario in cases:
+                name = scenario['id']
+                self.assertEqual(expected_stdout(scenario, runtime), actual[name])
+                write_stream(source / 'cases' / name, 'stdout', actual[name])
+            self.assertEqual(compare(source, source)['status'], 'PASS')
+            for name in actual:
+                case = source / 'cases' / name
+                for mutation in (actual[name].replace(b'pilot/skills', b'pilot/other'),
+                                 actual[name].replace(b'runtime', b'wrong-root'),
+                                 cases[0 if name == 'text' else 1]['stdout'].encode(),
+                                 actual[name] + b' ', actual[name].replace(b'\n', b'\r\n')):
+                    with self.subTest(name=name, mutation=mutation):
+                        write_stream(case, 'stdout', mutation)
+                        self.assertEqual({r['rule'] for r in compare(source, source)['failures']},
+                                         {f'{name}.oracle.stdout'})
+                write_stream(case, 'stdout', actual[name])
+            # Even two independently valid oracles must not hide cross-run paths.
+            other = self.root / 'other-runtime-binding'
+            synthetic_round(other, self.root / 'other-runtime')
+            rules = {r['rule'] for r in compare(source, other)['failures']}
+            self.assertTrue({'round.runtime', 'text.stdout', 'json.stdout'} <= rules)
+
+    def test_invalid_runtime_binding_is_rejected(self):
+        for scenario in ({'stdout': '{runtime}', 'stdoutRuntime': 'anything'},
+                         {'stdout': 'no placeholder', 'stdoutRuntime': 'text'},
+                         {'stdout': '{runtime}', 'stdoutRuntime': 'json', 'stdoutSha256': '0' * 64},
+                         {'stdout': '{runtime}', 'stdoutRuntime': 'text', 'stdoutPrefix': ''}):
+            with self.subTest(scenario=scenario), self.assertRaises(ValueError):
+                expected_stdout(scenario, self.root)
 
     def test_bundled_skills_missing_scenario_expects_no_marker(self):
         scenario = next(s for s in SCENARIOS if s['id'] == 'bundled-skills-missing')
@@ -686,6 +897,27 @@ class ContractTests(unittest.TestCase):
                     self.assertEqual(result['status'], 'FAIL')
                     self.assertEqual({row['rule'] for row in result['failures']},
                                      {f'{name}.oracle.disk'})
+
+    def test_expected_disk_removals_require_exact_complete_tree(self):
+        import compare as compare_module
+        # A synthetic oracle only, never written to the production registry.
+        scenario = {'id': 'remove', 'argv': [], 'stdinHex': '', 'token': False,
+                    'exit': 0, 'stdout': '', 'stderr': '', 'diskRemovals': ['project/keep.txt']}
+        with patch.object(compare_module, 'SCENARIOS', [scenario]), patch.object(sys.modules[__name__], 'SCENARIOS', [scenario]):
+            source = self.root / 'removal'
+            synthetic_round(source, self.root / 'removal-runtime')
+            self.assertEqual(compare(source, source)['status'], 'FAIL')
+            case = source / 'cases/remove'
+            (case / 'tree/project/keep.txt').unlink()
+            save(case / 'final.json', snapshot(case / 'tree'))
+            self.assertEqual(compare(source, source)['status'], 'PASS')
+            for invalid in (['missing'], ['.'], ['project/keep.txt', 'project/keep.txt']):
+                with self.subTest(invalid=invalid), patch.dict(scenario, diskRemovals=invalid):
+                    rules = {r['rule'] for r in compare(source, source)['failures']}
+                    self.assertIn('remove.oracle.disk', rules)
+            (case / 'tree/openssl.cnf').unlink()
+            save(case / 'final.json', snapshot(case / 'tree'))
+            self.assertIn('remove.oracle.disk', {r['rule'] for r in compare(source, source)['failures']})
 
     def test_missing_both_rounds_cannot_pass(self):
         self.assertEqual(compare(self.root, self.root)['status'], 'FAIL')

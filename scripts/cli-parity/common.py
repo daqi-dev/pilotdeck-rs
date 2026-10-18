@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -24,6 +25,21 @@ SCENARIOS = json.loads((SCRIPT / 'scenarios.json').read_text())
 
 class Blocked(RuntimeError):
     pass
+
+
+def per_stream_scenarios(scenarios):
+    """Validate the registry before allowing any cross-stream order exception."""
+    declared = set()
+    for scenario in scenarios:
+        if 'streamOrder' not in scenario and 'streamOrderReason' not in scenario:
+            continue
+        order, reason = scenario.get('streamOrder'), scenario.get('streamOrderReason')
+        if not isinstance(order, str) or order != 'per-stream':
+            raise Blocked(f"apparatus.stream-order: {scenario['id']}: streamOrder must be 'per-stream'")
+        if not isinstance(reason, str) or not reason.strip():
+            raise Blocked(f"apparatus.stream-order: {scenario['id']}: streamOrderReason must be a nonempty string")
+        declared.add(scenario['id'])
+    return declared
 
 
 # 已启动、尚未被 stop_group 证实全部停止的进程组（pgid）。锁是否可释放只看它是否为空，不看异常类型。
@@ -103,13 +119,44 @@ def output_path(path):
     return path
 
 
-def fixture(path):
+def fixture_relative(name):
+    parts = Path(name).parts
+    if not parts or Path(name).is_absolute() or '..' in parts or name != Path(name).as_posix():
+        raise ValueError(f'invalid fixture path: {name}')
+    return Path(name)
+
+
+def fixture(path, scenario=None, baseline=None):
+    scenario = scenario or {}
+    initial_tree(scenario)  # Validate every extra path before creating the runtime.
     path.mkdir(mode=0o700)
     for name in DIRS:
         (path / name).mkdir(mode=0o700)
-    for name, data in FILES.items():
-        (path / name).write_bytes(data)
-        (path / name).chmod(0o600)
+    files = dict(FILES)
+    for name, text in scenario.get('fixtureFiles', {}).items():
+        fixture_relative(name)
+        if name in files:
+            raise ValueError(f'fixture cannot replace base file: {name}')
+        files[name] = text.encode()
+    for name, blob in scenario.get('fixtureBlobs', {}).items():
+        fixture_relative(name)
+        fixture_relative(blob['path'])
+        if name in files or baseline is None or len(blob['revision']) != 40 or any(c not in '0123456789abcdef' for c in blob['revision']):
+            raise ValueError(f'invalid fixture blob: {name}')
+        # Read the pinned historical blob only; never check out or modify baseline.
+        data = subprocess.check_output(['/usr/bin/git', '-C', str(baseline), 'show',
+                                        blob['revision'] + ':' + blob['path']],
+                                       env={'PATH': '/usr/bin:/bin', 'GIT_CONFIG_NOSYSTEM': '1',
+                                            'GIT_CONFIG_GLOBAL': '/dev/null'}, timeout=10)
+        if len(data) != blob['size'] or hashlib.sha256(data).hexdigest() != blob['sha256']:
+            raise ValueError(f'fixture blob identity changed: {name}')
+        files[name] = data
+    for name, data in files.items():
+        dest = path / fixture_relative(name)
+        for parent in reversed(dest.relative_to(path).parents[:-1]):
+            (path / parent).mkdir(mode=0o700, exist_ok=True)
+        dest.write_bytes(data)
+        dest.chmod(0o600)
 
 
 def snapshot(root):
@@ -151,11 +198,29 @@ def staged_skills_identity(folder):
     return {'path': str(folder), 'sha256': digest}
 
 
-def initial_tree():
+def initial_tree(scenario=None):
+    scenario = scenario or {}
     result = {name: {'mode': 0o700, 'type': 'directory'} for name in DIRS}
     result['.'] = {'mode': 0o700, 'type': 'directory'}
     result.update({name: {'mode': 0o600, 'type': 'file', 'size': len(data),
                          'sha256': hashlib.sha256(data).hexdigest()} for name, data in FILES.items()})
+    extra = {name: {'size': len(text.encode()), 'sha256': hashlib.sha256(text.encode()).hexdigest()}
+             for name, text in scenario.get('fixtureFiles', {}).items()}
+    if extra.keys() & scenario.get('fixtureBlobs', {}).keys():
+        raise ValueError('duplicate fixture file/blob')
+    extra.update({name: {'size': blob['size'], 'sha256': blob['sha256']}
+                  for name, blob in scenario.get('fixtureBlobs', {}).items()})
+    for name, identity in extra.items():
+        rel = fixture_relative(name)
+        if name in result:
+            raise ValueError(f'fixture cannot replace base entry: {name}')
+        for parent in rel.parents:
+            key = parent.as_posix()
+            existing = result.get(key)
+            if existing and existing['type'] != 'directory':
+                raise ValueError(f'fixture file used as directory: {key}')
+            result[key] = {'mode': 0o700, 'type': 'directory'}
+        result[name] = {'mode': 0o600, 'type': 'file', **identity}
     return dict(sorted(result.items()))
 
 
