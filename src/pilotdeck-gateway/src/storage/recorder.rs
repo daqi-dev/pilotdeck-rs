@@ -754,7 +754,8 @@ fn validate_compaction_completed(entry: &JsValue) -> RecorderResult<()> {
     Ok(())
 }
 /// SessionDomainValidation.ts:379-384. `entry.error.length` throws for
-/// null/undefined and reads as zero only for an empty string or array.
+/// null/undefined and reads as zero for an empty string or array, or for any
+/// other value whose own `length` property is the number 0 (`{length: 0}`).
 fn validate_compaction_failed(entry: &JsValue) -> RecorderResult<()> {
     let operation = field(entry, "operationId");
     if !truthy(operation) {
@@ -780,7 +781,11 @@ fn validate_compaction_failed(entry: &JsValue) -> RecorderResult<()> {
         }
         JsValue::String(value) => value.is_empty(),
         JsValue::Array(values) => values.is_empty(),
-        _ => false,
+        JsValue::Object(object) => object
+            .get("length")
+            .and_then(JsValue::as_number)
+            .is_some_and(|length| length == 0.0),
+        JsValue::Bool(_) | JsValue::Number(_) => false,
     };
     if empty {
         return Err(domain(

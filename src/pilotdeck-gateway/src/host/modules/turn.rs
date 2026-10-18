@@ -13,6 +13,10 @@ pub type DrainOrCloseSteer = Arc<dyn Fn() -> HostFuture<JsObject> + Send + Sync>
 /// TS `AgentLoopInput.onCompactPersisted`: the dispatcher has already validated
 /// `payload.boundary` as a record and `payload.messages` as an array.
 pub type PersistCompaction = Arc<dyn Fn(JsObject, Vec<JsValue>) -> HostFuture<()> + Send + Sync>;
+/// TS `loopAbortController.abort(reason)` in `TurnRunner`'s persistence catch.
+/// The host wires this to the turn's `Cancellation`; the adapter still answers
+/// `{persisted:true}` because the abort travels beside the response.
+pub type AbortCompaction = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct Ports {
@@ -161,18 +165,21 @@ impl Handler {
 }
 /// TS `TurnRunner`'s `onCompactPersisted` durable branch (TurnRunner.ts:338-374):
 /// a compact boundary is written as one atomic replacement record, then the
-/// deferred `compaction_completed` is committed. A failed write closes the
-/// bracket as `compaction_failed`; the TS loop additionally aborts, which this
-/// host adapter expresses by returning the error instead of `{persisted:true}`.
+/// deferred `compaction_completed` is committed. A failed write is best-effort:
+/// the bracket closes as `compaction_failed`, the loop is aborted with
+/// `compaction_persistence_failed`, and the callback still returns normally so
+/// the dispatcher answers `{persisted:true}` exactly like TS.
 pub fn persist_compaction_to_recorder(
     recorder: Arc<Recorder>,
     session_id: JsString,
     turn_id: JsString,
+    abort: AbortCompaction,
 ) -> PersistCompaction {
     Arc::new(move |boundary, messages| {
         let recorder = recorder.clone();
         let session_id = session_id.clone();
         let turn_id = turn_id.clone();
+        let abort = abort.clone();
         Box::pin(async move {
             let compact = boundary
                 .get("kind")
@@ -196,14 +203,13 @@ pub fn persist_compaction_to_recorder(
                     "Transcript writer does not support atomic compaction replacement.".into(),
                 ))
             };
-            match result {
-                Ok(()) => Ok(()),
-                Err(error) => {
-                    let message = error.to_string();
-                    let _ = recorder.fail_deferred_compaction(&session_id, &turn_id, &message);
-                    Err(ModuleError::new(message).into())
-                }
+            if let Err(error) = result {
+                let message = error.to_string();
+                // `failDeferredCompaction(...).catch(() => {})` in TS.
+                let _ = recorder.fail_deferred_compaction(&session_id, &turn_id, &message);
+                abort("compaction_persistence_failed");
             }
+            Ok(())
         })
     })
 }

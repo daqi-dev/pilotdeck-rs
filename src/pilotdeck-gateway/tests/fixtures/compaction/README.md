@@ -13,7 +13,7 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction
 
 生成器先跑 `tests/baseline_source_guard.mjs` 的 `bindSourceTree`：固定 Git 绝对路径、HEAD 等于 `cc7c4e6`、已跟踪树无改动、整棵 `src` 逐 blob 比对；再按 import 传递闭包复算 `sourceSha256`。每次运行在输出目录下 `mkdtemp` 一个 `.generate-*` 临时目录，只清理本次创建的目录；transcript 落盘行、返回值与错误都来自真实 TS，随机 UUID/场景目录归一化后写入 `oracle.json`；生成器连跑两次逐字节一致（UUID 归一化后）。
 
-`oracle.json.scenarios[]`（6 组，Rust 逐场景重放步骤结果与整份 transcript 文件字节）：
+`oracle.json.scenarios[]`（9 组，Rust 逐场景重放步骤结果与整份 transcript 文件字节）：
 
 | 场景 | 覆盖 |
 |---|---|
@@ -23,6 +23,11 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction
 | control-boundaries | microcompact / resume / manual / 无 snapshot 的 compact boundary：writer 原样落盘，不补字段 |
 | errors | 无 pending 的 defer；无 bracket 的 completed/failed；重复 started；非法 messageCount/maxContextTokens/missing；空 error；error=null 的 V8 TypeError；全部拒绝且不发布 sequence |
 | restore | 重开并 `SessionRuntime.restore` 后：pending compaction 清空、commit 无操作、域里仍开着的 bracket 可以正常 completed，第二次 completed 报 `invalid_compaction`；序号/父链连续 |
+| outside-turn | 未 startTurn 时写 compaction_started/completed/failed -> `event_outside_turn`，transcript 不增长 |
+| non-string-operation-ids | 数字/数组（含嵌套、null/undefined 元素）/空数组/普通对象/带不可调用 `toString` 的对象/布尔 operationId：`Set` 引用语义、`Array#join`/`Object#toString` 文案，以及 `TypeError: Cannot convert object to primitive value` |
+| failure-length | `entry.error.length === 0`：空串、空数组、`{length:0}`（含 -0）拒绝；数字、非空数组、`{length:1}`、`{length:'0'}`、`{length:null}`、`{length:[0]}`、布尔放行 |
+
+`oracle.json.runner`（1 组，Rust 经 `Handler` 调用生产 `persist_compaction_to_recorder`）：真实 `TurnRunner.run` 的 `onCompactPersisted` catch 分支。非 compact boundary 触发失败后，真实 recorder 写 `compaction_failed`，真实 `AbortController` 置 `aborted=true/reason="compaction_persistence_failed"`，回调本身正常 resolve，dispatcher 仍返回 `{persisted:true}`；Rust 侧用同一语义：先关闭 bracket，再调用注入的 abort 回调，最后成功返回。
 
 `oracle.json.turn[]`（18 组，Rust 直接调用 `host::modules::turn::Handler`）：
 
@@ -32,6 +37,6 @@ cargo test --locked --offline -p pilotdeck-gateway --test compaction
 - 回调抛 `disk full` -> 错误原样上抛；
 - 缺失/空/非字符串 operation -> dispatcher 字段错误文案。
 
-`TurnRunner.ts:338-374` 的 durable 分支在 Rust 侧由 `turn::persist_compaction_to_recorder` 表达：compact boundary 写 replacement 后 commit；非 compact boundary 或写失败先 `failDeferredCompaction` 再返回错误。TS 的 catch 还会 abort 外层 loop（不在宿主层范围）；Rust 不返回 `{persisted:true}` 假成功，而把错误交给调用方，避免未持久化的压缩面被送进模型。该差异在 `tests/compaction.rs::unsupported_boundary_closes_deferred_bracket` 与 RESULT 中登记。
+`TurnRunner.ts:338-374` 的 durable 分支在 Rust 侧由 `turn::persist_compaction_to_recorder` 表达：compact boundary 写 replacement 后 commit；非 compact boundary 或写失败先 `failDeferredCompaction`，再以 `compaction_persistence_failed` 触发注入的 abort 回调，最后正常返回（dispatcher 响应 `{persisted:true}`）。这与 TS 的 catch 一致：失败不冒充成功，abort 与响应分两路，由宿主执行层把取消投影成 aborted result。
 
 范围：只证明 compaction 生命周期与 control boundary 的 JSONL 落盘格式、域校验和 `persist_compaction` 分派；`durableContextRuntime` / `TurnRunner` 的调度本身、`try_auto_compact` 预算注入、question/permission/inbox 生命周期与 `completeTurn` 留给后续 PR。
