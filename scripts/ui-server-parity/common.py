@@ -67,12 +67,14 @@ _YAML_WORD = r'[A-Za-z_][A-Za-z0-9_./*-]*'
 _YAML_RESOLVED_WORDS = {'yes', 'no', 'true', 'false', 'on', 'off', 'null'}
 # Values of other sections only need to be single-line scalars; no indicators
 # ('=' alone resolves to PyYAML's unconstructible value tag).
-_YAML_OPAQUE = r"[^\s'\"#\[\]{}&*!|>%@`,?:=-][^\s#\[\]{},:]*"
-_YAML_END = r'(?:\s+#.*)?\s*$'
-_YAML_TOP = re.compile(r'([A-Za-z_][A-Za-z0-9_-]*):(?:\s+(\[\]|\{\}|' + _YAML_QUOTED + '|' + _YAML_OPAQUE + '))?' + _YAML_END)
-_YAML_PACKAGE = re.compile(r'-\s+(' + _YAML_QUOTED + '|' + _YAML_WORD + ')' + _YAML_END)
-_YAML_ITEM = re.compile(r'-\s+(?:' + _YAML_QUOTED + '|' + _YAML_OPAQUE + ')' + _YAML_END)
-_YAML_ENTRY = re.compile(r'(?:' + _YAML_QUOTED + '|' + _YAML_OPAQUE + r'):(?:\s+(?:'
+# YAML separates only with space and tab; NBSP and other Unicode spaces are
+# scalar content, as in PyYAML (#94 review).
+_YAML_OPAQUE = r"[^ \t'\"#\[\]{}&*!|>%@`,?:=-][^ \t#\[\]{},:]*"
+_YAML_END = r'(?:[ \t]+#.*)?[ \t]*$'
+_YAML_TOP = re.compile(r'([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]+(\[\]|\{\}|' + _YAML_QUOTED + '|' + _YAML_OPAQUE + '))?' + _YAML_END)
+_YAML_PACKAGE = re.compile(r'-[ \t]+(' + _YAML_QUOTED + '|' + _YAML_WORD + ')' + _YAML_END)
+_YAML_ITEM = re.compile(r'-[ \t]+(?:' + _YAML_QUOTED + '|' + _YAML_OPAQUE + ')' + _YAML_END)
+_YAML_ENTRY = re.compile(r'(?:' + _YAML_QUOTED + '|' + _YAML_OPAQUE + r'):(?:[ \t]+(?:'
                          + _YAML_QUOTED + '|' + _YAML_OPAQUE + '))?' + _YAML_END)
 _YAML_FORBIDDEN = re.compile('[\x00-\x1f\x7f-\x9f\u2028\u2029\ufeff\ufffe\uffff]')
 
