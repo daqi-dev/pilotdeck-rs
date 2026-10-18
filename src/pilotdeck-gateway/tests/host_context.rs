@@ -60,31 +60,14 @@ fn decode(v: &JsValue, root: &Path) -> JsValue {
         _ => v.clone(),
     }
 }
-fn normalized(v: &JsValue, root: &Path) -> JsValue {
-    fn sort(v: &JsValue) -> JsValue {
-        match v {
-            JsValue::Array(a) => JsValue::Array(a.iter().map(sort).collect()),
-            JsValue::Object(o) => {
-                let mut fields = o.entries().iter().collect::<Vec<_>>();
-                fields.sort_by(|a, b| a.0.units().cmp(b.0.units()));
-                let mut result = JsObject::new();
-                for (k, v) in fields {
-                    result.insert(k.clone(), sort(v));
-                }
-                JsValue::Object(result)
-            }
-            _ => v.clone(),
-        }
-    }
-    sort(
-        &parse_json(
-            &stringify_json(v)
-                .unwrap()
-                .unwrap()
-                .replace(root.to_str().unwrap(), "<fixture>"),
-        )
-        .unwrap(),
-    )
+fn normalized(v: &JsValue, root: &Path) -> String {
+    // JSON normalization still omits undefined fields, but key order is part of
+    // the contract: the dispatcher records and returns objects as the runtime
+    // built them. Compare the exact serialized bytes instead of sorting keys.
+    stringify_json(v)
+        .unwrap()
+        .unwrap()
+        .replace(root.to_str().unwrap(), "<fixture>")
 }
 fn request() -> JsValue {
     parse_json(r#"{"provider":"p","model":"m","messages":[],"systemPrompt":"base prompt","tools":[{"name":"base"}],"metadata":{"kept":true}}"#).unwrap()
@@ -133,17 +116,30 @@ impl Fake {
     fn invoke(&self, op: Operation, input: ContextInput) -> HostFuture<JsValue> {
         let fake = self.clone();
         Box::pin(async move {
-            let mut fields = input.fields.clone();
-            if let Some(abort) = &input.abort_signal {
+            // Mirror the generator's recordInput: trusted fields are removed
+            // from the recorded object and appended at the end. JsObject::insert
+            // keeps an existing key's position, so a plain clone would preserve
+            // the wire order of a forged abortSignal instead.
+            let forged_abort = input.fields.get("abortSignal").cloned();
+            let mut fields = JsObject::new();
+            for (key, value) in input.fields.entries() {
+                if key.equals_str("abortSignal") || key.equals_str("budgetEvaluator") {
+                    continue;
+                }
+                fields.insert(key.clone(), value.clone());
+            }
+            let abort = if let Some(abort) = &input.abort_signal {
                 assert!(Arc::ptr_eq(abort, fake.abort.as_ref().unwrap()));
-                fields.insert(
-                    "abortSignal".into(),
-                    if *fake.signal.as_ref().unwrap().borrow() {
-                        "aborted".into()
-                    } else {
-                        "active".into()
-                    },
-                );
+                Some(if *fake.signal.as_ref().unwrap().borrow() {
+                    "aborted".into()
+                } else {
+                    "active".into()
+                })
+            } else {
+                forged_abort
+            };
+            if let Some(abort) = abort.filter(|v| !v.is_undefined()) {
+                fields.insert("abortSignal".into(), abort);
             }
             if input.budget_evaluator.is_some() {
                 fields.insert("budgetEvaluator".into(), "function".into());
@@ -357,7 +353,7 @@ fn outcome(result: Result<JsObject, HostError>) -> JsValue {
 async fn real_ts_context_dispatcher_replay() {
     let oracle = baseline::oracle(ORACLE);
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 340);
+    assert_eq!(cases.len(), 352);
     let root = std::env::temp_dir().join(format!("pdrs-host-context-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("media.txt"), b"aGVsbG8=\n").unwrap();

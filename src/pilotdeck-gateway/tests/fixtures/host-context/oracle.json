@@ -28898,6 +28898,1427 @@
           }
         }
       }
+    },
+    {
+      "name": "stage-projection-340",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100,
+          "budgetStage": "pre_route",
+          "budgetProjection": {
+            "stage": "recovery"
+          }
+        }
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "budgetStage": "pre_route",
+            "budgetProjection": {
+              "stage": "recovery"
+            },
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        },
+        {
+          "operation": "budget",
+          "request": {
+            "provider": "p",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "systemPrompt": "preview prompt",
+            "tools": [],
+            "metadata": {
+              "kept": true
+            },
+            "cacheBreakpoints": [
+              0
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "signal": "absent"
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "result": {
+            "snapshot": {
+              "tokens": 25,
+              "maxContextTokens": 100,
+              "warningRatio": 0.7,
+              "blockingRatio": 0.9,
+              "ratio": 0.25,
+              "state": "ok",
+              "extra": "kept"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "stage-projection-341",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100,
+          "budgetStage": "recovery",
+          "budgetProjection": {
+            "stage": "pre_route"
+          }
+        }
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "budgetStage": "recovery",
+            "budgetProjection": {
+              "stage": "pre_route"
+            },
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        },
+        {
+          "operation": "budget",
+          "request": {
+            "provider": "p",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            },
+            "cacheBreakpoints": [
+              0
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "signal": "absent"
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "result": {
+            "snapshot": {
+              "tokens": 25,
+              "maxContextTokens": 100,
+              "warningRatio": 0.7,
+              "blockingRatio": 0.9,
+              "ratio": 0.25,
+              "state": "ok",
+              "extra": "kept"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "stage-projection-342",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100,
+          "budgetStage": "routed",
+          "budgetProjection": {
+            "stage": "pre_route"
+          }
+        }
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "budgetStage": "routed",
+            "budgetProjection": {
+              "stage": "pre_route"
+            },
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        },
+        {
+          "operation": "budget",
+          "request": {
+            "provider": "p",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            },
+            "cacheBreakpoints": [
+              0
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "signal": "absent"
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "result": {
+            "snapshot": {
+              "tokens": 25,
+              "maxContextTokens": 100,
+              "warningRatio": 0.7,
+              "blockingRatio": 0.9,
+              "ratio": 0.25,
+              "state": "ok",
+              "extra": "kept"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "stage-projection-343",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100,
+          "budgetStage": "bad",
+          "budgetProjection": {
+            "stage": "recovery"
+          }
+        }
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "budgetStage": "bad",
+            "budgetProjection": {
+              "stage": "recovery"
+            },
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        },
+        {
+          "operation": "budget",
+          "request": {
+            "provider": "p",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "systemPrompt": "preview prompt",
+            "tools": [],
+            "metadata": {
+              "kept": true
+            },
+            "cacheBreakpoints": [
+              0
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "signal": "absent"
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "result": {
+            "snapshot": {
+              "tokens": 25,
+              "maxContextTokens": 100,
+              "warningRatio": 0.7,
+              "blockingRatio": 0.9,
+              "ratio": 0.25,
+              "state": "ok",
+              "extra": "kept"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "cache-tools-344",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "preview": {
+        "cachePlan": {
+          "generation": 0
+        },
+        "tools": {}
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "input.tools is not iterable"
+        }
+      }
+    },
+    {
+      "name": "cache-tools-345",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "preview": {
+        "cachePlan": {
+          "generation": 0
+        },
+        "tools": 7
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "input.tools is not iterable"
+        }
+      }
+    },
+    {
+      "name": "cache-tools-346",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "preview": {
+        "cachePlan": {
+          "generation": 0
+        },
+        "tools": {
+          "$undefined": true
+        }
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "input.tools is not iterable"
+        }
+      }
+    },
+    {
+      "name": "cache-tools-347",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "preview": {
+        "cachePlan": {
+          "generation": 0
+        },
+        "tools": null
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "input.tools is not iterable"
+        }
+      }
+    },
+    {
+      "name": "cache-tools-348",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "preview": {
+        "cachePlan": {
+          "generation": 0
+        },
+        "tools": [
+          null,
+          {
+            "name": "a"
+          }
+        ]
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'name')"
+        }
+      }
+    },
+    {
+      "name": "cache-tools-349",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "preview": {
+        "cachePlan": {
+          "generation": 0
+        },
+        "tools": [
+          {
+            "name": "a"
+          },
+          null
+        ]
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'name')"
+        }
+      }
+    },
+    {
+      "name": "cache-tools-350",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "preview": {
+        "cachePlan": {
+          "generation": 0
+        },
+        "tools": [
+          null,
+          {}
+        ]
+      },
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent",
+            "budgetEvaluator": "function"
+          }
+        },
+        {
+          "operation": "prepare_for_model",
+          "input": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ],
+            "previewOnly": true,
+            "extra": true
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of undefined (reading 'localeCompare')"
+        }
+      }
+    },
+    {
+      "name": "without-budget-valid",
+      "payload": {
+        "operation": "try_auto_compact",
+        "input": {
+          "budgetRequest": {
+            "provider": "p",
+            "model": "m",
+            "messages": [],
+            "systemPrompt": "base prompt",
+            "tools": [
+              {
+                "name": "base"
+              }
+            ],
+            "metadata": {
+              "kept": true
+            }
+          },
+          "budgetPreparation": {
+            "provider": "p",
+            "model": "m",
+            "tools": [],
+            "sessionId": "budget-session",
+            "messages": [
+              "replaced"
+            ],
+            "previewOnly": false,
+            "extra": true
+          },
+          "maxContextTokens": 100
+        }
+      },
+      "budget": false,
+      "calls": [
+        {
+          "operation": "try_auto_compact",
+          "input": {
+            "budgetPreparation": {
+              "provider": "p",
+              "model": "m",
+              "tools": [],
+              "sessionId": "budget-session",
+              "messages": [
+                "replaced"
+              ],
+              "previewOnly": false,
+              "extra": true
+            },
+            "maxContextTokens": 100,
+            "sessionId": "session",
+            "turnId": "turn",
+            "cwd": "/pdrs-fixture/project",
+            "permissionMode": "default",
+            "runMode": "agent"
+          }
+        }
+      ],
+      "methods": [
+        "prepare_for_model",
+        "apply_tool_results",
+        "recover_from_model_error",
+        "capture_turn",
+        "try_auto_compact"
+      ],
+      "response": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "result": {
+            "operation": "try_auto_compact",
+            "extra": "kept"
+          }
+        }
+      }
     }
   ]
 }
