@@ -116,6 +116,20 @@ export async function verifyNodeModules(ui) {
   for (const name of REQUIRED_PACKAGES) if (!declared_.includes(name)) throw new Error(`ui/package.json does not declare ${name}`);
   const wanted = [...REQUIRED_PACKAGES, ...xtermNames];
   const locked = lockedUiVersions(declared.toString('utf8'), wanted);
+  // pnpm hashes store directory names longer than virtualStoreDirMaxLength. That
+  // encoding is not reproduced here, so such a layout is refused explicitly
+  // instead of being reported as a version mismatch.
+  const modules = JSON.parse(await readFile(resolve(repository, 'node_modules', '.modules.yaml'), 'utf8'));
+  if (modules.virtualStoreDir !== '.pnpm' || modules.nodeLinker !== 'isolated') {
+    throw new Error(`Baseline node_modules layout unsupported: virtualStoreDir=${modules.virtualStoreDir} nodeLinker=${modules.nodeLinker}`);
+  }
+  const maxLength = modules.virtualStoreDirMaxLength;
+  for (const name of wanted) {
+    const dir = pnpmStoreDir(name, locked.get(name));
+    if (!Number.isInteger(maxLength) || dir.length > maxLength) {
+      throw new Error(`Baseline node_modules uses a hashed store directory for ${name} (virtualStoreDirMaxLength=${maxLength}); extend the apparatus before using this layout`);
+    }
+  }
   const packages = [];
   for (const name of wanted) packages.push(await checkPackage(ui, repository, name, locked.get(name)));
   let installedXterm = [];
