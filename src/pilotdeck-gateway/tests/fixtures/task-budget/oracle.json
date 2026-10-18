@@ -808,6 +808,185 @@
       "crossFile": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.2,\"settledRunIds\":[\"new\",\"run-z\"]}\n{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"cross-ts\",\"runId\":\"from-ts\",\"turnSpentUsd\":0.125}\n"
     },
     {
+      "name": "residual-temporaries",
+      "threshold": 2,
+      "initial": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"runId\":\"run-z\",\"turnSpentUsd\":0.1}\n",
+      "initialTemporaryFiles": {
+        "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+        "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+      },
+      "steps": [
+        {
+          "op": "load",
+          "result": {
+            "ok": true
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"runId\":\"run-z\",\"turnSpentUsd\":0.1}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "get",
+          "result": {
+            "spentUsd": 0.1,
+            "settledRunIds": [
+              "run-z"
+            ]
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"runId\":\"run-z\",\"turnSpentUsd\":0.1}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "settle",
+          "run": "after-residue",
+          "spend": 0.1,
+          "result": {
+            "ok": true
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.2,\"settledRunIds\":[\"after-residue\",\"run-z\"]}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "reopen",
+          "result": {
+            "ok": true
+          },
+          "count": 0,
+          "file": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.2,\"settledRunIds\":[\"after-residue\",\"run-z\"]}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "get",
+          "result": {
+            "spentUsd": 0.2,
+            "settledRunIds": [
+              "after-residue",
+              "run-z"
+            ]
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.2,\"settledRunIds\":[\"after-residue\",\"run-z\"]}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        }
+      ],
+      "reloaded": [
+        {
+          "key": "/pdrs-fixture/project\u0000session\u0000session",
+          "spentUsd": 0.2,
+          "settledRunIds": [
+            "after-residue",
+            "run-z"
+          ]
+        }
+      ],
+      "reloadCount": 1,
+      "reloadError": null,
+      "crossFile": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.2,\"settledRunIds\":[\"after-residue\",\"run-z\"]}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"cross-ts\",\"spentUsd\":0.125,\"settledRunIds\":[\"from-ts\"]}\n"
+    },
+    {
+      "name": "orphan-temporaries",
+      "threshold": 1,
+      "initial": null,
+      "initialTemporaryFiles": {
+        "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+        "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+      },
+      "steps": [
+        {
+          "op": "load",
+          "result": {
+            "ok": true
+          },
+          "count": 0,
+          "file": null,
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "get",
+          "result": null,
+          "count": 0,
+          "file": null,
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "settle",
+          "run": "after-orphan",
+          "spend": 0.1,
+          "result": {
+            "ok": true
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.1,\"settledRunIds\":[\"after-orphan\"]}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "reopen",
+          "result": {
+            "ok": true
+          },
+          "count": 0,
+          "file": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.1,\"settledRunIds\":[\"after-orphan\"]}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        },
+        {
+          "op": "get",
+          "result": {
+            "spentUsd": 0.1,
+            "settledRunIds": [
+              "after-orphan"
+            ]
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.1,\"settledRunIds\":[\"after-orphan\"]}\n",
+          "temporaryFiles": {
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀\",\"\"]}\n",
+            "sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"project\",\"sessionKey\":\"*\",\"spentUsd\":0.25,\"settledRunIds\":[\"z\"],\"totalUsd\":10,\"projectRetentionMs\":100,\"lastActivityAtMs\":1792281600000}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.30000000000000004,\"settledRunIds\":[\"\\ud800\",\"😀"
+          }
+        }
+      ],
+      "reloaded": [
+        {
+          "key": "/pdrs-fixture/project\u0000session\u0000session",
+          "spentUsd": 0.1,
+          "settledRunIds": [
+            "after-orphan"
+          ]
+        }
+      ],
+      "reloadCount": 1,
+      "reloadError": null,
+      "crossFile": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.1,\"settledRunIds\":[\"after-orphan\"]}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"cross-ts\",\"spentUsd\":0.125,\"settledRunIds\":[\"from-ts\"]}\n"
+    },
+    {
       "name": "no-final-newline",
       "threshold": 512,
       "initial": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"runId\":\"run-z\",\"turnSpentUsd\":0.1}",
@@ -1944,6 +2123,157 @@
       "reloadCount": 1,
       "reloadError": null,
       "crossFile": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.25,\"settledRunIds\":[\"reinsert\"]}\n{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"cross-ts\",\"spentUsd\":0.125,\"settledRunIds\":[\"from-ts\"]}\n"
+    },
+    {
+      "name": "resolved-write-root",
+      "threshold": 512,
+      "initial": null,
+      "steps": [
+        {
+          "op": "configure",
+          "total": 10,
+          "root": "/pdrs-fixture/a/../project//./",
+          "resolveRoot": true,
+          "result": {
+            "ok": true
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"configured\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"scope\":\"project\",\"totalUsd\":10}\n"
+        },
+        {
+          "op": "settle",
+          "run": "resolved",
+          "spend": 0.5,
+          "root": "/pdrs-fixture/a/../project//./",
+          "resolveRoot": true,
+          "result": {
+            "ok": true
+          },
+          "count": 2,
+          "file": "{\"version\":1,\"kind\":\"configured\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"scope\":\"project\",\"totalUsd\":10}\n{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"runId\":\"resolved\",\"turnSpentUsd\":0.5}\n"
+        },
+        {
+          "op": "clear",
+          "root": "/pdrs-fixture/a/../project//./",
+          "resolveRoot": true,
+          "result": {
+            "ok": true
+          },
+          "count": 3,
+          "file": "{\"version\":1,\"kind\":\"configured\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"scope\":\"project\",\"totalUsd\":10}\n{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"runId\":\"resolved\",\"turnSpentUsd\":0.5}\n{\"version\":1,\"kind\":\"cleared\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\"}\n"
+        }
+      ],
+      "reloaded": [
+        {
+          "key": "/pdrs-fixture/project\u0000project\u0000*",
+          "spentUsd": 0,
+          "settledRunIds": [],
+          "totalUsd": 10
+        }
+      ],
+      "reloadCount": 3,
+      "reloadError": null,
+      "crossFile": "{\"version\":1,\"kind\":\"configured\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"scope\":\"project\",\"totalUsd\":10}\n{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\",\"runId\":\"resolved\",\"turnSpentUsd\":0.5}\n{\"version\":1,\"kind\":\"cleared\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"session\"}\n{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"cross-ts\",\"runId\":\"from-ts\",\"turnSpentUsd\":0.125}\n"
+    },
+    {
+      "name": "empty-root",
+      "threshold": 3,
+      "initial": null,
+      "steps": [
+        {
+          "op": "settle",
+          "run": "empty",
+          "spend": 0.25,
+          "root": "",
+          "result": {
+            "ok": true
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"\",\"sessionKey\":\"session\",\"runId\":\"empty\",\"turnSpentUsd\":0.25}\n"
+        },
+        {
+          "op": "get",
+          "root": "",
+          "result": {
+            "spentUsd": 0.25,
+            "settledRunIds": [
+              "empty"
+            ]
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"\",\"sessionKey\":\"session\",\"runId\":\"empty\",\"turnSpentUsd\":0.25}\n"
+        },
+        {
+          "op": "get",
+          "root": ".",
+          "result": {
+            "spentUsd": 0.25,
+            "settledRunIds": [
+              "empty"
+            ]
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"\",\"sessionKey\":\"session\",\"runId\":\"empty\",\"turnSpentUsd\":0.25}\n"
+        },
+        {
+          "op": "reopen",
+          "result": {
+            "ok": true
+          },
+          "count": 0,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"\",\"sessionKey\":\"session\",\"runId\":\"empty\",\"turnSpentUsd\":0.25}\n"
+        },
+        {
+          "op": "get",
+          "root": "",
+          "result": {
+            "spentUsd": 0.25,
+            "settledRunIds": [
+              "empty"
+            ]
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"\",\"sessionKey\":\"session\",\"runId\":\"empty\",\"turnSpentUsd\":0.25}\n"
+        },
+        {
+          "op": "clear",
+          "root": "",
+          "result": {
+            "ok": true
+          },
+          "count": 2,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"\",\"sessionKey\":\"session\",\"runId\":\"empty\",\"turnSpentUsd\":0.25}\n{\"version\":1,\"kind\":\"cleared\",\"projectRoot\":\"\",\"sessionKey\":\"session\"}\n"
+        },
+        {
+          "op": "get",
+          "root": "",
+          "result": null,
+          "count": 2,
+          "file": "{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"\",\"sessionKey\":\"session\",\"runId\":\"empty\",\"turnSpentUsd\":0.25}\n{\"version\":1,\"kind\":\"cleared\",\"projectRoot\":\"\",\"sessionKey\":\"session\"}\n"
+        },
+        {
+          "op": "settle",
+          "run": "fixed-root",
+          "spend": 0.1,
+          "result": {
+            "ok": true
+          },
+          "count": 1,
+          "file": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.1,\"settledRunIds\":[\"fixed-root\"]}\n"
+        }
+      ],
+      "reloaded": [
+        {
+          "key": "/pdrs-fixture/project\u0000session\u0000session",
+          "spentUsd": 0.1,
+          "settledRunIds": [
+            "fixed-root"
+          ]
+        }
+      ],
+      "reloadCount": 1,
+      "reloadError": null,
+      "crossFile": "{\"version\":1,\"kind\":\"snapshot\",\"projectRoot\":\"/pdrs-fixture/project\",\"scope\":\"session\",\"sessionKey\":\"session\",\"spentUsd\":0.1,\"settledRunIds\":[\"fixed-root\"]}\n{\"version\":1,\"kind\":\"settled\",\"projectRoot\":\"/pdrs-fixture/project\",\"sessionKey\":\"cross-ts\",\"runId\":\"from-ts\",\"turnSpentUsd\":0.125}\n"
     },
     {
       "name": "numbers",

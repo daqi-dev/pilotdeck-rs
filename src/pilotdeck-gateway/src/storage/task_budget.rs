@@ -137,6 +137,12 @@ impl TaskBudgetStore {
     pub fn path(&self) -> &Path {
         &self.path
     }
+    /// Resolve a project key lexically like TS `registry.resolve` / `path.resolve`,
+    /// without filesystem canonicalization. An empty key resolves to the cwd.
+    /// A6.3-pr8 callers must resolve roots before calling the three write methods.
+    pub fn resolve_project_root(project_root: &JsString) -> Result<JsString> {
+        resolve_project_root(project_root)
+    }
     /// Count of accepted records, including replayed duplicate settlements.
     pub fn record_count(&self) -> usize {
         self.record_count
@@ -242,6 +248,9 @@ impl TaskBudgetStore {
         let key = ledger_key(project_root, scope, session_key)?;
         Ok(self.ledgers.iter().find(|(k, _)| *k == key).map(|(_, v)| v))
     }
+    /// `project_root` must already be resolved, as by TS `registry.resolve`.
+    /// Use [`Self::resolve_project_root`] at the runtime boundary (A6.3-pr8);
+    /// this method preserves the supplied root in the appended record.
     pub fn configure_project(
         &mut self,
         project_root: &JsString,
@@ -315,6 +324,9 @@ impl TaskBudgetStore {
     }
     /// Caller supplies the configured scope; no budget means the runtime skips
     /// this call. Invalid spend and duplicate run IDs do not append or touch time.
+    /// `project_root` must already be resolved, as by TS `registry.resolve`.
+    /// Use [`Self::resolve_project_root`] at the runtime boundary (A6.3-pr8);
+    /// this method preserves the supplied root in the appended record.
     pub fn settle(
         &mut self,
         project_root: &JsString,
@@ -358,6 +370,9 @@ impl TaskBudgetStore {
     }
     /// Matches TS's synchronous clear: it deliberately does not force a load.
     /// Runtime callers wanting to retain existing ledgers must load first.
+    /// `project_root` must already be resolved, as by TS `registry.resolve`.
+    /// Use [`Self::resolve_project_root`] at the runtime boundary (A6.3-pr8);
+    /// this method preserves the supplied root in the appended record.
     pub fn clear_session(&mut self, project_root: &JsString, session_key: &JsString) -> Result<()> {
         self.remove(&ledger_key(
             project_root,
@@ -419,10 +434,13 @@ impl TaskBudgetStore {
                 }
                 contents.push_str(&json_line(&object(fields))?);
             }
-            let temporary = self.path.with_file_name(format!(
-                "sdk-task-budget-ledger.jsonl.{}.tmp",
-                uuid::Uuid::new_v4()
-            ));
+            let mut temporary_name = self.path.file_name().unwrap().to_os_string();
+            temporary_name.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
+            let temporary = self.path.with_file_name(temporary_name);
+            // Same durability assumption as TS writeFileSync + renameSync:
+            // neither the file nor its directory is fsynced. Load reads only the
+            // ledger; load and later compactions leave crash-residual .tmp files
+            // untouched. A successful rename consumes only this new temporary.
             fs::write(&temporary, contents)?;
             fs::rename(temporary, &self.path)?;
             self.record_count = self.ledgers.len();
@@ -506,7 +524,7 @@ fn valid_record(record: &JsValue) -> bool {
 }
 // Node path.resolve is lexical, not realpath. Work in UTF-16 so lone surrogates
 // and NULs in legacy identities survive; these keys never become filesystem paths.
-fn ledger_key(root: &JsString, scope: TaskBudgetScope, session: &JsString) -> Result<JsString> {
+fn resolve_project_root(root: &JsString) -> Result<JsString> {
     let cwd;
     let mut input = Vec::new();
     if root.units().first() != Some(&47) {
@@ -533,6 +551,10 @@ fn ledger_key(root: &JsString, scope: TaskBudgetScope, session: &JsString) -> Re
         }
         units.extend_from_slice(part);
     }
+    Ok(JsString::from_utf16(units))
+}
+fn ledger_key(root: &JsString, scope: TaskBudgetScope, session: &JsString) -> Result<JsString> {
+    let mut units = resolve_project_root(root)?.units().to_vec();
     units.push(0);
     units.extend(scope.as_str().encode_utf16());
     units.push(0);

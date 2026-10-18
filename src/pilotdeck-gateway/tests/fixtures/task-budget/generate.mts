@@ -37,6 +37,7 @@ const bytes = async (home: string) => readFile(ledgerPath(home), 'utf8').catch(e
 function registry(home: string, threshold: number) {
   // Only persistence methods are exercised. Avoid constructing real project
   // resources, watchers or sessions; the resolve seam supplies a root only.
+  // Raw roots intentionally exercise legacy store inputs, not runtime admission.
   const r: any = Object.create(ProjectRuntimeRegistry.prototype);
   Object.assign(r, {
     options: { pilotHome: home, now: () => new Date(r.fixtureNow) }, fixtureNow: NOW,
@@ -47,6 +48,12 @@ function registry(home: string, threshold: number) {
   return r;
 }
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
+async function temporaryFiles(home: string) {
+  const directory = dirname(ledgerPath(home));
+  if (!existsSync(directory)) return {};
+  const files = (await readdir(directory)).filter(s => s.endsWith('.tmp')).sort();
+  return Object.fromEntries(await Promise.all(files.map(async name => [name, await readFile(join(directory, name), 'utf8')])));
+}
 function state(r: any) {
   return clone([...r.sdkTaskBudgetLedgers.entries()].map(([key, ledger]: any) => ({ key,
     ...ledger, settledRunIds: [...ledger.settledRunIds],
@@ -54,7 +61,7 @@ function state(r: any) {
 }
 async function run(r: any, step: any) {
   r.fixtureNow = step.now ?? NOW;
-  const root = step.root ?? ROOT;
+  const root = step.resolveRoot ? resolve(step.root ?? ROOT) : step.root ?? ROOT;
   const session = step.session ?? 'session';
   try {
     switch (step.op) {
@@ -86,6 +93,7 @@ if (process.argv[3] === '--verify-rust') {
     assert.equal(r.taskBudgetLedgerRecordCount, scenario.reloadCount);
     assert.deepEqual(await run(r, crossStep), scenario.reloadError ? { error: scenario.reloadError } : { ok: true });
     assert.equal(await bytes(home), scenario.crossFile, `${scenario.name}: TS continues Rust bytes`);
+    assert.deepEqual(await temporaryFiles(home), scenario.initialTemporaryFiles ?? {}, `${scenario.name}: TS preserves residuals`);
   }
   const rejected = oracle.scenarios.filter((s: any) => s.reloadError).length;
   console.log(`PASS: TS checked ${oracle.scenarios.length} Rust ledgers (${oracle.scenarios.length - rejected} continued, ${rejected} cached-load rejection)`);
@@ -94,17 +102,23 @@ if (process.argv[3] === '--verify-rust') {
 await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(output, '.generate-'));
 const scenarios: any[] = [];
-async function scenario(name: string, steps: any[], threshold = 512, initial: string | null = null) {
+async function scenario(name: string, steps: any[], threshold = 512, initial: string | null = null, initialTemporaryFiles: Record<string, string> = {}) {
   const home = join(scratch, name);
   if (initial !== null) { await mkdir(dirname(ledgerPath(home)), { recursive: true }); await writeFile(ledgerPath(home), initial); }
+  for (const [name, contents] of Object.entries(initialTemporaryFiles)) {
+    await mkdir(dirname(ledgerPath(home)), { recursive: true });
+    await writeFile(join(dirname(ledgerPath(home)), name), contents);
+  }
+  const hasResiduals = Object.keys(initialTemporaryFiles).length > 0;
   let r = registry(home, threshold);
   const results = [];
   for (const step of steps) {
     let result;
     if (step.op === 'reopen') { r = registry(home, threshold); result = { ok: true }; }
     else result = await run(r, step);
-    results.push({ ...step, result, count: r.taskBudgetLedgerRecordCount, file: await bytes(home) });
-    if (existsSync(dirname(ledgerPath(home)))) assert.deepEqual((await readdir(dirname(ledgerPath(home)))).filter(s => s.endsWith('.tmp')), []);
+    const residuals = await temporaryFiles(home);
+    results.push({ ...step, result, count: r.taskBudgetLedgerRecordCount, file: await bytes(home), ...(hasResiduals ? { temporaryFiles: residuals } : {}) });
+    assert.deepEqual(residuals, initialTemporaryFiles, `${name}: old temporaries survive, new ones are renamed`);
   }
   const final = await bytes(home);
   const reopened = registry(home, threshold);
@@ -112,7 +126,8 @@ async function scenario(name: string, steps: any[], threshold = 512, initial: st
   const reloadError = reloadResult?.error ?? null;
   const reloaded = state(reopened), reloadCount = reopened.taskBudgetLedgerRecordCount;
   assert.deepEqual(await run(reopened, crossStep), reloadError ? { error: reloadError } : { ok: true });
-  const item = { name, threshold, initial, steps: results, reloaded, reloadCount, reloadError, crossFile: await bytes(home) };
+  assert.deepEqual(await temporaryFiles(home), initialTemporaryFiles, `${name}: reload/continuation preserves residuals`);
+  const item = { name, threshold, initial, ...(hasResiduals ? { initialTemporaryFiles } : {}), steps: results, reloaded, reloadCount, reloadError, crossFile: await bytes(home) };
   scenarios.push(item);
   console.log(`${name}: ${steps.length} steps, final=${final?.length ?? 'absent'} bytes, reload=${reloadCount}`);
   return item;
@@ -157,6 +172,22 @@ try {
   const dup = await scenario('replay-duplicate', [load, get(), settle('new'), reopen, get()], 3, duplicate + duplicate);
   assert.equal(dup.steps[0].count, 2);
   assert.equal(dup.steps[1].result.spentUsd, 0.1);
+  // Model the on-disk residue at interruption before rename, with both a
+  // complete genuine TS snapshot and a truncated write. The differing state
+  // makes accidental recovery from the temporary observable.
+  const residuals = {
+    'sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000001.tmp': seed,
+    'sdk-task-budget-ledger.jsonl.00000000-0000-4000-8000-000000000002.tmp': seed.slice(0, -8),
+  };
+  const stale = await scenario('residual-temporaries', [load, get(), settle('after-residue'), reopen, get()], 2, duplicate, residuals);
+  assert.equal(stale.steps[1].result.spentUsd, 0.1);
+  assert.equal(stale.steps[4].result.spentUsd, 0.2);
+  assert.equal(JSON.parse(stale.steps[2].file).kind, 'snapshot');
+  const orphan = await scenario('orphan-temporaries', [load, get(), settle('after-orphan'), reopen, get()], 1, null, residuals);
+  assert.equal(orphan.steps[1].result, null);
+  assert.equal(orphan.steps[0].file, null);
+  assert.equal(orphan.steps[4].result.spentUsd, 0.1);
+  assert.equal(JSON.parse(orphan.steps[2].file).kind, 'snapshot');
   await scenario('no-final-newline', [load, get(), settle('lost'), get(), reopen, get(), settle('survives'), reopen, get()], 512, duplicate.trimEnd());
   const malformed = '\n \t\r\n{bad}\nnull\n[]\n' + duplicate + '{"version":1,"kind":"future","projectRoot":"/pdrs-fixture/project","sessionKey":"session"}\n' + duplicate.slice(0, -8);
   const bad = await scenario('bad-lines', [load, get(), settle('glued'), reopen, get(), settle('valid'), reopen, get()], 512, malformed);
@@ -211,6 +242,20 @@ try {
   await scenario('path-and-unicode', [settle('一', 1, { root: '/pdrs-fixture/a/../project//./', session: '中\ud800' }),
     settle('😀', 1, { root: '/pdrs-fixture/project', session: '中\ud800' }),
     get({ session: '中\ud800' }), { op: 'clear', session: '中\ud800' }, settle('reinsert', 0.25), reopen, get()], 2);
+  const unresolved = { root: '/pdrs-fixture/a/../project//./', resolveRoot: true };
+  const resolved = await scenario('resolved-write-root', [configure(10, undefined, unresolved),
+    settle('resolved', 0.5, unresolved), { op: 'clear', ...unresolved }]);
+  assert.ok(resolved.steps[2].file.trimEnd().split('\n').every((line: string) => JSON.parse(line).projectRoot === ROOT));
+  // Empty legacy roots use cwd for identity. Clear before compaction so no
+  // machine-specific cwd appears in snapshots or the recorded reload keys.
+  assert.equal(taskBudgetLedgerKey('', 'session', 'session'), taskBudgetLedgerKey(process.cwd(), 'session', 'session'));
+  const emptyRoot = await scenario('empty-root', [settle('empty', 0.25, { root: '' }), get({ root: '' }), get({ root: '.' }),
+    reopen, get({ root: '' }), { op: 'clear', root: '' }, get({ root: '' }), settle('fixed-root')], 3);
+  assert.equal(emptyRoot.steps[1].result.spentUsd, 0.25);
+  assert.deepEqual(emptyRoot.steps[2].result, emptyRoot.steps[1].result);
+  assert.deepEqual(emptyRoot.steps[4].result, emptyRoot.steps[1].result);
+  assert.equal(emptyRoot.steps[6].result, null);
+  assert.equal(JSON.parse(emptyRoot.steps[7].file).projectRoot, ROOT);
   await scenario('numbers', [settle('negative-zero', -0), settle('tiny', 1e-7), settle('huge', 1e21),
     settle('finite-max', 1.7976931348623157e308), settle('overflow', 1.7976931348623157e308), reopen, get()], 4);
   const defaultLimit = await scenario('default-threshold', [load, settle('threshold'), get()], 512, duplicate.repeat(511));

@@ -79,6 +79,12 @@ fn run(store: &mut TaskBudgetStore, step: &JsValue) -> JsValue {
         .unwrap_or_else(|| "session".into());
     let now = field(step, "now").as_number().unwrap_or(NOW);
     let result = (|| -> Result<JsValue, TaskBudgetError> {
+        let root = if field(step, "resolveRoot") == &JsValue::Bool(true) {
+            TaskBudgetStore::resolve_project_root(&root)?
+        } else {
+            // Legacy store-input scenarios intentionally bypass runtime resolve.
+            root
+        };
         match string(field(step, "op")).as_str() {
             "load" => store.load()?,
             "configure" => {
@@ -167,6 +173,25 @@ fn file_json(path: &Path) -> JsValue {
         Err(e) => panic!("{}: {e}", path.display()),
     }
 }
+fn temporary_files(path: &Path) -> JsValue {
+    let mut files = JsObject::new();
+    let directory = path.parent().unwrap();
+    if directory.exists() {
+        let mut names: Vec<_> = fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        names.sort();
+        for name in names {
+            files.insert(
+                name.to_str().unwrap().into(),
+                file_json(&directory.join(name)),
+            );
+        }
+    }
+    JsValue::Object(files)
+}
 fn equal_json(actual: &JsValue, expected: &JsValue, context: &str) {
     // Stringify collapses NaN/Infinity to null exactly as the TS oracle does.
     let actual = parse_json(&stringify_json(actual).unwrap().unwrap()).unwrap();
@@ -180,6 +205,16 @@ fn replay(base: &Path, scenario: &JsValue) {
     if let Some(initial) = field(scenario, "initial").as_string() {
         fs::create_dir_all(store.path().parent().unwrap()).unwrap();
         fs::write(store.path(), initial.to_utf8().unwrap()).unwrap();
+    }
+    if let JsValue::Object(files) = field(scenario, "initialTemporaryFiles") {
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        for (name, contents) in files.entries() {
+            fs::write(
+                store.path().parent().unwrap().join(name.to_utf8().unwrap()),
+                string(contents),
+            )
+            .unwrap();
+        }
     }
     for (i, step) in array(field(scenario, "steps")).iter().enumerate() {
         let context = format!("{name} step {i}: {}", string(field(step, "op")));
@@ -200,29 +235,35 @@ fn replay(base: &Path, scenario: &JsValue) {
             field(step, "file"),
             "{context}: exact UTF-8 bytes"
         );
-        if store.path().parent().unwrap().exists() {
-            assert!(
-                fs::read_dir(store.path().parent().unwrap())
-                    .unwrap()
-                    .all(|entry| !entry
-                        .unwrap()
-                        .file_name()
-                        .to_string_lossy()
-                        .ends_with(".tmp")),
-                "{context}: temporary file left"
-            );
-        }
+        let expected_temporary = match field(step, "temporaryFiles") {
+            JsValue::Undefined => JsValue::Object(JsObject::new()),
+            value => value.clone(),
+        };
+        assert_eq!(
+            temporary_files(store.path()),
+            expected_temporary,
+            "{context}: residual bytes"
+        );
     }
 }
 #[test]
 fn real_ts_sequences_match_results_counts_and_every_file_byte() {
     let oracle = parse_json(ORACLE).unwrap();
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 27);
+    assert_eq!(scenarios.len(), 31);
     let scratch = Scratch::new();
     for scenario in scenarios {
         replay(&scratch.0, scenario);
     }
+}
+#[test]
+fn empty_project_root_helper_resolves_to_cwd() {
+    // The real TS generator asserts the same empty-root/cwd identity relation.
+    let cwd: JsString = std::env::current_dir().unwrap().to_str().unwrap().into();
+    assert_eq!(
+        TaskBudgetStore::resolve_project_root(&"".into()).unwrap(),
+        cwd
+    );
 }
 #[test]
 fn rust_reads_ts_ledgers_and_replayed_state() {
