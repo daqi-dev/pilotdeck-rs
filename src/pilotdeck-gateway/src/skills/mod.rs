@@ -712,13 +712,14 @@ fn base64url(value: &JsValue) -> String {
 }
 
 /// fs.promises.mkdir(path, { recursive: true }) (node_file.cc MKDirpAsync);
-/// errors always name the requested path. Any errno other than ENOENT and the
+/// errors name the requested path, except the stat fallback below, which names
+/// the component being created. Any errno other than ENOENT and the
 /// four fatal ones is settled by stat-ing the same path: a directory is
 /// success (after EEXIST the pending children continue; after any other errno
 /// the whole call ends there), a missing path reports stat's errno, a
 /// non-directory is EEXIST, or ENOTDIR when the EEXIST hit an ancestor.
-/// 待实测 for EROFS/EDQUOT: A6.8-pr4 RESULT.md 第二轮 lists the
-/// read-only-image probe.
+/// Measured on a read-only image (Node 22.22): EROFS goes through this stat
+/// fallback and reports ENOENT/EEXIST/ENOTDIR as above. EDQUOT is not measured.
 fn mkdir_p(path: &str) -> Result<()> {
     let fail = |e: &io::Error| SkillError::io(e, "mkdir", Some(path));
     let errno = |n| io::Error::from_raw_os_error(n);
@@ -877,7 +878,9 @@ fn resolve(value: &str) -> Result<String> {
 }
 /// process.cwd(): Node caches the first successful read (until chdir), so a
 /// cwd deleted later still resolves against the old path; only a failed
-/// first read throws `ENOENT: no such file or directory, uv_cwd`. 待实测.
+/// first read throws `ENOENT: no such file or directory, uv_cwd`. Measured
+/// (Node 22.22): after the cwd is removed, process.cwd() and path.resolve("rel")
+/// keep returning the cached directory.
 fn process_cwd() -> Result<String> {
     static CACHED: Mutex<Option<String>> = Mutex::new(None);
     let mut cached = CACHED.lock().unwrap_or_else(PoisonError::into_inner);
