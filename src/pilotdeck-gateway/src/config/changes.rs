@@ -4,7 +4,7 @@
 //! Paths are carried as [`JsString`] rather than Rust `String`: the baseline
 //! concatenates JavaScript strings, so a config key containing a lone surrogate
 //! must survive into the reported path unchanged.
-use pilotdeck_protocol::{JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 /// `PilotConfigChangeClass` without the baseline's unused `"invalid"` member:
 /// `classifyPath` never returns it.
@@ -29,7 +29,11 @@ impl ChangeClass {
 
 /// `diffConfigSnapshots`: only the `config` member of each snapshot is compared.
 pub fn diff_config_snapshots(previous: &JsValue, next: &JsValue) -> Vec<JsString> {
-    diff_values(config_of(previous), config_of(next), &JsString::default())
+    diff_values(
+        Operand::Value(config_of(previous)),
+        Operand::Value(config_of(next)),
+        &JsString::default(),
+    )
 }
 
 /// `classifyConfigChanges`: one class per distinct class, first-seen order.
@@ -122,29 +126,118 @@ fn starts_with(path: &JsString, prefix: &str) -> bool {
     path.units().starts_with(&prefix)
 }
 
-fn diff_values(left: &JsValue, right: &JsValue, prefix: &JsString) -> Vec<JsString> {
-    if object_is(left, right) {
+static NULL: JsValue = JsValue::Null;
+
+/// Own function members of `Array.prototype` (Node 22). `length` is handled on
+/// the array itself and `__proto__` is inherited from `Object.prototype`.
+const ARRAY_PROTOTYPE_METHODS: &[&str] = &[
+    "constructor",
+    "at",
+    "concat",
+    "copyWithin",
+    "fill",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "lastIndexOf",
+    "pop",
+    "push",
+    "reverse",
+    "shift",
+    "unshift",
+    "slice",
+    "sort",
+    "splice",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "entries",
+    "values",
+    "forEach",
+    "filter",
+    "flat",
+    "flatMap",
+    "map",
+    "every",
+    "some",
+    "reduce",
+    "reduceRight",
+    "toReversed",
+    "toSorted",
+    "toSpliced",
+    "with",
+    "toLocaleString",
+    "toString",
+];
+
+/// Which prototype supplied an inherited function. `Object.prototype` and
+/// `Array.prototype` expose distinct functions under the same names, and
+/// `Object.is` distinguishes them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuiltinPrototype {
+    Object,
+    Array,
+}
+
+/// A property read result. The wire model stores JSON values but not the
+/// inherited function members of `Object.prototype`/`Array.prototype`, nor
+/// `Object.prototype` itself; those are represented here so `diff_values` can
+/// apply the baseline's `Object.is` rules to them.
+#[derive(Clone, Copy)]
+enum Operand<'a> {
+    Value(&'a JsValue),
+    Number(f64),
+    Function(BuiltinPrototype),
+    ObjectPrototype,
+}
+
+impl<'a> Operand<'a> {
+    fn as_array(self) -> Option<&'a [JsValue]> {
+        match self {
+            Self::Value(JsValue::Array(items)) => Some(items),
+            _ => None,
+        }
+    }
+    fn entries(self) -> &'a [(JsString, JsValue)] {
+        match self {
+            Self::Value(JsValue::Object(object)) => object.entries(),
+            _ => &[],
+        }
+    }
+    fn is_diffable_object(self) -> bool {
+        matches!(
+            self,
+            Self::Value(JsValue::Object(_)) | Self::ObjectPrototype
+        )
+    }
+}
+
+fn diff_values(left: Operand<'_>, right: Operand<'_>, prefix: &JsString) -> Vec<JsString> {
+    if operand_is(left, right) {
         return vec![];
     }
 
-    if let (JsValue::Array(left), JsValue::Array(right)) = (left, right) {
+    if let (Some(left), Some(right)) = (left.as_array(), right.as_array()) {
         if left.len() != right.len() {
             return vec![path_or_root(prefix)];
         }
         let mut changes = vec![];
         for (index, (left, right)) in left.iter().zip(right).enumerate() {
-            changes.extend(diff_values(left, right, &index_path(prefix, index)));
+            changes.extend(diff_values(
+                Operand::Value(left),
+                Operand::Value(right),
+                &index_path(prefix, index),
+            ));
         }
         return changes;
     }
 
-    if !is_diffable_object(left) || !is_diffable_object(right) {
+    if !left.is_diffable_object() || !right.is_diffable_object() {
         return vec![path_or_root(prefix)];
     }
 
-    let (Some(left), Some(right)) = (left.as_object(), right.as_object()) else {
-        unreachable!("is_diffable_object checked both sides");
-    };
     let mut keys: Vec<&JsString> = left
         .entries()
         .iter()
@@ -159,51 +252,136 @@ fn diff_values(left: &JsValue, right: &JsValue, prefix: &JsString) -> Vec<JsStri
     let mut changes = vec![];
     for key in keys {
         let path = child_path(prefix, key);
-        let left = get_property(left, key).unwrap_or(&super::value::UNDEFINED);
-        let right = get_property(right, key).unwrap_or(&super::value::UNDEFINED);
+        let left = get_property(left, key).unwrap_or(Operand::Value(&super::value::UNDEFINED));
+        let right = get_property(right, key).unwrap_or(Operand::Value(&super::value::UNDEFINED));
         changes.extend(diff_values(left, right, &path));
     }
     changes
 }
 
-/// `Object.is`: NaN equals NaN and `+0`/`-0` differ. The wire model carries no
-/// reference identity, so containers are always recursed; for the acyclic JSON
-/// snapshots this yields the same paths as the baseline's identity check, since
-/// equal containers recurse to no changes.
-fn object_is(left: &JsValue, right: &JsValue) -> bool {
+/// `Object.is` for operands. The wire model carries no reference identity, so
+/// containers are always recursed; for the acyclic snapshots this yields the
+/// same paths as the baseline's identity check, since equal containers recurse
+/// to no changes.
+fn operand_is(left: Operand<'_>, right: Operand<'_>) -> bool {
+    match (left, right) {
+        (Operand::Value(left), Operand::Value(right)) => value_is(left, right),
+        (Operand::Number(left), Operand::Number(right)) => number_is(left, right),
+        (Operand::Number(left), Operand::Value(JsValue::Number(right)))
+        | (Operand::Value(JsValue::Number(right)), Operand::Number(left)) => {
+            number_is(left, *right)
+        }
+        (Operand::Function(left), Operand::Function(right)) => left == right,
+        (Operand::ObjectPrototype, Operand::ObjectPrototype) => true,
+        _ => false,
+    }
+}
+
+fn value_is(left: &JsValue, right: &JsValue) -> bool {
     match (left, right) {
         (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
         (JsValue::Bool(left), JsValue::Bool(right)) => left == right,
-        (JsValue::Number(left), JsValue::Number(right)) => {
-            (left.is_nan() && right.is_nan())
-                || (left == right
-                    && (*left != 0.0 || left.is_sign_negative() == right.is_sign_negative()))
-        }
+        (JsValue::Number(left), JsValue::Number(right)) => number_is(*left, *right),
         (JsValue::String(left), JsValue::String(right)) => left == right,
         _ => false,
     }
 }
 
-fn is_diffable_object(value: &JsValue) -> bool {
-    matches!(value, JsValue::Object(_))
+/// `Object.is` for numbers: NaN equals NaN and `+0`/`-0` differ.
+fn number_is(left: f64, right: f64) -> bool {
+    (left.is_nan() && right.is_nan())
+        || (left == right && (left != 0.0 || left.is_sign_negative() == right.is_sign_negative()))
 }
 
-/// Own property first, then the explicit prototype chain (the config loader
-/// models literal `__proto__` keys that way). There is no implicit
-/// `Object.prototype` in the wire model; keys stay `JsString` so lone
-/// surrogates are not decoded.
-fn get_property<'a>(
-    object: &'a pilotdeck_protocol::JsObject,
-    key: &JsString,
-) -> Option<&'a JsValue> {
-    let mut object = Some(object);
-    while let Some(current) = object {
-        if let Some(value) = current.get_key(key) {
-            return Some(value);
+/// Property read following the baseline's JavaScript lookup: own entries, the
+/// explicit prototype chain, then the builtin members of `Object.prototype`
+/// (and `Array.prototype` when an array appears in the chain). A `None`
+/// prototype means the implicit `Object.prototype`; an explicit `Null`
+/// prototype (for example `Object.create(null)`) has no builtin fallback.
+fn get_property<'a>(operand: Operand<'a>, key: &JsString) -> Option<Operand<'a>> {
+    match operand {
+        Operand::Value(JsValue::Object(object)) => object_property(object, key),
+        Operand::ObjectPrototype => object_prototype_property(key),
+        _ => None,
+    }
+}
+
+fn object_property<'a>(receiver: &'a JsObject, key: &JsString) -> Option<Operand<'a>> {
+    let mut current = Some(receiver);
+    let mut array_prototype = false;
+    while let Some(object) = current {
+        if let Some(value) = object.get_key(key) {
+            return Some(Operand::Value(value));
         }
-        object = current.prototype().and_then(JsValue::as_object);
+        match object.prototype() {
+            None => break,
+            Some(JsValue::Object(prototype)) => current = Some(prototype),
+            Some(JsValue::Array(items)) => {
+                if key.equals_str("length") {
+                    return Some(Operand::Number(items.len() as f64));
+                }
+                if let Some(index) = array_index(key)
+                    && let Some(value) = items.get(index)
+                {
+                    return Some(Operand::Value(value));
+                }
+                array_prototype = true;
+                current = None;
+            }
+            Some(_) => return None,
+        }
+    }
+    if key.equals_str("__proto__") {
+        return Some(match receiver.prototype() {
+            Some(prototype) => Operand::Value(prototype),
+            None => Operand::ObjectPrototype,
+        });
+    }
+    if array_prototype && is_array_prototype_method(key) {
+        return Some(Operand::Function(BuiltinPrototype::Array));
+    }
+    if is_object_prototype_function(key) {
+        return Some(Operand::Function(BuiltinPrototype::Object));
     }
     None
+}
+
+/// `Object.prototype` has no enumerable own keys; reading `__proto__` yields
+/// its own null prototype, and the named members are functions.
+fn object_prototype_property<'a>(key: &JsString) -> Option<Operand<'a>> {
+    if key.equals_str("__proto__") {
+        return Some(Operand::Value(&NULL));
+    }
+    is_object_prototype_function(key).then_some(Operand::Function(BuiltinPrototype::Object))
+}
+
+fn is_object_prototype_function(key: &JsString) -> bool {
+    !key.equals_str("__proto__") && super::value::builtin_property(key)
+}
+
+fn is_array_prototype_method(key: &JsString) -> bool {
+    ARRAY_PROTOTYPE_METHODS
+        .iter()
+        .any(|name| key.equals_str(name))
+}
+
+/// Own array index key, or `None` for `length`, non-canonical numbers and other
+/// keys. JSON arrays only ever carry canonical index keys.
+fn array_index(key: &JsString) -> Option<usize> {
+    let units = key.units();
+    if units.is_empty() || (units.len() > 1 && units[0] == u16::from(b'0')) {
+        return None;
+    }
+    let mut index = 0usize;
+    for &unit in units {
+        if !(u16::from(b'0')..=u16::from(b'9')).contains(&unit) {
+            return None;
+        }
+        index = index
+            .checked_mul(10)?
+            .checked_add(usize::from(unit - u16::from(b'0')))?;
+    }
+    Some(index)
 }
 
 fn path_or_root(prefix: &JsString) -> JsString {
