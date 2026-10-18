@@ -40,4 +40,4 @@ TS 写 14 条 → Rust restore 后续写 7 条 → TS restore 校验序号/paren
 
 额外 Rust 回归覆盖持久化失败后的域/历史 ID 不发布、两个 recorder 共享域，以及 recorder 与 writer 并发追加时的连续序号、唯一 ID、完整父链。会话集成须用 `Recorder::from_writer(Arc<TranscriptWriter>)` 注入现有 writer；`new/with_clock/with_sources` 是独立会话的便利构造器，不能另建后与已有 writer 指向同一路径。
 
-范围：只证明 durable model/tool 记录与 A6.2 transcript 存储同格式；未接 host、`ProjectRuntimeRegistry` 或 gateway method，不宣称宿主侧 model/tool port 已本地化。compaction/question/permission/inbox 生命周期与 `completeTurn` 留给后续 PR。
+范围：只证明 durable model/tool 记录与 A6.2 transcript 存储同格式；未接 host、`ProjectRuntimeRegistry` 或 gateway method，不宣称宿主侧 model/tool port 已本地化。compaction 生命周期由 `tests/fixtures/compaction` 单独覆盖；question/permission/inbox 生命周期与 `completeTurn` 留给后续 PR。
