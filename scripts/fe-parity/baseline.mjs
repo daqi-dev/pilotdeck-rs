@@ -9,35 +9,31 @@ const exec = promisify(execFile);
 
 // Runner-facing packages whose resolved install must come from the pnpm store.
 // Every linked "@xterm/*" package is checked too (see verifyNodeModules).
-// Every package the runner loads from the baseline (requireUI / imports), grouped
-// by the pnpm importer whose node_modules resolves it. self-check asserts this
-// covers all requireUI(...) call sites. playwright-core does not resolve from ui
-// at all, so callers must already tolerate its absence; it is not bindable here.
-const REQUIRED_PACKAGES = ['vite', 'ws', '@playwright/test', 'react', 'react-dom', 'typescript', 'yaml'];
-export const ROOT_PACKAGES = ['jsonrepair'];
+// Every direct dependency declared by the ui and root manifests is bound to the
+// pinned lockfile (#61.2): whatever the runner loads from the baseline
+// (requireUI, `--import tsx`, evaluated frozen sources) resolves through these.
+// playwright-core does not resolve from ui at all, so callers must tolerate its
+// absence; it is the only requireUI target outside the manifests.
 export const UNBOUND_PACKAGES = ['playwright-core'];
-export { REQUIRED_PACKAGES };
+const IMPORTERS = [['ui', ui => ui], ['.', (ui, repository) => repository]];
 
 async function sha256(path) {
   return createHash('sha256').update(await readFile(path)).digest('hex');
 }
 
-// pnpm encodes a virtual-store directory as "<name(/→+)>@<version>[_<peer>...]".
-// Extract the version without being confused by "@" inside peer suffixes.
-export function parsePnpmDirVersion(dirName, name) {
-  const prefix = name.replace(/\//g, '+') + '@';
-  if (!dirName.startsWith(prefix)) {
-    throw new Error(`pnpm dir ${dirName} does not match package ${name}`);
+// pnpm's virtual-store directory name (dependency-path depPathToFilename):
+//   "<name>@<version>" with \/:*?"<>| -> "+"; when peers are present the final ")"
+//   is dropped and every ")(" "(" ")" becomes "_"; names longer than
+//   virtualStoreDirMaxLength, or not lower-case, keep their first max-33 chars
+//   plus "_" and the first 32 hex digits of their SHA-256.
+// Checked against every direct dependency of the real baseline (131 plain, 13 hashed).
+export function pnpmStoreDir(name, lockVersion, maxLength = 120) {
+  let file = `${name}@${lockVersion}`.replace(/[\\/:*?"<>|]/g, '+');
+  if (file.includes('(')) file = file.replace(/\)$/, '').replace(/(\)\()|\(|\)/g, '_');
+  if (file.length > maxLength || (file !== file.toLowerCase() && !file.startsWith('file+'))) {
+    return `${file.substring(0, maxLength - 33)}_${createHash('sha256').update(file).digest('hex').slice(0, 32)}`;
   }
-  const rest = dirName.slice(prefix.length);
-  const underscore = rest.indexOf('_');
-  return underscore === -1 ? rest : rest.slice(0, underscore);
-}
-
-// pnpm's virtual-store directory for an importer's resolved version, e.g.
-// vite + "7.3.3(@types/node@22.19.19)(jiti@1.21.7)" -> "vite@7.3.3_@types+node@22.19.19_jiti@1.21.7".
-export function pnpmStoreDir(name, lockVersion) {
-  return `${name}@${lockVersion}`.replace(/\//g, '+').replace(/\)\(/g, '_').replace(/\(/g, '_').replace(/\)$/, '');
+  return file;
 }
 
 // An importer's resolved versions from the pinned lockfile, e.g. importer "ui":
@@ -64,9 +60,8 @@ export function lockedImporterVersions(lockText, importer, names) {
   for (const name of names) if (!found.has(name)) throw new Error(`pnpm-lock.yaml importers.${importer} does not resolve ${name}`);
   return found;
 }
-export const lockedUiVersions = (lockText, names) => lockedImporterVersions(lockText, 'ui', names);
 
-async function checkPackage(base, repository, name, lockVersion) {
+async function checkPackage(base, repository, name, lockVersion, maxLength) {
   const link = resolve(base, 'node_modules', name);
   let resolved;
   try {
@@ -77,6 +72,12 @@ async function checkPackage(base, repository, name, lockVersion) {
     }
     throw error;
   }
+  // Workspace packages: the link must reach exactly the locked local directory.
+  if (lockVersion.startsWith('link:')) {
+    const expected = await realpath(resolve(base, lockVersion.slice('link:'.length)));
+    if (resolved !== expected) throw new Error(`Baseline package ${name} resolves to ${resolved}, lockfile expects ${expected}`);
+    return { name, version: lockVersion, path: resolved };
+  }
   // The pnpm virtual store lives at <repo>/node_modules/.pnpm; anything resolved
   // outside of it (a hoisted copy, a nested node_modules, a stray tarball) is not
   // the install the lockfile describes.
@@ -85,14 +86,17 @@ async function checkPackage(base, repository, name, lockVersion) {
     throw new Error(`Baseline package ${name} resolves outside .pnpm: ${resolved}`);
   }
   // Bind the link to the lockfile, not to whatever store directory it points at:
-  // another valid version left in the store must not pass (#61.2).
+  // another valid version left in the store must not pass.
   const dirName = resolved.slice(store.length).split(sep, 1)[0];
-  const expectedDir = pnpmStoreDir(name, lockVersion);
+  const expectedDir = pnpmStoreDir(name, lockVersion, maxLength);
   if (dirName !== expectedDir || resolved !== resolve(store, expectedDir, 'node_modules', name)) {
     throw new Error(`Baseline package ${name} resolves to ${dirName}, lockfile expects ${expectedDir}`);
   }
   const { version } = JSON.parse(await readFile(resolve(resolved, 'package.json'), 'utf8'));
-  const expectedVersion = parsePnpmDirVersion(dirName, name);
+  // file: dependencies are bound by their store directory alone; their lock
+  // "version" is the source path, not the package.json version.
+  if (lockVersion.startsWith('file:')) return { name, version: lockVersion, path: resolved };
+  const expectedVersion = lockVersion.split('(', 1)[0];
   if (version !== expectedVersion) {
     throw new Error(`Baseline package ${name} version mismatch: ${version} != ${expectedVersion}`);
   }
@@ -116,42 +120,35 @@ export async function verifyNodeModules(ui) {
   }
   const lockfileSha256 = createHash('sha256').update(declared).digest('hex');
 
-  // The wanted set comes from the Git-pinned manifest, never from what happens
-  // to be installed: a deleted link or a missing @xterm scope must fail.
-  const manifest = JSON.parse(await readFile(resolve(ui, 'package.json'), 'utf8'));
-  const declared_ = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
-  const xtermNames = declared_.filter(name => name.startsWith('@xterm/')).sort();
-  for (const name of REQUIRED_PACKAGES) if (!declared_.includes(name)) throw new Error(`ui/package.json does not declare ${name}`);
-  const wanted = [...REQUIRED_PACKAGES, ...xtermNames];
-  const locked = lockedUiVersions(declared.toString('utf8'), wanted);
-  const rootManifest = JSON.parse(await readFile(resolve(repository, 'package.json'), 'utf8'));
-  const rootDeclared = Object.keys({ ...rootManifest.dependencies, ...rootManifest.devDependencies });
-  for (const name of ROOT_PACKAGES) if (!rootDeclared.includes(name)) throw new Error(`package.json does not declare ${name}`);
-  const rootLocked = lockedImporterVersions(declared.toString('utf8'), '.', ROOT_PACKAGES);
-  // pnpm hashes store directory names longer than virtualStoreDirMaxLength. That
-  // encoding is not reproduced here, so such a layout is refused explicitly
-  // instead of being reported as a version mismatch.
   const modules = JSON.parse(await readFile(resolve(repository, 'node_modules', '.modules.yaml'), 'utf8'));
   if (modules.virtualStoreDir !== '.pnpm' || modules.nodeLinker !== 'isolated') {
     throw new Error(`Baseline node_modules layout unsupported: virtualStoreDir=${modules.virtualStoreDir} nodeLinker=${modules.nodeLinker}`);
   }
   const maxLength = modules.virtualStoreDirMaxLength;
-  for (const [name, version] of [...wanted.map(n => [n, locked.get(n)]), ...ROOT_PACKAGES.map(n => [n, rootLocked.get(n)])]) {
-    const dir = pnpmStoreDir(name, version);
-    if (!Number.isInteger(maxLength) || dir.length > maxLength) {
-      throw new Error(`Baseline node_modules uses a hashed store directory for ${name} (virtualStoreDirMaxLength=${maxLength}); extend the apparatus before using this layout`);
-    }
+  if (!Number.isInteger(maxLength) || maxLength < 34) {
+    throw new Error(`Baseline node_modules virtualStoreDirMaxLength unsupported: ${maxLength}`);
   }
+  // The wanted set comes from the Git-pinned manifests, never from what happens
+  // to be installed: a deleted link or a missing scope must fail.
+  const lockText = declared.toString('utf8');
   const packages = [];
-  for (const name of wanted) packages.push(await checkPackage(ui, repository, name, locked.get(name)));
-  for (const name of ROOT_PACKAGES) packages.push(await checkPackage(repository, repository, name, rootLocked.get(name)));
+  for (const [importer, baseOf] of IMPORTERS) {
+    const base = baseOf(ui, repository);
+    const manifest = JSON.parse(await readFile(resolve(base, 'package.json'), 'utf8'));
+    const names = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }).sort();
+    const locked = lockedImporterVersions(lockText, importer, names);
+    for (const name of names) packages.push({ importer, ...await checkPackage(base, repository, name, locked.get(name), maxLength) });
+  }
+  // Scoped packages actually present must all be declared (e.g. a stray @xterm/*).
+  const uiManifest = JSON.parse(await readFile(resolve(ui, 'package.json'), 'utf8'));
+  const uiDeclared = Object.keys({ ...uiManifest.dependencies, ...uiManifest.devDependencies, ...uiManifest.optionalDependencies });
   let installedXterm = [];
   try {
     installedXterm = (await readdir(resolve(ui, 'node_modules', '@xterm'))).map(entry => `@xterm/${entry}`);
   } catch (error) {
     if (!(error && error.code === 'ENOENT')) throw error;
   }
-  const extra = installedXterm.filter(name => !xtermNames.includes(name));
+  const extra = installedXterm.filter(name => !uiDeclared.includes(name));
   if (extra.length) throw new Error(`Baseline node_modules has undeclared @xterm packages: ${extra.join(', ')}`);
   return { lockfileSha256, packages };
 }
