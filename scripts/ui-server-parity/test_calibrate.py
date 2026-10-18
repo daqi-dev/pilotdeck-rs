@@ -319,7 +319,8 @@ class CalibrationControls(unittest.TestCase):
             (root / 'reference/direct').mkdir(parents=True)
             (root / 'reference/direct/recording.jsonl').write_text('x')
             free = type('Disk', (), {'free': 50_000_000_000})()
-            with patch('calibrate.size', side_effect=[12_000_000, 29_000_000_000]), \
+            # Just under the cap: the projected run growth must still trip the budget.
+            with patch('calibrate.size', side_effect=[12_000_000, calibrate.CAP_BYTES - 1_000_000_000]), \
                     patch('calibrate.shutil.disk_usage', return_value=free), self.assertRaisesRegex(ValueError, 'space budget'):
                 calibrate.space_check(root, root / 'reference')
             with patch('calibrate.size', side_effect=[12_000_000, 16_000_000_000]), \
