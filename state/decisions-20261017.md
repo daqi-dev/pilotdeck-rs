@@ -76,3 +76,4 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **选项**：A 实现改 `claude -p --model claude-opus-5-5`（worktree 内、dontAsk + 显式工具白名单），评审由 GLM + DeepSeek 两家非作者承担；B 实现改 opencode GLM build agent（GLM 就不能再当评审，只剩 DeepSeek 一家）；C 停 impl 到 10-22。
 - **建议 / 执行**：A。Claude 作为作者时不审自己；评审 = GLM（opencode plan）+ DeepSeek（review-deepseek.py，默认关思考）；四角色 run-review-roles --runner zai 照常。
 - **原则**：实现通道换人时，同步重排评审，保证两家非作者；通道不可用不降级为单评审。
+- **回切（10-18）**：10-18 用户告知 codex 额度恢复，已回切。守护会话 pilotdeck-rs-69 实测 `codex exec --sandbox read-only` 返回 CODEX-OK。新开的 impl 单改回由 codex 实现；已用 claude 开工的 A6.8-pr3、D1-pr2、A6.2-pr3 跑完当前这轮，不中途换手。评审照旧两家非作者：codex 实现的单由 Claude 与 GLM/DeepSeek 中任两家评审。
