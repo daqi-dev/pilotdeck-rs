@@ -104,6 +104,7 @@ const { JsonlSessionPersistence } = await load('src/session/persistence/JsonlSes
 const { createSidecarDefaultModuleDispatcher } = await load(
   'src/agent/modules/transport/sidecarDefaultModuleDispatcher.ts',
 );
+const { TurnRunner } = await load('src/agent/turn/TurnRunner.ts');
 
 const NOW = '2026-10-19T00:00:00.000Z';
 const SESSION = 's1';
@@ -321,6 +322,69 @@ async function runTurn(payload: any, mode: 'none' | 'ok' | 'throw') {
   return { mode, payload, response, calls };
 }
 
+// P2-1: TurnRunner.ts:338-374's catch is best-effort. A failed replacement is
+// closed as compaction_failed, the loop aborts with
+// "compaction_persistence_failed", and the callback itself resolves. The fake
+// loop calls the real callback, then observes the real AbortSignal.
+async function runRunnerFailure(scratch: string) {
+  const dir = join(scratch, 'runner-persistence-failure');
+  await mkdir(dir, { recursive: true });
+  const ctx = open(dir);
+  await ctx.recorder.startTurn(SESSION, 'turn-1');
+  await ctx.recorder.recordCompactionStarted(SESSION, 'turn-1', {
+    operationId: 'op-r', trigger: 'auto', messageCount: 1,
+  });
+  ctx.recorder.deferCompactionCompletion(SESSION, 'turn-1', {
+    operationId: 'op-r', status: 'compacted', tier: 'full', compactionId: 'compaction-runner', messageCount: 1,
+  });
+  let callbackCalls = 0;
+  let callbackReturned = false;
+  let callbackError: string | null = null;
+  let signalAborted = false;
+  let signalReason: unknown;
+  const loop = {
+    snapshotFileState: () => ({}),
+    run: async function* (input: any) {
+      const signal = input.abortSignal;
+      callbackCalls++;
+      try {
+        await input.onCompactPersisted({ boundary: { kind: 'resume' }, messages: [] });
+        callbackReturned = true;
+      } catch (error: any) {
+        callbackError = error?.message ?? String(error);
+      }
+      signalAborted = signal.aborted;
+      signalReason = signal.reason;
+      yield { type: 'fixture_event', sessionId: SESSION, turnId: 'turn-1' };
+    },
+  };
+  const runner = new TurnRunner(
+    loop as any,
+    ctx.writer,
+    undefined,
+    () => new Date(NOW),
+    undefined,
+    { cwd: '/fixture', transcriptPath: ctx.path, collectFileArtifacts: false },
+    { eventRecorder: ctx.recorder },
+  );
+  const events: string[] = [];
+  for await (const event of runner.run({
+    sessionId: SESSION, turnId: 'turn-1', messages: [],
+    input: { type: 'text', text: 'hi' }, turnAlreadyStarted: true,
+  } as any)) {
+    events.push(event.type);
+    if (callbackReturned || callbackError !== null) break;
+  }
+  const read = await readTranscript(ctx.path);
+  const compactionEntries = read.entries
+    .filter((entry: any) => entry.type.startsWith('compaction_'))
+    .map((entry: any) => ({ type: entry.type, operationId: entry.operationId, error: entry.error }));
+  return normalize({
+    name: 'runner-persistence-failure',
+    callbackCalls, callbackReturned, callbackError, signalAborted, signalReason, events, compactionEntries,
+  }, dir);
+}
+
 /** Deletes are confined to the run's own mkdtemp tree. */
 function assertOwnedScratch(outputDir: string, path: string): string {
   const rel = relative(outputDir, path);
@@ -424,6 +488,80 @@ try {
     { op: 'state' },
   ], ['ok', 'ok', 'ok', 'read:2/0@2', 'ok', 'ok', 'error:invalid_compaction', 'read:3/0@3', 'state:3']);
 
+  // Compaction records outside a started turn go through the same domain
+  // validator as every other turn-scoped event.
+  await scenario('outside-turn', [
+    { op: 'recordStarted', draft: { operationId: 'outside', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordCompleted', draft: { operationId: 'outside', status: 'skipped', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'outside', error: 'x' } },
+    { op: 'state' },
+  ], ['error:event_outside_turn', 'error:event_outside_turn', 'error:event_outside_turn', 'state:0']);
+
+  // The envelope does not constrain operationId, so domain validation sees the
+  // raw value. `${operationId}` uses Array#join / Object#toString, and an own
+  // non-callable toString throws the V8 TypeError.
+  await scenario('non-string-operation-ids', [
+    { op: 'startTurn' },
+    { op: 'recordStarted', draft: { operationId: 7, trigger: 'auto', messageCount: 1 } },
+    { op: 'recordStarted', draft: { operationId: 7, trigger: 'auto', messageCount: 1 } },
+    { op: 'recordStarted', draft: { operationId: [1, 2], trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: [1, 2], error: 'x' } },
+    { op: 'recordStarted', draft: { operationId: [[3], [4, [5]]], trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: [[3], [4, [5]]], error: 'x' } },
+    { op: 'recordFailed', draft: { operationId: [null, undefined, 6], error: 'x' } },
+    { op: 'recordStarted', draft: { operationId: [], trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: [], error: 'x' } },
+    { op: 'recordStarted', draft: { operationId: { a: 1 }, trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: { a: 1 }, error: 'x' } },
+    { op: 'recordFailed', draft: { operationId: { toString: 'not-callable' }, error: 'x' } },
+    { op: 'recordFailed', draft: { operationId: [{ toString: 'not-callable' }], error: 'x' } },
+    { op: 'recordStarted', draft: { operationId: true, trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: true, error: 'x' } },
+    { op: 'read' },
+  ], ['ok', 'ok', 'error:invalid_compaction', 'ok', 'error:invalid_compaction', 'ok',
+    'error:invalid_compaction', 'error:invalid_compaction', 'ok', 'error:invalid_compaction',
+    'ok', 'error:invalid_compaction', 'error:TypeError', 'error:TypeError', 'ok', 'ok',
+    'read:8/0@8']);
+
+  // validateCompactionFailed reads `entry.error.length === 0` on any value:
+  // numbers, non-empty arrays and {length: 1} pass; {length: 0}, an empty
+  // array/string, and a literal -0 fail.
+  await scenario('failure-length', [
+    { op: 'startTurn' },
+    { op: 'recordStarted', draft: { operationId: 'length-0', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-0', error: { length: 0 } } },
+    { op: 'recordStarted', draft: { operationId: 'length-neg0', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-neg0', error: { length: -0 } } },
+    { op: 'recordStarted', draft: { operationId: 'length-empty-array', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-empty-array', error: [] } },
+    { op: 'recordStarted', draft: { operationId: 'length-empty-string', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-empty-string', error: '' } },
+    { op: 'recordStarted', draft: { operationId: 'length-number', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-number', error: 5 } },
+    { op: 'recordStarted', draft: { operationId: 'length-array', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-array', error: [1] } },
+    { op: 'recordStarted', draft: { operationId: 'length-1', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-1', error: { length: 1 } } },
+    { op: 'recordStarted', draft: { operationId: 'length-string', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-string', error: { length: '0' } } },
+    { op: 'recordStarted', draft: { operationId: 'length-null', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-null', error: { length: null } } },
+    { op: 'recordStarted', draft: { operationId: 'length-array-zero', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-array-zero', error: { length: [0] } } },
+    { op: 'recordStarted', draft: { operationId: 'length-bool', trigger: 'auto', messageCount: 1 } },
+    { op: 'recordFailed', draft: { operationId: 'length-bool', error: true } },
+    { op: 'read' },
+  ], ['ok', 'ok', 'error:invalid_compaction', 'ok', 'error:invalid_compaction', 'ok',
+    'error:invalid_compaction', 'ok', 'error:invalid_compaction', 'ok', 'ok', 'ok', 'ok',
+    'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'read:19/0@19']);
+
+  // --- TurnRunner's real onCompactPersisted catch (P2-1) ---
+  const runner = await runRunnerFailure(scratch);
+  console.log(
+    `runner-persistence-failure: callbackReturned=${runner.callbackReturned} ` +
+    `aborted=${runner.signalAborted} reason=${runner.signalReason}`,
+  );
+
   // --- Turn module dispatcher scenarios ---
   const turn: any[] = [];
   const boundary = compactBoundary();
@@ -461,11 +599,11 @@ try {
     ignored: { nested: [1, null, true] }, turnId: 'other', sessionId: 'other',
   }, 'ok');
 
-  const oracle = JSON.stringify({ sourceCommit: BASELINE_COMMIT, tree, sourceSha256, node: process.version, now: NOW, sessionId: SESSION, scenarios, turn }, null, 2) + '\n';
+  const oracle = JSON.stringify({ sourceCommit: BASELINE_COMMIT, tree, sourceSha256, node: process.version, now: NOW, sessionId: SESSION, scenarios, turn, runner }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
   assert.ok(!new RegExp(UUID.source).test(oracle), 'oracle.json contains an unnormalized UUID');
   await writeFile(join(output, 'oracle.json'), oracle);
-  console.log(`PASS: generated ${scenarios.length} recorder scenarios and ${turn.length} turn dispatcher scenarios from real TS`);
+  console.log(`PASS: generated ${scenarios.length} recorder scenarios, ${turn.length} turn dispatcher scenarios and ${runner.callbackCalls} runner callback calls from real TS`);
 } finally {
   await rm(assertOwnedScratch(output, scratch), { recursive: true, force: true });
 }

@@ -1326,6 +1326,597 @@
       "files": {
         "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"op-r\",\"trigger\":\"auto\",\"messageCount\":2,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"compaction_completed\",\"operationId\":\"op-r\",\"status\":\"skipped\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":\"<id-3>\"}\n"
       }
+    },
+    {
+      "name": "outside-turn",
+      "steps": [
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "outside",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "event_outside_turn",
+              "message": "compaction_started requires an active turn turn-1."
+            }
+          }
+        },
+        {
+          "op": "recordCompleted",
+          "draft": {
+            "operationId": "outside",
+            "status": "skipped",
+            "messageCount": 1
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "event_outside_turn",
+              "message": "compaction_completed requires an active turn turn-1."
+            }
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "outside",
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "event_outside_turn",
+              "message": "compaction_failed requires an active turn turn-1."
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "sequence": 0,
+            "lastEntryId": null
+          }
+        }
+      ],
+      "files": {}
+    },
+    {
+      "name": "non-string-operation-ids",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": 7,
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": 7,
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction 7 already started."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": [
+              1,
+              2
+            ],
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": [
+              1,
+              2
+            ],
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction 1,2 has no open lifecycle bracket."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": [
+              [
+                3
+              ],
+              [
+                4,
+                [
+                  5
+                ]
+              ]
+            ],
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": [
+              [
+                3
+              ],
+              [
+                4,
+                [
+                  5
+                ]
+              ]
+            ],
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction 3,4,5 has no open lifecycle bracket."
+            }
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": [
+              null,
+              null,
+              6
+            ],
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction ,,6 has no open lifecycle bracket."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": [],
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": [],
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction  has no open lifecycle bracket."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": {
+              "a": 1
+            },
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": {
+              "a": 1
+            },
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction [object Object] has no open lifecycle bracket."
+            }
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": {
+              "toString": "not-callable"
+            },
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot convert object to primitive value"
+            }
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": [
+              {
+                "toString": "not-callable"
+              }
+            ],
+            "error": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot convert object to primitive value"
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": true,
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": true,
+            "error": "x"
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 8,
+            "diagnostics": 0,
+            "sequence": 8
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":7,\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"compaction_started\",\"operationId\":[1,2],\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"compaction_started\",\"operationId\":[[3],[4,[5]]],\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"compaction_started\",\"operationId\":[],\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"compaction_started\",\"operationId\":{\"a\":1},\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"compaction_started\",\"operationId\":true,\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"compaction_failed\",\"operationId\":true,\"error\":\"x\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n"
+      }
+    },
+    {
+      "name": "failure-length",
+      "steps": [
+        {
+          "op": "startTurn",
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-0",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-0",
+            "error": {
+              "length": 0
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction length-0 has invalid failure metadata."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-neg0",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-neg0",
+            "error": {
+              "length": 0
+            }
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction length-neg0 has invalid failure metadata."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-empty-array",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-empty-array",
+            "error": []
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction length-empty-array has invalid failure metadata."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-empty-string",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-empty-string",
+            "error": ""
+          },
+          "outcome": {
+            "error": {
+              "name": "SessionDomainValidationError",
+              "code": "invalid_compaction",
+              "message": "Compaction length-empty-string has invalid failure metadata."
+            }
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-number",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-number",
+            "error": 5
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-array",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-array",
+            "error": [
+              1
+            ]
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-1",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-1",
+            "error": {
+              "length": 1
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-string",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-string",
+            "error": {
+              "length": "0"
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-null",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-null",
+            "error": {
+              "length": null
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-array-zero",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-array-zero",
+            "error": {
+              "length": [
+                0
+              ]
+            }
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordStarted",
+          "draft": {
+            "operationId": "length-bool",
+            "trigger": "auto",
+            "messageCount": 1
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "recordFailed",
+          "draft": {
+            "operationId": "length-bool",
+            "error": true
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": 19,
+            "diagnostics": 0,
+            "sequence": 19
+          }
+        }
+      ],
+      "files": {
+        "s1.jsonl": "{\"type\":\"turn_started\",\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-1>\",\"parentEntryId\":null}\n{\"type\":\"compaction_started\",\"operationId\":\"length-0\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":2,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-2>\",\"parentEntryId\":\"<id-1>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-neg0\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":3,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-3>\",\"parentEntryId\":\"<id-2>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-empty-array\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":4,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-4>\",\"parentEntryId\":\"<id-3>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-empty-string\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":5,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-5>\",\"parentEntryId\":\"<id-4>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-number\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":6,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-6>\",\"parentEntryId\":\"<id-5>\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"length-number\",\"error\":5,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":7,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-7>\",\"parentEntryId\":\"<id-6>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-array\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":8,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-8>\",\"parentEntryId\":\"<id-7>\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"length-array\",\"error\":[1],\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":9,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-9>\",\"parentEntryId\":\"<id-8>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-1\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":10,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-10>\",\"parentEntryId\":\"<id-9>\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"length-1\",\"error\":{\"length\":1},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":11,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-11>\",\"parentEntryId\":\"<id-10>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-string\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":12,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-12>\",\"parentEntryId\":\"<id-11>\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"length-string\",\"error\":{\"length\":\"0\"},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":13,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-13>\",\"parentEntryId\":\"<id-12>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-null\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":14,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-14>\",\"parentEntryId\":\"<id-13>\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"length-null\",\"error\":{\"length\":null},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":15,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-15>\",\"parentEntryId\":\"<id-14>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-array-zero\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":16,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-16>\",\"parentEntryId\":\"<id-15>\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"length-array-zero\",\"error\":{\"length\":[0]},\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":17,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-17>\",\"parentEntryId\":\"<id-16>\"}\n{\"type\":\"compaction_started\",\"operationId\":\"length-bool\",\"trigger\":\"auto\",\"messageCount\":1,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":18,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-18>\",\"parentEntryId\":\"<id-17>\"}\n{\"type\":\"compaction_failed\",\"operationId\":\"length-bool\",\"error\":true,\"sessionId\":\"s1\",\"turnId\":\"turn-1\",\"sequence\":19,\"createdAt\":\"2026-10-19T00:00:00.000Z\",\"entryId\":\"<id-19>\",\"parentEntryId\":\"<id-18>\"}\n"
+      }
     }
   ],
   "turn": [
@@ -2009,5 +2600,30 @@
         }
       ]
     }
-  ]
+  ],
+  "runner": {
+    "name": "runner-persistence-failure",
+    "callbackCalls": 1,
+    "callbackReturned": true,
+    "callbackError": null,
+    "signalAborted": true,
+    "signalReason": "compaction_persistence_failed",
+    "events": [
+      "turn_started",
+      "input_accepted",
+      "user_prompt_submitted",
+      "fixture_event"
+    ],
+    "compactionEntries": [
+      {
+        "type": "compaction_started",
+        "operationId": "op-r"
+      },
+      {
+        "type": "compaction_failed",
+        "operationId": "op-r",
+        "error": "Transcript writer does not support atomic compaction replacement."
+      }
+    ]
+  }
 }

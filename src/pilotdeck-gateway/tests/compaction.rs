@@ -249,6 +249,7 @@ async fn run_step(ctx: &mut Ctx, step: &JsValue) -> JsValue {
                 ctx.recorder.clone(),
                 session.clone(),
                 turn.clone(),
+                Arc::new(|_| {}),
             );
             match port(
                 field(step, "boundary").as_object().unwrap().clone(),
@@ -351,7 +352,7 @@ async fn real_ts_recorder_scenarios_match_outcomes_and_bytes() {
     let JsValue::Array(scenarios) = field(&oracle, "scenarios") else {
         panic!("scenarios")
     };
-    assert_eq!(scenarios.len(), 6, "oracle scenario count");
+    assert_eq!(scenarios.len(), 9, "oracle scenario count");
     let scratch = Scratch::new("replay");
     for scenario in scenarios {
         let name = s(field(scenario, "name"));
@@ -493,15 +494,13 @@ fn recorder_at(dir: &Path) -> Recorder {
 }
 
 #[tokio::test]
-async fn unsupported_boundary_closes_deferred_bracket() {
-    // TS's JsonlTranscriptWriter always provides recordCompactionReplacement, so
-    // this host-only boundary (no abort controller) has no real-TS oracle; the
-    // replacement/commit path itself is covered by the oracle scenario above.
+async fn unsupported_boundary_closes_deferred_bracket_and_aborts() {
+    // TS's JsonlTranscriptWriter always provides recordCompactionReplacement,
+    // so a non-compact boundary is this adapter's equivalent of the throwing
+    // write. The real TurnRunner catch is replay-tested below.
     let scratch = Scratch::new("port");
     let session: JsString = SESSION.into();
     let turn: JsString = "turn-1".into();
-    // A non-compact boundary must close the deferred bracket as failed, the
-    // same catch branch TurnRunner.ts takes for an unsupported replacement.
     let dir = scratch.0.join("unsupported");
     fs::create_dir_all(&dir).unwrap();
     let recorder = Arc::new(recorder_at(&dir));
@@ -528,8 +527,15 @@ async fn unsupported_boundary_closes_deferred_bracket() {
             ]),
         )
         .unwrap();
-    let port = turn::persist_compaction_to_recorder(recorder.clone(), session, turn);
-    let error = port(
+    let aborts = Arc::new(Mutex::new(Vec::new()));
+    let captured = aborts.clone();
+    let port = turn::persist_compaction_to_recorder(
+        recorder.clone(),
+        session,
+        turn,
+        Arc::new(move |reason: &str| captured.lock().unwrap().push(reason.to_string())),
+    );
+    port(
         object([("kind", text("resume"))])
             .as_object()
             .unwrap()
@@ -537,10 +543,11 @@ async fn unsupported_boundary_closes_deferred_bracket() {
         Vec::new(),
     )
     .await
-    .unwrap_err();
+    .expect("TS callback answers {persisted:true} after aborting");
     assert_eq!(
-        error.message,
-        "Transcript writer does not support atomic compaction replacement."
+        *aborts.lock().unwrap(),
+        ["compaction_persistence_failed"],
+        "abort reason"
     );
     let read = read_transcript(dir.join(format!("{SESSION}.jsonl"))).unwrap();
     let kinds: Vec<String> = read
@@ -551,5 +558,114 @@ async fn unsupported_boundary_closes_deferred_bracket() {
     assert_eq!(
         kinds,
         ["turn_started", "compaction_started", "compaction_failed"]
+    );
+}
+
+/// P2-1: the fixture executes the real `TurnRunner` callback. TS resolves the
+/// callback after `failDeferredCompaction` and `abort("compaction_persistence_failed")`,
+/// so the dispatcher answers `{persisted:true}`; the abort travels beside it.
+#[tokio::test]
+async fn real_ts_runner_aborts_after_successful_persist_response() {
+    let oracle = oracle();
+    let expected = field(&oracle, "runner");
+    assert_eq!(s(field(expected, "name")), "runner-persistence-failure");
+    assert_eq!(field(expected, "callbackCalls").as_number(), Some(1.0));
+    assert_eq!(field(expected, "callbackReturned"), &JsValue::Bool(true));
+    assert!(matches!(field(expected, "callbackError"), JsValue::Null));
+    assert_eq!(field(expected, "signalAborted"), &JsValue::Bool(true));
+    assert_eq!(
+        s(field(expected, "signalReason")),
+        "compaction_persistence_failed"
+    );
+
+    let scratch = Scratch::new("runner");
+    let dir = scratch.0.join("runner-persistence-failure");
+    fs::create_dir_all(&dir).unwrap();
+    let recorder = Arc::new(recorder_at(&dir));
+    let session: JsString = SESSION.into();
+    let turn: JsString = "turn-1".into();
+    recorder.start_turn(&session, &turn).unwrap();
+    recorder
+        .record_compaction_started(
+            &session,
+            &turn,
+            &object([
+                ("operationId", text("op-r")),
+                ("trigger", text("auto")),
+                ("messageCount", JsValue::Number(1.0)),
+            ]),
+        )
+        .unwrap();
+    recorder
+        .defer_compaction_completion(
+            &session,
+            &turn,
+            &object([
+                ("operationId", text("op-r")),
+                ("status", text("compacted")),
+                ("tier", text("full")),
+                ("compactionId", text("compaction-runner")),
+                ("messageCount", JsValue::Number(1.0)),
+            ]),
+        )
+        .unwrap();
+
+    let aborts = Arc::new(Mutex::new(Vec::new()));
+    let captured = aborts.clone();
+    let ports = Ports {
+        persist_compaction: Some(turn::persist_compaction_to_recorder(
+            recorder,
+            session,
+            turn,
+            Arc::new(move |reason: &str| captured.lock().unwrap().push(reason.to_string())),
+        )),
+        ..Ports::default()
+    };
+    let handler = Handler {
+        ports,
+        authorizations: None,
+    };
+    let boundary = object([("kind", text("resume"))]);
+    let response = handler
+        .call(turn_call(&object([
+            ("operation", text("persist_compaction")),
+            ("boundary", boundary),
+            ("messages", JsValue::Array(Vec::new())),
+        ])))
+        .await
+        .expect("dispatcher responds after the callback resolves");
+    assert_eq!(
+        stringify_json(&JsValue::Object(response))
+            .unwrap()
+            .as_deref(),
+        Some("{\"persisted\":true}")
+    );
+    assert_eq!(
+        *aborts.lock().unwrap(),
+        ["compaction_persistence_failed"],
+        "the abort is the loop's, not the dispatcher error path"
+    );
+
+    let read = read_transcript(dir.join(format!("{SESSION}.jsonl"))).unwrap();
+    let entries: Vec<JsValue> = read
+        .entries
+        .iter()
+        .filter(|entry| s(field(entry, "type")).starts_with("compaction_"))
+        .map(|entry| {
+            let mut item = JsObject::new();
+            item.insert("type".into(), field(entry, "type").clone());
+            if let Some(operation) = entry.get("operationId") {
+                item.insert("operationId".into(), operation.clone());
+            }
+            if let Some(error) = entry.get("error") {
+                item.insert("error".into(), error.clone());
+            }
+            JsValue::Object(item)
+        })
+        .collect();
+    assert_eq!(
+        stringify_json(&JsValue::Array(entries)).unwrap(),
+        stringify_json(field(expected, "compactionEntries")).unwrap(),
+        "compaction entries"
     );
 }
