@@ -43,3 +43,7 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway skills
 ```
 
 范围：证明 SkillManager 八个方法的契约（结果对象、错误类与码/文案、磁盘文件树字节）与 skills 绑定选择；默认测试经 `SkillManager::call` 重放，因此每个方法的 errno 准入表（`node_io::LOCAL_ERRNOS` 的 `skill_*`）必须恰好等于该方法在 oracle 中出现过的 errno。external 绑定只做选择，调用一律返回 `SKILL_MODULE_HOST_REQUIRED`（requires_host），外部模块宿主另单实现；未接入 gateway method，未宣称本地化。已知差异：frontmatter 落入兼容回退时孤立代理先变 U+FFFD（TS 保留）；frontmatter 含自引用 alias 时 validate 在 Rust 报 TypeError（TS 返回带环对象，随后在 JSON 传输时失败）；Rust 不读进程 cwd 之外的 `os.homedir()`，由 `SkillManagerOptions::home_dir` 或 `$HOME` 提供；深嵌套数组的 RangeError 阈值是 Rust 常量 `js_value::MAX_ARRAY_DEPTH`，与 V8 栈深不逐值相等。
+
+## 平台相关行为（不进夹具）
+
+scan 的递归 readdir 会沿目录链接展开。自指链接（`dir/loop -> .`）要一直展开到内核的 ELOOP 才停，所以文件数取决于内核的符号链接嵌套上限：macOS 是 32，Linux 的 MAXSYMLINKS 是 40。TS 本身在不同平台上的结果就不一样，而夹具要求与机器无关，CI 跑在 ubuntu，所以这类场景不录进 oracle（A6.8-pr4 四角色闸门 P1）。Rust 与 TS 在同一平台上的展开方式一致，都是按 metadata 能解析的深度展开。
