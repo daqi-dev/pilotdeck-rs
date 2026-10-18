@@ -132,6 +132,45 @@ fn limits() -> Limits {
         ..Limits::default()
     }
 }
+// Protocol assertions should not race Python startup/IO on a loaded CI worker.
+fn protocol_limits() -> Limits {
+    Limits {
+        handshake_timeout: Duration::from_secs(5),
+        execution_timeout: Duration::from_secs(10),
+        close_timeout: Duration::from_secs(5),
+        ..limits()
+    }
+}
+
+// External processes do not share Tokio's virtual clock. Keep a runnable task
+// so Tokio cannot auto-advance while a fixture is still producing its event.
+struct ManualClock(tokio::task::JoinHandle<()>);
+impl ManualClock {
+    fn start() -> Self {
+        tokio::time::pause();
+        Self(tokio::spawn(async {
+            loop {
+                tokio::task::yield_now().await;
+            }
+        }))
+    }
+}
+impl Drop for ManualClock {
+    fn drop(&mut self) {
+        self.0.abort();
+        tokio::time::resume();
+    }
+}
+async fn wait_for_event(label: &str, ready: impl Fn() -> bool) {
+    let watchdog = std::time::Instant::now() + Duration::from_secs(10);
+    while !ready() {
+        assert!(
+            std::time::Instant::now() < watchdog,
+            "missing fixture event: {label}"
+        );
+        tokio::task::yield_now().await;
+    }
+}
 struct Receipt(std::path::PathBuf);
 impl Receipt {
     fn assert_pass(&self, mode: &str) {
@@ -637,16 +676,41 @@ async fn explicit_close_reaps_child() {
 }
 #[tokio::test]
 async fn close_timeout_kills_and_reaps_unresponsive_child_without_receipt() {
-    let mut bounded = limits();
+    let mut bounded = protocol_limits();
     bounded.close_timeout = Duration::from_millis(50);
-    let client = HostClient::spawn(&mut command("close-hang"), None, bounded)
+    let (mut command, receipt) = peer("close-hang");
+    let client = HostClient::spawn(&mut command, None, bounded)
         .await
         .unwrap();
     let pid = client.child_id().unwrap();
-    timeout(Duration::from_secs(1), client.close())
-        .await
-        .unwrap()
-        .unwrap();
+    let clock = ManualClock::start();
+    let close = client.close();
+    tokio::pin!(close);
+    tokio::select! {
+        biased;
+        result = &mut close => panic!("close skipped EOF grace period: {result:?}"),
+        _ = wait_for_event("stdin EOF", || receipt.0.with_extension("eof").exists()) => {}
+    }
+    // Poll after the writer has dropped stdin, ensuring the EOF grace timer
+    // is registered before advancing time (the marker alone is not enough).
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(close.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    tokio::time::advance(Duration::from_millis(51)).await;
+    tokio::select! {
+        biased;
+        result = &mut close => panic!("close skipped TERM grace period: {result:?}"),
+        _ = wait_for_event("SIGTERM", || receipt.0.with_extension("term").exists()) => {}
+    }
+    tokio::time::advance(Duration::from_millis(51)).await;
+    tokio::select! {
+        biased;
+        result = &mut close => result.unwrap(),
+        _ = wait_for_event("kill and reap", || false) => unreachable!()
+    }
+    drop(clock);
     assert_reaped(pid).await;
     println!("HOST_PASS close timeout killed and reaped pid={pid}");
 }
@@ -658,17 +722,29 @@ async fn cancel_run(mode: &str) -> (Result<ExecuteResult, HostError>, Arc<Handle
         Arc::get_mut(&mut handler).unwrap().cancellation = Some(cancellation.clone());
     }
     let (mut command, receipt) = peer(mode);
-    let bounded = Limits {
-        execution_timeout: Duration::from_millis(400),
-        close_timeout: Duration::from_millis(100),
-        ..limits()
-    };
+    let timed = matches!(mode, "cancel-timeout" | "cancel-before-timeout");
+    let mut bounded = protocol_limits();
+    if timed {
+        bounded.execution_timeout = Duration::from_millis(400);
+    }
     let client = HostClient::spawn(&mut command, None, bounded)
         .await
         .unwrap();
-    let result = client
-        .execute_cancellable(request(), handler.clone(), cancellation)
+    let clock = timed.then(ManualClock::start);
+    let task = tokio::spawn(client.execute_cancellable(request(), handler.clone(), cancellation));
+    if timed {
+        wait_for_event("cancel protocol ready", || {
+            receipt.0.with_extension("ready").exists()
+        })
         .await;
+        assert!(
+            !task.is_finished(),
+            "execution timed out before protocol assertions"
+        );
+        tokio::time::advance(Duration::from_millis(401)).await;
+    }
+    drop(clock);
+    let result = task.await.unwrap();
     if result.is_ok() || matches!(mode, "cancel-before-disconnect" | "cancel-before-timeout") {
         receipt.assert_pass(mode);
     }
@@ -726,15 +802,12 @@ async fn maximum_execution_and_terminal_drain_durations_do_not_panic() {
 async fn close_allows_sigterm_cleanup_after_stdin_eof() {
     let mode = "close-term-cleanup";
     let (mut command, receipt) = peer(mode);
-    let bounded = Limits {
-        close_timeout: Duration::from_millis(100),
-        ..limits()
-    };
+    let bounded = protocol_limits();
     let client = HostClient::spawn(&mut command, None, bounded)
         .await
         .unwrap();
     let pid = client.child_id().unwrap();
-    timeout(Duration::from_secs(2), client.close())
+    timeout(Duration::from_secs(15), client.close())
         .await
         .unwrap()
         .unwrap();
@@ -986,11 +1059,10 @@ async fn close_timeout_execute_timeout_drop_and_exited_leader_kill_grandchildren
         "grandchild-exit",
     ] {
         let (mut command, receipt) = peer(mode);
-        let bounded = Limits {
-            close_timeout: Duration::from_millis(40),
-            execution_timeout: Duration::from_millis(100),
-            ..limits()
-        };
+        let mut bounded = protocol_limits();
+        if mode == "grandchild-timeout" {
+            bounded.execution_timeout = Duration::from_millis(100);
+        }
         let client = HostClient::spawn(&mut command, None, bounded)
             .await
             .unwrap();
@@ -999,11 +1071,20 @@ async fn close_timeout_execute_timeout_drop_and_exited_leader_kill_grandchildren
             .parse()
             .unwrap();
         if mode == "grandchild-timeout" {
-            let error = client
-                .execute(request(), Handler::new(mode))
-                .await
-                .unwrap_err();
+            let handler = Handler::new(mode);
+            let clock = ManualClock::start();
+            let task = tokio::spawn(client.execute(request(), handler.clone()));
+            wait_for_event("accepted callback", || {
+                handler.active_calls.load(Ordering::SeqCst) != 0
+            })
+            .await;
+            assert!(!task.is_finished());
+            tokio::time::advance(Duration::from_millis(101)).await;
+            drop(clock);
+            let error = task.await.unwrap().unwrap_err();
             assert_eq!(error.kind, HostErrorKind::Timeout);
+            assert!(error.accepted);
+            assert_eq!(handler.active_calls.load(Ordering::SeqCst), 0);
         } else if mode == "grandchild-drop" {
             drop(client);
         } else {

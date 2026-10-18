@@ -61,6 +61,74 @@ mod tests {
     }
 
     #[test]
+    fn prototype_keys_match_real_ts_merge_and_first_fatal() {
+        // Reuse the pinned TS recorder output rather than deriving expectations
+        // from either Rust entry. Env merge drops inherited fields in two rows.
+        let fixture_data = pilotdeck_protocol::parse_json(include_str!(
+            "../../pilotdeck-gateway/tests/fixtures/config/diagnostics.json"
+        ))
+        .unwrap();
+        let pilotdeck_protocol::JsValue::Array(cases) = fixture_data.get("cases").unwrap() else {
+            panic!("TS fixture cases must be an array");
+        };
+        for id in [
+            "diag-2650-prototype-root",
+            "diag-2651-prototype-root-pilot",
+            "diag-2652-prototype-root",
+            "diag-2653-prototype-root-pilot",
+        ] {
+            let row = cases
+                .iter()
+                .find(|row| {
+                    row.get("id")
+                        .and_then(|value| value.as_string())
+                        .is_some_and(|value| value.equals_str(id))
+                })
+                .unwrap();
+            // Only these ASCII cases enter serde; the complete golden corpus
+            // also contains lone UTF-16 surrogates and needs the JS parser.
+            let row: serde_json::Value =
+                serde_json::from_str(&pilotdeck_protocol::stringify_json(row).unwrap().unwrap())
+                    .unwrap();
+            let (dir, _) = fixture(id, row["yaml"].as_str().unwrap());
+            let mut env = pilotdeck_gateway::config::Env::from([(
+                "PILOTDECK_CONFIG_PATH".into(),
+                dir.join("pilotdeck.yaml").to_string_lossy().into_owned(),
+            )]);
+            for (key, value) in row["env"].as_object().unwrap() {
+                env.insert(key.clone(), value.as_str().unwrap().into());
+            }
+            let pairs: Vec<_> = env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str()))
+                .collect();
+            let cli = check(&Env::from_pairs(&pairs), &dir.join("project"), &dir);
+            let gateway = pilotdeck_gateway::config::load_project(
+                &dir,
+                &dir.join("project"),
+                &env,
+                Some("."),
+            );
+            if row["load"]["ok"] == true {
+                assert!(gateway.is_ok(), "{id}");
+                assert_eq!(message(cli), "ok", "{id}");
+            } else {
+                let error = gateway.err().expect("TS first fatal");
+                assert!(!error.requires_host, "{id}");
+                assert_eq!(error.code, row["load"]["code"].as_str().unwrap(), "{id}");
+                let expected = row["load"]["message"].as_str().unwrap();
+                assert_eq!(
+                    String::from_utf16_lossy(error.message.units()),
+                    expected,
+                    "{id}"
+                );
+                assert_eq!(message(cli), expected, "{id}");
+            }
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
     fn cli_and_gateway_report_the_same_first_fatal() {
         // Keep this cross-entry test when removing the CLI's original parser.
         // Each row contains multiple faults, or an override that changes which
