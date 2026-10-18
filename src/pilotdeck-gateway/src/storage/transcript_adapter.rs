@@ -13,13 +13,13 @@
 use super::{
     LedgerError, TranscriptRead, WriterState, invalid,
     ledger::field,
-    transcript::{after_debris, create_temporary, private_dirs, read_transcript_limited, uuid},
+    transcript::{create_temporary, private_dirs, private_open, read_transcript_limited, uuid},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
     collections::HashSet,
     fmt, fs,
-    io::{self, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -113,36 +113,51 @@ pub trait TranscriptStore: Send + Sync {
 }
 
 /// Gateway-local JSONL host store with the TS default provider's bytes:
-/// append = JsonlSessionPersistence (debris kept, LF added, one JSON line),
-/// read = readTranscript. Appends are atomic sibling replaces instead of
-/// appendFile, so a failed append never leaves a partial line. No `.lock`
-/// file (TS has none either): one store instance per Gateway process owns
-/// its files; it serializes its own writes only.
+/// append = JsonlSessionPersistence (B/src/session/persistence/
+/// JsonlSessionPersistence.ts:20-65), read = readTranscript. Like TS, each
+/// append is one O_APPEND write of `JSON.stringify(entry) + "\n"`, so
+/// concurrent writers in other instances or processes interleave whole lines
+/// instead of losing one; a failed write can leave a torn line, which
+/// readTranscript then reports. Like TS `prepareTail`, the first append to a
+/// path in this instance adds one LF after unterminated crash debris. No
+/// `.lock` file (TS has none either); this instance serializes its own writes.
 #[derive(Default)]
 pub struct JsonlTranscriptStore {
-    writes: Mutex<()>,
+    /// Write lock; holds the paths whose tail this instance has prepared.
+    prepared: Mutex<HashSet<PathBuf>>,
 }
 impl JsonlTranscriptStore {
     pub fn new() -> Self {
         Self::default()
     }
-    fn write_all(&self, path: &Path, bytes: impl FnOnce(Vec<u8>) -> Vec<u8>) -> StoreResult<()> {
-        let _guard = self.writes.lock().unwrap_or_else(|e| e.into_inner());
+    fn lock(&self, path: &Path) -> StoreResult<MutexGuard<'_, HashSet<PathBuf>>> {
+        let guard = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             private_dirs(parent)?;
         }
-        let current = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
-            Err(e) => return Err(e.into()),
-        };
-        let next = bytes(current);
-        let (mut file, cleanup) = create_temporary(path)?;
-        file.write_all(&next)?;
-        file.sync_all()?;
-        fs::rename(&cleanup.0, path)?;
+        Ok(guard)
+    }
+    /// TS prepareTail: `open(path, "a+", 0o600)`, then LF after a non-LF last byte.
+    fn prepare_tail(path: &Path) -> StoreResult<()> {
+        let mut file = private_open()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(path)?;
+        let size = file.metadata()?.len();
+        if size > 0 {
+            let mut last = [0u8; 1];
+            file.seek(SeekFrom::Start(size - 1))?;
+            file.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                file.write_all(b"\n")?;
+            }
+        }
         Ok(())
     }
+}
+fn is_str(value: &JsValue, text: &str) -> bool {
+    value.as_string().is_some_and(|t| t.equals_str(text))
 }
 fn json_line(entry: &JsValue) -> StoreResult<String> {
     let mut line = stringify_json(entry)?
@@ -153,9 +168,23 @@ fn json_line(entry: &JsValue) -> StoreResult<String> {
 impl TranscriptStore for JsonlTranscriptStore {
     fn append(&self, key: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
         let line = json_line(entry)?;
-        self.write_all(&key.transcript_path, |current| {
-            after_debris(&current, line.as_bytes())
-        })
+        let path = &key.transcript_path;
+        let mut prepared = self.lock(path)?;
+        if !prepared.contains(path) {
+            Self::prepare_tail(path)?;
+            prepared.insert(path.clone());
+        }
+        // appendFile(path, line, { mode: 0o600, flush }): flush only for compact boundaries.
+        let boundary = field(entry, "boundary");
+        let flush = is_str(field(entry, "type"), "control_boundary")
+            && is_str(field(boundary, "kind"), "compact")
+            && is_str(field(boundary, "subtype"), "compact_boundary");
+        let mut file = private_open().append(true).create(true).open(path)?;
+        file.write_all(line.as_bytes())?;
+        if flush {
+            file.sync_all()?;
+        }
+        Ok(())
     }
     fn read(&self, key: &TranscriptKey, max_bytes: Option<u64>) -> StoreResult<TranscriptRead> {
         read_transcript_limited(&key.transcript_path, max_bytes)
@@ -174,7 +203,18 @@ impl TranscriptStore for JsonlTranscriptStore {
             .iter()
             .map(json_line)
             .collect::<StoreResult<String>>();
-        Some(lines.and_then(|lines| self.write_all(&key.transcript_path, |_| lines.into_bytes())))
+        // The TS store contract calls replace atomic; the fixture's writeFile
+        // truncates first. A sibling replace gives the same bytes without a
+        // window where the transcript is empty or half written.
+        Some(lines.and_then(|lines| {
+            let path = &key.transcript_path;
+            let _guard = self.lock(path)?;
+            let (mut file, cleanup) = create_temporary(path)?;
+            file.write_all(lines.as_bytes())?;
+            file.sync_all()?;
+            fs::rename(&cleanup.0, path)?;
+            Ok(())
+        }))
     }
 }
 
@@ -470,34 +510,8 @@ impl TranscriptWriter {
         Ok(())
     }
     fn restore_entries(&self, entries: &[JsValue]) -> AdapterResult<()> {
-        let mut sequence = 0.0;
-        let mut last = None;
-        let mut ids = HashSet::new();
         // validateSessionEventLog runs over the whole log before domain checks.
-        for entry in entries {
-            validate_envelope(entry)?;
-            let seq = field(entry, "sequence").as_number().unwrap();
-            if seq <= sequence {
-                return Err(validation(
-                    "sequence_not_increasing",
-                    format!(
-                        "Session event sequence must increase strictly: received {} after {}.",
-                        js_number(seq),
-                        js_number(sequence)
-                    ),
-                ));
-            }
-            sequence = seq;
-            if let Some(id) = present(entry, "entryId").and_then(JsValue::as_string) {
-                if !ids.insert(id.clone()) {
-                    return Err(validation(
-                        "duplicate_entry_id",
-                        format!("Session event entryId must be unique: {}.", lossy(id)),
-                    ));
-                }
-                last = Some(id.clone());
-            }
-        }
+        let (state, ids) = validate_event_log(entries)?;
         // Then validateSessionDomainLog; then storage.restore hydrates projections.
         for entry in entries {
             domain_supported(entry)?;
@@ -506,8 +520,8 @@ impl TranscriptWriter {
             projection_supported(entry)?;
         }
         let mut inner = self.lock();
-        inner.sequence = sequence as u64;
-        inner.last_entry_id = last;
+        inner.sequence = state.sequence;
+        inner.last_entry_id = state.last_entry_id;
         inner.entry_ids = ids;
         Ok(())
     }
@@ -736,6 +750,44 @@ fn non_empty_string(value: &JsValue) -> Option<&JsString> {
     value
         .as_string()
         .filter(|s| !js_trim_units(s.units()).is_empty())
+}
+/// SessionEventLogValidation.ts:26-56 validateSessionEventLog; also restores
+/// the JsonlLedgerStore writer state.
+pub(super) fn validate_event_log(
+    entries: &[JsValue],
+) -> AdapterResult<(WriterState, HashSet<JsString>)> {
+    let mut sequence = 0.0;
+    let mut last = None;
+    let mut ids = HashSet::new();
+    for entry in entries {
+        validate_envelope(entry)?;
+        let seq = field(entry, "sequence").as_number().unwrap();
+        if seq <= sequence {
+            return Err(validation(
+                "sequence_not_increasing",
+                format!(
+                    "Session event sequence must increase strictly: received {} after {}.",
+                    js_number(seq),
+                    js_number(sequence)
+                ),
+            ));
+        }
+        sequence = seq;
+        if let Some(id) = present(entry, "entryId").and_then(JsValue::as_string) {
+            if !ids.insert(id.clone()) {
+                return Err(validation(
+                    "duplicate_entry_id",
+                    format!("Session event entryId must be unique: {}.", lossy(id)),
+                ));
+            }
+            last = Some(id.clone());
+        }
+    }
+    let state = WriterState {
+        sequence: sequence as u64,
+        last_entry_id: last,
+    };
+    Ok((state, ids))
 }
 /// SessionEventLogValidation.ts:93-122.
 fn validate_envelope(entry: &JsValue) -> AdapterResult<()> {

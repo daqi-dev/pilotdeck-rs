@@ -1,4 +1,7 @@
-use super::{LedgerError, Result, SessionOperationLedger, TranscriptSink, invalid, ledger::field};
+use super::{
+    LedgerError, Result, SessionOperationLedger, TranscriptSink, invalid, ledger::field,
+    transcript_adapter::validate_event_log,
+};
 use crate::{
     metadata::js_trim,
     project_files::{has_unpaired_surrogate, node_collator, node_locale},
@@ -337,9 +340,9 @@ impl TranscriptSink for JsonlLedgerStore {
         self.check_health()?;
         let sequence = self.state.sequence + 1;
         if sequence as f64 > MAX_SAFE_INTEGER {
-            return Err(invalid(
-                "Session event sequence must be a positive safe integer.",
-            ));
+            return Err(invalid(format!(
+                "Session event sequence must be a positive safe integer: {sequence}."
+            )));
         }
         let entry_id: JsString = uuid()?.into();
         if self.entry_ids.contains(&entry_id) {
@@ -370,45 +373,9 @@ impl TranscriptSink for JsonlLedgerStore {
         Ok(())
     }
 }
+/// Same validateSessionEventLog as the async adapter, so messages match TS.
 fn restore_state(entries: &[JsValue]) -> Result<(WriterState, HashSet<JsString>)> {
-    let mut state = WriterState::default();
-    let mut ids = HashSet::new();
-    for entry in entries {
-        let seq = field(entry, "sequence").as_number().unwrap();
-        if !seq.is_finite() || seq.fract() != 0.0 || !(1.0..=MAX_SAFE_INTEGER).contains(&seq) {
-            return Err(invalid(
-                "Session event sequence must be a positive safe integer.",
-            ));
-        }
-        if seq <= state.sequence as f64 {
-            return Err(invalid("Session event sequence must increase strictly."));
-        }
-        state.sequence = seq as u64;
-        let id = entry.get("entryId");
-        if let Some(id) = id {
-            let id = valid_id(id)?;
-            if !ids.insert(id.clone()) {
-                return Err(invalid("Session event entryId must be unique."));
-            }
-            state.last_entry_id = Some(id.clone());
-        }
-        if let Some(parent) = entry
-            .get("parentEntryId")
-            .filter(|v| !matches!(v, JsValue::Null))
-        {
-            valid_id(parent)?;
-            if Some(parent) == id {
-                return Err(invalid("Session event cannot reference itself as parent."));
-            }
-        }
-    }
-    Ok((state, ids))
-}
-fn valid_id(value: &JsValue) -> Result<&JsString> {
-    value
-        .as_string()
-        .filter(|v| !js_trim(&String::from_utf16_lossy(v.units())).is_empty())
-        .ok_or_else(|| invalid("Session event entryId must be a non-empty string."))
+    validate_event_log(entries).map_err(|error| invalid(error.to_string()))
 }
 /// JsonlSessionPersistence.prepareTail: crash debris without a final LF is kept,
 /// but the next record must not join it.
