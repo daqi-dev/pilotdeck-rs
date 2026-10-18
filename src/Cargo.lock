@@ -671,9 +671,13 @@ dependencies = [
 name = "pilotdeck-cli"
 version = "0.1.0"
 dependencies = [
+ "icu_collator",
+ "icu_locale_core",
+ "libc",
  "pilotdeck-gateway",
  "pilotdeck-protocol",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

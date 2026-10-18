@@ -18,7 +18,7 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, baseline_path, digest, environment,
-                    env_summary, fixture, hashes, output_path, parity_lock, save, snapshot, staged_skills_identity)
+                    env_summary, fixture, hashes, output_path, parity_lock, per_stream_scenarios, save, snapshot, staged_skills_identity)
 from compare import compare
 from policy import sandbox_profile
 
@@ -352,7 +352,7 @@ def run_round(output, runtime, profile, isolation, side, provenance, timeout):
     for scenario in SCENARIOS:
         case = folder / 'cases' / scenario['id']
         case.mkdir()
-        fixture(runtime)
+        fixture(runtime, scenario, Path(provenance['baseline']['path']))
         save(case / 'initial.json', snapshot(runtime))
         command = [provenance.get('stagedExecutable', provenance['executable'])['path']]
         if actual_side == 'ts':
@@ -406,6 +406,7 @@ def main():
     summary = {'status': 'BLOCKED', 'scope': 'D0-pr1 calibration; no command migration claim'}
     staged = staged_skills = None
     try:
+        per_stream_scenarios(SCENARIOS)
         if sys.platform != 'darwin' or not Path('/usr/bin/sandbox-exec').is_file():
             raise Blocked('D0-pr1 requires macOS sandbox-exec; no unconfined fallback')
         baseline = baseline_path(args.baseline)

@@ -10,8 +10,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, digest_plain, read_plain,
-                    environment, env_summary, hashes, initial_tree, snapshot, staged_skills_identity)
+from common import (Blocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, digest_plain, read_plain,
+                    environment, env_summary, hashes, initial_tree, per_stream_scenarios, snapshot, staged_skills_identity)
 from policy import sandbox_profile
 
 RECORDING_ORIGIN = 'live-os-sandbox'
@@ -38,9 +38,26 @@ def comparison_view(side, stderr, streams):
     return stderr[match.end():], coalesce(events)
 
 
-def pair_failures(ac, bc):
+def expected_stdout(scenario, runtime):
+    """Instantiate recorded oracle inputs; never rewrite observed output bytes."""
+    text = scenario['stdout']
+    if 'stdoutRuntime' not in scenario:
+        return text.encode()
+    encoding = scenario['stdoutRuntime']
+    if encoding not in ('json', 'text') or '{runtime}' not in text:
+        raise ValueError('invalid stdout runtime binding')
+    if 'stdoutSha256' in scenario or 'stdoutPrefix' in scenario:
+        raise ValueError('runtime binding requires only a full stdout oracle')
+    value = str(runtime)
+    if encoding == 'json':
+        value = json.dumps(value, ensure_ascii=False)[1:-1]
+    return text.replace('{runtime}', value).encode()
+
+
+def pair_failures(ac, bc, per_stream):
     return [{'rule': f'{name}.{field}'} for name in ac.keys() & bc.keys()
-            for field in ac[name] if ac[name][field] != bc[name][field]]
+            for field in ac[name] if not (field == 'order' and name in per_stream)
+            and ac[name][field] != bc[name][field]]
 
 
 def plain(path, directory=False):
@@ -81,6 +98,7 @@ def load_round(path):
         if not condition:
             errors.append(rule)
     try:
+        per_stream_scenarios(SCENARIOS)
         plain(path, directory=True)
         plain(path / 'cases', directory=True)
         require({p.name for p in path.iterdir()} == {'round.json', 'cases'}, 'round.artifact-members')
@@ -194,7 +212,7 @@ def load_round(path):
             require(type(record['exitCode']) is int, f'{name}.exit-type')
             before = json.loads(read_plain(folder / 'initial.json'))
             after = snapshot(folder / 'tree')
-            require(before == initial_tree(), f'{name}.initial')
+            require(before == initial_tree(scenario), f'{name}.initial')
             require(after == json.loads(read_plain(folder / 'final.json')), f'{name}.disk.manifest')
             if run['side'] == 'ts' and scenario.get('oracle') == PENDING:
                 # Registered but not yet calibrated from a real TS round: never a PASS.
@@ -202,14 +220,19 @@ def load_round(path):
             elif run['side'] == 'ts':
                 require(record['exitCode'] == scenario['exit'], f'{name}.oracle.exit')
                 for channel, data in (('stdout', stdout), ('stderr', stderr)):
-                    if channel in scenario:
-                        require(data == scenario[channel].encode(), f'{name}.oracle.{channel}')
+                    if channel in scenario or (channel == 'stdout' and 'stdoutRuntime' in scenario):
+                        expected = expected_stdout(scenario, runtime) if channel == 'stdout' else scenario[channel].encode()
+                        require(data == expected, f'{name}.oracle.{channel}')
                     else:
                         require(data.startswith(scenario[channel + 'Prefix'].encode()) and data.endswith(b'\n'), f'{name}.oracle.{channel}')
                     if channel + 'Sha256' in scenario:
                         require(hashlib.sha256(data).hexdigest() == scenario[channel + 'Sha256'], f'{name}.oracle.{channel}')
                 additions = scenario.get('diskAdditions', {})
-                require(not (before.keys() & additions.keys()) and after == before | additions,
+                removals = scenario.get('diskRemovals', [])
+                retained = {key: value for key, value in before.items() if key not in removals}
+                require(isinstance(removals, list) and len(set(removals)) == len(removals)
+                        and set(removals) <= before.keys() and '.' not in removals
+                        and not (retained.keys() & additions.keys()) and after == retained | additions,
                         f'{name}.oracle.disk')
             cases[name] = {'stdout': stdout, 'stderr': stderr, 'order': streams,
                            'exitCode': record['exitCode'], 'initial': before, 'disk': after}
@@ -219,6 +242,11 @@ def load_round(path):
 
 
 def compare(left, right, expected_rust=None):
+    try:
+        per_stream = per_stream_scenarios(SCENARIOS)
+    except Blocked as error:
+        return {'status': 'BLOCKED', 'failures': [{'rule': 'apparatus.stream-order', 'error': str(error)}],
+                'scenarios': 0, 'scope': 'D0-pr1 calibration only'}
     a, ac, ae = load_round(Path(left))
     b, bc, be = load_round(Path(right))
     failures = [{'side': side, 'rule': rule} for side, errors in (('left', ae), ('right', be)) for rule in errors]
@@ -240,7 +268,7 @@ def compare(left, right, expected_rust=None):
             failures.append({'rule': 'round.expected-rust-side'})
         # Keep testing pair semantics even when the independent TS oracle fails.
         # Real negative controls must exercise both guards, not only the oracle.
-        failures.extend(pair_failures(ac, bc))
+        failures.extend(pair_failures(ac, bc, per_stream))
     return {'status': 'FAIL' if failures else 'PASS', 'failures': failures,
             'scenarios': len(ac), 'scope': 'D0-pr1 calibration only'}
 
@@ -261,4 +289,4 @@ if __name__ == '__main__':
         expected = None
     result = compare(args.left, args.right, expected)
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    raise SystemExit(0 if result['status'] == 'PASS' else 1)
+    raise SystemExit({'PASS': 0, 'FAIL': 1, 'BLOCKED': 2}[result['status']])

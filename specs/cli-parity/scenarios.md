@@ -29,3 +29,26 @@
 help 两场景的 755 字节 stdout 全文 SHA-256 从主仓 host5 两个原件核同后登记于 scenarios.json，测试用完整字节见 scripts/cli-parity/help.txt；前缀后的中段变化也必须拒绝。非法 JSON 的 V8 文案随 Node 版本变化；D1-pr2 起 oracle 钉 stderr 全文（与 Rust 单测中 host5 实录及 `src/pilotdeck-cli/tests/fixtures/json-syntax/cases.json` 的 Node 22 差分夹具同源），换 Node 主版本须重新定标，两轮 Node 路径/SHA 仍必须一致。
 
 D1-pr2 新增三场景（共 13 个）。场景可带 `envPaths`：只许**新增**环境变量、值为 runtime 下的相对路径（不得为空、绝对或含 `..`，不得覆盖上表隔离变量），由 `common.environment` 校验。新场景的期望值一律由真实 TS 轮定标后填入；未定标的场景标 `"oracle": "PENDING-TS-CALIBRATION"`，TS 轮比较时恒报 `<id>.oracle.pending`，不可能 PASS。Rust 轮离线复验（compare.py）除核对 round.json 记录的哈希外，还读取 `rust-stage/bin/pilotdeck` 的盘上实际字节（须为普通单链接文件），不符即 `round.rust-stage-bytes`；staged skills 目录的身份记入 round.json 的 `stagedSkills`，离线复核盘上目录不符即 `round.rust-stage-skills` / `round.rust-stage-skills-bytes`（D1-pr3）。host5 旧定标已有真实证据；本次修改后的稳定性须以新 TS 两轮复算为准，不沿用旧 PASS。setup/update mock、信号、PTY、有效配置默认流和网关业务属于 D0 后续批次。
+
+## D2-pr1 新增批次（15 个，TS 实录期望已登记）
+
+注册正本仍是 `scripts/cli-parity/scenarios.json`；现共 28 例，其中既有 13 例保持原 oracle。以下 15 例的 exit、stdout、stderr、disk 均从协调者采集的 `_build/wt-d1-cli/_tmp/20261018-d2-skills/d0-calib1/ts-1/cases/<ID>/` 机械提取，TS 第二轮用于交叉核对；没有从 Rust 输出取值。具体取 `record.json.exitCode`、`stdout.bin` 全文、`stderr.bin`（只剥第 6 条 SQLite 前缀）、`initial.json` 与 `final.json` 的逐项差集，并核实际 `tree/`。12 个 stdout 按 [比较口径第 4 条](normalization.md) 绑定 runtime，反向展开须逐字等于实录。原件 SHA-256 清单和提取脚本见该任务目录 `oracle-provenance-r2.json`、`calibrate_r2.py`。本次改动会改变装置哈希，正式新轮由协调者运行；旧轮不冒充新装置 PASS。未定标的未来场景仍用 `PENDING-TS-CALIBRATION`，即使两轮一致也不能 PASS。
+
+| ID | 覆盖目的 | TS 出处 |
+|---|---|---|
+| legacy-skills-mixed | KNOWN_LEGACY 命中的 browser-use 被 rename 备份；自定义 docx 保留；完成标记 | migrateLegacyBundledSkills.ts:20–25,59–135 |
+| skills-usage / skills-unknown-leaf | 缺子命令、未知子命令 | pilotdeck.ts:426–433 |
+| skills-from-invalid | 未知来源保留原 raw 文案 | pilotdeck.ts:462–480 |
+| skills-missing-values | --from/source/project/pilot-home 缺值的回落 | pilotdeck.ts:527–543 |
+| skills-default-dry | 默认来源与文字报告 | migrateSkills.ts:55–59,186–227；pilotdeck.ts:483–514 |
+| skills-alias-dedupe | 别名、all、重复来源和自定义路径去重，JSON | pilotdeck.ts:462–480；migrateSkills.ts:230–239 |
+| skills-custom-dry / skills-custom-execute | 直接子目录/单技能发现、验证、完整目录复制、JSON | migrateSkills.ts:99–182,242–269；SkillManager.ts:328–426 |
+| skills-conflict-skip / skills-conflict-rename / skills-conflict-overwrite | 冲突保留、-imported-2、overwrite 优先且删除旧文件 | migrateSkills.ts:272–289；pilotdeck.ts:436–440 |
+| skills-invalid-json-report / skills-invalid-text-report | 验证错误的 JSON/text 不同退出码 | pilotdeck.ts:451–459 |
+| skills-project-home-overrides | project 只影响来源，显式 pilot-home 决定目的地 | pilotdeck.ts:441–450；migrateSkills.ts:186–198 |
+
+历史副本的内容不进入本仓库。`fixtureBlobs` 固定读取基线 Git 的 `db77b86d09441c5fab6340a669598f8fbabe82c7:skills/browser-use/SKILL.md`（2702 bytes，文件 SHA-256 `d381166cfd54b5f86ff395c7faee4f36f6a67887bdf830f36ddaa4ec32f0a2df`）。这是单文件树，`SHA256("SKILL.md\0" + blob + "\0")` 为 TS 的历史指纹 `e955f4f0813e4735c8130c2ccab5725a35a9f5dcb9098159c35d5ecf895ab2f8`。读取不 checkout、不更改基线；原件缺失或身份不符立即报错。其余 `fixtureFiles` 为本项目自写内容，路径限制在 runtime 内，父目录 0700、文件 0600，初始树由注册内容独立复核。
+
+新增场景会删除/移动初始文件，定标后可登记 `diskRemovals`（初始树已有路径，禁止根目录、重复和不存在路径）与 `diskAdditions`（不得覆盖保留下来的初始项）。最终仍逐项比较完整树，未登记的新增、删除和变化不获豁免。
+
+协调者已运行 `LANG=C LC_ALL=C node scripts/cli-parity/skills_probe.mjs /Users/da/ws/pilotdeck-rs/resources/PilotDeck`，原件为主仓 `_tmp/20261018-d2-skills/r1/probe.json`：Node 22.22.0、ICU 78.2，默认 locale 确为 en-US。Rust 回归夹具 `src/pilotdeck-cli/tests/fixtures/skills-probe.json` 只摘取该原件中的比较矩阵、稳定排序和哈希输入/结果；逐项覆盖 225 组比较、15 项排序、Unicode/空目录/软链接树哈希。正式 D0 Rust 对拍及双家独立终审仍由协调者执行。
