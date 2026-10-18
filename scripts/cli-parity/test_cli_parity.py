@@ -331,6 +331,13 @@ class ContractTests(unittest.TestCase):
         (self.root / 'out3').mkdir()
         with self.assertRaises(Blocked):
             stage_rust(self.root / 'out3', expected, baseline)
+        # A root-level skills/ link is materialized by copytree, so it is refused up front.
+        (baseline / 'skills/link').unlink()
+        (baseline / 'skills').rename(baseline / 'real-skills')
+        (baseline / 'skills').symlink_to('real-skills', target_is_directory=True)
+        (self.root / 'out4').mkdir()
+        with self.assertRaisesRegex(Blocked, 'is a symlink'):
+            stage_rust(self.root / 'out4', expected, baseline)
 
     def test_rust_round_must_run_the_registered_stage_copy(self):
         source = self.source()
