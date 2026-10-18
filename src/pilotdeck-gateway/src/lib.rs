@@ -14,6 +14,7 @@ mod native_archive;
 mod node_io;
 mod pairing;
 mod project_files;
+pub mod runtime;
 mod session_model;
 pub mod skills;
 pub mod storage;
