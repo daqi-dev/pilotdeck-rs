@@ -23,7 +23,8 @@ const sources = [
   'context/budget/TokenAccountingRuntime.ts', 'context/budget/TokenBudgetManager.ts',
   'context/budget/tokenizer.ts', 'model/protocol/toolResultContent.ts',
   'router/stats/TokenStatsCollector.ts', 'router/utils/modelPricing.ts',
-  'agent/loop/AgentLoop.ts',
+  'agent/loop/AgentLoop.ts', 'agent/loop/nativeAgentTurnCapabilitiesAdapter.ts',
+  'router/RouterRuntime.ts',
 ];
 const sourceSha256: Record<string, string> = {};
 for (const source of sources) {
@@ -49,6 +50,7 @@ const executable = client.replace(/from (["'])(\.[^"']+)\1/g, (_all: string, quo
 const { SidecarTurnProtocol } = await import('data:text/javascript;base64,' + Buffer.from(executable).toString('base64'));
 const { TokenAccountingRuntime } = await load('context/budget/TokenAccountingRuntime.ts');
 const { TokenStatsCollector } = await load('router/stats/TokenStatsCollector.ts');
+const { createAgentTurnCapabilities: createNativeAgentTurnCapabilities } = await load('agent/loop/nativeAgentTurnCapabilitiesAdapter.ts');
 const output = await mkdtemp(join(process.argv[2] ? resolve(process.argv[2]) : tmpdir(), 'host-budget-'));
 const accounting = new TokenAccountingRuntime({ modelConfig: { providers: {} }, fetch: async () => { throw new Error('oracle must never use network'); } });
 const json = (value: any) => JSON.parse(JSON.stringify(value));
@@ -126,17 +128,59 @@ for (const schema of [undefined, null, [], true, 12, 'schema']) {
 for (const mimeType of [undefined, 'custom/pdf']) {
   add(`local-pdf-mime-${specs.length}`, { operation: names[0], request: { ...request, messages: [{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: [{ type: 'pdf', mimeType, data: 'abc', pages: 1e-7 }] }] }] } }, { local: true });
 }
+// Shallow canonical admission deliberately permits these deep shapes. Record
+// the native composition's actual result/errors, never a hand-written oracle.
+const localRequest = (name: string, patch: any) => add(`local-lax-${name}`, { operation: names[0], request: { ...request, ...patch } }, { local: true });
+const contentRequest = (name: string, content: any) => localRequest(name, { messages: [{ role: 'user', content }] });
+const resultRequest = (name: string, content: any) => contentRequest(name, [{ type: 'tool_result', content }]);
+for (const [name, content] of Object.entries({ 'null-block': [null], 'string-content': 'hi', 'missing-content': undefined, 'null-content': null, 'object-content': {}, 'primitive-block': [5] })) contentRequest(name, content);
+for (const message of [null, 5, {}]) localRequest(`message-${JSON.stringify(message)}`, { messages: [message] });
+for (const name of [undefined, null, 5, ['\ud800']]) contentRequest(`call-name-${JSON.stringify(name)}`, [{ type: 'tool_call', name, input: {} }]);
+for (const value of [5, false, [], { length: 0 }, { length: 1 }]) {
+  contentRequest(`text-${JSON.stringify(value)}`, [{ type: 'text', text: value }]);
+  resultRequest(`result-text-${JSON.stringify(value)}`, [{ type: 'text', text: value }]);
+}
+for (const pages of ['2', '', [], [2], {}, false]) {
+  for (const mimeType of ['application/pdf', 'custom/pdf']) resultRequest(`pdf-${mimeType}-${JSON.stringify(pages)}`, [{ type: 'pdf', data: 'abc', mimeType, pages }]);
+}
+for (const content of [undefined, null, 'hi', {}, [null], [5]]) resultRequest(`result-content-${JSON.stringify(content)}`, content);
+for (const source of ['url', 'base64']) {
+  for (const data of [undefined, null, 5, ['\ud800']]) resultRequest(`image-${source}-${JSON.stringify(data)}`, [{ type: 'image', source, data }]);
+}
+for (const systemPrompt of [5, false, 0, [], ['hi'], { length: 0 }]) localRequest(`system-${JSON.stringify(systemPrompt)}`, { systemPrompt });
+for (const tools of [{}, 'ab', '😀', [null], [5], { length: 0 }, false]) localRequest(`tools-${JSON.stringify(tools)}`, { tools });
+localRequest('system-before-message', { systemPrompt: 5, messages: [null], tools: {} });
+localRequest('message-before-tools', { messages: [null], tools: {} });
+const shadowed = { toString: null };
+for (const value of [shadowed, [shadowed], { nested: shadowed }]) {
+  contentRequest(`call-coercion-${JSON.stringify(value)}`, [{ type: 'tool_call', name: value }]);
+  localRequest(`tool-coercion-${JSON.stringify(value)}`, { tools: [{ name: 't', description: value }] });
+  resultRequest(`join-coercion-${JSON.stringify(value)}`, [{ type: 'text', text: value }]);
+  add(`local-cost-coercion-${JSON.stringify(value)}`, { operation: names[2], provider: 'openai', model: 'gpt-4o', usage: { inputTokens: value } }, { local: true });
+}
+resultRequest('image-mime-coercion', [{ type: 'image', source: 'url', mimeType: shadowed, data: 'url' }]);
+resultRequest('map-before-join-null', [{ type: 'text', text: shadowed }, null]);
+resultRequest('map-before-join-image', [{ type: 'text', text: shadowed }, { type: 'image', data: null }]);
+add('local-cost-native-before-coercion', { operation: names[2], provider: 'openai', model: 'gpt-4o', usage: { inputTokens: shadowed, nativeCost: 0.125 } }, { local: true });
 const cases = [];
 for (const spec of specs) {
   const calls: any[] = [];
   const controller = new AbortController();
   if (spec.signal === 'aborted') controller.abort();
   const stats = new TokenStatsCollector({ enabled: false, filePath: join(output, 'unused-stats.json'), modelPricing: spec.pricing });
+  // Fake router/config, real native adapter + real accounting/statistics.
+  // RouterRuntime.estimateUsageCost delegates directly to stats.estimateCost;
+  // the AgentLoop caller's later fallback does not belong inside this port.
+  const nativeBudget = spec.local ? createNativeAgentTurnCapabilities(
+    { cwd: output, provider: 'fixture', model: 'fixture', permissionMode: 'default' },
+    { ports: { model: {}, tools: {} }, tokenAccounting: accounting,
+      router: { estimateUsageCost: stats.estimateCost.bind(stats) } },
+  ).model.budget : undefined;
   const fail = () => { if (spec.error) throw new Error(spec.error); };
   const budget: any = {};
   if (spec.capabilities[0]) budget.estimateRequestInput = async (value: any) => {
     calls.push({ operation: names[0], request: value }); fail();
-    return spec.local ? accounting.estimateRequestInput(value) : special(spec.tokens ?? 17.5);
+    return spec.local ? nativeBudget!.estimateRequestInput!(value) : special(spec.tokens ?? 17.5);
   };
   if (spec.capabilities[1]) budget.evaluateRequestBudget = async (value: any, options: any) => {
     const { signal, ...rest } = options;
@@ -147,9 +191,7 @@ for (const spec of specs) {
   if (spec.capabilities[2]) budget.estimateUsageCost = async (usage: any, provider: string, model: string) => {
     calls.push({ operation: names[2], ...(usage === undefined ? {} : { usage }), provider, model }); fail();
     if (!spec.local) return special(spec.cost ?? 0.25);
-    const estimate = stats.estimateCost(usage, provider, model);
-    if (typeof estimate === 'number' && Number.isFinite(estimate) && estimate >= 0) return estimate;
-    return typeof usage?.nativeCost === 'number' && Number.isFinite(usage.nativeCost) && usage.nativeCost >= 0 ? usage.nativeCost : undefined;
+    return nativeBudget!.estimateUsageCost!(usage, provider, model);
   };
   const dispatcher = createSidecarDefaultModuleDispatcher({
     config: { cwd: output, provider: 'fixture', model: 'fixture', permissionMode: 'default' },

@@ -223,9 +223,12 @@ impl UsageCostEstimator for LocalUsageCost {
                     let token = |key: &str| -> Result<Option<f64>, HostError> {
                         match u.get(key) {
                             None | Some(JsValue::Undefined | JsValue::Null) => Ok(None),
-                            Some(value) => crate::js_value::to_number(value)
-                                .map(Some)
-                                .map_err(|error| ModuleError::new(format!("{error:?}")).into()),
+                            Some(value) => {
+                                check_primitive_conversion(value)?;
+                                crate::js_value::to_number(value)
+                                    .map(Some)
+                                    .map_err(|_| conversion_error())
+                            }
                         }
                     };
                     Ok::<_, HostError>(Usage {
@@ -238,12 +241,15 @@ impl UsageCostEstimator for LocalUsageCost {
                     })
                 })
                 .transpose()?;
-            Ok(model_cost::estimate_usage_cost(
+            // The native budget port calls router.estimateUsageCost directly.
+            // AgentLoop's finite/non-negative fallback happens outside this
+            // module; the dispatcher must see and reject invalid raw costs.
+            Ok(Some(model_cost::estimate_cost(
                 usage.as_ref(),
                 &provider,
                 &model,
                 pricing,
-            ))
+            )))
         })();
         Box::pin(async move { result })
     }
@@ -284,15 +290,21 @@ fn surrogate_pricing(
     Some(projected)
 }
 
-// This is only the local counter's projection, not canonical request admission.
-// Ignore fields the counter never reads (including roles and provider metadata).
-// The normal typed projection uses model_cost; lax non-object tool schemas
-// use the same tokenizer because ToolSchema can only represent object schemas.
+// Project only the fields the local counter reads, in TS evaluation order.
+// Dynamic wire values cannot be parsed as canonical typed blocks: e.g. strings
+// are iterable, template interpolation accepts missing names, and tool-result
+// Array#join converts primitives. The resulting typed request still shares the
+// existing model_cost counter and tokenizer.
 fn accounting_request(raw: &JsObject) -> Result<(CanonicalModelRequest, usize), HostError> {
-    let messages = array(raw.get("messages"), "messages")?
+    let system_prompt = raw
+        .get("systemPrompt")
+        .filter(|value| truthy(value))
+        .map(|value| token_text(Some(value)))
+        .transpose()?;
+    let messages = iterable(raw.get("messages"), "request.messages")?
         .iter()
         .map(|message| {
-            let content = array(message.get("content"), "content")?
+            let content = iterable(property(Some(message), "content")?, "message.content")?
                 .iter()
                 .filter_map(|block| accounting_block(block).transpose())
                 .collect::<Result<_, _>>()?;
@@ -306,14 +318,16 @@ fn accounting_request(raw: &JsObject) -> Result<(CanonicalModelRequest, usize), 
     let mut extra_tool_tokens = 0;
     let tools = match raw.get("tools") {
         None | Some(JsValue::Null | JsValue::Undefined) => None,
+        value if length(value)?.as_number() == Some(0.0) => None,
         value => {
             let mut tools = Vec::new();
-            for tool in array(value, "tools")? {
-                let name = template_string(tool.get("name"))?;
-                let description = match tool.get("description") {
-                    None | Some(JsValue::Null | JsValue::Undefined) => None,
-                    value => Some(template_string(value)?),
-                };
+            for tool in iterable(value, "tools")?.iter() {
+                let name = template_string(property(Some(tool), "name")?)?;
+                let description = tool
+                    .get("description")
+                    .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                    .map(|value| template_string(Some(value)))
+                    .transpose()?;
                 if let Some(schema) = tool.get("inputSchema").and_then(JsValue::as_object) {
                     tools.push(ToolSchema {
                         name,
@@ -334,7 +348,7 @@ fn accounting_request(raw: &JsObject) -> Result<(CanonicalModelRequest, usize), 
                     units.extend(json.encode_utf16());
                     extra_tool_tokens +=
                         pilotdeck_tokenizer::count_tokens(&JsString::from_utf16(units))
-                            .map_err(|e| ModuleError::new(format!("{e:?}")))?;
+                            .map_err(|error| ModuleError::new(format!("{error:?}")))?;
                 }
             }
             Some(tools)
@@ -342,11 +356,12 @@ fn accounting_request(raw: &JsObject) -> Result<(CanonicalModelRequest, usize), 
     };
     Ok((
         CanonicalModelRequest {
-            provider: string(raw.get("provider"), "provider")?,
-            model: string(raw.get("model"), "model")?,
+            // These routing fields do not participate in local token accounting.
+            provider: JsString::default(),
+            model: JsString::default(),
             messages,
             tools,
-            system_prompt: optional_text(raw.get("systemPrompt"), "systemPrompt")?,
+            system_prompt,
             tool_choice: None,
             max_output_tokens: None,
             temperature: None,
@@ -362,28 +377,24 @@ fn accounting_request(raw: &JsObject) -> Result<(CanonicalModelRequest, usize), 
     ))
 }
 fn accounting_block(block: &JsValue) -> Result<Option<ContentBlock>, HostError> {
-    let text = |value: Option<&JsValue>, field| -> Result<ContentBody, HostError> {
+    let text = |value| -> Result<ContentBody, HostError> {
         Ok(ContentBody::Text(TextBlock {
-            text: token_text(value, field)?,
+            text: token_text(value)?,
             block_id: None,
         }))
     };
-    let body = match block
-        .get("type")
+    let body = match property(Some(block), "type")?
         .and_then(JsValue::as_string)
         .and_then(|s| s.to_utf8().ok())
         .as_deref()
     {
-        Some("text") => text(block.get("text"), "text")?,
+        Some("text") => text(block.get("text"))?,
         Some("thinking") => text(
             block
                 .get("reasoningContent")
                 .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
                 .or_else(|| block.get("text")),
-            "text",
         )?,
-        // These four blocks share the fixed multimedia count; their other
-        // fields do not participate in accounting and must not be validated.
         Some("image" | "pdf" | "audio" | "media_reference") => ContentBody::Image(ImageBlock {
             source: MediaSource::Base64,
             data: JsString::default(),
@@ -394,137 +405,184 @@ fn accounting_block(block: &JsValue) -> Result<Option<ContentBlock>, HostError> 
         Some("tool_call") => ContentBody::ToolCall(ToolCall {
             timeline: None,
             id: JsString::default(),
-            name: string(block.get("name"), "name")?,
+            name: template_string(block.get("name"))?,
             input: block.get("input").cloned().unwrap_or(JsValue::Undefined),
             raw: None,
         }),
-        Some("tool_result") => ContentBody::ToolResult(ToolResult {
-            tool_call_id: JsString::default(),
-            is_error: None,
-            raw: None,
-            content: array(block.get("content"), "content")?
+        Some("tool_result") => {
+            let content = block.get("content");
+            property(content, "map")?; // Nullish receivers throw before the call.
+            let Some(JsValue::Array(items)) = content else {
+                return Err(ModuleError::new("content.map is not a function").into());
+            };
+            // TS completes map before join coerces text values. A later null
+            // block must throw before an earlier text's conversion error.
+            let mapped = items
                 .iter()
                 .map(accounting_result)
-                .collect::<Result<_, _>>()?,
-        }),
-        Some("tool_result_reference") => text(block.get("preview"), "preview")?,
-        _ => return Ok(None), // TS's block switch returns zero for unknown tags.
+                .collect::<Result<Vec<_>, _>>()?;
+            ContentBody::ToolResult(ToolResult {
+                tool_call_id: JsString::default(),
+                is_error: None,
+                raw: None,
+                content: mapped
+                    .iter()
+                    .map(|value| -> Result<_, HostError> {
+                        let text = if matches!(value, JsValue::Null | JsValue::Undefined) {
+                            JsString::default()
+                        } else {
+                            template_string(Some(value))?
+                        };
+                        Ok(ToolResultItem {
+                            timeline: None,
+                            body: ToolResultContent::Text(TextBlock {
+                                text,
+                                block_id: None,
+                            }),
+                        })
+                    })
+                    .collect::<Result<_, _>>()?,
+            })
+        }
+        Some("tool_result_reference") => text(block.get("preview"))?,
+        _ => return Ok(None),
     };
     Ok(Some(ContentBlock {
         timeline: None,
         body,
     }))
 }
-fn accounting_result(block: &JsValue) -> Result<ToolResultItem, HostError> {
-    let body = match block
-        .get("type")
+fn accounting_result(block: &JsValue) -> Result<JsValue, HostError> {
+    let tag = property(Some(block), "type")?
         .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .as_deref()
-    {
-        Some("image") => ToolResultContent::Image(ImageBlock {
-            source: if block
-                .get("source")
-                .and_then(JsValue::as_string)
-                .is_some_and(|s| s.equals_str("url"))
-            {
-                MediaSource::Url
-            } else {
-                MediaSource::Base64
-            },
-            data: string(block.get("data"), "data")?,
-            mime_type: string(block.get("mimeType"), "mimeType")?,
-            bytes: None,
-            detail: None,
-        }),
-        Some("pdf")
-            if !block
-                .get("mimeType")
-                .and_then(JsValue::as_string)
-                .is_some_and(|s| s.equals_str("application/pdf")) =>
-        {
-            // Typed PdfBlock fixes the MIME to application/pdf. Preserve the
-            // TS interpolation for a lax wire value outside that typed shape.
-            let mut units: Vec<u16> = "[PDF: ".encode_utf16().collect();
+        .and_then(|s| s.to_utf8().ok());
+    Ok(match tag.as_deref() {
+        Some("text") => block.get("text").cloned().unwrap_or(JsValue::Undefined),
+        Some("image" | "pdf") => {
+            let pdf = tag.as_deref() == Some("pdf");
+            let mut units: Vec<u16> = (if pdf { "[PDF: " } else { "[Image: " })
+                .encode_utf16()
+                .collect();
             units.extend_from_slice(template_string(block.get("mimeType"))?.units());
-            units.extend(
-                format!(
-                    ", {} base64 characters",
-                    string(block.get("data"), "data")?.len_utf16()
-                )
-                .encode_utf16(),
-            );
-            if let Some(pages) = block
-                .get("pages")
-                .and_then(JsValue::as_number)
-                .filter(|n| *n != 0.0 && !n.is_nan())
+            units.extend(", ".encode_utf16());
+            if !pdf
+                && block
+                    .get("source")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|value| value.equals_str("url"))
             {
-                units.extend(
-                    format!(", {} pages", crate::js_value::number_string(pages)).encode_utf16(),
-                );
+                units.extend_from_slice(template_string(block.get("data"))?.units());
+            } else {
+                units
+                    .extend_from_slice(template_string(Some(&length(block.get("data"))?))?.units());
+                units.extend(" base64 characters".encode_utf16());
+            }
+            if pdf && block.get("pages").is_some_and(truthy) {
+                units.extend(", ".encode_utf16());
+                units.extend_from_slice(template_string(block.get("pages"))?.units());
+                units.extend(" pages".encode_utf16());
             }
             units.push(u16::from(b']'));
-            ToolResultContent::Text(TextBlock {
-                text: JsString::from_utf16(units),
-                block_id: None,
-            })
+            JsValue::String(JsString::from_utf16(units))
         }
-        Some("pdf") => ToolResultContent::Pdf(PdfBlock {
-            data: string(block.get("data"), "data")?,
-            bytes: 0.0,
-            pages: block.get("pages").and_then(JsValue::as_number),
-        }),
-        Some("text") => ToolResultContent::Text(TextBlock {
-            text: optional_text(block.get("text"), "text")?.unwrap_or_default(),
-            block_id: None,
-        }),
-        _ => ToolResultContent::Text(TextBlock {
-            text: JsString::default(),
-            block_id: None,
-        }),
-    };
-    Ok(ToolResultItem {
-        timeline: None,
-        body,
+        _ => JsValue::Undefined,
     })
 }
 fn template_string(value: Option<&JsValue>) -> Result<JsString, HostError> {
-    if let Some(JsValue::String(value)) = value {
-        return Ok(value.clone());
-    }
-    crate::js_value::display(value.unwrap_or(&JsValue::Undefined))
-        .map(JsString::from)
-        .map_err(|e| ModuleError::new(format!("{e:?}")).into())
+    let undefined = JsValue::Undefined;
+    let value = value.unwrap_or(&undefined);
+    check_primitive_conversion(value)?;
+    crate::js_value::to_string_units(value)
+        .map(JsString::from_utf16)
+        .map_err(|_| conversion_error())
 }
-fn token_text(value: Option<&JsValue>, field: &str) -> Result<JsString, HostError> {
-    match value {
-        None | Some(JsValue::Undefined) => {
-            Err(ModuleError::new("Cannot read properties of undefined (reading 'length')").into())
+// Wire JSON cannot contain callable properties. An own toString shadows the
+// inherited conversion method; valueOf cannot supply a primitive either.
+// Array#join visits elements, but ordinary object properties are not visited.
+fn check_primitive_conversion(value: &JsValue) -> Result<(), HostError> {
+    let mut frames = vec![std::slice::from_ref(value).iter()];
+    while let Some(frame) = frames.last_mut() {
+        match frame.next() {
+            Some(JsValue::Object(object)) if object.get("toString").is_some() => {
+                return Err(ModuleError::new("Cannot convert object to primitive value").into());
+            }
+            Some(JsValue::Array(items)) => {
+                if frames.len() > crate::js_value::MAX_ARRAY_DEPTH {
+                    return Err(conversion_error());
+                }
+                frames.push(items.iter());
+            }
+            Some(_) => {}
+            None => {
+                frames.pop();
+            }
         }
-        Some(JsValue::Null) => {
-            Err(ModuleError::new("Cannot read properties of null (reading 'length')").into())
+    }
+    Ok(())
+}
+fn conversion_error() -> HostError {
+    ModuleError::new(crate::js_value::StackOverflow::MESSAGE).into()
+}
+fn property<'a>(value: Option<&'a JsValue>, field: &str) -> Result<Option<&'a JsValue>, HostError> {
+    match value {
+        None | Some(JsValue::Undefined | JsValue::Null) => {
+            let receiver = if matches!(value, Some(JsValue::Null)) {
+                "null"
+            } else {
+                "undefined"
+            };
+            Err(ModuleError::new(format!(
+                "Cannot read properties of {receiver} (reading '{field}')"
+            ))
+            .into())
         }
-        _ => string(value, field),
+        Some(value) => Ok(value.get(field)),
     }
 }
-fn local_shape(field: &str) -> HostError {
-    ModuleError::new(format!("Local token accounting cannot read {field}.")).into()
+fn length(value: Option<&JsValue>) -> Result<JsValue, HostError> {
+    Ok(match value {
+        Some(JsValue::String(text)) => JsValue::Number(text.len_utf16() as f64),
+        Some(JsValue::Array(items)) => JsValue::Number(items.len() as f64),
+        _ => property(value, "length")?
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+    })
 }
-fn string(value: Option<&JsValue>, field: &str) -> Result<JsString, HostError> {
-    value
-        .and_then(JsValue::as_string)
-        .cloned()
-        .ok_or_else(|| local_shape(field))
-}
-fn optional_text(value: Option<&JsValue>, field: &str) -> Result<Option<JsString>, HostError> {
+fn token_text(value: Option<&JsValue>) -> Result<JsString, HostError> {
+    // countTokens first reads length, then calls js-tiktoken's substring.
+    if length(value)?.as_number() == Some(0.0) {
+        return Ok(JsString::default());
+    }
     match value {
-        None | Some(JsValue::Null | JsValue::Undefined) => Ok(None),
-        _ => string(value, field).map(Some),
+        Some(JsValue::String(text)) => Ok(text.clone()),
+        _ => Err(ModuleError::new("text.substring is not a function").into()),
     }
 }
-fn array<'a>(value: Option<&'a JsValue>, field: &str) -> Result<&'a [JsValue], HostError> {
+fn truthy(value: &JsValue) -> bool {
     match value {
-        Some(JsValue::Array(items)) => Ok(items),
-        _ => Err(local_shape(field)),
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Array(_) | JsValue::Object(_) => true,
+    }
+}
+fn iterable<'a>(
+    value: Option<&'a JsValue>,
+    name: &str,
+) -> Result<std::borrow::Cow<'a, [JsValue]>, HostError> {
+    match value {
+        Some(JsValue::Array(items)) => Ok(std::borrow::Cow::Borrowed(items)),
+        Some(JsValue::String(text)) => Ok(std::borrow::Cow::Owned(
+            char::decode_utf16(text.units().iter().copied())
+                .map(|ch| {
+                    JsValue::String(match ch {
+                        Ok(ch) => JsString::from(ch.to_string()),
+                        Err(ch) => JsString::from_utf16(vec![ch.unpaired_surrogate()]),
+                    })
+                })
+                .collect(),
+        )),
+        _ => Err(ModuleError::new(format!("{name} is not iterable")).into()),
     }
 }
