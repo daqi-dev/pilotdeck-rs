@@ -171,7 +171,7 @@ fn pricing(spec: &JsValue) -> Option<PricingMap> {
 async fn budget_dispatch_matches_real_ts_calls_responses_and_capabilities() {
     let oracle = parse_json(ORACLE).unwrap();
     let cases = array(field(&oracle, "cases"));
-    assert_eq!(cases.len(), 258);
+    assert_eq!(cases.len(), 338);
     for case in cases {
         let name = text(field(case, "name"));
         let calls = Arc::new(Mutex::new(Vec::new()));
@@ -257,7 +257,13 @@ fn budget_oracle_is_pinned_to_clean_baseline_blobs() {
     let commit = "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85";
     assert_eq!(text(field(&oracle, "sourceCommit")), commit);
     let sources = field(&oracle, "sourceSha256").as_object().unwrap();
-    assert_eq!(sources.len(), 10);
+    assert_eq!(sources.len(), 12);
+    assert!(
+        sources
+            .get("src/agent/loop/nativeAgentTurnCapabilitiesAdapter.ts")
+            .is_some()
+    );
+    assert!(sources.get("src/router/RouterRuntime.ts").is_some());
     for (_, hash) in sources.entries().iter() {
         assert_eq!(text(hash).len(), 64);
     }
@@ -337,7 +343,8 @@ fn budget_fixtures_regenerate_twice_identically() {
         "committed oracle differs from real TS"
     );
     println!(
-        "HOST_BUDGET_REGEN_PASS cases=258 runs=2 oracle_bytes={}",
+        "HOST_BUDGET_REGEN_PASS cases={} runs=2 oracle_bytes={}",
+        array(field(&parse_json(ORACLE).unwrap(), "cases")).len(),
         first.len()
     );
 }

@@ -10,7 +10,9 @@
     "src/model/protocol/toolResultContent.ts": "1ea84ca676f80e935b6d7b5699adb97a185964fe0d77bc38b1f429e8a9e22f23",
     "src/router/stats/TokenStatsCollector.ts": "886914cd342433be20c2ba58f832a3f59c91b88a69767fb459484d7b20475ad1",
     "src/router/utils/modelPricing.ts": "f25e61b95a00e44765da0bb81b65b4fb988c886bbca97e03b9fd62b118c54c9c",
-    "src/agent/loop/AgentLoop.ts": "d9949a78b6396e58060f5b19d32d51ba15139bc9900de8bf9fe1c1231621aff2"
+    "src/agent/loop/AgentLoop.ts": "d9949a78b6396e58060f5b19d32d51ba15139bc9900de8bf9fe1c1231621aff2",
+    "src/agent/loop/nativeAgentTurnCapabilitiesAdapter.ts": "539470b166fe0f9d40a0776fad0cc2b47d7fb3e4d04df38db4a4a724f0098e9c",
+    "src/router/RouterRuntime.ts": "c3136e14359ac8ab0ef4fa4872da456b0fd30401b797592e7d38f30179ee45b8"
   },
   "cases": [
     {
@@ -18064,19 +18066,18 @@
         }
       ],
       "response": {
-        "ok": true,
-        "result": {
-          "costUsd": null
-        }
+        "ok": false,
+        "message": "Host budget capability returned an invalid usage cost."
       },
       "wireResponse": {
         "kind": "response",
         "messageId": "host-module-response",
         "inReplyTo": "call",
         "requestId": "request",
-        "ok": true,
-        "payload": {
-          "costUsd": null
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability returned an invalid usage cost."
         }
       }
     },
@@ -18138,19 +18139,18 @@
         }
       ],
       "response": {
-        "ok": true,
-        "result": {
-          "costUsd": null
-        }
+        "ok": false,
+        "message": "Host budget capability returned an invalid usage cost."
       },
       "wireResponse": {
         "kind": "response",
         "messageId": "host-module-response",
         "inReplyTo": "call",
         "requestId": "request",
-        "ok": true,
-        "payload": {
-          "costUsd": null
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability returned an invalid usage cost."
         }
       }
     },
@@ -18352,19 +18352,18 @@
         }
       ],
       "response": {
-        "ok": true,
-        "result": {
-          "costUsd": null
-        }
+        "ok": false,
+        "message": "Host budget capability returned an invalid usage cost."
       },
       "wireResponse": {
         "kind": "response",
         "messageId": "host-module-response",
         "inReplyTo": "call",
         "requestId": "request",
-        "ok": true,
-        "payload": {
-          "costUsd": null
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability returned an invalid usage cost."
         }
       }
     },
@@ -18426,19 +18425,18 @@
         }
       ],
       "response": {
-        "ok": true,
-        "result": {
-          "costUsd": null
-        }
+        "ok": false,
+        "message": "Host budget capability returned an invalid usage cost."
       },
       "wireResponse": {
         "kind": "response",
         "messageId": "host-module-response",
         "inReplyTo": "call",
         "requestId": "request",
-        "ok": true,
-        "payload": {
-          "costUsd": null
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability returned an invalid usage cost."
         }
       }
     },
@@ -20004,6 +20002,7856 @@
         "ok": true,
         "payload": {
           "tokens": 23
+        }
+      }
+    },
+    {
+      "name": "local-lax-null-block",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                null
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  null
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  null
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'type')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'type')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-string-content",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": "hi"
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": "hi"
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 4
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 4
+        }
+      }
+    },
+    {
+      "name": "local-lax-missing-content",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user"
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user"
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user"
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "message.content is not iterable"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "message.content is not iterable"
+        }
+      }
+    },
+    {
+      "name": "local-lax-null-content",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": null
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": null
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": null
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "message.content is not iterable"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "message.content is not iterable"
+        }
+      }
+    },
+    {
+      "name": "local-lax-object-content",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": {}
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": {}
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": {}
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "message.content is not iterable"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "message.content is not iterable"
+        }
+      }
+    },
+    {
+      "name": "local-lax-primitive-block",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                5
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  5
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  5
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 4
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 4
+        }
+      }
+    },
+    {
+      "name": "local-lax-message-null",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            null
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              null
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              null
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'content')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'content')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-message-5",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            5
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              5
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              5
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "message.content is not iterable"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "message.content is not iterable"
+        }
+      }
+    },
+    {
+      "name": "local-lax-message-{}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {}
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {}
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {}
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "message.content is not iterable"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "message.content is not iterable"
+        }
+      }
+    },
+    {
+      "name": "local-lax-call-name-undefined",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "input": {}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 6
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 6
+        }
+      }
+    },
+    {
+      "name": "local-lax-call-name-null",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "name": null,
+                  "input": {}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": null,
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": null,
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 6
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 6
+        }
+      }
+    },
+    {
+      "name": "local-lax-call-name-5",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "name": 5,
+                  "input": {}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": 5,
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": 5,
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 6
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 6
+        }
+      }
+    },
+    {
+      "name": "local-lax-call-name-[\"\\ud800\"]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "name": [
+                    "\ud800"
+                  ],
+                  "input": {}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": [
+                      "\ud800"
+                    ],
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": [
+                      "\ud800"
+                    ],
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 6
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 6
+        }
+      }
+    },
+    {
+      "name": "local-lax-text-5",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": 5
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": 5
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": 5
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "text.substring is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "text.substring is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-text-5",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": 5
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": 5
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 5
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 5
+        }
+      }
+    },
+    {
+      "name": "local-lax-text-false",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": false
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": false
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": false
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "text.substring is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "text.substring is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-text-false",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": false
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": false
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 5
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 5
+        }
+      }
+    },
+    {
+      "name": "local-lax-text-[]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": []
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": []
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": []
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 4
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 4
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-text-[]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 4
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 4
+        }
+      }
+    },
+    {
+      "name": "local-lax-text-{\"length\":0}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": {
+                    "length": 0
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": {
+                      "length": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": {
+                      "length": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 4
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 4
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-text-{\"length\":0}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "length": 0
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "length": 0
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "length": 0
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 8
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 8
+        }
+      }
+    },
+    {
+      "name": "local-lax-text-{\"length\":1}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": {
+                    "length": 1
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": {
+                      "length": 1
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": {
+                      "length": 1
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "text.substring is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "text.substring is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-text-{\"length\":1}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "length": 1
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "length": 1
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "length": 1
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 8
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 8
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-application/pdf-\"2\"",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "application/pdf",
+                      "pages": "2"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": "2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": "2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 20
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 20
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-custom/pdf-\"2\"",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "custom/pdf",
+                      "pages": "2"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": "2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": "2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 20
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 20
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-application/pdf-\"\"",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "application/pdf",
+                      "pages": ""
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": ""
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": ""
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 16
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 16
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-custom/pdf-\"\"",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "custom/pdf",
+                      "pages": ""
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": ""
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": ""
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 16
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 16
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-application/pdf-[]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "application/pdf",
+                      "pages": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 19
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 19
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-custom/pdf-[]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "custom/pdf",
+                      "pages": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 19
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 19
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-application/pdf-[2]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "application/pdf",
+                      "pages": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": [
+                          2
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": [
+                          2
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 20
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 20
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-custom/pdf-[2]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "custom/pdf",
+                      "pages": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": [
+                          2
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": [
+                          2
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 20
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 20
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-application/pdf-{}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "application/pdf",
+                      "pages": {}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": {}
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": {}
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 22
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 22
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-custom/pdf-{}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "custom/pdf",
+                      "pages": {}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": {}
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": {}
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 22
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 22
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-application/pdf-false",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "application/pdf",
+                      "pages": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": false
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "application/pdf",
+                        "pages": false
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 16
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 16
+        }
+      }
+    },
+    {
+      "name": "local-lax-pdf-custom/pdf-false",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "pdf",
+                      "data": "abc",
+                      "mimeType": "custom/pdf",
+                      "pages": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": false
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "pdf",
+                        "data": "abc",
+                        "mimeType": "custom/pdf",
+                        "pages": false
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 16
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 16
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-content-undefined",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of undefined (reading 'map')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of undefined (reading 'map')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-content-null",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": null
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": null
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": null
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'map')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'map')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-content-\"hi\"",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": "hi"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": "hi"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": "hi"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "content.map is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "content.map is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-content-{}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": {}
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": {}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "content.map is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "content.map is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-content-[null]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    null
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      null
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      null
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'type')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'type')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-result-content-[5]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    5
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      5
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      5
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 4
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 4
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-url-undefined",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "url"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 11
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 11
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-url-null",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "url",
+                      "data": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "data": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "data": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 11
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 11
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-url-5",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "url",
+                      "data": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "data": 5
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "data": 5
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 12
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 12
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-url-[\"\\ud800\"]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "url",
+                      "data": [
+                        "\ud800"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "data": [
+                          "\ud800"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "data": [
+                          "\ud800"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 11
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 11
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-base64-undefined",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "base64"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of undefined (reading 'length')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of undefined (reading 'length')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-base64-null",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "base64",
+                      "data": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "data": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "data": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'length')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'length')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-base64-5",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "base64",
+                      "data": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "data": 5
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "data": 5
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 14
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 14
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-base64-[\"\\ud800\"]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "base64",
+                      "data": [
+                        "\ud800"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "data": [
+                          "\ud800"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "base64",
+                        "data": [
+                          "\ud800"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 15
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 15
+        }
+      }
+    },
+    {
+      "name": "local-lax-system-5",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "systemPrompt": 5
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": 5
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": 5
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "text.substring is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "text.substring is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-system-false",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "systemPrompt": false
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": false
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": false
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 0
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 0
+        }
+      }
+    },
+    {
+      "name": "local-lax-system-0",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "systemPrompt": 0
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": 0
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": 0
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 0
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 0
+        }
+      }
+    },
+    {
+      "name": "local-lax-system-[]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "systemPrompt": []
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": []
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": []
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 0
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 0
+        }
+      }
+    },
+    {
+      "name": "local-lax-system-[\"hi\"]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "systemPrompt": [
+            "hi"
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": [
+              "hi"
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": [
+              "hi"
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "text.substring is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "text.substring is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-system-{\"length\":0}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "systemPrompt": {
+            "length": 0
+          }
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": {
+              "length": 0
+            }
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "systemPrompt": {
+              "length": 0
+            }
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 0
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 0
+        }
+      }
+    },
+    {
+      "name": "local-lax-tools-{}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": {}
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": {}
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": {}
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "tools is not iterable"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "tools is not iterable"
+        }
+      }
+    },
+    {
+      "name": "local-lax-tools-\"ab\"",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": "ab"
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": "ab"
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": "ab"
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 2
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 2
+        }
+      }
+    },
+    {
+      "name": "local-lax-tools-\"😀\"",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": "😀"
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": "😀"
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": "😀"
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 1
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 1
+        }
+      }
+    },
+    {
+      "name": "local-lax-tools-[null]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": [
+            null
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              null
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              null
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'name')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'name')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-tools-[5]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": [
+            5
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              5
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              5
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 1
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 1
+        }
+      }
+    },
+    {
+      "name": "local-lax-tools-{\"length\":0}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": {
+            "length": 0
+          }
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": {
+              "length": 0
+            }
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": {
+              "length": 0
+            }
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 0
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 0
+        }
+      }
+    },
+    {
+      "name": "local-lax-tools-false",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": false
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": false
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": false
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "tools is not iterable"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "tools is not iterable"
+        }
+      }
+    },
+    {
+      "name": "local-lax-system-before-message",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            null
+          ],
+          "systemPrompt": 5,
+          "tools": {}
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              null
+            ],
+            "systemPrompt": 5,
+            "tools": {}
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              null
+            ],
+            "systemPrompt": 5,
+            "tools": {}
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "text.substring is not a function"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "text.substring is not a function"
+        }
+      }
+    },
+    {
+      "name": "local-lax-message-before-tools",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            null
+          ],
+          "tools": {}
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              null
+            ],
+            "tools": {}
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              null
+            ],
+            "tools": {}
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'content')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'content')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-call-coercion-{\"toString\":null}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "name": {
+                    "toString": null
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": {
+                      "toString": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": {
+                      "toString": null
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-lax-tool-coercion-{\"toString\":null}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": [
+            {
+              "name": "t",
+              "description": {
+                "toString": null
+              }
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              {
+                "name": "t",
+                "description": {
+                  "toString": null
+                }
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              {
+                "name": "t",
+                "description": {
+                  "toString": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-lax-join-coercion-{\"toString\":null}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "toString": null
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "toString": null
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "toString": null
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-cost-coercion-{\"toString\":null}",
+      "payload": {
+        "operation": "estimate_usage_cost",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": {
+            "toString": null
+          }
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_usage_cost",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "usage": {
+            "inputTokens": {
+              "toString": null
+            }
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_usage_cost",
+          "usage": {
+            "inputTokens": {
+              "toString": null
+            }
+          },
+          "provider": "openai",
+          "model": "gpt-4o"
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-lax-call-coercion-[{\"toString\":null}]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "name": [
+                    {
+                      "toString": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": [
+                      {
+                        "toString": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": [
+                      {
+                        "toString": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-lax-tool-coercion-[{\"toString\":null}]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": [
+            {
+              "name": "t",
+              "description": [
+                {
+                  "toString": null
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              {
+                "name": "t",
+                "description": [
+                  {
+                    "toString": null
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              {
+                "name": "t",
+                "description": [
+                  {
+                    "toString": null
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-lax-join-coercion-[{\"toString\":null}]",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": [
+                        {
+                          "toString": null
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": [
+                          {
+                            "toString": null
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": [
+                          {
+                            "toString": null
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-cost-coercion-[{\"toString\":null}]",
+      "payload": {
+        "operation": "estimate_usage_cost",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": [
+            {
+              "toString": null
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_usage_cost",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "usage": {
+            "inputTokens": [
+              {
+                "toString": null
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_usage_cost",
+          "usage": {
+            "inputTokens": [
+              {
+                "toString": null
+              }
+            ]
+          },
+          "provider": "openai",
+          "model": "gpt-4o"
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-lax-call-coercion-{\"nested\":{\"toString\":null}}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "name": {
+                    "nested": {
+                      "toString": null
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": {
+                      "nested": {
+                        "toString": null
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_call",
+                    "name": {
+                      "nested": {
+                        "toString": null
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 8
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 8
+        }
+      }
+    },
+    {
+      "name": "local-lax-tool-coercion-{\"nested\":{\"toString\":null}}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [],
+          "tools": [
+            {
+              "name": "t",
+              "description": {
+                "nested": {
+                  "toString": null
+                }
+              }
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              {
+                "name": "t",
+                "description": {
+                  "nested": {
+                    "toString": null
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [],
+            "tools": [
+              {
+                "name": "t",
+                "description": {
+                  "nested": {
+                    "toString": null
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 5
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 5
+        }
+      }
+    },
+    {
+      "name": "local-lax-join-coercion-{\"nested\":{\"toString\":null}}",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "nested": {
+                          "toString": null
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "nested": {
+                            "toString": null
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "nested": {
+                            "toString": null
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "tokens": 8
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "tokens": 8
+        }
+      }
+    },
+    {
+      "name": "local-cost-coercion-{\"nested\":{\"toString\":null}}",
+      "payload": {
+        "operation": "estimate_usage_cost",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": {
+            "nested": {
+              "toString": null
+            }
+          }
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_usage_cost",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "usage": {
+            "inputTokens": {
+              "nested": {
+                "toString": null
+              }
+            }
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_usage_cost",
+          "usage": {
+            "inputTokens": {
+              "nested": {
+                "toString": null
+              }
+            }
+          },
+          "provider": "openai",
+          "model": "gpt-4o"
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Host budget capability returned an invalid usage cost."
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Host budget capability returned an invalid usage cost."
+        }
+      }
+    },
+    {
+      "name": "local-lax-image-mime-coercion",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "image",
+                      "source": "url",
+                      "mimeType": {
+                        "toString": null
+                      },
+                      "data": "url"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "mimeType": {
+                          "toString": null
+                        },
+                        "data": "url"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "image",
+                        "source": "url",
+                        "mimeType": {
+                          "toString": null
+                        },
+                        "data": "url"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot convert object to primitive value"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "name": "local-lax-map-before-join-null",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "toString": null
+                      }
+                    },
+                    null
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "toString": null
+                        }
+                      },
+                      null
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "toString": null
+                        }
+                      },
+                      null
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'type')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'type')"
+        }
+      }
+    },
+    {
+      "name": "local-lax-map-before-join-image",
+      "payload": {
+        "operation": "estimate_request_input",
+        "request": {
+          "provider": "openai",
+          "model": "gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": {
+                        "toString": null
+                      }
+                    },
+                    {
+                      "type": "image",
+                      "data": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "toString": null
+                        }
+                      },
+                      {
+                        "type": "image",
+                        "data": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_request_input",
+          "request": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": {
+                          "toString": null
+                        }
+                      },
+                      {
+                        "type": "image",
+                        "data": null
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "response": {
+        "ok": false,
+        "message": "Cannot read properties of null (reading 'length')"
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": false,
+        "code": "HOST_MODULE_FAILED",
+        "error": {
+          "message": "Cannot read properties of null (reading 'length')"
+        }
+      }
+    },
+    {
+      "name": "local-cost-native-before-coercion",
+      "payload": {
+        "operation": "estimate_usage_cost",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "usage": {
+          "inputTokens": {
+            "toString": null
+          },
+          "nativeCost": 0.125
+        }
+      },
+      "capabilities": [
+        true,
+        true,
+        true
+      ],
+      "local": true,
+      "call": {
+        "kind": "request",
+        "method": "module_call",
+        "module": "budget",
+        "messageId": "call",
+        "requestId": "request",
+        "runId": "run",
+        "operationId": "operation",
+        "payload": {
+          "operation": "estimate_usage_cost",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "usage": {
+            "inputTokens": {
+              "toString": null
+            },
+            "nativeCost": 0.125
+          }
+        }
+      },
+      "manifest": {
+        "methods": [
+          "estimate_request_input",
+          "evaluate_request_budget",
+          "estimate_usage_cost"
+        ]
+      },
+      "calls": [
+        {
+          "operation": "estimate_usage_cost",
+          "usage": {
+            "inputTokens": {
+              "toString": null
+            },
+            "nativeCost": 0.125
+          },
+          "provider": "openai",
+          "model": "gpt-4o"
+        }
+      ],
+      "response": {
+        "ok": true,
+        "result": {
+          "costUsd": 0.125
+        }
+      },
+      "wireResponse": {
+        "kind": "response",
+        "messageId": "host-module-response",
+        "inReplyTo": "call",
+        "requestId": "request",
+        "ok": true,
+        "payload": {
+          "costUsd": 0.125
         }
       }
     }
