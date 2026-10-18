@@ -2142,6 +2142,16 @@
         },
         {
           "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-link-missing/manifest.json",
+          "text": "{\"snapshotId\":\"link-missing-1\",\"entries\":[{\"path\":\"link-only\",\"entryType\":\"symlink\"}]}"
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-file-missing/manifest.json",
+          "text": "{\"snapshotId\":\"file-missing-1\",\"entries\":[{\"path\":\"file-only\",\"entryType\":\"file\"}]}"
+        },
+        {
+          "op": "writeSnapshot",
           "path": "workspaces/quirk/sessions/quirk/snapshots/manual-abs/manifest.json",
           "text": "{\"snapshotId\":\"abs-1\",\"entries\":[{\"path\":\"/etc/passwd\",\"entryType\":\"file\"}]}"
         },
@@ -2382,6 +2392,26 @@
           "targetTree": []
         },
         {
+          "op": "restore",
+          "snapshotId": "link-missing-1",
+          "target": "quirk-link-missing",
+          "outcome": {
+            "restored": true,
+            "workspaceKey": "<dir>/quirk-link-missing"
+          },
+          "targetTree": []
+        },
+        {
+          "op": "restore",
+          "snapshotId": "file-missing-1",
+          "target": "quirk-file-missing",
+          "outcome": {
+            "restored": true,
+            "workspaceKey": "<dir>/quirk-file-missing"
+          },
+          "targetTree": []
+        },
+        {
           "op": "get",
           "snapshotId": "entries-5",
           "outcome": {
@@ -2537,6 +2567,16 @@
           "sha256": "73364d24f719c89b337cdca88bf636568dc34ad5a67afc0fe1cb15f412010edb"
         },
         {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-file-missing",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-file-missing/manifest.json",
+          "kind": "file",
+          "size": 83,
+          "sha256": "eb69583f7405af7f889b062b227e486ae77edda739537fd0c68c3d1113a246e7"
+        },
+        {
           "path": "workspaces/quirk/sessions/quirk/snapshots/manual-full",
           "kind": "dir"
         },
@@ -2551,6 +2591,16 @@
           "kind": "file",
           "size": 823,
           "sha256": "138c9b048038dca022e449893a524c5d7074fcb61d9abd70be12cdd498f99793"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-link-missing",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/manual-link-missing/manifest.json",
+          "kind": "file",
+          "size": 86,
+          "sha256": "2ee7d2d06a60da53b62b142f59bc6f7e2f1bd21f3b0c1f965adc7bbc9c1ccbdb"
         },
         {
           "path": "workspaces/quirk/sessions/quirk/snapshots/manual-missing",

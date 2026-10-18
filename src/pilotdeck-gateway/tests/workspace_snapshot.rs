@@ -359,7 +359,10 @@ fn utf16_cmp(left: &str, right: &str) -> std::cmp::Ordering {
 }
 /// Byte-exact non-UTF-8 names need a byte-transparent filesystem; generate.mts
 /// probes identically and drops the scenario where this fails (APFS/HFS+
-/// reject the bytes with EINVAL, Linux allows them).
+/// reject the bytes with EINVAL, Linux allows them). The committed oracle has
+/// no non-utf8 scenario because it was generated on macOS, and CI never
+/// regenerates the fixtures: this path is currently uncovered. Linux
+/// generation is pending #283.
 fn non_utf8_names_writable(dir: &Path) -> bool {
     let probe = dir.join(OsString::from_vec(b"probe-\xff".to_vec()));
     let writable = fs::write(&probe, b"").is_ok();
@@ -725,9 +728,10 @@ fn replay_scenario(scenario: &JsValue) {
     }
     let raw_files = arr(field(spec, "rawFiles"));
     if !raw_files.is_empty() && !non_utf8_names_writable(&dir) {
-        // generate.mts probes the same way and omits the scenario where the
-        // filesystem rejects the bytes (macOS APFS/HFS+ EINVAL); an oracle
-        // generated on a byte-transparent filesystem skips locally.
+        // generate.mts probes the same way. The committed oracle was generated
+        // on macOS, where APFS/HFS+ reject the bytes and the scenario is
+        // dropped; CI never regenerates the fixtures, so this path currently
+        // has no coverage. Linux generation is pending #283.
         eprintln!("scenario {name}: skipped, filesystem rejects non-UTF-8 file names");
         return;
     }

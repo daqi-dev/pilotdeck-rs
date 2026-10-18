@@ -397,6 +397,11 @@ impl WorkspaceSnapshotProvider {
                     WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(&parent)))
                 })?;
             }
+            // workspaceSnapshot.ts:125/128 makes the type-specific field part of
+            // the same guard: an entry whose entryType matches but whose
+            // linkTarget/objectKey is missing is deliberately skipped, and
+            // restore still resolves `restored:true`. The provider-quirks gold
+            // sample pins both cases.
             let entry_type = field(entry, "entryType");
             if entry_type
                 .as_string()

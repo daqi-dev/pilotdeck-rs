@@ -41,8 +41,8 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway worksp
 | snapshot-inside | 快照根在工作区内：扫描排除该子树、相似前缀不排除 |
 | workspace-missing | scandir ENOENT 落失败 marker（Node 文案） |
 | root-equals-workspace | 快照根等于工作区根：拒绝并只留失败 marker |
-| non-utf8 | 非 UTF-8 文件名：readdir 损失解码后 lstat ENOENT（`bad-�.txt` 文案）。平台相关：需字节透明文件系统，生成器先探测，APFS/HFS+ 拒绝该字节（EINVAL）即整场景跳过，Rust 回放同探测跳过。Linux 路径待 #283 |
-| provider-quirks | 手工 manifest：数字/缺字段/非字符串 createdAt/重复键/null 条目/绝对路径/`..` 路径/目录名叫 manifest.json——list 校验跳过、get 不过校验、restore 只动作可执行条目；对象路径为目录时 restore 报 `EISDIR ... read`。`entries` 为 `5`/`{}`/`"x"`/`null` 时（非数组）按 TS `workspaceSnapshot.ts:115` 的 `Array.isArray` 分支恢复成空条目、`restored:true` 且目标树为空，get 原样返回该值 |
+| non-utf8 | 非 UTF-8 文件名：readdir 损失解码后 lstat ENOENT（`bad-�.txt` 文案）。需字节透明文件系统，生成器先探测；APFS/HFS+ 以 EINVAL 拒绝该字节即整场景跳过。**当前没有覆盖**：提交的 `oracle.json` 在 macOS 上生成，其中没有该场景，CI 也不重新生成夹具。Linux 生成路径待 #283；Rust 回放同探测跳过 |
+| provider-quirks | 手工 manifest：数字/缺字段/非字符串 createdAt/重复键/null 条目/绝对路径/`..` 路径/目录名叫 manifest.json——list 校验跳过、get 不过校验、restore 只动作可执行条目；对象路径为目录时 restore 报 `EISDIR ... read`。`entries` 为 `5`/`{}`/`"x"`/`null` 时（非数组）按 TS `workspaceSnapshot.ts:115` 的 `Array.isArray` 分支恢复成空条目、`restored:true` 且目标树为空，get 原样返回该值。`entryType` 为 `symlink`/`file` 但缺 `linkTarget`/`objectKey` 时按 TS `workspaceSnapshot.ts:125/128` 的同条件跳过，不抛错、`restored:true`、目标树为空 |
 | provider-null | manifest 为 `null`：list/get 抛 TypeError 文案 |
 | provider-order | 目录遍历按 Node readdir（libuv 字节序）：重复 `snapshotId` 取最后一份；`createdAt` 用 ICU `localeCompare`（`Z` 排在 `a` 前），相等值稳定保持遍历序 |
 | mask-scope | 掩码范围负控：failureReason/entries.path/linkTarget 的 ISO 日期与 restore 出的用户 `.json` 都按原文比较 |
