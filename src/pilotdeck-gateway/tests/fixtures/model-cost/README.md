@@ -16,10 +16,10 @@
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
-  src/pilotdeck-gateway/tests/fixtures/model-cost/generate.mts
+  src/pilotdeck-gateway/tests/fixtures/model-cost/generate.mts [outdir]
 ```
 
-生成器断言基线 HEAD 与固定 commit，记录被测源码 SHA-256，并把真实 TS 数值写入 `oracle.json`；无时间戳、pid 或本机路径，连续跑两次字节一致。当前产出：273 个定价查找、885 个费用算术用例、1653 个 usage 费用用例、51 个请求形状。
+生成器断言基线 HEAD 与固定 commit，且 `git status --porcelain --untracked-files=no` 为空（不检查未跟踪文件）；每个 `sourceSha256` 取 `git show <commit>:src/<path>` 的 blob 哈希，并与工作树内容核对，随后把真实 TS 数值写入 `oracle.json`（临时文件 + rename 原子替换）。无时间戳、pid 或本机路径，连续跑两次字节一致；省略 `outdir` 时就地写入夹具目录。当前产出：273 个定价查找、885 个费用算术用例、1653 个 usage 费用用例、51 个请求形状。设置 `PDRS_BASELINE` 时，Rust 回放 `oracle_comes_from_the_fixed_baseline` 会复跑同一组干净性与 blob 哈希校验。
 
 - `pricingLookups[]`：catalog 全模型 ×（无覆盖 / `gpt` 子串覆盖）、语料之外的模式边界（大小写、优先级、`o1/o3/o4`、qwen/llama/mistral 等）、JS `/i` 非 Unicode 折叠与 `.` 行终止符边界（`K`、`ſ`、`\r`、`\n`、U+2028/U+2029 的拒绝；`\v`/`\t` 的正例）、configured 精确键/子串键/空条目/插入顺序/整数键。
 - `costs[]`：真实 `calculateInputCost`/`calculateCacheReadCost` 的逐项结果（含 0、小数、十亿级 token）。
@@ -29,4 +29,4 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 ## 回放
 
-Rust 测试 `src/model_cost_tests.rs` 用 `parse_json`（保留对象插入顺序）重建 canonical request，所有数字用 `==` 精确比较，无 epsilon。
+Rust 测试 `src/model_cost_tests.rs` 用 `parse_json`（保留对象插入顺序）重建 canonical request，所有数字用 `==` 精确比较，无 epsilon。设置 `PDRS_BASELINE` 且加 `--ignored` 时，`model_cost_fixtures_regenerate_identically_from_ts` 会重跑生成器到临时目录并与已提交 `oracle.json` 逐字节比较。
