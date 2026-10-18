@@ -9,7 +9,7 @@
 规则（与 specs/README.md 同步维护，改一处必改另一处）：
   _build/ 顶层：wt-<issue号或阶段码>[-<短名>]  或  YYYYMMDD-HHMMSS[-<用途>]（共享缓存白名单除外）
   _tmp/  顶层：YYYYMMDD-<slug>
-  分支名：<owner>/<内容>（全小写），owner ∈ {codex, docs, dev, chore, fix}；裸 main/release 豁免
+  分支名：<owner>/<内容>（全小写），owner ∈ {codex, glm, deepseek, claude, docs, dev, chore, fix}；裸 main/release 豁免
   存量违规登记在 check-naming.baseline.txt，只减不增：清一项删一行（或 --write-baseline 收紧），新增即 FAIL。
 """
 
@@ -27,7 +27,7 @@ TMP_EXEMPT = {"archive"}  # 历史豁免：只减不增
 # 长期共享缓存/工具目录，非遗留违规（规约白名单）
 BUILD_EXEMPT = {"cargo-home", "fe-parity"}
 FILE_EXEMPT = {".DS_Store"}  # macOS 系统文件，随时再生，豁免
-BRANCH_OWNER = re.compile(r"^(codex|docs|dev|chore|fix)/[a-z0-9][a-z0-9./_-]*$")
+BRANCH_OWNER = re.compile(r"^(codex|glm|deepseek|claude|docs|dev|chore|fix)/[a-z0-9][a-z0-9./_-]*$")
 BRANCH_EXEMPT = {"main", "master", "release"}
 
 
@@ -72,7 +72,7 @@ def collect_bad(root: Path) -> tuple[list[str], list[str]]:
         if b in BRANCH_EXEMPT:
             continue
         if not BRANCH_OWNER.match(b):
-            bad.append(f"分支名 owner 不在白名单（codex|docs|dev|chore|fix）: {b}")
+            bad.append(f"分支名 owner 不在白名单（codex|glm|deepseek|claude|docs|dev|chore|fix）: {b}")
     return sorted(bad), skipped
 
 

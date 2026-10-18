@@ -9,8 +9,17 @@
      或有 `<!-- pr-gate:waiver <理由≥8字> -->`（纯文档/纯状态 PR 用，理由会打印出来供评审看）。
   2. 有 issue 关联：`Closes|Fixes|Resolves #N`（合并即关单，GitHub 定顺序）或 `Refs #N`（一单多 PR，单保持开），
      或 `<!-- no-issue <理由> -->`。
+  3. 谁写谁不审（CLAUDE.md「当前协作与持续推进」）：PR 描述有 `<!-- reviewers: A,B -->`，列出双谱系评审的两家；
+     作者谱系（可以多家）＝ 分支前缀谱系 ∪ 所有 author 标记里的已知谱系 ∪ 提交 Co-Authored-By / Agent: / Model: 署名：
+       - 只做加法：多个 author 标记取并集，author 标记读原文（不剥代码），所以任何写法都只会多算作者、不会少算；
+       - 前缀不是 codex/ glm/ deepseek/ claude/（docs/ chore/ fix/ dev/）且标记里没有已知谱系 → FAIL；
+       - 署名范围是「目标分支当前最新 tip..head」（PR_BASE_REF / --pr 的 baseRefName），不用 PR 创建时冻结的 base.sha；
+       - 署名扫描是非自述信号：协调者用 Claude 提交 codex 的产物也会带 Claude 署名，此时 Claude 同样不得评审。
+     评审至少两家不同谱系、都不是作者；角色审计结果块的 runner 谱系（zai→GLM、anthropic→Claude）也不得是作者。
+     谱系名不区分大小写，dsh/ds→deepseek，gpt→codex，opus/sonnet→claude，zai→glm。
 
-输入：--body-file FILE ｜ --pr N（调 gh pr view，只读）｜ 环境变量 PR_BODY（CI 用，避免 shell 插值）
+输入：--body-file FILE ｜ --pr N（调 gh pr view，只读）｜ 环境变量 PR_BODY（CI 用，避免 shell 插值）；
+      分支名：--head-ref 或环境变量 PR_HEAD_REF（--pr 时自动取）
 退出码：0 通过 · 1 不通过 · 2 输入错误
 """
 from __future__ import annotations
@@ -26,6 +35,144 @@ MARKER = re.compile(r"<!--\s*pr-gate:v1\b([^>]*)-->")
 WAIVER = re.compile(r"<!--\s*pr-gate:waiver\s+(.+?)\s*-->", re.S)
 ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d+\b", re.I)
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
+# 取完整注释正文再校验（不能用 [^>]：正文含 > 时整条会被静默忽略）
+REVIEWERS = re.compile(r"<!--\s*reviewers\s*:(.*?)-->", re.I | re.S)
+AUTHOR = re.compile(r"<!--\s*author\s*:(.*?)-->", re.I | re.S)
+FAMILY = {"codex": "codex", "gpt": "codex", "glm": "glm", "zai": "glm", "deepseek": "deepseek", "dsh": "deepseek",
+          "ds": "deepseek", "claude": "claude", "opus": "claude", "sonnet": "claude", "anthropic": "claude"}
+BRANCH_FAMILY = {"codex": "codex", "glm": "glm", "deepseek": "deepseek", "claude": "claude"}
+
+
+def family(name: str) -> str | None:
+    return FAMILY.get(name.strip().lower())
+
+
+# 署名识别分两处看：名字部分（< 之前）按模型名单词匹配；邮箱只认已知厂商域名。
+# 不拆整条邮箱：普通人的 ds@example.org、alex@gpt.example.org 不能算成模型作者。
+TRAILER_NAME_EXTRA = {"opencode": "glm", "openai": "codex", "zhipu": "glm"}
+NAME_SKIP = {"ds"}  # 太短，人名缩写常见
+VENDOR_DOMAINS = {"anthropic.com": "claude", "openai.com": "codex", "deepseek.com": "deepseek",
+                  "zhipu.com": "glm", "zhipuai.cn": "glm", "bigmodel.cn": "glm", "z.ai": "glm", "opencode": "glm"}
+
+
+def trailer_family_of(line: str) -> set[str]:
+    """一条署名值 → 谱系。邮箱（尖括号里的、或裸写的）只按已知厂商域名判；其余文字按模型名单词判。
+    一行里有多个地址、地址后还有文字，都逐个看，不因格式不规整整条漏计。"""
+    emails = re.findall(r"<([^<>]*)>", line)
+    rest = re.sub(r"<[^<>]*>", " ", line)
+    emails += re.findall(r"[^\s<>,;]+@[^\s<>,;]+", rest)
+    rest = re.sub(r"[^\s<>,;]+@[^\s<>,;]+", " ", rest)
+    out = set()
+    words = {k: v for k, v in {**FAMILY, **TRAILER_NAME_EXTRA}.items() if k not in NAME_SKIP}
+    for tok in re.findall(r"[a-z0-9]+", rest.lower()):
+        if tok in words:
+            out.add(words[tok])
+    for email in emails:
+        domain = email.strip().lower().rsplit("@", 1)[-1] if "@" in email else email.strip().lower()
+        for d, f in VENDOR_DOMAINS.items():
+            if domain == d or domain.endswith("." + d):
+                out.add(f)
+    return out
+
+
+class TrailerScanError(Exception):
+    pass
+
+
+def trailer_families(base: str, head: str) -> set[str]:
+    """base..head 提交的 Co-Authored-By 署名与 Agent:/Model: 标注对应的谱系。给了范围却读不到 → 抛 TrailerScanError（fail-closed）。"""
+    if not base or not head:
+        return set()
+    # base..head 即「head 可达、base 不可达」的提交集合（多公共祖先时也正确，不另取 merge-base）
+    # 扫完整提交消息里任意位置的 Co-Authored-By 行：git 的 trailer 解析只认末段，署名后再跟一段说明就会漏；
+    # 续行（下一行以空白开头）按 git trailer 语义拼回同一行
+    cp = subprocess.run(["git", "log", f"{base}..{head}", "--format=%B%x00"], capture_output=True, text=True)
+    if cp.returncode != 0:
+        raise TrailerScanError(cp.stderr.strip()[:200])
+    out = set()
+    # 也读 specs/README.md 规定的提交标注 Agent: / Model:（同源的机器可读谱系信号）
+    for m in re.finditer(r"(?im)^[ \t]*(?:co-authored-by|agent|model)[ \t]*:[ \t]*(.*(?:\n[ \t]+\S.*)*)", cp.stdout):
+        out |= trailer_family_of(" ".join(m.group(1).split()))
+    return out
+
+
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _strip_inline(line: str) -> str:
+    """去掉行内代码（CommonMark：开闭反引号串等长）；HTML 注释内的反引号不当代码开头。"""
+    out, i, n = [], 0, len(line)
+    while i < n:
+        if line.startswith("<!--", i):
+            j = line.find("-->", i + 4)
+            j = n if j < 0 else j + 3
+            out.append(line[i:j]); i = j
+        elif line[i] == "`":
+            j = i
+            while j < n and line[j] == "`":
+                j += 1
+            run = line[i:j]
+            k = line.find(run, j)
+            while k >= 0 and k + len(run) < n and line[k + len(run)] == "`":
+                k = line.find(run, k + len(run) + 1)
+            if k < 0:
+                out.append(run); i = j
+            else:
+                i = k + len(run)
+        else:
+            out.append(line[i]); i += 1
+    return "".join(out)
+
+
+def strip_code(body: str) -> str:
+    """去掉代码块（行首 ``` 或 ~~~ 围栏）与行内代码：文档里引用的标记写法不算标记。
+    围栏只认行首（≤3 空格缩进），所以 HTML 注释里出现的 ``` 不会吞掉后面的真标记。"""
+    lines, fence = [], None
+    for line in body.splitlines():
+        m = FENCE.match(line)
+        if fence:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = None
+            continue
+        if m:
+            fence = m.group(1)
+            continue
+        lines.append(_strip_inline(line))
+    return "\n".join(lines)
+
+
+def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
+    errs: list[str] = []
+    # author 只做加法、读原文：剥代码只可能让作者变少（=放宽），所以作者声明一律不剥
+    names = [x for m in AUTHOR.findall(body) for x in re.split(r"[,\s]+", m.strip()) if x]
+    declared = {family(x) for x in names if family(x)}
+    body = strip_code(body)  # reviewers 等其余标记去掉代码引用再看（剥掉只会让它们变少=更严）
+    branch = BRANCH_FAMILY.get(head_ref.strip().split("/", 1)[0].lower()) if "/" in head_ref else None
+    authors = declared | ({branch} if branch else set()) | (trailers or set())
+    if not branch and not declared:
+        errs.append(f"无法确定作者谱系：分支「{head_ref or '未知'}」前缀不是 codex/glm/deepseek/claude，"
+                    "且 author 标记里没有已知谱系（codex/GLM/DeepSeek/Claude）")
+    rm = REVIEWERS.findall(body)
+    if len(rm) != 1:
+        errs.append(f"须恰好一个 <!-- reviewers: A,B --> 标记（现 {len(rm)} 个），列出双谱系评审的两家")
+        return errs
+    rnames = [x for x in re.split(r"[,\s]+", rm[0].strip()) if x]
+    fams = [family(x) for x in rnames]
+    bad = [n for n, f in zip(rnames, fams) if f is None]
+    if bad:
+        errs.append(f"reviewers 里有未知谱系 {bad}（可选 codex/GLM/DeepSeek/Claude）")
+    known = {f for f in fams if f}
+    if len(known) < 2:
+        errs.append(f"评审须至少两家不同谱系，现为 {sorted(known) or '无'}")
+    clash = sorted(authors & known)
+    if clash:
+        src = "（含提交署名）" if trailers and set(clash) & trailers else ""
+        errs.append(f"作者谱系 {clash}{src} 出现在评审里（谁写谁不审）")
+    for m in MARKER.finditer(body):
+        rn = re.search(r"(?:^|\s)runner=(\S+)", m.group(1))
+        if rn and family(rn.group(1)) in authors:
+            errs.append(f"角色审计用的 runner={rn.group(1)} 与作者同谱系（{family(rn.group(1))}）；改用 --runner 另一家重跑")
+    return errs
 
 
 def check_block(attrs: str, head: str) -> list[str]:
@@ -68,10 +215,13 @@ def check_block(attrs: str, head: str) -> list[str]:
     return errs
 
 
-def check(body: str, head: str = "") -> list[str]:
+def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
-    blocks = list(MARKER.finditer(body))
-    w = WAIVER.search(body)
+    # 所有标记（结果块、豁免、issue、reviewers/author）统一不认代码里引用的写法，与 runner 检查同口径。
+    # 真结果块被塞进围栏 = 缺结果块 → FAIL，方向是拦而不是放。
+    prose = strip_code(body)
+    blocks = list(MARKER.finditer(prose))
+    w = WAIVER.search(prose)
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
         for n, m in enumerate(blocks, 1):
@@ -85,8 +235,9 @@ def check(body: str, head: str = "") -> list[str]:
             print(f"check-pr-gate: 豁免——{reason}")
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    if not ISSUE_LINK.search(body) and not NO_ISSUE.search(body):
+    if not ISSUE_LINK.search(prose) and not NO_ISSUE.search(prose):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
+    errs.extend(check_reviewers(body, head_ref, trailers))
     return errs
 
 
@@ -95,22 +246,60 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--body-file")
     g.add_argument("--pr")
-    ap.add_argument("--head", default=os.environ.get("PR_HEAD", ""), help="PR 当前 head SHA；给定时与结果块 head= 比对")
+    ap.add_argument("--head", default=None, help="PR 当前 head SHA；给定时与结果块 head= 比对（默认：--pr 取目标 PR；否则环境 PR_HEAD）")
+    ap.add_argument("--head-ref", default=None, help="PR 分支名，用来推断作者谱系（默认：--pr 取目标 PR 的分支；否则取环境变量 PR_HEAD_REF）")
     a = ap.parse_args()
+    a.head_explicit = a.head is not None
+    base = None
     if a.body_file:
         body = open(a.body_file, encoding="utf-8").read()
     elif a.pr:
-        cp = subprocess.run(["gh", "pr", "view", a.pr, "--json", "body", "--jq", ".body"], capture_output=True, text=True)
+        cp = subprocess.run(["gh", "pr", "view", a.pr, "--json", "body,headRefName,headRefOid,baseRefName"], capture_output=True, text=True)
         if cp.returncode != 0:
             print(f"check-pr-gate: gh 失败：{cp.stderr.strip()}", file=sys.stderr)
             return 2
-        body = cp.stdout
+        import json
+        pr = json.loads(cp.stdout)
+        body = pr.get("body") or ""
+        # --pr 一律用目标 PR 自己的分支，不继承环境里别的 PR 的 PR_HEAD_REF（防用他人分支判作者）
+        a.head_ref = a.head_ref if a.head_ref is not None else pr.get("headRefName", "")
+        # 署名范围也一律取目标 PR 的，不继承环境里别的 PR 的 PR_HEAD / PR_BASE_SHA
+        target = pr.get("headRefOid", "")
+        if a.head_explicit and target and not (a.head and (target.startswith(a.head) or a.head.startswith(target))):
+            print(f"check-pr-gate: FAIL --head={a.head!r} 与目标 PR 的 head {target[:12]} 不一致；--pr 模式一律按目标 PR 扫署名")
+            return 1
+        a.head = target or (a.head or "")
+        name = pr.get("baseRefName", "")
+        if name:
+            # 目标分支的当前 tip，不是 PR 创建时冻结的 baseRefOid（PR rebase 过 main 时后者会把 main 的提交算进来）
+            subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{name}:refs/remotes/origin/{name}", a.head],
+                           capture_output=True)
+            base = f"origin/{name}"
     elif "PR_BODY" in os.environ:
         body = os.environ["PR_BODY"]
     else:
         print("check-pr-gate: 需要 --body-file / --pr / 环境变量 PR_BODY", file=sys.stderr)
         return 2
-    errs = check(body, a.head)
+    if a.head_ref is None:
+        a.head_ref = os.environ.get("PR_HEAD_REF", "")
+    if a.head is None:
+        a.head = os.environ.get("PR_HEAD", "")
+    if base is None:
+        ref = os.environ.get("PR_BASE_REF", "")
+        base = f"origin/{ref}" if ref else os.environ.get("PR_BASE_SHA", "")
+    if os.environ.get("GITHUB_ACTIONS") == "true" and not (base and a.head):
+        print("check-pr-gate: CI 缺 PR_BASE_REF / PR_HEAD，无法扫提交署名（fail-closed）", file=sys.stderr)
+        return 2
+    try:
+        trailers = trailer_families(base, a.head)
+    except TrailerScanError as e:
+        print(f"check-pr-gate: FAIL 读不到提交署名 {base[:8]}..{a.head[:8]}（{e}）；给了范围就必须扫成功，不降级放行")
+        return 1
+    if base and a.head:
+        print(f"check-pr-gate: 提交署名谱系 {sorted(trailers) or '无'}（计入作者）")
+    else:
+        print("check-pr-gate: 本地未给提交范围，未扫署名（CI 会扫）", file=sys.stderr)
+    errs = check(body, a.head, a.head_ref, trailers)
     for e in errs:
         print(f"check-pr-gate: FAIL {e}")
     if not errs:

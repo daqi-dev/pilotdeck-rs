@@ -2,7 +2,7 @@ name: pr-gate
 
 # 合并闸门第 2、3 步的机器检查（scripts/check-pr-gate.py）。单独成文件：
 # ci.yml 的 pull_request 默认不含 edited，改 PR 描述不会重跑；这里显式加上。
-# 设为分支保护必需检查属仓库设置，由协调者在本文件合入后另做（CLAUDE.md 第 14 条范围内）。
+# **不设为分支保护必需检查**（CLAUDE.md「合并闸门」：它读 PR 描述，merge_group 事件上没有 PR 上下文）；协调者入队前核绿。
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
@@ -12,8 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 扫 base..head 的 Co-Authored-By 署名，判作者谱系
       - name: 角色审计结果块与 issue 关联
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}  # 用目标分支当前 tip；base.sha 是冻结值
         run: python3 -I scripts/check-pr-gate.py
