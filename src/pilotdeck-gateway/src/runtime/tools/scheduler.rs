@@ -51,13 +51,22 @@ impl ToolRuntime {
         // Predicates are evaluated for the entire batch before any call starts.
         // Single-call batches bypass the predicate, exactly like TS.
         for (index, call) in calls.iter().enumerate() {
+            // Deliberate deviation (fixtures/tool-runtime/README.md): TS runs
+            // every concurrencySafe tool in the concurrent phase; here only
+            // those that are also read-only do, so a sibling error, which
+            // drops the concurrent batch, never cuts a write short. Other safe
+            // tools (e.g. agent) run in the sequential phase. isReadOnly is
+            // asked only of concurrencySafe tools; a throw counts as false.
+            let tool = self.registry.get(&call.name);
             let safe = self.mode == SchedulerMode::Concurrent
                 && calls.len() > 1
-                && self
-                    .registry
-                    .get(&call.name)
+                && tool
+                    .as_ref()
                     .map(|t| t.is_concurrency_safe(&call.input))
                     .transpose()?
+                    .is_some_and(|v| truthy(&v))
+                && tool
+                    .and_then(|t| t.is_read_only(&call.input).ok())
                     .is_some_and(|v| truthy(&v));
             if safe {
                 concurrent.push(index);
@@ -82,10 +91,11 @@ impl ToolRuntime {
         // TS Promise.all rejects on the first error and lets the started
         // siblings finish detached. Deliberate deviation: the rejection is
         // reported at the same moment, but the batch owns the siblings and
-        // drops them. Only concurrency-safe tools run here, so no write is cut
-        // short, and a non-cooperative sibling cannot hold the error back.
-        // The pass that sees the error still polls every sibling once, so all
-        // of them have started, as Promise.all's synchronous map ensures.
+        // drops them. Only read-only concurrency-safe tools run here (see the
+        // classification above), so no write is cut short, and a
+        // non-cooperative sibling cannot hold the error back. The pass that
+        // sees the error still polls every sibling once, as Promise.all's
+        // synchronous map runs each up to its first await.
         poll_fn(|cx| {
             let mut unfinished = false;
             let mut first_error = None;
@@ -450,6 +460,17 @@ impl<'a> Plain<'a> {
         }
     }
 }
+/// `schema.<key>` as a normal JS property read: own keys, then the explicit
+/// prototype chain (schemas built programmatically or by config merges).
+fn schema_field<'a>(schema: &'a JsValue, key: &str) -> Option<&'a JsValue> {
+    match schema {
+        JsValue::Object(o) => match object_property(o, &key.into())? {
+            Operand::Value(v) => Some(v),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 /// Own enumerable entries in JS `Object.keys`/`Object.entries` order.
 fn js_entries(object: &JsObject) -> Vec<&(JsString, JsValue)> {
     let mut entries: Vec<_> = object.entries().iter().collect();
@@ -564,7 +585,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
     }
     /// `for (const key of schema.required ?? [])`, keys coerced by `in`.
     fn required(schema: &JsValue) -> Result<Vec<JsString>, HostError> {
-        match schema.get("required") {
+        match schema_field(schema, "required") {
             None | Some(JsValue::Null | JsValue::Undefined) => Ok(vec![]),
             Some(JsValue::Array(keys)) => Ok(keys.iter().map(js_string).collect()),
             Some(JsValue::String(s)) => {
@@ -605,7 +626,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
             }
             _ => {}
         }
-        match schema.get("enum") {
+        match schema_field(schema, "enum") {
             Some(JsValue::Array(enumeration)) => {
                 let equal = |v: &JsValue| match (value, v) {
                     (Operand::Value(JsValue::Number(a)), JsValue::Number(b)) => {
@@ -643,7 +664,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
             }
             _ => {}
         }
-        let kind = schema.get("type");
+        let kind = schema_field(schema, "type");
         if let Some(kind) = kind
             && !matches(value, kind)
         {
@@ -685,7 +706,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
             && let Some(value) = plain
         {
             let empty = JsObject::new();
-            let properties = match schema.get("properties") {
+            let properties = match schema_field(schema, "properties") {
                 None | Some(JsValue::Null | JsValue::Undefined) => Properties::Object(&empty),
                 Some(JsValue::Object(o)) => Properties::Object(o),
                 Some(JsValue::Array(a)) => Properties::Array(a),
@@ -697,7 +718,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
                     issue(out, &path, "required", format!("{path} is required."));
                 }
             }
-            if schema.get("additionalProperties") == Some(&JsValue::Bool(false)) {
+            if schema_field(schema, "additionalProperties") == Some(&JsValue::Bool(false)) {
                 for key in value.keys() {
                     if !properties.has(key)? {
                         let path = format!("{path}.{}", text(key));
@@ -720,7 +741,7 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, Ho
             .and_then(JsValue::as_string)
             .is_some_and(|s| s.equals_str("array"))
             && let (Operand::Value(JsValue::Array(values)), Some(schema)) =
-                (value, schema.get("items").filter(|s| truthy(s)))
+                (value, schema_field(schema, "items").filter(|s| truthy(s)))
         {
             for (i, value) in values.iter().enumerate() {
                 walk(Operand::Value(value), schema, &format!("{path}[{i}]"), out)?;
