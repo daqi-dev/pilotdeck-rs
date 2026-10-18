@@ -16,10 +16,12 @@ const FIXTURES: &str = concat!(
     "/tests/fixtures/operation-ledger"
 );
 fn oracle() -> JsValue {
-    parse_json(include_str!(
-        "../../tests/fixtures/operation-ledger/oracle.json"
-    ))
-    .unwrap()
+    let oracle = include_str!("../../tests/fixtures/operation-ledger/oracle.json");
+    assert!(
+        !oracle.contains(".generate-"),
+        "oracle.json leaks a generation path"
+    );
+    parse_json(oracle).unwrap()
 }
 fn id() -> OperationIdentity {
     OperationIdentity {

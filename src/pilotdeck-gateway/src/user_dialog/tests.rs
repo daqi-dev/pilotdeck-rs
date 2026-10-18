@@ -26,7 +26,12 @@ impl Drop for Scratch {
     }
 }
 fn fixture() -> JsValue {
-    parse_json(include_str!("../../tests/fixtures/user-dialog/oracle.json")).unwrap()
+    let oracle = include_str!("../../tests/fixtures/user-dialog/oracle.json");
+    assert!(
+        !oracle.contains(".generate-"),
+        "oracle.json leaks a generation path"
+    );
+    parse_json(oracle).unwrap()
 }
 fn field<'a>(value: &'a JsValue, name: &str) -> &'a JsValue {
     value.get(name).unwrap()

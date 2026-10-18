@@ -166,6 +166,10 @@ fn run(h: &Harness, op: &JsValue) -> Result<JsValue> {
 
 /// Replays every recorded TS scenario; returns the dialog codes Rust produced.
 fn replay_oracle() -> HashSet<String> {
+    assert!(
+        !ORACLE.contains(".generate-"),
+        "oracle.json leaks a generation path"
+    );
     let oracle = parse_json(ORACLE).unwrap();
     let scratch = Scratch::new();
     let mut codes = HashSet::new();
