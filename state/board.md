@@ -9,8 +9,6 @@ updated: 2026-10-18 17:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - B2-94-archive | gate | ready | #257 合入时漏掉的归档哈希登记（wt-a62-run，claude/b2-94-archive）：闸门 P2 已修，gate5 + DeepSeek 确认中
 - A6.6-pr3 | impl | ready | WorkspaceSnapshot（wt-a66-pr3，glm/a66-pr3）：GLM 第三轮（生成器断言 + 测试 12 个编译错误）
 - A6.4-pr11 | impl | ready | SDK task budget JSONL 账本（wt-a64-pr11，codex/a64-pr11）：codex 实现中
-- #256-review | review | ready | 守护会话的看板标记脚本：三轮收敛 0/0/0，待作者入队
-- #259-review | review | ready | 人定资源上限 12 / 100 GiB / cargo ≤ 4：两轮收敛 0/0/0，待作者入队；合并前仍按 8 / 80
 - A6.3-pr6 | impl | ready | 会话权限规则/模式 registry + SessionConfigOverrides（不依赖 X0）
 - A6.7-pr3 | impl | ready | hooks 配置解析与匹配（纯函数，不依赖 X0）
 - A6.4-pr1 | impl | blocked | model module 适配；等 A6-X0 合并
@@ -25,7 +23,7 @@ updated: 2026-10-18 17:10 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 <!-- READY:END -->
 
 > ## 2026-10-18 17:10 · /loop 两小时交接（自 14:58 起）
-> 合并：#255（board）、#257（B2-94 重新冻结，Closes #94）。#257 入队「失败」后 auto-merge 仍开着，结果合入的是 dae2557，闸门 P2 修复 e6aa919 没进去。另开 claude/b2-94-archive 补上，教训记入 `state/memory/20261018-auto-merge-armed.md`。A6 首批：X0 三家首轮 0/0；A6.3-pr1（DeepSeek dsh 试点）首轮两家撞车 P1 一次修好，二轮 0/0。dsh 有工具后能自己实测 TS 再改，试点表现正常。A6.6-pr3（GLM，无 Bash）第一轮 1 小时超时，留下的代码编译不过，第三轮中，结论待收敛后记卡。D2 与 F2-A34-pr2 实测全过，进评审。新 P2-跟进 #253、#254、#258。外部定标 checkout 已核对哈希后删除，证据在 `_tmp/archive/b2-calibration-2026-10-18-a025aa97/`。worktree 8/8（主仓 + a62-run、d1-cli、f34b、a6-x0、a63-pr1、a66-pr3、a64-pr11），磁盘 52.2/80 GiB。
+> 合并：#255（board）、#257（B2-94 重新冻结，Closes #94）。#257 入队「失败」后 auto-merge 仍开着，结果合入的是 dae2557，闸门 P2 修复 e6aa919 没进去。另开 claude/b2-94-archive 补上，教训记入 `state/memory/20261018-auto-merge-armed.md`。A6 首批：X0 三家首轮 0/0；A6.3-pr1（DeepSeek dsh 试点）首轮两家撞车 P1 一次修好，二轮 0/0。dsh 有工具后能自己实测 TS 再改，试点表现正常。A6.6-pr3（GLM，无 Bash）第一轮 1 小时超时，留下的代码编译不过，第三轮中，结论待收敛后记卡。D2 与 F2-A34-pr2 实测全过，进评审。新 P2-跟进 #253、#254、#258。外部定标 checkout 已核对哈希后删除，证据在 `_tmp/archive/b2-calibration-2026-10-18-a025aa97/`。worktree 8/8（主仓 + a62-run、d1-cli、f34b、a6-x0、a63-pr1、a66-pr3、a64-pr11）；17:15 #256、#259 合入，上限改为 12 / 100 GiB，cargo 并发 ≤ 4（开跑前跑 scripts/cargo-slots.sh）。守护会话在仓外 clone 提交，6 个提交作者邮箱为空（14c19a1…e333c4b），main 禁强推无法改写，教训见 `state/memory/20261018-clone-author-email.md`，磁盘 52.2/80 GiB。
 > **持有人与后台**：协调者本会话。后台在跑：X0 增量确认、A6.3 闸门、D2 两家评审、F2 两家评审、B2-archive 闸门与确认、GLM A6.6 第三轮、codex A6.4-pr11；状态见各自 `_tmp/20261018-*/*.status`。**下一步**：评审收敛 → 闸门 → 入队（先 --disable-auto 再推修复）；X0 合并后放开 A6.4-pr1、A6.5-pr1；#259 合并后改按 12 / 100，开跑前跑 cargo-slots.sh。
 
 > ## 2026-10-18 14:58 · /loop
