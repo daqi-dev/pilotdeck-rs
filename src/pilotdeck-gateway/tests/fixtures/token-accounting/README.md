@@ -14,7 +14,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 输出父目录默认系统临时目录。每次 `mkdtemp` 建独占子目录，stdout 最后一行包含 `output`、`transport` 和精确条数；生成器不覆盖仓库候选、不删除固定路径。仅在无法监听时，可显式追加 `--capture-transport` 生成非 HTTP 候选；日志明确标 `injected (HTTP not verified)`。
 
-精确人口：52 组 / 349 步（各组长度也固定断言）、42 个 snapshot、20 个各 operation 自有必填字段/值域用例、3 个直接 provider-count 错误。覆盖本地拆分、工具/多媒体、浅校验允许的深层异常、校准匹配和限幅、provider 字段优先与有限负数/小数、HTTP 状态失败、官方 URL 判定、headers、缓存命中/淘汰/禁用、thinking、schema normalization、cache markers、UTF-16、schema prototype、provider/model 原型链查找。local-composition/local-shallow-boundary 只从已有金样复用输入，每个期望都重新调用真实 TS。
+精确人口：53 组 / 361 步（各组长度也固定断言）、42 个 snapshot、20 个各 operation 自有必填字段/值域用例、3 个直接 provider-count 错误。覆盖本地拆分、工具/多媒体、浅校验允许的深层异常、校准匹配和限幅、provider 字段优先与有限负数/小数、HTTP 状态失败、官方 URL 判定、headers、缓存命中/淘汰/禁用、thinking、schema normalization、cache markers、UTF-16、schema prototype、provider/model 原型链查找。local-composition/local-shallow-boundary 只从已有金样复用输入，每个期望都重新调用真实 TS。
 
 Rust 回放通过 protocol 的 JsValue 保留对象次序及孤立 surrogate；比较视图对孤立 surrogate 使用 `$utf16` 测试载体，不把它替换成 U+FFFD。每次回放始终检查 commit/hash 格式；设置 `PDRS_BASELINE` 时逐个检查固定 blob 与实际源码。临时文件与 HTTP 服务均每次运行独占，无固定路径清理。
 
@@ -56,7 +56,7 @@ cargo test --manifest-path src/Cargo.toml --locked --offline \
 
 显式 `generate-http.mts [existing-output-parent] --capture-transport` 只用于禁止监听的环境：注入在 Node fetch 下方的 dispatcher 边界，重定向与 JSON 解析仍由真实 Node 处理；日志标 `scripted dispatcher (HTTP not verified)`。此模式双录一致不能代替上述 HTTP 命令，ignored 再生测试禁止该模式。测试、生成器均保留独占临时目录，无固定路径删除。
 
-运行时默认 transport 使用已有 hyper HTTP；TLS transport 由后续 A6.4-pr5 注入，不新增依赖。tokenizer、JSON 构造/解析在线程池内执行，最多四个 CPU 批次；取消会撤销排队批次和网络 future，已开始的纯 CPU 批次在持有 permit 时完成。深层 JSON 转换使用迭代算法，并沿用 gateway 的深层转换上限（2000）；V8 实际栈阈值随调用栈变化，不声称逐深度等同。
+运行时默认 transport 使用已有 hyper HTTP；TLS transport 由后续 A6.4-pr5 注入，不新增依赖。tokenizer、JSON 构造/解析在线程池内执行，最多四个 CPU 批次；取消会撤销排队批次和网络 future，已开始的纯 CPU 批次在持有 permit 时完成。深层 JSON 转换使用迭代算法；普通转换沿用 gateway 的 2000 上限，cache key 的有序 clone 单独使用实测保守下界 1800（真实 TS `sortValue` 在 schema 深度 1890 成功、1895 失败，5/5 次），V8 实际栈阈值随调用栈变化，中间带不作逐深度等同声明。
 
 ## 第三轮：方法接收者与 transport 前置失败
 
@@ -74,3 +74,9 @@ cargo test --manifest-path src/Cargo.toml --locked --offline \
 真实 TS 的 `this.modelConfig.providers[request.provider]` 与 `provider.models[request.model]` 是普通对象下标，键为 `__proto__`、`constructor`、`toString` 时会命中 `Object.prototype`，不是未命中。非 HTTP 语料新增 `prototype-lookup` 6 步：provider 三个键均使 `provider.models` 为 `undefined`，随后 `[request.model]` 抛 `Cannot read properties of undefined (reading 'm')`；model 三个键得到 truthy 的继承成员，请求未给 `maxOutputTokens` 时在 `model.capabilities.maxOutputTokens` 处抛 `Cannot read properties of undefined (reading 'maxOutputTokens')`。两种情况都回退本地估算，快照带 `estimatorError`，且零次 transport 调用。
 
 HTTP 语料另加 `prototype-model-{__proto__,constructor,toString}` 3 例：请求带 `maxOutputTokens` 时 `??` 短路，真实 TS 会实际发出 count 请求，快照 `source=provider`。金样记录完整请求体与响应快照，Rust 回放逐字节比较。默认 HTTP 生成器的逐例 `request` 覆盖项也由 Rust 回放应用。
+
+## 第五轮：原型键求值顺序与 cache key 深度
+
+`prototype-lookup` 增 5 步：三个原型键 model 带 `maxOutputTokens: 10` 与 `speed: 'fast'` 时在 `model.capabilities.supportsSpeed` 抛 `(reading 'supportsSpeed')`；`tools: 'x'` 在 `maxOutputTokens`/`speed` 之前抛 `request.tools?.map is not a function`。`prototype-responses` 增 4 步，钉住 Responses builder 的求值顺序：messages → `max_output_tokens` → `tools` → `service_tier`，因此原型键 model 缺 `maxOutputTokens` 时先报 `maxOutputTokens`，而带 token limit 时 `tools` 先于 `speed`。三个 `unsupported-*` 组各增一步原型键 model，确认非 anthropic、非官方 Responses URL 在 builder 之前 `return undefined`，快照为 local 且无 `estimatorError`。
+
+cache key 的深层失败边界由 `depth-probe.mts`/`depth-probe2.mts` 实测：默认 cacheSize 下 schema 深度 1890 成功、1895 抛 `RangeError: Maximum call stack size exceeded`（5/5 次），2500 同样抛错；cacheSize 0 时 1900 成功，说明抛错点在 `getCachedProviderCount` 的 `sortValue`，不在 `countWithProvider` 的 try 内。Rust 保持 `.await?` 传播，并把 cache key 有序 clone 的保守下界设为 1800；`cache_key_depth_matches_measured_v8_sort_boundary` 用 1700 成功、1900 失败做负控。

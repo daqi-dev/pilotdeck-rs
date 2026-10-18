@@ -410,9 +410,10 @@ fn cache_key(request: &JsObject) -> Result<[u8; 32], HostError> {
             projected.insert(key.into(), value.clone());
         }
     }
-    let serialized = stringify_json(&super::json_walk::transform(
+    let serialized = stringify_json(&super::json_walk::transform_with_limit(
         &JsValue::Object(projected),
         true,
+        super::json_walk::CACHE_KEY_MAX_DEPTH,
         |o| o,
     )?)
     .map_err(|e| ModuleError::new(e.to_string()))?

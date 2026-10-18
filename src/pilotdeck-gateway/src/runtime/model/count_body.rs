@@ -116,31 +116,18 @@ pub(super) fn count_request(
     else {
         return Ok(None);
     };
+    // An inherited `Object.prototype` member is truthy and reaches the body
+    // builder as a model with no own fields. The builder only throws when it
+    // reads `model.capabilities` (maxOutputTokens/supportsSpeed), so the
+    // protocol and official-URL gate must run first: the baseline returns
+    // undefined from countWithProvider before any body is built.
     let prototype_model;
-    let model = match model {
-        Operand::Value(value) if truthy(value) => value,
+    let (model, prototype) = match model {
+        Operand::Value(value) if truthy(value) => (value, false),
         Operand::Value(_) => return Ok(None),
-        // An inherited `Object.prototype` member is truthy. On the baseline's
-        // body builders, `request.maxOutputTokens ?? model.capabilities...`
-        // throws for these members because the function/`Object.prototype`
-        // value has no `capabilities`; when the request supplies the token
-        // limit, the same member is otherwise treated as a model with no own
-        // fields and the request is sent.
         Operand::Function(_) | Operand::ObjectPrototype | Operand::Number(_) => {
-            if !present(request.get("maxOutputTokens").unwrap_or(&UNDEFINED)) {
-                return Err(ModuleError::new(
-                    "Cannot read properties of undefined (reading 'maxOutputTokens')",
-                )
-                .into());
-            }
-            if request.get("speed").unwrap_or(&UNDEFINED) != &JsValue::Undefined {
-                return Err(ModuleError::new(
-                    "Cannot read properties of undefined (reading 'capabilities')",
-                )
-                .into());
-            }
             prototype_model = JsValue::Object(JsObject::new());
-            &prototype_model
+            (&prototype_model, true)
         }
     };
     let anthropic = is(field(provider, "protocol"), "anthropic");
@@ -176,13 +163,10 @@ pub(super) fn count_request(
     };
     let request = JsValue::Object(request.clone());
     let thinking = thinking(&request, model, anthropic)?;
-    if present(field(&request, "tools")) && !matches!(field(&request, "tools"), JsValue::Array(_)) {
-        return Err(ModuleError::new("request.tools?.map is not a function").into());
-    }
     let body = if anthropic {
-        anthropic_body(&request, thinking)
+        anthropic_body(&request, thinking, prototype)?
     } else {
-        responses_body(&request, thinking)?
+        responses_body(&request, thinking, prototype)?
     };
     let mut headers = JsObject::new();
     headers.insert("content-type".into(), "application/json".into());
@@ -309,7 +293,16 @@ fn tool_choice(choice: &JsValue, anthropic: bool) -> JsValue {
         ("name", field(choice, "name").clone()),
     ])
 }
-fn anthropic_body(request: &JsValue, thinking: JsValue) -> JsValue {
+fn anthropic_body(
+    request: &JsValue,
+    thinking: JsValue,
+    prototype: bool,
+) -> Result<JsValue, HostError> {
+    // `buildAnthropicRequest` evaluates `request.tools?.map(...)` before the
+    // returned object's `max_tokens`/`speed` reads.
+    if present(field(request, "tools")) && !matches!(field(request, "tools"), JsValue::Array(_)) {
+        return Err(ModuleError::new("request.tools?.map is not a function").into());
+    }
     let mut tools: Vec<_> = array(field(request, "tools"))
         .iter()
         .map(|tool| {
@@ -346,6 +339,14 @@ fn anthropic_body(request: &JsValue, thinking: JsValue) -> JsValue {
         if field(schema, "strict") != &JsValue::Bool(false) {
             choice = object([("type", "tool".into()), ("name", "__output__".into())]);
         }
+    }
+    // `max_tokens: request.maxOutputTokens ?? model.capabilities.maxOutputTokens`
+    // is evaluated after the tools were built, before messages.
+    if prototype && !present(field(request, "maxOutputTokens")) {
+        return Err(ModuleError::new(
+            "Cannot read properties of undefined (reading 'maxOutputTokens')",
+        )
+        .into());
     }
     let plan = field(request, "cachePlan");
     let cache_tools = field(plan, "tools") == &JsValue::Bool(true) && !tools.is_empty();
@@ -402,7 +403,14 @@ fn anthropic_body(request: &JsValue, thinking: JsValue) -> JsValue {
     } else {
         prompt.clone()
     };
-    object([
+    // `speed` is the last capabilities read in the returned object literal.
+    if prototype && field(request, "speed") != &JsValue::Undefined {
+        return Err(ModuleError::new(
+            "Cannot read properties of undefined (reading 'supportsSpeed')",
+        )
+        .into());
+    }
+    Ok(object([
         ("model", field(request, "model").clone()),
         ("messages", JsValue::Array(messages)),
         ("system", system),
@@ -416,7 +424,7 @@ fn anthropic_body(request: &JsValue, thinking: JsValue) -> JsValue {
         ),
         ("tool_choice", choice),
         ("thinking", thinking),
-    ])
+    ]))
 }
 fn anthropic_block(block: &JsValue) -> JsValue {
     let tag = text(field(block, "type"));
@@ -528,7 +536,11 @@ fn reference_text(block: &JsValue) -> JsValue {
         "\", offset: <line>, limit: 80 }) when surrounding context is needed. Avoid paging through the whole file from offset 1 unless the task truly requires a complete sequential review. If the task depends on complete lists, counts, search candidates, evidence checks, or long page content, use grep/refined searches and targeted reads on the persisted result before concluding.]".into(),
     ])
 }
-fn responses_body(request: &JsValue, reasoning: JsValue) -> Result<JsValue, HostError> {
+fn responses_body(
+    request: &JsValue,
+    reasoning: JsValue,
+    prototype: bool,
+) -> Result<JsValue, HostError> {
     let mut input = Vec::new();
     for message in array(field(request, "messages")) {
         let mut content = Vec::new();
@@ -597,37 +609,50 @@ fn responses_body(request: &JsValue, reasoning: JsValue) -> Result<JsValue, Host
         }
         flush(&mut input, &mut content, field(message, "role"));
     }
+    // `buildOpenAIResponsesRequest` evaluates `input` (messages) first, then
+    // `max_output_tokens`, then `request.tools?.map(...)`, then service_tier.
+    if prototype && !present(field(request, "maxOutputTokens")) {
+        return Err(ModuleError::new(
+            "Cannot read properties of undefined (reading 'maxOutputTokens')",
+        )
+        .into());
+    }
     let tools = field(request, "tools");
+    if present(tools) && !matches!(tools, JsValue::Array(_)) {
+        return Err(ModuleError::new("request.tools?.map is not a function").into());
+    }
+    let tools_json = if present(tools) {
+        JsValue::Array(
+            array(tools)
+                .iter()
+                .map(|tool| {
+                    Ok::<_, HostError>(object([
+                        ("type", "function".into()),
+                        ("name", field(tool, "name").clone()),
+                        ("description", field(tool, "description").clone()),
+                        ("parameters", normalize_schema(field(tool, "inputSchema"))?),
+                        ("strict", JsValue::Bool(true)),
+                    ]))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    } else {
+        JsValue::Undefined
+    };
+    let choice = tool_choice(field(request, "toolChoice"), false);
+    if prototype && field(request, "speed") != &JsValue::Undefined {
+        return Err(ModuleError::new(
+            "Cannot read properties of undefined (reading 'supportsSpeed')",
+        )
+        .into());
+    }
     let schema = field(request, "outputSchema");
     Ok(object([
         ("model", field(request, "model").clone()),
         ("input", JsValue::Array(input)),
         ("instructions", field(request, "systemPrompt").clone()),
-        (
-            "tools",
-            if present(tools) {
-                JsValue::Array(
-                    array(tools)
-                        .iter()
-                        .map(|tool| {
-                            Ok::<_, HostError>(object([
-                                ("type", "function".into()),
-                                ("name", field(tool, "name").clone()),
-                                ("description", field(tool, "description").clone()),
-                                ("parameters", normalize_schema(field(tool, "inputSchema"))?),
-                                ("strict", JsValue::Bool(true)),
-                            ]))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            } else {
-                JsValue::Undefined
-            },
-        ),
-        (
-            "tool_choice",
-            tool_choice(field(request, "toolChoice"), false),
-        ),
+        ("tools", tools_json),
+        ("tool_choice", choice),
         (
             "text",
             if truthy(schema) {
