@@ -1,10 +1,11 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 08:30 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
-- A6.8-pr3 | impl | ready | 原生 SkillManager list/read/write/create/delete/validate（wt-a68-skills，分支 claude/a68-skills）：Claude 实现中（_tmp/20261018-a68-skills/task.md），完成后协调者跑真实 TS 夹具与 cargo；import/scan/binding 留 pr4
-- D1-pr2 | impl | ready | CLI 第二批 = 清 #214/#215/#218/#219（wt-d1-cli，分支 claude/d1-pr2）：Claude 实现中（_tmp/20261018-d1-pr2/task.md），含 Node 探针与 D0 新场景（协调者用真实 TS 定标）
-- A6.2-pr3 | impl | ready | transcript/metadata 适配器（AsyncTranscriptStorageAdapter + NativeSessionStorageAdapter，wt-a62-run 复用，分支 claude/a62-pr3）：Claude 实现中（_tmp/20261018-a62-pr3/task.md）
+updated: 2026-10-18 12:05 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
+- glm-226 | gate | ready | #226 夹具三条（GLM 实现试点，wt-a68-skills，分支 glm/a68-p2-fixtures）：codex+DeepSeek 确认轮 0/0，闸门在跑；过后开 PR 合并
+- flake-230 | gate | ready | #230 host resume 用例 CI 不稳定（wt-a62-run，分支 codex/host-race-230，含 claude/flake-230）：根因为夹具小响应未触发 EPIPE，8×6 压测 48/48；两家 0/0；排在 glm-226 之后合并
+- p2-sweep-2 | impl | ready | P2-跟进开着 22 个（>10 触发定期清账）：派 1 个 worker（codex）集中清理，优先 #222/#226/#231 以外前置节点已近的；仍需两家评审
+- A6.8-pr4 | impl | ready | SkillManager import/scan/binding 选择 + gateway 接线；前置清 #226（glm-226 合并后剩余项）
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
 - #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
@@ -14,6 +15,9 @@ updated: 2026-10-18 08:30 · by 协调者(Claude Code 交互·opus-5.5·/loop �
 
 > ## 2026-10-18 08:30 · /loop 两小时交接（自 06:32 起）
 > 合并：#212（board）、#217（A6.2-pr2 RunRegistry，真实 TS 夹具 25 场景）、#220（D1-pr1 CLI 首批，D0 Rust 轮 10/10）。D1 首轮两家判「内置技能 Packaged 恒真」P0，改为真实探测 + D0 rust-stage 布局；A6.2 生成器默认参数让 quirk 场景没打到目标（GLM P1），加命中断言后重生成。新 P2-跟进：#213 #214 #215 #218 #219（D1）、#216（RunRegistry 抢陈旧锁竞态，与 TS 一致，前置于 A7）。worktree：主仓 + wt-a62-run（已合并，证据在其 _tmp，待清）+ wt-d1-cli（复用为 D1-pr2）+ wt-a68-skills；磁盘 38.6/80 GiB。后台：Claude 实现 A6.8-pr3 与 D1-pr2（各自 claude.status 写 exit= 即结束）。**下一步**：两路实现回来后协调者跑测试/定标→两家评审→闸门→串行合并；空档 triage A6.2-pr3。
+
+> ## 2026-10-18 12:05 · /loop 两小时交接（自 08:30 起）
+> 合并：#223（codex 回切）、#224（人定模型分工）、#227（A6.8-pr3 SkillManager）、#228（D1-pr2，D0 13 场景）、#229（A6.2-pr3 transcript 适配器）、#232（D1-pr3，codex 实现：CLI 共享配置加载 + 装置证据读取钉 inode）。仲裁：A6.8-pr3 两家分歧由 codex 实测仲裁（8 条全不成立）；A6.2-pr3 跨进程丢行（两家撞车）改 O_APPEND。GLM 实现试点（#226）四轮收敛，结论记入决策卡「模型分工」。新 P2-跟进 #222 #226 #230 #231；#230（CI 不稳定）根因已找到待合并。worktree：主仓 + wt-a62-run + wt-d1-cli + wt-a68-skills + wt-flake（已被 codex/host-race-230 取代，合并后可清）；磁盘 45.3/80 GiB。**下一步**：glm-226 → flake-230 串行合并；然后 p2-sweep-2（codex）与 A6.8-pr4 并行。
 
 > ## 2026-10-18 04:28 · /loop 交接（00:31 后漏写，守护会话提醒后补）
 > 合并：#203（A6.1-pr2）、#200（编排提速：GLM 经 claude -p、闸门 readonly=tools、上限 8 worktree / 80 GiB）、#202（DeepSeek 默认关思考）、#204（run-review-roles 容忍非 UTF-8 diff，挡 A6.2 闸门的最小修复）、#205（A6.2-pr1 ledger）。**codex 额度用尽至 10-22**：实现改 claude -p（opus），评审 GLM + DeepSeek（决策卡 state/decisions-20261017.md 末节）。在途：A6.8 两条与 D0 已收敛待开 PR；A6.1-pr3 等 Claude 修复（03:19 因任务书相对路径未启动，04:27 重启，空等约 1 小时）。worktree：主仓 + wt-a61 + wt-d0 + wt-a68-dialog + wt-a68-upload + wt-board；磁盘 42.1/80 GiB。**下一步**：A6.8 两条与 D0 开 PR 合并 → A6.1-pr3 确认 → A6.2-pr2 / D0-pr2。
