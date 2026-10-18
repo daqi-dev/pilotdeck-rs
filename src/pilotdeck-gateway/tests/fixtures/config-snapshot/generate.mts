@@ -367,6 +367,13 @@ for (const [file, sample] of [['catalog.json', 1], ['diagnostics.json', 18]] as 
   }
 }
 
+// The corpus replay above only takes loadable cases. `diag-1-empty` (input
+// `{}`) is the canonical error case: its first diagnostic is the recoverable
+// schemaVersion warning, while the thrown error's own code is the fatal
+// missing-agent error. Recording it pins `error.code` against
+// `error.diagnosticCode` instead of comparing the two by accident.
+add('existing-diagnostics-diag-1-empty', '{}');
+
 add('non-ascii-values', `schemaVersion: 1
 agent: {model: 中文/模型}
 model:

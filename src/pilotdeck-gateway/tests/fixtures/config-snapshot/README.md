@@ -7,15 +7,17 @@
 
 ## 目录与条数
 
-`oracle.json` 共 **156** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **157** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言：
 
-- 81 条手写用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project 合并、
-  provider/模型目录、credential、modules、SOP、proxy 迁移；其中 28 条为本轮
-  新增（第一轮评审反例：router 冲突、API key 字面量、清扫周期、tier 键序、
-  深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖）；
-- 20 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
-- 55 条来自既有 `tests/fixtures/config/diagnostics.json` 中 `load.ok` 的确定性
+- 82 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
+  合并、provider/模型目录、credential、modules、SOP、proxy 迁移；其中 28 条为
+  第二轮新增（第一轮评审反例：router 冲突、API key 字面量、清扫周期、tier 键序、
+  深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖），本轮新增 1 条
+  既有错误用例 `diag-1-empty`（输入 `{}`，`error.code` 与首条诊断的
+  `diagnosticCode` 不同）；
+- 18 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
+- 57 条来自既有 `tests/fixtures/config/diagnostics.json` 中 `load.ok` 的确定性
   抽样（按成功用例顺序每 18 条取 1 条）。
 
 既有 `config/` 原件是 catalog/诊断对拍，不含 YAML 目录；这里把其中可加载的
@@ -49,7 +51,9 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   `snapshot::content_hash(config)` 自洽，再对归一化后的 config 复算并逐字段比较。
   这样既校验哈希算法，又不把生成时的临时路径写进原件。
 - `undefined`、`NaN`、`±Infinity`、`-0` 用 `{"$":tag}` 编码；Rust 测试解码后
-  按 JavaScript 值语义比较，对象比较忽略属性顺序但保留属性有无。
+  按 JavaScript 值语义比较。对象按 `Object.entries` 的枚举顺序比较：canonical
+  array-index 键（如 `"2"`、`"10"`）升序在前，其余键按插入序；属性有无与键序
+  都算差异。生产侧快照在比较前用 `js_order` 归一化成同一顺序。
 
 ## 回放
 

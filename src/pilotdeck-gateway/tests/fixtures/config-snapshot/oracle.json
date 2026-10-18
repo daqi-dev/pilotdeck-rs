@@ -24,7 +24,7 @@
     "src/always-on/config/parseAlwaysOnConfig.ts": "232626f2e2f9d6dc1921dc43510cbc86afad2d94215ac3a97ed3a2de0ceaa0b1",
     "src/cron/config/parseCronConfig.ts": "2eac4629ef01401779b46bf996a86f5123a10b42aeb0b0a39f447f10f5b53e8d"
   },
-  "count": 156,
+  "count": 157,
   "cases": [
     {
       "id": "minimal-defaults",
@@ -21007,6 +21007,17 @@
             "enabled": false
           }
         }
+      }
+    },
+    {
+      "id": "existing-diagnostics-diag-1-empty",
+      "yaml": "{}\n",
+      "env": {},
+      "error": {
+        "name": "PilotConfigError",
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section.",
+        "diagnosticCode": "CONFIG_SCHEMA_VERSION_MISSING"
       }
     },
     {
