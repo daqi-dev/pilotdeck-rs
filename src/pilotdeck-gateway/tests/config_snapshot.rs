@@ -20,7 +20,7 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         oracle.get("count").and_then(JsValue::as_number),
         Some(cases.len() as f64)
     );
-    assert_eq!(cases.len(), 156, "fixture count changed");
+    assert_eq!(cases.len(), 157, "fixture count changed");
     let sources = oracle
         .get("sources")
         .and_then(JsValue::as_object)
@@ -179,15 +179,20 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
                         ));
                     }
                     let first = error.diagnostics.first().and_then(JsValue::as_object);
-                    for key in ["code", "hint"] {
+                    // The oracle records the first diagnostic's code as
+                    // `diagnosticCode`; the error's own `code` is a separate
+                    // top-level field (they can differ, e.g. a missing agent
+                    // section after a missing schemaVersion warning).
+                    for (actual_key, expected_key) in [("code", "diagnosticCode"), ("hint", "hint")]
+                    {
                         let actual = first
-                            .and_then(|d| d.get(key))
+                            .and_then(|d| d.get(actual_key))
                             .and_then(JsValue::as_string)
                             .and_then(|s| s.to_utf8().ok());
-                        if actual != expect(key) {
+                        if actual != expect(expected_key) {
                             failures.push(format!(
-                                "{id}: diagnostic.{key} {actual:?} != {:?}",
-                                expect(key)
+                                "{id}: diagnostic.{actual_key} {actual:?} != {:?}",
+                                expect(expected_key)
                             ));
                         }
                     }
