@@ -64,6 +64,10 @@ CASES = [
     ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
     ("GLM 写、四角色用 GLM 以外：放行", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
      + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", True, ""),
+    # #275 r3 codex P1-1：未闭合的行内前缀不得吞掉下一行的真 author 声明
+    ("未闭合行内前缀吞不掉下一行的真 author", BASE + "标记前缀为 `<!-- author:`。\n<!-- author:claude,codex -->\n<!-- reviewers: claude,glm -->", "codex/repro", False, "谁写谁不审"),
+    # #275 r3 codex P1-2：缩进代码块与被带 info string 的行错误「关闭」的围栏里的标记都不算
+    ("四空格缩进的 reviewers 不算标记", "<!-- pr-gate:waiver 纯文档测试用例足够长 -->\nRefs #1\n\n    <!-- reviewers: codex,deepseek -->\n", "claude/x", False, "恰好一个"),
 ]
 
 
@@ -71,6 +75,17 @@ def main() -> int:
     fails = 0
     for name, body, ref, ok, want in CASES:
         e = errs(body, ref)
+        good = (not e) if ok else (bool(e) and any(want in x for x in e))
+        print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
+        fails += not good
+    # #275 r3 codex P1-2：整体 check()（结果块 / 豁免）也不认缩进代码块、错关围栏与行内提到的写法
+    for name, body, ref, ok, want in [
+    ("四空格缩进的唯一结果块不算", "Refs #1\n<!-- reviewers: codex,deepseek -->\n\n    " + GLM_BLOCK.split("\n")[0] + "\n", "claude/x", False, "缺角色审计结果块"),
+    ("四空格缩进的 waiver 不算", "Refs #1\n<!-- reviewers: codex,deepseek -->\n\n    <!-- pr-gate:waiver 纯文档测试用例足够长 -->\n", "claude/x", False, "缺角色审计结果块"),
+    ("围栏内 ```python 行不是关闭围栏", "Refs #1\n<!-- reviewers: codex,deepseek -->\n```\n```python\n" + GLM_BLOCK.split("\n")[0] + "\n```\n", "claude/x", False, "缺角色审计结果块"),
+    ("行内提到的标记写法不算标记", "Refs #1\n说明：用 <!-- pr-gate:waiver 纯文档测试用例足够长 --> 豁免。\n<!-- reviewers: codex,deepseek -->\n", "claude/x", False, "缺角色审计结果块"),
+    ]:
+        e = gate.check(body, "", ref)
         good = (not e) if ok else (bool(e) and any(want in x for x in e))
         print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
         fails += not good
@@ -246,7 +261,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 27} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 31} 例）")
     return 1 if fails else 0
 
 

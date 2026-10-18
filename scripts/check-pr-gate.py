@@ -37,7 +37,7 @@ ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 取完整注释正文再校验（不能用 [^>]：正文含 > 时整条会被静默忽略）
 REVIEWERS = re.compile(r"<!--\s*reviewers\s*:(.*?)-->", re.I | re.S)
-AUTHOR = re.compile(r"<!--\s*author\s*:(.*?)-->", re.I | re.S)
+AUTHOR = re.compile(r"<!--\s*author\s*:((?:(?!<!--|-->)[^\n])*)-->", re.I)  # 单行、不跨另一个注释起止：未闭合前缀吞不掉后面的真声明
 FAMILY = {"codex": "codex", "gpt": "codex", "glm": "glm", "zai": "glm", "deepseek": "deepseek", "dsh": "deepseek",
           "ds": "deepseek", "claude": "claude", "opus": "claude", "sonnet": "claude", "anthropic": "claude"}
 BRANCH_FAMILY = {"codex": "codex", "glm": "glm", "deepseek": "deepseek", "claude": "claude"}
@@ -97,6 +97,7 @@ def trailer_families(base: str, head: str) -> set[str]:
 
 
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE_CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")  # CommonMark：关闭围栏不带 info string
 
 
 def _strip_inline(line: str) -> str:
@@ -131,14 +132,22 @@ def strip_code(body: str) -> str:
     for line in body.splitlines():
         m = FENCE.match(line)
         if fence:
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+            c = FENCE_CLOSE.match(line)
+            if c and c.group(1)[0] == fence[0] and len(c.group(1)) >= len(fence):
                 fence = None
             continue
         if m:
             fence = m.group(1)
             continue
+        if re.match(r"^(?: {4}|\t)", line):
+            continue  # 缩进代码块（≥4 空格或 tab）：其中的标记写法不算标记
         lines.append(_strip_inline(line))
     return "\n".join(lines)
+
+
+def marker_lines(body: str) -> str:
+    """只保留「整行就是 HTML 注释标记」的行（代码已剥）：标记必须独占一行，行内提到的写法不算。"""
+    return "\n".join(l for l in strip_code(body).splitlines() if l.strip().startswith("<!--") and l.strip().endswith("-->"))
 
 
 def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
@@ -146,7 +155,7 @@ def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) 
     # author 只做加法、读原文：剥代码只可能让作者变少（=放宽），所以作者声明一律不剥
     names = [x for m in AUTHOR.findall(body) for x in re.split(r"[,\s]+", m.strip()) if x]
     declared = {family(x) for x in names if family(x)}
-    body = strip_code(body)  # reviewers 等其余标记去掉代码引用再看（剥掉只会让它们变少=更严）
+    body = marker_lines(body)  # reviewers 等其余标记：去掉代码引用、且须独占一行（只会让它们变少=更严）
     branch = BRANCH_FAMILY.get(head_ref.strip().split("/", 1)[0].lower()) if "/" in head_ref else None
     authors = declared | ({branch} if branch else set()) | (trailers or set())
     if not branch and not declared:
@@ -220,8 +229,9 @@ def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | No
     # 所有标记（结果块、豁免、issue、reviewers/author）统一不认代码里引用的写法，与 runner 检查同口径。
     # 真结果块被塞进围栏 = 缺结果块 → FAIL，方向是拦而不是放。
     prose = strip_code(body)
-    blocks = list(MARKER.finditer(prose))
-    w = WAIVER.search(prose)
+    marks = marker_lines(body)
+    blocks = list(MARKER.finditer(marks))
+    w = WAIVER.search(marks)
     if blocks:
         # 分批（--paths）评审可贴多个结果块：逐块校验，任一无效即拒
         for n, m in enumerate(blocks, 1):
@@ -235,7 +245,7 @@ def check(body: str, head: str = "", head_ref: str = "", trailers: set[str] | No
             print(f"check-pr-gate: 豁免——{reason}")
     else:
         errs.append("缺角色审计结果块（python3 scripts/run-review-roles.py 生成 summary.md，贴进 PR）或 pr-gate:waiver 豁免")
-    if not ISSUE_LINK.search(prose) and not NO_ISSUE.search(prose):
+    if not ISSUE_LINK.search(prose) and not NO_ISSUE.search(marks):
         errs.append("缺 issue 关联：Closes/Fixes #N（合并即关）或 Refs #N（单保持开），或 <!-- no-issue 理由 -->")
     errs.extend(check_reviewers(body, head_ref, trailers))
     return errs
@@ -272,8 +282,11 @@ def main() -> int:
         name = pr.get("baseRefName", "")
         if name:
             # 目标分支的当前 tip，不是 PR 创建时冻结的 baseRefOid（PR rebase 过 main 时后者会把 main 的提交算进来）
-            subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{name}:refs/remotes/origin/{name}", a.head],
-                           capture_output=True)
+            fr = subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{name}:refs/remotes/origin/{name}", a.head],
+                                capture_output=True, text=True)
+            if fr.returncode != 0:
+                print(f"check-pr-gate: FAIL 刷新目标分支 {name} 失败（rc={fr.returncode}）：{fr.stderr.strip()[:200]}；不用陈旧缓存判作者")
+                return 1
             base = f"origin/{name}"
     elif "PR_BODY" in os.environ:
         body = os.environ["PR_BODY"]
