@@ -17,10 +17,13 @@ const turnOrder = page => surface(page).evaluate((node, labels) => {
   for (const label of labels) for (let at = text.indexOf(label); at >= 0; at = text.indexOf(label, at + 1)) hits.push([at, label]);
   return hits.sort((a, b) => a[0] - b[0]).map(([, label]) => label);
 }, TURN);
-// :31-32/:42 also fail on an extra store row; turnOrder alone cannot see a row
-// sharing no text with TURN. Count outermost keyed rows only ([data-message-key],
-// the contract selector of a-class-disposition.md:27, with no keyed ancestor), so
-// an extra top-level row fails while the trace's inner split stays free.
+// :31-32/:42 also fail on an extra store row. turnOrder cannot see a row that
+// shares no text with TURN, so also count rendered top-level keyed rows
+// ([data-message-key] with no keyed ancestor). The row-layering contract
+// (a-class-disposition.md:29) fixes a folded turn's top-level rows to user, trace
+// host and answer, with trace children inside the host. Not covered: store rows
+// that never render (e.g. status), and an extra row inside the trace sharing no
+// text with TURN.
 // Old side, derived from source: the compact segment's previous host is the
 // thinking row (processGrouping.ts:377-389, :681-704), so it rides as that row's
 // after-attachment (:864-886); the fold keeps prior-user, prior-answer, user,

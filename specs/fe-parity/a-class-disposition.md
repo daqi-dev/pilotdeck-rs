@@ -26,6 +26,8 @@
 
 **定位契约（不算钩子，新前端须保留）**：已有的 F2 黑盒套件就用这些 DOM 定位点（`scripts/fe-parity/tests/streaming-scroll.spec.mjs:7, 46, 59`），改写沿用同一口径：`[data-chat-search-surface]`、`[data-message-key]`、`[data-stream-scroll-viewport]`、region「Live thinking content」、按钮「Back to latest」「Thought process」（含 `aria-expanded`）、`mark[aria-current="true"]`、searchbox，以及 `data-testid="assistant-message-actions"` 和 `assistant-message-model`。
 
+**行分层契约（同属定位契约）**：已折叠的完成轮里，轨迹宿主必须是独立的顶层 `[data-message-key]` 行（顶层 = 父链上没有别的 keyed 祖先）；该轮可见的顶层 keyed 行只能是 user、轨迹宿主、answer 三种，按此顺序排列；轨迹展开后的子行（thinking、tool、compact 等）可以带 `[data-message-key]`，但必须嵌在宿主行内，不得平铺到顶层。依据（旧侧，基线同上）：`ui/src/components/chat-v2/processGrouping.ts:961-969` 折叠时只推出 user 项、一个合成的 `turn-trace-*` 宿主项和 answer 项，其余项进入宿主的 `turnTrace.items`（:944-956）；`ui/src/components/chat-v2/MessagesPaneV2.tsx:1096` 每项一个 `MeasuredMessageItem`，其根 div 带 `data-message-key`（:288-293），展开的子行渲染在宿主 item 之内（:1110-1125）。未折叠的轮（进行中、异常、无最终回答，:936-939）不受此条约束。#1 改写按此契约数顶层 keyed 行（`scripts/fe-parity/tests/a-streaming-lifecycle.spec.mjs` 的 `ROWS`）。
+
 **改写时一律去掉的内部断言**：
 - `store.getMessages().map(kind)`（lifecycle L31-32、L42）→ 改为按 DOM 行顺序断言；
 - `detail.isLoading`（lifecycle L201）→ 改为等 mock 路由放行；
