@@ -572,8 +572,18 @@ fn errno_admission_equals_the_codes_each_method_recorded() {
 #[test]
 fn unmeasured_errnos_require_the_host() {
     let io = |n| io::Error::from_raw_os_error(n);
-    let e = SkillError::io(&io(libc::EACCES), "stat", Some("/x")).admit("skill_list");
-    assert!(e.requires_host && e.code == "NODE_IO_REQUIRED" && e.message.is_empty());
+    // Same convention as the other admitted methods: every errno outside a
+    // method's measured set, across the whole libuv table, goes to the host.
+    for method in super::binding::SkillMethod::ALL {
+        for errno in crate::node_io::unmeasured_errnos(method.wire()) {
+            let e = SkillError::io(&io(errno), "stat", Some("/x")).admit(method.wire());
+            assert!(
+                e.requires_host && e.code == "NODE_IO_REQUIRED" && e.message.is_empty(),
+                "{} {errno}",
+                method.wire()
+            );
+        }
+    }
     let e = SkillError::io(&io(libc::ENOTDIR), "scandir", Some("/x")).admit("skill_list");
     assert_eq!(
         (e.requires_host, e.message.as_str()),

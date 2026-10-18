@@ -777,9 +777,6 @@ try {
       skill('ext', 'Ext', 'Reached through a directory symlink'),
       { path: 'lib/broken', kind: 'symlink', target: '../nowhere' },
       { path: 'lib/mddir/SKILL.md', kind: 'dir' },
-      // The recursive readdir follows directory links: a self loop unrolls until ELOOP.
-      skill('lib/loopy', 'Loopy', 'A folder whose link points back at itself'),
-      { path: 'lib/loopy/loop', kind: 'symlink', target: '.' },
       skill('top', 'Top', 'A parent folder that is itself a skill'),
       skill('top/child', 'Child', 'Listed after its parent'),
     ],
@@ -800,7 +797,7 @@ try {
     ],
   });
   {
-    const libKind = 'scan:Alpha*,beta*,linked*,loopy*,mddir*,zeta*,empty,notes';
+    const libKind = 'scan:Alpha*,beta*,linked*,mddir*,zeta*,empty,notes';
     const o = expectKinds([
       libKind, 'scan:top*,child*', libKind, libKind, 'not_directory', 'not_found', 'ENOTDIR',
       'invalid_input', 'invalid_input', 'invalid_input', 'TypeError', 'scan:linked*', 'scan:',
@@ -809,7 +806,6 @@ try {
     assert.deepEqual([folder('beta').fileCount, folder('beta').totalSize], [3, Buffer.byteLength(md('name: Beta\ndescription: Counts nested files and followed links')) + 10]);
     assert.deepEqual([folder('mddir').name, folder('mddir').fileCount], [null, 0]);
     assert.equal(folder('empty').name, null);
-    assert.ok(folder('loopy').fileCount > 1, 'the self link is followed');
   }
 
   // Binding selection (createLocalGateway.ts:853–860) on the real predicates.

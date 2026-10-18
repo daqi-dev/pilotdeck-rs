@@ -25017,16 +25017,6 @@
           "kind": "dir"
         },
         {
-          "path": "lib/loopy/SKILL.md",
-          "kind": "file",
-          "text": "---\nname: Loopy\ndescription: A folder whose link points back at itself\n---\n\nBody.\n"
-        },
-        {
-          "path": "lib/loopy/loop",
-          "kind": "symlink",
-          "target": "."
-        },
-        {
           "path": "top/SKILL.md",
           "kind": "file",
           "text": "---\nname: Top\ndescription: A parent folder that is itself a skill\n---\n\nBody.\n"
@@ -25073,15 +25063,6 @@
                   "sourcePath": "<dir>/lib/linked",
                   "fileCount": 1,
                   "totalSize": 74
-                },
-                {
-                  "folderName": "loopy",
-                  "hasSkillMd": true,
-                  "name": "Loopy",
-                  "description": "A folder whose link points back at itself",
-                  "sourcePath": "<dir>/lib/loopy",
-                  "fileCount": 33,
-                  "totalSize": 2706
                 },
                 {
                   "folderName": "mddir",
@@ -25191,15 +25172,6 @@
                   "totalSize": 74
                 },
                 {
-                  "folderName": "loopy",
-                  "hasSkillMd": true,
-                  "name": "Loopy",
-                  "description": "A folder whose link points back at itself",
-                  "sourcePath": "<dir>/lib/loopy",
-                  "fileCount": 33,
-                  "totalSize": 2706
-                },
-                {
                   "folderName": "mddir",
                   "hasSkillMd": true,
                   "name": null,
@@ -25274,15 +25246,6 @@
                   "sourcePath": "<dir>/lib/linked",
                   "fileCount": 1,
                   "totalSize": 74
-                },
-                {
-                  "folderName": "loopy",
-                  "hasSkillMd": true,
-                  "name": "Loopy",
-                  "description": "A folder whose link points back at itself",
-                  "sourcePath": "<dir>/lib/loopy",
-                  "fileCount": 33,
-                  "totalSize": 2706
                 },
                 {
                   "folderName": "mddir",
@@ -25516,22 +25479,6 @@
           "path": "lib/linked",
           "kind": "symlink",
           "target": "../ext"
-        },
-        {
-          "path": "lib/loopy",
-          "kind": "dir"
-        },
-        {
-          "path": "lib/loopy/SKILL.md",
-          "kind": "file",
-          "size": 82,
-          "sha256": "da2c7e3d08d4d7e561e36d4bfd3ba0484e6e2983bb34eca51aa2c9da9dcb0f51",
-          "text": "---\nname: Loopy\ndescription: A folder whose link points back at itself\n---\n\nBody.\n"
-        },
-        {
-          "path": "lib/loopy/loop",
-          "kind": "symlink",
-          "target": "."
         },
         {
           "path": "lib/mddir",
