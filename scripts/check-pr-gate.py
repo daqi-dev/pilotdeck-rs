@@ -37,7 +37,7 @@ ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs)\s+#\d
 NO_ISSUE = re.compile(r"<!--\s*no-issue\s+(\S.*?)\s*-->", re.S)
 # 取完整注释正文再校验（不能用 [^>]：正文含 > 时整条会被静默忽略）
 REVIEWERS = re.compile(r"<!--\s*reviewers\s*:(.*?)-->", re.I | re.S)
-AUTHOR = re.compile(r"<!--\s*author\s*:((?:(?!<!--|-->)[^\n])*)-->", re.I)  # 单行、不跨另一个注释起止：未闭合前缀吞不掉后面的真声明
+AUTHOR = re.compile(r"<!--\s*author\s*:((?:(?!<!--|-->).)*)-->", re.I | re.S)  # 可折行，但不跨另一个注释起止：未闭合前缀吞不掉后面的真声明，折行声明也照样计入
 FAMILY = {"codex": "codex", "gpt": "codex", "glm": "glm", "zai": "glm", "deepseek": "deepseek", "dsh": "deepseek",
           "ds": "deepseek", "claude": "claude", "opus": "claude", "sonnet": "claude", "anthropic": "claude"}
 BRANCH_FAMILY = {"codex": "codex", "glm": "glm", "deepseek": "deepseek", "claude": "claude"}
@@ -128,8 +128,12 @@ def _strip_inline(line: str) -> str:
 def strip_code(body: str) -> str:
     """去掉代码块（行首 ``` 或 ~~~ 围栏）与行内代码：文档里引用的标记写法不算标记。
     围栏只认行首（≤3 空格缩进），所以 HTML 注释里出现的 ``` 不会吞掉后面的真标记。"""
-    lines, fence = [], None
+    lines, fence, comment = [], None, False
     for line in body.splitlines():
+        if comment:  # 跨行 HTML 注释（CommonMark type-2 HTML 块）里出现的 ``` 不是围栏
+            lines.append(line)
+            comment = "-->" not in line
+            continue
         m = FENCE.match(line)
         if fence:
             c = FENCE_CLOSE.match(line)
@@ -142,6 +146,8 @@ def strip_code(body: str) -> str:
         if re.match(r"^(?: {4}|\t)", line):
             continue  # 缩进代码块（≥4 空格或 tab）：其中的标记写法不算标记
         lines.append(_strip_inline(line))
+        last = line.rfind("<!--")
+        comment = last >= 0 and "-->" not in line[last:]
     return "\n".join(lines)
 
 

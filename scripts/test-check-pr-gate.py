@@ -64,6 +64,10 @@ CASES = [
     ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
     ("GLM 写、四角色用 GLM 以外：放行", GLM_BLOCK.replace("runner=zai model=glm-5.3", "runner=anthropic model=claude-sonnet-5-5")
      + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", True, ""),
+    # #275 gate-aff4d89 P0：折行的 author 声明也要计入（只多算不少算）
+    ("折行 author 声明照样计入", BASE + "<!-- author: deepseek -->\n<!-- author: claude,\nglm -->\n<!-- reviewers: claude,glm -->", "chore/x", False, "谁写谁不审"),
+    # gate-aff4d89 P1：跨行注释里的顶格 ``` 不是围栏，吞不掉后面的真标记
+    ("跨行注释里的 ``` 不吞后面的真 reviewers", BASE + "<!-- note:\n```\nwhatever\n-->\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
     # #275 r3 codex P1-1：未闭合的行内前缀不得吞掉下一行的真 author 声明
     ("未闭合行内前缀吞不掉下一行的真 author", BASE + "标记前缀为 `<!-- author:`。\n<!-- author:claude,codex -->\n<!-- reviewers: claude,glm -->", "codex/repro", False, "谁写谁不审"),
     # #275 r3 codex P1-2：缩进代码块与被带 info string 的行错误「关闭」的围栏里的标记都不算
