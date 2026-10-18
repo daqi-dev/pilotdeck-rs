@@ -1,0 +1,1938 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceTreeSha256": "79a648cceae29e0958d64a14008ee38ab7fb74d977ca4eca6a06eff511164181",
+  "sourceTreeFiles": 1000,
+  "sourceSha256": {
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/cli/LocalGatewayBootConfig.ts": "50868660983195f433ec076abc14a42f00d9673ed7ba769468b151f81af5dd8a",
+    "src/gateway/dialog/projectRegistry.ts": "adab87e1783dc39f017e7d6b9bbd9aaa286b60235ad622709752499443e794fb",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/storage/workspaceSnapshot.ts": "e6364694245dc9f3f98378161b4de0f891d6efa022c1e7c5b018855f68931a93",
+    "src/web/server/listProjects.ts": "b12e71223d9667950a41dccc1215bfcca6b4cb9999f5ef43439286940131f210"
+  },
+  "node": "v22.22.0",
+  "v8": "12.4.254.21-node.33",
+  "platform": "darwin",
+  "arch": "arm64",
+  "locale": "en-US",
+  "scenarios": [
+    {
+      "name": "projection",
+      "tree": [
+        {
+          "path": "outside.txt",
+          "kind": "file",
+          "b64": "b3V0c2lkZQo="
+        },
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/manual.txt",
+          "kind": "file",
+          "b64": "bWFudWFsCg=="
+        },
+        {
+          "path": "snapshots/objects/sha256",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/sha256/b6",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/sha256/b6/a9",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/sha256/b6/a9/b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+          "kind": "file",
+          "b64": "YWxwaGEK"
+        },
+        {
+          "path": "snapshots/objects/sha256/f2",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/sha256/f2/c8",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/objects/sha256/f2/c8/f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad",
+          "kind": "file",
+          "b64": "YmV0YQo="
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/broken-object",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/broken-object/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImJyb2tlbiIsCiAgIndvcmtzcGFjZUlkIjogInAtbWFpbiIsCiAgInNlc3Npb25JZCI6ICJzZXNzLWEiLAogICJ0dXJuSWQiOiAiYnJva2VuLXR1cm4iLAogICJydW5JZCI6ICJicm9rZW4tcnVuIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJjcmVhdGVkQXQiOiAiMjAyNS0xMi0yOVQyMzo1OTo1OS4wMDBaIiwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiYnJva2VuLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9taXNzaW5nLnR4dCIKICAgIH0KICBdCn0="
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/escape-object",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/escape-object/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImVzY2FwZSIsCiAgIndvcmtzcGFjZUlkIjogInAtbWFpbiIsCiAgInNlc3Npb25JZCI6ICJzZXNzLWEiLAogICJ0dXJuSWQiOiAiZXNjYXBlLXR1cm4iLAogICJydW5JZCI6ICJlc2NhcGUtcnVuIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJjcmVhdGVkQXQiOiAiMjAyNS0xMi0zMVQyMzo1OTo1OS4wMDBaIiwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiZXNjYXBlZC50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDgsCiAgICAgICJvYmplY3RLZXkiOiAiLi4vb3V0c2lkZS50eHQiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICJhYnNvbHV0ZS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDksCiAgICAgICJvYmplY3RLZXkiOiAiPGRpcj4vYWJzb2x1dGUudHh0IgogICAgfSwKICAgIHsKICAgICAgInBhdGgiOiAibGluayIsCiAgICAgICJlbnRyeVR5cGUiOiAic3ltbGluayIsCiAgICAgICJzaXplIjogMCwKICAgICAgImxpbmtUYXJnZXQiOiAiYWxwaGEudHh0IgogICAgfSwKICAgIHsKICAgICAgInBhdGgiOiAic2tpcC1taXNzaW5nLW9iamVjdC50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDUKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogIm5lc3RlZC9kZWVwLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJzaXplIjogNywKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL21hbnVhbC50eHQiCiAgICB9CiAgXQp9"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/missing-created-at",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/missing-created-at/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogIm1pc3NpbmciLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1hIiwKICAidHVybklkIjogIm1pc3NpbmctdHVybiIsCiAgInJ1bklkIjogIm1pc3NpbmctcnVuIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJlbnRyaWVzIjogW10KfQ=="
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/unsafe-path",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/sess-a/snapshots/unsafe-path/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogInVuc2FmZSIsCiAgIndvcmtzcGFjZUlkIjogInAtbWFpbiIsCiAgInNlc3Npb25JZCI6ICJzZXNzLWEiLAogICJ0dXJuSWQiOiAidW5zYWZlLXR1cm4iLAogICJydW5JZCI6ICJ1bnNhZmUtcnVuIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJjcmVhdGVkQXQiOiAiMjAyNS0xMi0zMFQyMzo1OTo1OS4wMDBaIiwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiLi4vZXZpbC50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvbWFudWFsLnR4dCIKICAgIH0KICBdCn0="
+        },
+        {
+          "path": "snapshots/workspaces/other-workspace",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/other-workspace/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/other-workspace/sessions/sess-a",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/other-workspace/sessions/sess-a/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/other-workspace/sessions/sess-a/snapshots/219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/other-workspace/sessions/sess-a/snapshots/219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/other-workspace/sessions/sess-a/snapshots/219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogIjIxOWI4MWQzNzg2YzIxMjFkNjcxOTU2YjIxNzRiNzUwM2JmNTMzZTdkYzYxOWU5N2RhZjM2ZGQ4NWZhZGM2MTkiLAogICJ3b3Jrc3BhY2VJZCI6ICJvdGhlci13b3Jrc3BhY2UiLAogICJzZXNzaW9uSWQiOiAic2Vzcy1hIiwKICAidHVybklkIjogInQtb3RoZXIiLAogICJydW5JZCI6ICJydW4tdC1vdGhlciIsCiAgInBoYXNlIjogInByZV91c2VyIiwKICAiYWJub3JtYWwiOiBmYWxzZSwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiYWxwaGEudHh0IiwKICAgICAgImVudHJ5VHlwZSI6ICJmaWxlIiwKICAgICAgInNpemUiOiA2LAogICAgICAiZGlnZXN0IjogImI2YTk4ZDljZTlhMmQ5MTQ5Mjg4ZmEzZGY0MmQzNzdjM2U0MjczN2FmZGNkYWY3MTRlMzNjMGExMDBiNTEwNjAiLAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvc2hhMjU2L2I2L2E5L2I2YTk4ZDljZTlhMmQ5MTQ5Mjg4ZmEzZGY0MmQzNzdjM2U0MjczN2FmZGNkYWY3MTRlMzNjMGExMDBiNTEwNjAiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICJsaW5rIiwKICAgICAgImVudHJ5VHlwZSI6ICJzeW1saW5rIiwKICAgICAgInNpemUiOiAwLAogICAgICAibGlua1RhcmdldCI6ICJhbHBoYS50eHQiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICJuZXN0ZWQvYmV0YS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDUsCiAgICAgICJkaWdlc3QiOiAiZjJjODJkZWNkZDcxODFjZjk4OTQ1OTI5YTYyNTk4ZGI3ZTZiNDc3ZTExZjZlMGViMGFlOTcwMjBlZmYxNTFhZCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvZjIvYzgvZjJjODJkZWNkZDcxODFjZjk4OTQ1OTI5YTYyNTk4ZGI3ZTZiNDc3ZTExZjZlMGViMGFlOTcwMjBlZmYxNTFhZCIKICAgIH0KICBdLAogICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDhaIgp9"
+        },
+        {
+          "path": "snapshots/workspaces/p-main",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogIjFkY2EyYjJkY2RhMTdmYTk3N2VjMTVmYTQ4ZWM1NTIyMjE3NjE5YjFhYTZkMTc3YjEyZjVlMTE1NjYyZjgxMGIiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1hIiwKICAidHVybklkIjogInQxIiwKICAicnVuSWQiOiAicnVuLXQxIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJhYm5vcm1hbCI6IGZhbHNlLAogICJlbnRyaWVzIjogWwogICAgewogICAgICAicGF0aCI6ICJhbHBoYS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDYsCiAgICAgICJkaWdlc3QiOiAiYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvYjYvYTkvYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogImxpbmsiLAogICAgICAiZW50cnlUeXBlIjogInN5bWxpbmsiLAogICAgICAic2l6ZSI6IDAsCiAgICAgICJsaW5rVGFyZ2V0IjogImFscGhhLnR4dCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogIm5lc3RlZC9iZXRhLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJzaXplIjogNSwKICAgICAgImRpZ2VzdCI6ICJmMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIiwKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL3NoYTI1Ni9mMi9jOC9mMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIgogICAgfQogIF0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMVoiCn0="
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogIjUwMjJkNjAzNDU0NGI1ZmZkMWI0MDdiNzc3NmQzZjBlYTE2NjViMWI1OTU2NGI1OTAxYmMyMGRlNDRkNWJkZDMiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1hIiwKICAidHVybklkIjogInQyIiwKICAicnVuSWQiOiAicnVuLXQyIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJhYm5vcm1hbCI6IGZhbHNlLAogICJlbnRyaWVzIjogWwogICAgewogICAgICAicGF0aCI6ICJhbHBoYS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDYsCiAgICAgICJkaWdlc3QiOiAiYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvYjYvYTkvYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogImxpbmsiLAogICAgICAiZW50cnlUeXBlIjogInN5bWxpbmsiLAogICAgICAic2l6ZSI6IDAsCiAgICAgICJsaW5rVGFyZ2V0IjogImFscGhhLnR4dCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogIm5lc3RlZC9iZXRhLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJzaXplIjogNSwKICAgICAgImRpZ2VzdCI6ICJmMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIiwKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL3NoYTI1Ni9mMi9jOC9mMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIgogICAgfQogIF0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwMloiCn0="
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/b04f48403ceab2c042e118a5785e6fe541654d37cc2e842c9177e66156f20ad0",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/b04f48403ceab2c042e118a5785e6fe541654d37cc2e842c9177e66156f20ad0/_FAILED.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImIwNGY0ODQwM2NlYWIyYzA0MmUxMThhNTc4NWU2ZmU1NDE2NTRkMzdjYzJlODQyYzkxNzdlNjYxNTZmMjBhZDAiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1hIiwKICAidHVybklkIjogInQtZmFpbGVkIiwKICAicnVuSWQiOiAicnVuLXQtZmFpbGVkIiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJzdGF0ZSI6ICJmYWlsZWQiLAogICJlcnJvciI6ICJXb3Jrc3BhY2UgZGlkIG5vdCBiZWNvbWUgcXVpZXNjZW50IGJlZm9yZSBzbmFwc2hvdCBjYXB0dXJlLiIsCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwOVoiCn0="
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImI5NDBmMTNkMzVlNjY5MzRmNmJiNTA0M2ZkNWE3NGExMjVhYjM2MDcxNDNlMWFmZjM4NzIyOTE5YTExZmFhMjIiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1hIiwKICAidHVybklkIjogInQ0IiwKICAicnVuSWQiOiAicnVuLXQ0IiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJhYm5vcm1hbCI6IGZhbHNlLAogICJlbnRyaWVzIjogWwogICAgewogICAgICAicGF0aCI6ICJhbHBoYS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDYsCiAgICAgICJkaWdlc3QiOiAiYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvYjYvYTkvYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogImxpbmsiLAogICAgICAiZW50cnlUeXBlIjogInN5bWxpbmsiLAogICAgICAic2l6ZSI6IDAsCiAgICAgICJsaW5rVGFyZ2V0IjogImFscGhhLnR4dCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogIm5lc3RlZC9iZXRhLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJzaXplIjogNSwKICAgICAgImRpZ2VzdCI6ICJmMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIiwKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL3NoYTI1Ni9mMi9jOC9mMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIgogICAgfQogIF0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwNFoiCn0="
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImVmNmExYTUyNmI2ODlmOTg0ZDllNGVhOGVmYTNlMDUwZDQ1YzEyYWE1NWE3YzQ3MjgzNTQ1Mzg5MzVkMzNmNGIiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1hIiwKICAidHVybklkIjogInQzIiwKICAicnVuSWQiOiAicnVuLXQzIiwKICAicGhhc2UiOiAicG9zdF9hZ2VudCIsCiAgImFibm9ybWFsIjogdHJ1ZSwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiYWxwaGEudHh0IiwKICAgICAgImVudHJ5VHlwZSI6ICJmaWxlIiwKICAgICAgInNpemUiOiA2LAogICAgICAiZGlnZXN0IjogImI2YTk4ZDljZTlhMmQ5MTQ5Mjg4ZmEzZGY0MmQzNzdjM2U0MjczN2FmZGNkYWY3MTRlMzNjMGExMDBiNTEwNjAiLAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvc2hhMjU2L2I2L2E5L2I2YTk4ZDljZTlhMmQ5MTQ5Mjg4ZmEzZGY0MmQzNzdjM2U0MjczN2FmZGNkYWY3MTRlMzNjMGExMDBiNTEwNjAiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICJsaW5rIiwKICAgICAgImVudHJ5VHlwZSI6ICJzeW1saW5rIiwKICAgICAgInNpemUiOiAwLAogICAgICAibGlua1RhcmdldCI6ICJhbHBoYS50eHQiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICJuZXN0ZWQvYmV0YS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDUsCiAgICAgICJkaWdlc3QiOiAiZjJjODJkZWNkZDcxODFjZjk4OTQ1OTI5YTYyNTk4ZGI3ZTZiNDc3ZTExZjZlMGViMGFlOTcwMjBlZmYxNTFhZCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvZjIvYzgvZjJjODJkZWNkZDcxODFjZjk4OTQ1OTI5YTYyNTk4ZGI3ZTZiNDc3ZTExZjZlMGViMGFlOTcwMjBlZmYxNTFhZCIKICAgIH0KICBdLAogICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDNaIgp9"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogIjQyMWIwYmQzNzRkNWQyYTAxMWI4YTc0M2I5YTM2N2UyOThhZjZjMDc0NDg3N2M1NTkzYTkzODYxOWE0MDIwNGYiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1iIiwKICAidHVybklkIjogInQ3IiwKICAicnVuSWQiOiAicnVuLXQ3IiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJhYm5vcm1hbCI6IGZhbHNlLAogICJlbnRyaWVzIjogWwogICAgewogICAgICAicGF0aCI6ICJhbHBoYS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDYsCiAgICAgICJkaWdlc3QiOiAiYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvYjYvYTkvYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogImxpbmsiLAogICAgICAiZW50cnlUeXBlIjogInN5bWxpbmsiLAogICAgICAic2l6ZSI6IDAsCiAgICAgICJsaW5rVGFyZ2V0IjogImFscGhhLnR4dCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogIm5lc3RlZC9iZXRhLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJzaXplIjogNSwKICAgICAgImRpZ2VzdCI6ICJmMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIiwKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL3NoYTI1Ni9mMi9jOC9mMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIgogICAgfQogIF0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwN1oiCn0="
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImZhMzllNmJlNDY4Njg0OWUzNDc0M2IyMmY3ZTIxMDc4OTkyYzEyZDU5ODZjZDQxNDg4NTZmODBhMTU0MjQxNTgiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1iIiwKICAidHVybklkIjogInQ1IiwKICAicnVuSWQiOiAicnVuLXQ1IiwKICAicGhhc2UiOiAicHJlX3VzZXIiLAogICJhYm5vcm1hbCI6IGZhbHNlLAogICJlbnRyaWVzIjogWwogICAgewogICAgICAicGF0aCI6ICJhbHBoYS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDYsCiAgICAgICJkaWdlc3QiOiAiYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvYjYvYTkvYjZhOThkOWNlOWEyZDkxNDkyODhmYTNkZjQyZDM3N2MzZTQyNzM3YWZkY2RhZjcxNGUzM2MwYTEwMGI1MTA2MCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogImxpbmsiLAogICAgICAiZW50cnlUeXBlIjogInN5bWxpbmsiLAogICAgICAic2l6ZSI6IDAsCiAgICAgICJsaW5rVGFyZ2V0IjogImFscGhhLnR4dCIKICAgIH0sCiAgICB7CiAgICAgICJwYXRoIjogIm5lc3RlZC9iZXRhLnR4dCIsCiAgICAgICJlbnRyeVR5cGUiOiAiZmlsZSIsCiAgICAgICJzaXplIjogNSwKICAgICAgImRpZ2VzdCI6ICJmMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIiwKICAgICAgIm9iamVjdEtleSI6ICJvYmplY3RzL3NoYTI1Ni9mMi9jOC9mMmM4MmRlY2RkNzE4MWNmOTg5NDU5MjlhNjI1OThkYjdlNmI0NzdlMTFmNmUwZWIwYWU5NzAyMGVmZjE1MWFkIgogICAgfQogIF0sCiAgImNyZWF0ZWRBdCI6ICIyMDI2LTAxLTAxVDAwOjAwOjAwLjAwNVoiCn0="
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/_COMMITTED",
+          "kind": "file",
+          "b64": ""
+        },
+        {
+          "path": "snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/manifest.json",
+          "kind": "file",
+          "b64": "ewogICJzbmFwc2hvdElkIjogImZlOTJjYWEwYjRlODY5Nzk0NjZlZmQzMDkxNGRjMGVkZjE0YTQ2NGU1ZTQ2NzU1NWU1YThlZjMxNzkzZDIxODgiLAogICJ3b3Jrc3BhY2VJZCI6ICJwLW1haW4iLAogICJzZXNzaW9uSWQiOiAic2Vzcy1iIiwKICAidHVybklkIjogInQ2IiwKICAicnVuSWQiOiAicnVuLXQ2IiwKICAicGhhc2UiOiAicG9zdF9hZ2VudCIsCiAgImFibm9ybWFsIjogdHJ1ZSwKICAiZW50cmllcyI6IFsKICAgIHsKICAgICAgInBhdGgiOiAiYWxwaGEudHh0IiwKICAgICAgImVudHJ5VHlwZSI6ICJmaWxlIiwKICAgICAgInNpemUiOiA2LAogICAgICAiZGlnZXN0IjogImI2YTk4ZDljZTlhMmQ5MTQ5Mjg4ZmEzZGY0MmQzNzdjM2U0MjczN2FmZGNkYWY3MTRlMzNjMGExMDBiNTEwNjAiLAogICAgICAib2JqZWN0S2V5IjogIm9iamVjdHMvc2hhMjU2L2I2L2E5L2I2YTk4ZDljZTlhMmQ5MTQ5Mjg4ZmEzZGY0MmQzNzdjM2U0MjczN2FmZGNkYWY3MTRlMzNjMGExMDBiNTEwNjAiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICJsaW5rIiwKICAgICAgImVudHJ5VHlwZSI6ICJzeW1saW5rIiwKICAgICAgInNpemUiOiAwLAogICAgICAibGlua1RhcmdldCI6ICJhbHBoYS50eHQiCiAgICB9LAogICAgewogICAgICAicGF0aCI6ICJuZXN0ZWQvYmV0YS50eHQiLAogICAgICAiZW50cnlUeXBlIjogImZpbGUiLAogICAgICAic2l6ZSI6IDUsCiAgICAgICJkaWdlc3QiOiAiZjJjODJkZWNkZDcxODFjZjk4OTQ1OTI5YTYyNTk4ZGI3ZTZiNDc3ZTExZjZlMGViMGFlOTcwMjBlZmYxNTFhZCIsCiAgICAgICJvYmplY3RLZXkiOiAib2JqZWN0cy9zaGEyNTYvZjIvYzgvZjJjODJkZWNkZDcxODFjZjk4OTQ1OTI5YTYyNTk4ZGI3ZTZiNDc3ZTExZjZlMGViMGFlOTcwMjBlZmYxNTFhZCIKICAgIH0KICBdLAogICJjcmVhdGVkQXQiOiAiMjAyNi0wMS0wMVQwMDowMDowMC4wMDZaIgp9"
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": {
+        "path": "<dir>/absolute.txt",
+        "b64": "YWJzb2x1dGUK"
+      },
+      "projects": [
+        {
+          "key": "<dir>/project",
+          "workspaceId": "p-main"
+        },
+        {
+          "key": "<dir>/target-project",
+          "workspaceId": "p-target"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "operations": [
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t7",
+                  "runId": "run-t7",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.007Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/manifest.json"
+                },
+                {
+                  "snapshotId": "fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t6",
+                  "runId": "run-t6",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.006Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/manifest.json"
+                },
+                {
+                  "snapshotId": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t5",
+                  "runId": "run-t5",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.005Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158/manifest.json"
+                },
+                {
+                  "snapshotId": "b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t4",
+                  "runId": "run-t4",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.004Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22/manifest.json"
+                },
+                {
+                  "snapshotId": "ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t3",
+                  "runId": "run-t3",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.003Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b/manifest.json"
+                },
+                {
+                  "snapshotId": "5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t2",
+                  "runId": "run-t2",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.002Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3/manifest.json"
+                },
+                {
+                  "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t1",
+                  "runId": "run-t1",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.001Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b/manifest.json"
+                },
+                {
+                  "snapshotId": "escape",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "escape-turn",
+                  "runId": "escape-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-31T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/escape-object/manifest.json"
+                },
+                {
+                  "snapshotId": "unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "unsafe-turn",
+                  "runId": "unsafe-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-30T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/unsafe-path/manifest.json"
+                },
+                {
+                  "snapshotId": "broken",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "broken-turn",
+                  "runId": "broken-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-29T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/broken-object/manifest.json"
+                },
+                {
+                  "snapshotId": "missing",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "missing-turn",
+                  "runId": "missing-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/missing-created-at/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 1
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t7",
+                  "runId": "run-t7",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.007Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/manifest.json"
+                }
+              ],
+              "nextCursor": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 2,
+            "cursor": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t6",
+                  "runId": "run-t6",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.006Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/manifest.json"
+                },
+                {
+                  "snapshotId": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t5",
+                  "runId": "run-t5",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.005Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158/manifest.json"
+                }
+              ],
+              "nextCursor": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 3
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t7",
+                  "runId": "run-t7",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.007Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/manifest.json"
+                },
+                {
+                  "snapshotId": "fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t6",
+                  "runId": "run-t6",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.006Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/manifest.json"
+                },
+                {
+                  "snapshotId": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t5",
+                  "runId": "run-t5",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.005Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158/manifest.json"
+                }
+              ],
+              "nextCursor": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 3,
+            "cursor": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t4",
+                  "runId": "run-t4",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.004Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22/manifest.json"
+                },
+                {
+                  "snapshotId": "ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t3",
+                  "runId": "run-t3",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.003Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b/manifest.json"
+                },
+                {
+                  "snapshotId": "5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t2",
+                  "runId": "run-t2",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.002Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3/manifest.json"
+                }
+              ],
+              "nextCursor": "5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 3,
+            "cursor": "5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t1",
+                  "runId": "run-t1",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.001Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b/manifest.json"
+                },
+                {
+                  "snapshotId": "escape",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "escape-turn",
+                  "runId": "escape-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-31T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/escape-object/manifest.json"
+                },
+                {
+                  "snapshotId": "unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "unsafe-turn",
+                  "runId": "unsafe-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-30T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/unsafe-path/manifest.json"
+                }
+              ],
+              "nextCursor": "unsafe"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 3,
+            "cursor": "unsafe"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "broken",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "broken-turn",
+                  "runId": "broken-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-29T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/broken-object/manifest.json"
+                },
+                {
+                  "snapshotId": "missing",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "missing-turn",
+                  "runId": "missing-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/missing-created-at/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 500
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t7",
+                  "runId": "run-t7",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.007Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/manifest.json"
+                },
+                {
+                  "snapshotId": "fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t6",
+                  "runId": "run-t6",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.006Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/manifest.json"
+                },
+                {
+                  "snapshotId": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t5",
+                  "runId": "run-t5",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.005Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158/manifest.json"
+                },
+                {
+                  "snapshotId": "b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t4",
+                  "runId": "run-t4",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.004Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22/manifest.json"
+                },
+                {
+                  "snapshotId": "ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t3",
+                  "runId": "run-t3",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.003Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b/manifest.json"
+                },
+                {
+                  "snapshotId": "5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t2",
+                  "runId": "run-t2",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.002Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3/manifest.json"
+                },
+                {
+                  "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t1",
+                  "runId": "run-t1",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.001Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b/manifest.json"
+                },
+                {
+                  "snapshotId": "escape",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "escape-turn",
+                  "runId": "escape-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-31T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/escape-object/manifest.json"
+                },
+                {
+                  "snapshotId": "unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "unsafe-turn",
+                  "runId": "unsafe-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-30T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/unsafe-path/manifest.json"
+                },
+                {
+                  "snapshotId": "broken",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "broken-turn",
+                  "runId": "broken-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-29T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/broken-object/manifest.json"
+                },
+                {
+                  "snapshotId": "missing",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "missing-turn",
+                  "runId": "missing-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/missing-created-at/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": "missing",
+            "limit": 2
+          },
+          "outcome": {
+            "ok": {
+              "items": []
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 0
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": -1
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 1.5
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 501
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": 100000000000000000000
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": "3"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": true
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_LIMIT",
+              "message": "limit must be an integer between 1 and 500."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "limit": null
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t7",
+                  "runId": "run-t7",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.007Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/manifest.json"
+                },
+                {
+                  "snapshotId": "fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t6",
+                  "runId": "run-t6",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.006Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/manifest.json"
+                },
+                {
+                  "snapshotId": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t5",
+                  "runId": "run-t5",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.005Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158/manifest.json"
+                },
+                {
+                  "snapshotId": "b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t4",
+                  "runId": "run-t4",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.004Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22/manifest.json"
+                },
+                {
+                  "snapshotId": "ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t3",
+                  "runId": "run-t3",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.003Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b/manifest.json"
+                },
+                {
+                  "snapshotId": "5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t2",
+                  "runId": "run-t2",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.002Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3/manifest.json"
+                },
+                {
+                  "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t1",
+                  "runId": "run-t1",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.001Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b/manifest.json"
+                },
+                {
+                  "snapshotId": "escape",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "escape-turn",
+                  "runId": "escape-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-31T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/escape-object/manifest.json"
+                },
+                {
+                  "snapshotId": "unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "unsafe-turn",
+                  "runId": "unsafe-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-30T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/unsafe-path/manifest.json"
+                },
+                {
+                  "snapshotId": "broken",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "broken-turn",
+                  "runId": "broken-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-29T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/broken-object/manifest.json"
+                },
+                {
+                  "snapshotId": "missing",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "missing-turn",
+                  "runId": "missing-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/missing-created-at/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": "sess-a"
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t4",
+                  "runId": "run-t4",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.004Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/b940f13d35e66934f6bb5043fd5a74a125ab3607143e1aff38722919a11faa22/manifest.json"
+                },
+                {
+                  "snapshotId": "ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t3",
+                  "runId": "run-t3",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.003Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/ef6a1a526b689f984d9e4ea8efa3e050d45c12aa55a7c4728354538935d33f4b/manifest.json"
+                },
+                {
+                  "snapshotId": "5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t2",
+                  "runId": "run-t2",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.002Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/5022d6034544b5ffd1b407b7776d3f0ea1665b1b59564b5901bc20de44d5bdd3/manifest.json"
+                },
+                {
+                  "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "t1",
+                  "runId": "run-t1",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.001Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-a/snapshots/1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b/manifest.json"
+                },
+                {
+                  "snapshotId": "escape",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "escape-turn",
+                  "runId": "escape-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-31T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/escape-object/manifest.json"
+                },
+                {
+                  "snapshotId": "unsafe",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "unsafe-turn",
+                  "runId": "unsafe-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-30T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/unsafe-path/manifest.json"
+                },
+                {
+                  "snapshotId": "broken",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "broken-turn",
+                  "runId": "broken-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2025-12-29T23:59:59.000Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/broken-object/manifest.json"
+                },
+                {
+                  "snapshotId": "missing",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-a",
+                  "turnId": "missing-turn",
+                  "runId": "missing-run",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/manual/sessions/sess-a/snapshots/missing-created-at/manifest.json"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": "sess-b",
+            "limit": 2
+          },
+          "outcome": {
+            "ok": {
+              "items": [
+                {
+                  "snapshotId": "421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t7",
+                  "runId": "run-t7",
+                  "phase": "pre_user",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.007Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/421b0bd374d5d2a011b8a743b9a367e298af6c0744877c5593a938619a40204f/manifest.json"
+                },
+                {
+                  "snapshotId": "fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188",
+                  "workspaceId": "p-main",
+                  "sessionId": "sess-b",
+                  "turnId": "t6",
+                  "runId": "run-t6",
+                  "phase": "post_agent",
+                  "state": "committed",
+                  "createdAt": "2026-01-01T00:00:00.006Z",
+                  "manifestPath": "<dir>/storage/snapshots/workspaces/p-main/sessions/sess-b/snapshots/fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188/manifest.json"
+                }
+              ],
+              "nextCursor": "fe92caa0b4e86979466efd30914dc0edf14a464e5e467555e5a8ef31793d2188"
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": "sess-missing"
+          },
+          "outcome": {
+            "ok": {
+              "items": []
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/target-project",
+            "sessionKey": "sess-a"
+          },
+          "outcome": {
+            "ok": {
+              "items": []
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": "does-not-exist",
+            "sessionKey": "sess-a"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_CURSOR",
+              "message": "snapshot cursor does not belong to this project."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": "219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_CURSOR",
+              "message": "snapshot cursor does not belong to this project."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": "",
+            "sessionKey": "sess-a"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_CURSOR",
+              "message": "snapshot cursor does not belong to this project."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": null,
+            "sessionKey": "sess-a"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_CURSOR",
+              "message": "snapshot cursor does not belong to this project."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "cursor": 123,
+            "sessionKey": "sess-a"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_CURSOR",
+              "message": "snapshot cursor does not belong to this project."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project",
+            "sessionKey": "sess-a",
+            "cursor": "fa39e6be4686849e34743b22f7e21078992c12d5986cd4148856f80a15424158"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "INVALID_SNAPSHOT_CURSOR",
+              "message": "snapshot cursor does not belong to this project."
+            }
+          }
+        },
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/unknown-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/unknown-project"
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b"
+          },
+          "outcome": {
+            "ok": {
+              "snapshot": {
+                "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+                "workspaceId": "p-main",
+                "sessionId": "sess-a",
+                "turnId": "t1",
+                "runId": "run-t1",
+                "phase": "pre_user",
+                "abnormal": false,
+                "entries": [
+                  {
+                    "path": "alpha.txt",
+                    "entryType": "file",
+                    "size": 6,
+                    "digest": "b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+                    "objectKey": "objects/sha256/b6/a9/b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060"
+                  },
+                  {
+                    "path": "link",
+                    "entryType": "symlink",
+                    "size": 0,
+                    "linkTarget": "alpha.txt"
+                  },
+                  {
+                    "path": "nested/beta.txt",
+                    "entryType": "file",
+                    "size": 5,
+                    "digest": "f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad",
+                    "objectKey": "objects/sha256/f2/c8/f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad"
+                  }
+                ],
+                "createdAt": "2026-01-01T00:00:00.001Z"
+              }
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "escape"
+          },
+          "outcome": {
+            "ok": {
+              "snapshot": {
+                "snapshotId": "escape",
+                "workspaceId": "p-main",
+                "sessionId": "sess-a",
+                "turnId": "escape-turn",
+                "runId": "escape-run",
+                "phase": "pre_user",
+                "createdAt": "2025-12-31T23:59:59.000Z",
+                "entries": [
+                  {
+                    "path": "escaped.txt",
+                    "entryType": "file",
+                    "size": 8,
+                    "objectKey": "../outside.txt"
+                  },
+                  {
+                    "path": "absolute.txt",
+                    "entryType": "file",
+                    "size": 9,
+                    "objectKey": "<dir>/absolute.txt"
+                  },
+                  {
+                    "path": "link",
+                    "entryType": "symlink",
+                    "size": 0,
+                    "linkTarget": "alpha.txt"
+                  },
+                  {
+                    "path": "skip-missing-object.txt",
+                    "entryType": "file",
+                    "size": 5
+                  },
+                  {
+                    "path": "nested/deep.txt",
+                    "entryType": "file",
+                    "size": 7,
+                    "objectKey": "objects/manual.txt"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "missing"
+          },
+          "outcome": {
+            "ok": {
+              "snapshot": {
+                "snapshotId": "missing",
+                "workspaceId": "p-main",
+                "sessionId": "sess-a",
+                "turnId": "missing-turn",
+                "runId": "missing-run",
+                "phase": "pre_user",
+                "entries": []
+              }
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "does-not-exist"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot does-not-exist was not found."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot 219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619 was not found."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/target-project",
+            "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot 1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b was not found."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/unknown-project",
+            "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/unknown-project"
+            }
+          }
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "escape",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "absolute.txt",
+              "kind": "file",
+              "b64": "YWJzb2x1dGUK"
+            },
+            {
+              "path": "escaped.txt",
+              "kind": "file",
+              "b64": "b3V0c2lkZQo="
+            },
+            {
+              "path": "link",
+              "kind": "symlink",
+              "target": "alpha.txt"
+            },
+            {
+              "path": "nested",
+              "kind": "dir"
+            },
+            {
+              "path": "nested/deep.txt",
+              "kind": "file",
+              "b64": "bWFudWFsCg=="
+            }
+          ],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "alpha.txt",
+              "kind": "file",
+              "b64": "YWxwaGEK"
+            },
+            {
+              "path": "link",
+              "kind": "symlink",
+              "target": "alpha.txt"
+            },
+            {
+              "path": "nested",
+              "kind": "dir"
+            },
+            {
+              "path": "nested/beta.txt",
+              "kind": "file",
+              "b64": "YmV0YQo="
+            }
+          ],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [
+            {
+              "path": "alpha.txt",
+              "kind": "file",
+              "b64": "YWxwaGEK"
+            },
+            {
+              "path": "link",
+              "kind": "symlink",
+              "target": "alpha.txt"
+            },
+            {
+              "path": "nested",
+              "kind": "dir"
+            },
+            {
+              "path": "nested/beta.txt",
+              "kind": "file",
+              "b64": "YmV0YQo="
+            }
+          ],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "missing",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "ok": {
+              "restored": true,
+              "workspaceKey": "<restore>"
+            }
+          },
+          "targetTree": [],
+          "restoreDir": true
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "unsafe",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "message": "Snapshot contains an unsafe relative path."
+            }
+          },
+          "restoreDir": true,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "broken",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "code": "ENOENT",
+              "message": "ENOENT: no such file or directory, open '<dir>/storage/snapshots/objects/missing.txt'"
+            }
+          },
+          "restoreDir": true,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot 219b81d3786c2121d671956b2174b7503bf533e7dc619e97daf36dd85fadc619 was not found."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "does-not-exist",
+            "targetProjectKey": "<dir>/target-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "SNAPSHOT_NOT_FOUND",
+              "message": "Snapshot does-not-exist was not found."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "1dca2b2dcda17fa977ec15fa48ec5522217619b1aa6d177b12f5e115662f810b",
+            "targetProjectKey": "<dir>/unknown-project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "PROJECT_NOT_FOUND",
+              "message": "Unknown projectKey: <dir>/unknown-project"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        }
+      ]
+    },
+    {
+      "name": "provider-syntax",
+      "tree": [
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots/bad",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots/bad/manifest.json",
+          "kind": "file",
+          "b64": "bm90IGpzb24="
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/project",
+          "workspaceId": "p-main"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "operations": [
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project"
+          },
+          "outcome": {
+            "error": {
+              "name": "SyntaxError",
+              "message": "Unexpected token 'o', \"not json\" is not valid JSON"
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "bad"
+          },
+          "outcome": {
+            "error": {
+              "name": "SyntaxError",
+              "message": "Unexpected token 'o', \"not json\" is not valid JSON"
+            }
+          }
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "bad"
+          },
+          "outcome": {
+            "error": {
+              "name": "SyntaxError",
+              "message": "Unexpected token 'o', \"not json\" is not valid JSON"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        }
+      ]
+    },
+    {
+      "name": "provider-null",
+      "tree": [
+        {
+          "path": "snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots/null",
+          "kind": "dir"
+        },
+        {
+          "path": "snapshots/workspaces/manual/sessions/s/snapshots/null/manifest.json",
+          "kind": "file",
+          "b64": "bnVsbA=="
+        }
+      ],
+      "snapshotRoot": "<dir>/storage/snapshots",
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/project",
+          "workspaceId": "p-main"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "operations": [
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project"
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'snapshotId')"
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "null"
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'snapshotId')"
+            }
+          }
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "null"
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'snapshotId')"
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        }
+      ]
+    },
+    {
+      "name": "unconfigured",
+      "tree": [],
+      "snapshotRoot": null,
+      "absoluteFile": null,
+      "projects": [
+        {
+          "key": "<dir>/project",
+          "workspaceId": "p-main"
+        }
+      ],
+      "fallbackProjectRoot": "<dir>/project",
+      "operations": [
+        {
+          "op": "snapshotList",
+          "input": {
+            "projectKey": "<dir>/project"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        },
+        {
+          "op": "snapshotGet",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          }
+        },
+        {
+          "op": "snapshotRestore",
+          "input": {
+            "projectKey": "<dir>/project",
+            "snapshotId": "x"
+          },
+          "outcome": {
+            "error": {
+              "name": "DialogGatewayError",
+              "code": "CAPABILITY_UNAVAILABLE",
+              "message": "Gateway snapshot provider is unavailable."
+            }
+          },
+          "restoreDir": false,
+          "targetTree": []
+        }
+      ]
+    }
+  ]
+}

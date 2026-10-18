@@ -3,4 +3,5 @@
 //! register a resource group with `project::ResourceBundle`.
 pub mod model;
 pub mod project;
+pub mod snapshot;
 pub mod steer;
