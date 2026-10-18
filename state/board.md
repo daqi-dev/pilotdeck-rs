@@ -3,7 +3,7 @@
 <!-- READY:BEGIN -->
 updated: 2026-10-18 14:23 · by 协调者(Claude Code 交互·opus-5.5·/loop)
 - A6.8-pr4 | gate | ready | SkillManager import/scan + binding + 清 #226 剩余项（wt-a68-skills，claude/a68-pr4）：闸门第二轮 P1（三处递归 JS 转换，已接 dispatch 的 project_file_read 实测会 SIGABRT）已修，第三轮闸门与两家确认中
-- B2-94 | calib | ready | #94 冻结装置重冻结（仓外 checkout /Users/da/ws/pdrs-b2cal-20261018，持锁）：同日 20/5/1 定标续跑中（ref16 时钟回退 REFUSED 已按程序重采）；完成后补 FROZEN 审批、去草稿、开 PR
+- B2-94 | impl | ready | #94 冻结装置重冻结（仓外 checkout /Users/da/ws/pdrs-b2cal-20261018，持锁）：同日 20/5/1 定标续跑中（ref16 时钟回退 REFUSED 已按程序重采）；完成后补 FROZEN 审批、去草稿、开 PR
 - F2-A34-pr2 | impl | ready | A 类样板改写 #15、#5、#1（pr1 已合 #240；分母 68 **待人复核**）
 - D1-pr4 | impl | ready | CLI 有效配置默认流（本地 Gateway + CliChannel）；前置 #213 已清，#231 剩中间目录 symlink 一项
 - p2-sweep-4 | impl | ready | P2-跟进仍多（>10），下一批清账
