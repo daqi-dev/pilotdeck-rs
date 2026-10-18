@@ -9,7 +9,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/workspace-snapshot
 ```
 
-生成器先断言基线 HEAD，并对每个场景的关键结果做自检（提交/失败状态、缓存命中、marker 早退、排序、manifest 字节等于 `JSON.stringify(, 2)`、树内容），防止步骤引用写错导致断言全部落空。`mkdtemp` 根目录预放 `pdrs-r9-linkout`/`pdrs-r9-path`/`pdrs-r9-target`/`ws-snapshot-scenario` 四个哨兵文件，全部场景跑完后断言仍在（固定路径 P0 负控）。写 `oracle.json` 前断言其中不含本次临时目录、输出目录与基线路径；Rust 读取时断言不含固定的 `/tmp/pdrs-*` 路径。生成器把进程时钟固定在 `2026-01-01T00:00:00Z`（`tick` 每次把假时钟推进 1 ms），因此唯一由真实时钟决定的 `createdAt` 也不再随运行变化，连跑两次 `oracle.json` 逐字节一致；Rust 回放仍用真实时钟，所以比较时继续对 `createdAt` 做 `<ts>` 掩码。临时目录保持 20 字符（`/tmp/pdrs-r10-` + 6），使含 NUL 的 `ERR_INVALID_ARG_VALUE` 引文落在 Node 的 128 UTF-16 单元 inspect 上限内；`nul-capture-root` 用 `dirName: '.'` 直接占用该 20 字符根目录。
+生成器先断言基线 HEAD，并对每个场景的关键结果做自检（提交/失败状态、缓存命中、marker 早退、排序、manifest 字节等于 `JSON.stringify(, 2)`、树内容），防止步骤引用写错导致断言全部落空。`mkdtemp` 根目录预放 `pdrs-r9-linkout`/`pdrs-r9-path`/`pdrs-r9-target`/`ws-snapshot-scenario` 四个哨兵文件，全部场景跑完后断言仍在。删除的主负控是**路径归属检查**：生成器的 `removeOwned` 与 Rust 的 `remove_owned` 都在调用 `rm` 前要求目标位于本次运行独占目录内，越界立即抛错，与哨兵放在哪里无关。生成器每次运行用录制桩注入旧的固定路径 `/tmp/pdrs-r9-linkout` 和一个真实越界哨兵，断言两者都被拒绝、桩零调用、哨兵仍在；Rust 侧由 `out_of_bounds_removal_is_refused_and_sentinel_survives` 覆盖同样两条。`PDRS_INJECT_LEGACY_DELETE=<path>` 可显式重放注入，正确实现会在 guard 处中止（见第十一轮证据）。写 `oracle.json` 前断言其中不含本次临时目录、输出目录与基线路径；Rust 读取时断言不含固定的 `/tmp/pdrs-*` 路径。生成器把进程时钟固定在 `2026-01-01T00:00:00Z`（`tick` 每次把假时钟推进 1 ms），因此唯一由真实时钟决定的 `createdAt` 也不再随运行变化，连跑两次 `oracle.json` 逐字节一致；Rust 回放仍用真实时钟，所以比较时继续对 `createdAt` 做 `<ts>` 掩码。临时目录保持 20 字符（`/tmp/pdrs-r10-` + 6），使含 NUL 的 `ERR_INVALID_ARG_VALUE` 引文落在 Node 的 128 UTF-16 单元 inspect 上限内；`nul-capture-root` 用 `dirName: '.'` 直接占用该 20 字符根目录。
 
 `oracle.json`：
 

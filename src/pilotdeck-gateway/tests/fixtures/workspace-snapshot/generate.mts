@@ -1,6 +1,6 @@
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -28,6 +28,43 @@ class FixedDate extends RealDate {
 globalThis.Date = FixedDate as unknown as DateConstructor;
 const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+
+type RemoveImpl = (path: string | Buffer, options: { recursive: boolean; force: boolean }) => Promise<void>;
+
+/**
+ * Deletes are confined to the run's own mkdtemp tree. The old fixed-path P0
+ * removed /tmp/pdrs-r9-* while every sentinel lived under <scratch>, so those
+ * sentinels could not observe that regression (round-4 P1). Every `rm` below
+ * goes through removeOwned: an out-of-tree target is refused before the
+ * filesystem is touched, independent of where a sentinel lives.
+ */
+function assertInside(root: string, path: string, action: string): string {
+  const rel = relative(root, path);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`${action} refused: ${path} is outside the run directory ${root}`);
+  }
+  return path;
+}
+async function removeOwned(
+  root: string,
+  value: string | Buffer,
+  options: { recursive?: boolean } = {},
+  remove: RemoveImpl = rm,
+): Promise<void> {
+  let path: string | Buffer;
+  if (typeof value === 'string') {
+    path = assertInside(root, resolve(root, value.split('<dir>').join(root)), 'remove');
+  } else {
+    // The non-UTF-8 probe path is byte-exact, so compare the run-root prefix as
+    // bytes instead of decoding a name that is deliberately not UTF-8.
+    const prefix = Buffer.from(root.endsWith(sep) ? root : `${root}${sep}`);
+    if (!value.subarray(0, prefix.length).equals(prefix)) {
+      throw new Error(`remove refused: ${value.toString('hex')} is outside the run directory ${root}`);
+    }
+    path = value;
+  }
+  await remove(path, { recursive: !!options.recursive, force: true });
+}
 const source = 'src/storage/workspaceSnapshot.ts';
 const { ContentAddressedWorkspaceSnapshotRecorder, createWorkspaceSnapshotProvider, resolveWorkspaceSnapshotConfig } =
   await import(pathToFileURL(join(baseline, source)).href);
@@ -167,7 +204,7 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
   // absolutes. join concatenates where resolve resets on absolute segments
   // (join(dir, dir + '/x') doubles the prefix — the round-2 failure), so the
   // unmasked value must go through resolve.
-  const resolvePath = (value: string) => resolve(dir, value.split('<dir>').join(dir));
+  const resolvePath = (value: string) => assertInside(dir, resolve(dir, value.split('<dir>').join(dir)), 'step path');
   const ids = new Map<string, string>();
   const markerDirs = new Map<string, string>();
   // Snapshot ids whose manifest/marker was produced by the real recorder;
@@ -191,7 +228,7 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
         await mkdir(resolvePath(step.path), { recursive: true });
         break;
       case 'remove':
-        await rm(resolvePath(step.path), { recursive: !!step.recursive, force: true });
+        await removeOwned(dir, step.path, { recursive: !!step.recursive });
         break;
       case 'writeSnapshot': {
         const base = step.markerOf === undefined ? '' : markerDirs.get(step.markerOf);
@@ -210,7 +247,7 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
       case 'symlinkSnapshot': {
         const path = join(root, step.path);
         await mkdir(dirname(path), { recursive: true });
-        await rm(path, { recursive: true, force: true });
+        await removeOwned(root, path, { recursive: true });
         await symlink(step.target, path);
         break;
       }
@@ -218,7 +255,7 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
         const base = step.markerOf === undefined ? '' : markerDirs.get(step.markerOf);
         assert.ok(base !== undefined, `unknown marker alias ${step.markerOf}`);
         const path = join(base, step.path ?? step.name);
-        await rm(join(root, path), { force: true });
+        await removeOwned(root, path);
         done.path = path.split(sep).join('/');
         delete done.markerOf;
         delete done.name;
@@ -344,11 +381,52 @@ try {
   // cannot exist (CI runs ubuntu, where the scenario executes).
   const nonUtf8Probe = Buffer.concat([Buffer.from(`${scratch}/probe-`), Buffer.from([0xff])]);
   const nonUtf8Names = await writeFile(nonUtf8Probe, '')
-    .then(() => rm(nonUtf8Probe, { force: true }))
+    .then(() => removeOwned(scratch, nonUtf8Probe))
     .then(
       () => true,
       () => false,
     );
+
+  // Negative control for the ownership guard (round-4 P1). The legacy bug
+  // removed the fixed /tmp/pdrs-r9-linkout path; that target is outside this
+  // run's <scratch>, so removeOwned must refuse it before any rm call. A
+  // recording stub proves the filesystem was never reached; the real sentinel
+  // outside the guarded root proves the refusal kept it alive. Setting
+  // PDRS_INJECT_LEGACY_DELETE runs the same injection as an explicit
+  // regression probe: the run must abort at the guard.
+  const guardRoot = join(scratch, 'guard-root');
+  const outsideRoot = join(scratch, 'guard-outside');
+  await mkdir(guardRoot, { recursive: true });
+  await mkdir(outsideRoot, { recursive: true });
+  const outsideSentinel = join(outsideRoot, 'pdrs-r9-linkout');
+  await writeFile(outsideSentinel, 'keep\n');
+  const legacyPaths = ['/tmp/pdrs-r9-linkout', outsideSentinel];
+  const reached: string[] = [];
+  const recordingRemove: RemoveImpl = async (path) => {
+    reached.push(String(path));
+  };
+  // 1. The exact historical target goes through a recording stub: the guard
+  //    must reject it before any rm call.
+  await assert.rejects(
+    () => removeOwned(guardRoot, legacyPaths[0], { recursive: true }, recordingRemove),
+    /outside the run directory/,
+    `legacy delete ${legacyPaths[0]} must be refused`,
+  );
+  assert.deepEqual(reached, [], 'a refused delete must never reach the filesystem');
+  // 2. A real out-of-tree sentinel goes through the real remover: rejected,
+  //    and the file is still readable afterwards.
+  await assert.rejects(
+    () => removeOwned(guardRoot, outsideSentinel, { recursive: true }),
+    /outside the run directory/,
+    `out-of-tree delete ${outsideSentinel} must be refused`,
+  );
+  assert.equal(await readFile(outsideSentinel, 'utf8'), 'keep\n', 'out-of-tree sentinel survived');
+  if (process.env.PDRS_INJECT_LEGACY_DELETE) {
+    console.error(`negative-control: injecting legacy delete ${process.env.PDRS_INJECT_LEGACY_DELETE}`);
+    await removeOwned(scratch, process.env.PDRS_INJECT_LEGACY_DELETE, { recursive: true }, recordingRemove);
+    assert.fail('negative-control FAIL: the legacy delete was not refused');
+  }
+  console.log(`negative-control: refused ${legacyPaths.length} out-of-tree deletes; 0 filesystem calls; sentinel kept`);
 
   // resolveWorkspaceSnapshotConfig env table; cwd is the only machine-specific
   // input and is masked on both sides.
@@ -1448,5 +1526,5 @@ try {
   // Same cleanup as ../run-registry/generate.mts: without it every run
   // (failed assertions included) leaves a .generate-* directory next to
   // oracle.json in the fixtures tree.
-  await rm(scratch, { recursive: true, force: true });
+  await removeOwned(scratch, scratch, { recursive: true });
 }
