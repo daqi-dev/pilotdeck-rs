@@ -1,6 +1,6 @@
 # SkillManager TS fixtures
 
-固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，被测源码 `src/extension/skills/SkillManager.ts` 与 `types.ts`（SHA-256 记在 `oracle.json`）。所有步骤结果与文件树都由真实 `SkillManager` 产生，无实现源码复制；环境准备（Node v22.22.0、基线 lockfile 的 tsx、`PDRS_BASELINE`）同 `../operation-ledger/README.md`。`localeCompare` / `toLocaleLowerCase` 取 ICU 默认 locale，生成器断言为 `en-US`，Rust 测试固定同一 locale。
+固定基线：`OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，被测源码 `src/extension/skills/SkillManager.ts`、`types.ts`，绑定选择取 `src/composition/types.ts` 与 `src/cli/createLocalGateway.ts`（SHA-256 记在 `oracle.json`）。所有步骤结果与文件树都由真实 `SkillManager` 产生，无实现源码复制；环境准备（Node v22.22.0、基线 lockfile 的 tsx、`PDRS_BASELINE`）同 `../operation-ledger/README.md`。`localeCompare` / `toLocaleLowerCase` 取 ICU 默认 locale，生成器断言为 `en-US`，Rust 测试固定同一 locale。
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
@@ -29,7 +29,11 @@ Rust 默认测试 `real_ts_scenarios_match_outcomes_and_file_trees` 逐场景在
 | create | 字段生成（换行折成空格、去空白、空 name、null 描述/正文）、空白 content 回退字段、完整 content、conflict（目录或文件已存在）、ENOTDIR、非字符串 name/body 的 TypeError（目录已建、留空）、project 范围、孤立代理 |
 | delete | 递归删除、重复删除、删除符号链接不碰目标、删除普通文件、read_only、invalid_slug、project_required、ENOTDIR |
 | validate-disk | 合格包（大文件、符号链接、可执行扩展名大小写、`.sh` 点文件无扩展名、嵌套、非 ASCII 名）、描述过短/过长、缺 name/description、无 frontmatter、空 SKILL.md、无 SKILL.md、源是文件/不存在、兼容回退、单文件超 10 MiB、总量超 50 MiB、超 500 文件（计数在第 501 个停）、去空白、`~` 与 `~/`、`..`、源是符号链接、空白路径、空对象、null、非字符串 sourcePath 落到 manifest |
-| validate-manifest | unsafe_path（`..`、绝对路径）、跳过非字符串/空 relativePath 与非对象条目、`Number(size) || 0`（字符串、十六进制、非数、数组、科学计数、布尔、Infinity）、扩展名取自整个相对路径、空列表、缺/非字符串 skillMdContent、BOM、超 500 条、总量、`files` 含 null（TypeError）、`files` 非数组、空白 name/description、UTF-16 长度 19/20 与 1024/1025 边界、整数键序与自有 `__proto__`、兼容回退块标量、alias、嵌套值、数组输入 |
+| validate-manifest | unsafe_path（`..`、绝对路径）、跳过非字符串/空 relativePath 与非对象条目、`Number(size) || 0`（字符串、十六进制、非数、数组、科学计数、布尔、Infinity）、扩展名取自整个相对路径、空列表、缺/非字符串 skillMdContent、BOM、超 500 条、总量、`files` 含 null（TypeError）、`files` 非数组、空白 name/description、UTF-16 长度 19/20 与 1024/1025 边界、整数键序与自有 `__proto__`、兼容回退块标量、alias、嵌套值、数组输入；上限等值点（单文件正好 10 MiB 与多 1 字节、正好 1 MiB、总量正好 50 MiB 与多 1 字节、正好 500 条） |
+| import | copy（fs.cp：相对符号链接改写成绝对路径）与 symlink 两种模式、force 覆盖、slug 去空白与回退 basename、project 范围建根、`~`、源是目录符号链接（copy 出一个链接）、目标是断链（copy 报 ERR_FS_CP_DIR_TO_NON_DIR，symlink 报 EEXIST）、包内 FIFO（ERR_FS_CP_FIFO_PIPE，残留随后删除）、目标在源内（ERR_FS_CP_EINVAL）、self_import、source_missing、source_not_directory、ENOTDIR、no_skill_md、SKILL.md 为目录与无 frontmatter（validation_failed 带 validation）、非法 slug、非字符串 slug、builtin、缺/空白/非字符串 sourcePath、project_required、null 输入 |
+| scan | 子目录排序（有 SKILL.md 在前，再 localeCompare）、跳过文件与断链、目录符号链接、SKILL.md 为目录（name 为 null、0 文件）、递归计数跟随链接（文件链接计入、FIFO 不计、自指链接展开到 ELOOP）、父目录本身是技能、去空白与尾斜杠、`~`、not_directory、not_found、ENOTDIR、invalid_input 三种、null |
+
+`oracle.json.bindings[]`：createLocalGateway.ts:853–860 的选择表，由真实 `isDisabledModuleBinding` / `isExternalModuleBinding`（`src/composition/types.ts`）判定，含 null/原始值在 `"implementationId" in` 处的 TypeError。`oracle.json.disabledError`：`createDisabledSkillManagementPort` 是模块私有函数，生成器从固定源码中抽取它唯一的错误（并断言八个方法都指向它），不是运行时结果。FIFO 由 `mkfifo` 创建，文件树记作 `kind: "fifo"`，不读取内容。
 
 `generate.mts <root> --verify-rust read|mutate` 由 Rust 忽略测试 `real_ts_and_rust_read_each_others_skill_trees` 调用：Rust 先 create/write（含孤立代理）一棵树，真实 TS 读取（list/read/validate）并输出结果，Rust 在同一棵树上重放并逐值比较（含真实 mtime）；随后 TS create/write/delete，Rust 读取 TS 写出的结果并与 TS 自己的读数逐值比较。
 
@@ -38,4 +42,4 @@ cd src
 PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway skills -- --include-ignored
 ```
 
-范围：只证明 SkillManager 的 list/read/write/create/delete/validate 契约（结果对象、错误类与码/文案、磁盘文件树字节）。`import`、`scan` 与 disabled/external skills 绑定选择（createLocalGateway.ts:851–860）留 A6.8-pr4；未接入 gateway method，未宣称本地化。已知差异：frontmatter 落入兼容回退时孤立代理先变 U+FFFD（TS 保留）；frontmatter 含自引用 alias 时 validate 在 Rust 报 TypeError（TS 返回带环对象，随后在 JSON 传输时失败）；Rust 不读进程 cwd 之外的 `os.homedir()`，由 `SkillManagerOptions::home_dir` 或 `$HOME` 提供。
+范围：证明 SkillManager 八个方法的契约（结果对象、错误类与码/文案、磁盘文件树字节）与 skills 绑定选择；默认测试经 `SkillManager::call` 重放，因此每个方法的 errno 准入表（`node_io::LOCAL_ERRNOS` 的 `skill_*`）必须恰好等于该方法在 oracle 中出现过的 errno。external 绑定只做选择，调用一律返回 `SKILL_MODULE_HOST_REQUIRED`（requires_host），外部模块宿主另单实现；未接入 gateway method，未宣称本地化。已知差异：frontmatter 落入兼容回退时孤立代理先变 U+FFFD（TS 保留）；frontmatter 含自引用 alias 时 validate 在 Rust 报 TypeError（TS 返回带环对象，随后在 JSON 传输时失败）；Rust 不读进程 cwd 之外的 `os.homedir()`，由 `SkillManagerOptions::home_dir` 或 `$HOME` 提供；深嵌套数组的 RangeError 阈值是 Rust 常量 `js_value::MAX_ARRAY_DEPTH`，与 V8 栈深不逐值相等。

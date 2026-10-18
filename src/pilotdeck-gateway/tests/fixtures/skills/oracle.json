@@ -2,7 +2,9 @@
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "sourceSha256": {
     "src/extension/skills/SkillManager.ts": "b971873bf42bb0141480e42826088c5e30bd1c1617fc1710375762ded3f87111",
-    "src/extension/skills/types.ts": "fa4cea5a828df7e2df986d624bed00b86cf171c9a0f111b0af3cee721598ea22"
+    "src/extension/skills/types.ts": "fa4cea5a828df7e2df986d624bed00b86cf171c9a0f111b0af3cee721598ea22",
+    "src/composition/types.ts": "221ac237369fd9159eaa04a7dd8de0ad5b99578a5aaa5d273f10625c00d6b91c",
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f"
   },
   "node": "v22.22.0",
   "locale": "en-US",
@@ -21487,9 +21489,4230 @@
               "message": "Provide either { sourcePath } or { skillMdContent, files: [...] }."
             }
           }
+        },
+        {
+          "op": "validate",
+          "input": {
+            "skillMdContent": "---\nname: M\ndescription: Manifest validation with everything\n---\n\nBody.\n",
+            "files": [
+              {
+                "relativePath": "SKILL.md",
+                "size": 1
+              },
+              {
+                "relativePath": "eq.bin",
+                "size": 10485760
+              }
+            ]
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "hardFails": [],
+              "warnings": [
+                {
+                  "code": "file_large",
+                  "message": "Large file: eq.bin (10.0 MB)"
+                }
+              ],
+              "stats": {
+                "fileCount": 2,
+                "totalBytes": 10485761
+              },
+              "frontmatter": {
+                "name": "M",
+                "description": "Manifest validation with everything"
+              }
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "input": {
+            "skillMdContent": "---\nname: M\ndescription: Manifest validation with everything\n---\n\nBody.\n",
+            "files": [
+              {
+                "relativePath": "SKILL.md",
+                "size": 1
+              },
+              {
+                "relativePath": "over.bin",
+                "size": 10485761
+              }
+            ]
+          },
+          "outcome": {
+            "result": {
+              "ok": false,
+              "hardFails": [
+                {
+                  "code": "file_too_large",
+                  "message": "File exceeds 10485760 bytes: over.bin (10485761 bytes)"
+                }
+              ],
+              "warnings": [],
+              "stats": {
+                "fileCount": 2,
+                "totalBytes": 10485762
+              },
+              "frontmatter": {
+                "name": "M",
+                "description": "Manifest validation with everything"
+              }
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "input": {
+            "skillMdContent": "---\nname: M\ndescription: Manifest validation with everything\n---\n\nBody.\n",
+            "files": [
+              {
+                "relativePath": "SKILL.md",
+                "size": 1
+              },
+              {
+                "relativePath": "mib.bin",
+                "size": 1048576
+              }
+            ]
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "hardFails": [],
+              "warnings": [],
+              "stats": {
+                "fileCount": 2,
+                "totalBytes": 1048577
+              },
+              "frontmatter": {
+                "name": "M",
+                "description": "Manifest validation with everything"
+              }
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "input": {
+            "skillMdContent": "---\nname: M\ndescription: Manifest validation with everything\n---\n\nBody.\n",
+            "files": [
+              {
+                "relativePath": "SKILL.md",
+                "size": 0
+              },
+              {
+                "relativePath": "t0.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t1.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t2.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t3.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t4.bin",
+                "size": 10485760
+              }
+            ]
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "hardFails": [],
+              "warnings": [
+                {
+                  "code": "file_large",
+                  "message": "Large file: t0.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t1.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t2.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t3.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t4.bin (10.0 MB)"
+                }
+              ],
+              "stats": {
+                "fileCount": 6,
+                "totalBytes": 52428800
+              },
+              "frontmatter": {
+                "name": "M",
+                "description": "Manifest validation with everything"
+              }
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "input": {
+            "skillMdContent": "---\nname: M\ndescription: Manifest validation with everything\n---\n\nBody.\n",
+            "files": [
+              {
+                "relativePath": "SKILL.md",
+                "size": 1
+              },
+              {
+                "relativePath": "t0.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t1.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t2.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t3.bin",
+                "size": 10485760
+              },
+              {
+                "relativePath": "t4.bin",
+                "size": 10485760
+              }
+            ]
+          },
+          "outcome": {
+            "result": {
+              "ok": false,
+              "hardFails": [
+                {
+                  "code": "total_too_large",
+                  "message": "Bundle total size exceeds 52428800 bytes (52428801)."
+                }
+              ],
+              "warnings": [
+                {
+                  "code": "file_large",
+                  "message": "Large file: t0.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t1.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t2.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t3.bin (10.0 MB)"
+                },
+                {
+                  "code": "file_large",
+                  "message": "Large file: t4.bin (10.0 MB)"
+                }
+              ],
+              "stats": {
+                "fileCount": 6,
+                "totalBytes": 52428801
+              },
+              "frontmatter": {
+                "name": "M",
+                "description": "Manifest validation with everything"
+              }
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "input": {
+            "skillMdContent": "---\nname: M\ndescription: Manifest validation with everything\n---\n\nBody.\n",
+            "files": [
+              {
+                "relativePath": "SKILL.md",
+                "size": 1
+              },
+              {
+                "relativePath": "f1",
+                "size": 1
+              },
+              {
+                "relativePath": "f2",
+                "size": 1
+              },
+              {
+                "relativePath": "f3",
+                "size": 1
+              },
+              {
+                "relativePath": "f4",
+                "size": 1
+              },
+              {
+                "relativePath": "f5",
+                "size": 1
+              },
+              {
+                "relativePath": "f6",
+                "size": 1
+              },
+              {
+                "relativePath": "f7",
+                "size": 1
+              },
+              {
+                "relativePath": "f8",
+                "size": 1
+              },
+              {
+                "relativePath": "f9",
+                "size": 1
+              },
+              {
+                "relativePath": "f10",
+                "size": 1
+              },
+              {
+                "relativePath": "f11",
+                "size": 1
+              },
+              {
+                "relativePath": "f12",
+                "size": 1
+              },
+              {
+                "relativePath": "f13",
+                "size": 1
+              },
+              {
+                "relativePath": "f14",
+                "size": 1
+              },
+              {
+                "relativePath": "f15",
+                "size": 1
+              },
+              {
+                "relativePath": "f16",
+                "size": 1
+              },
+              {
+                "relativePath": "f17",
+                "size": 1
+              },
+              {
+                "relativePath": "f18",
+                "size": 1
+              },
+              {
+                "relativePath": "f19",
+                "size": 1
+              },
+              {
+                "relativePath": "f20",
+                "size": 1
+              },
+              {
+                "relativePath": "f21",
+                "size": 1
+              },
+              {
+                "relativePath": "f22",
+                "size": 1
+              },
+              {
+                "relativePath": "f23",
+                "size": 1
+              },
+              {
+                "relativePath": "f24",
+                "size": 1
+              },
+              {
+                "relativePath": "f25",
+                "size": 1
+              },
+              {
+                "relativePath": "f26",
+                "size": 1
+              },
+              {
+                "relativePath": "f27",
+                "size": 1
+              },
+              {
+                "relativePath": "f28",
+                "size": 1
+              },
+              {
+                "relativePath": "f29",
+                "size": 1
+              },
+              {
+                "relativePath": "f30",
+                "size": 1
+              },
+              {
+                "relativePath": "f31",
+                "size": 1
+              },
+              {
+                "relativePath": "f32",
+                "size": 1
+              },
+              {
+                "relativePath": "f33",
+                "size": 1
+              },
+              {
+                "relativePath": "f34",
+                "size": 1
+              },
+              {
+                "relativePath": "f35",
+                "size": 1
+              },
+              {
+                "relativePath": "f36",
+                "size": 1
+              },
+              {
+                "relativePath": "f37",
+                "size": 1
+              },
+              {
+                "relativePath": "f38",
+                "size": 1
+              },
+              {
+                "relativePath": "f39",
+                "size": 1
+              },
+              {
+                "relativePath": "f40",
+                "size": 1
+              },
+              {
+                "relativePath": "f41",
+                "size": 1
+              },
+              {
+                "relativePath": "f42",
+                "size": 1
+              },
+              {
+                "relativePath": "f43",
+                "size": 1
+              },
+              {
+                "relativePath": "f44",
+                "size": 1
+              },
+              {
+                "relativePath": "f45",
+                "size": 1
+              },
+              {
+                "relativePath": "f46",
+                "size": 1
+              },
+              {
+                "relativePath": "f47",
+                "size": 1
+              },
+              {
+                "relativePath": "f48",
+                "size": 1
+              },
+              {
+                "relativePath": "f49",
+                "size": 1
+              },
+              {
+                "relativePath": "f50",
+                "size": 1
+              },
+              {
+                "relativePath": "f51",
+                "size": 1
+              },
+              {
+                "relativePath": "f52",
+                "size": 1
+              },
+              {
+                "relativePath": "f53",
+                "size": 1
+              },
+              {
+                "relativePath": "f54",
+                "size": 1
+              },
+              {
+                "relativePath": "f55",
+                "size": 1
+              },
+              {
+                "relativePath": "f56",
+                "size": 1
+              },
+              {
+                "relativePath": "f57",
+                "size": 1
+              },
+              {
+                "relativePath": "f58",
+                "size": 1
+              },
+              {
+                "relativePath": "f59",
+                "size": 1
+              },
+              {
+                "relativePath": "f60",
+                "size": 1
+              },
+              {
+                "relativePath": "f61",
+                "size": 1
+              },
+              {
+                "relativePath": "f62",
+                "size": 1
+              },
+              {
+                "relativePath": "f63",
+                "size": 1
+              },
+              {
+                "relativePath": "f64",
+                "size": 1
+              },
+              {
+                "relativePath": "f65",
+                "size": 1
+              },
+              {
+                "relativePath": "f66",
+                "size": 1
+              },
+              {
+                "relativePath": "f67",
+                "size": 1
+              },
+              {
+                "relativePath": "f68",
+                "size": 1
+              },
+              {
+                "relativePath": "f69",
+                "size": 1
+              },
+              {
+                "relativePath": "f70",
+                "size": 1
+              },
+              {
+                "relativePath": "f71",
+                "size": 1
+              },
+              {
+                "relativePath": "f72",
+                "size": 1
+              },
+              {
+                "relativePath": "f73",
+                "size": 1
+              },
+              {
+                "relativePath": "f74",
+                "size": 1
+              },
+              {
+                "relativePath": "f75",
+                "size": 1
+              },
+              {
+                "relativePath": "f76",
+                "size": 1
+              },
+              {
+                "relativePath": "f77",
+                "size": 1
+              },
+              {
+                "relativePath": "f78",
+                "size": 1
+              },
+              {
+                "relativePath": "f79",
+                "size": 1
+              },
+              {
+                "relativePath": "f80",
+                "size": 1
+              },
+              {
+                "relativePath": "f81",
+                "size": 1
+              },
+              {
+                "relativePath": "f82",
+                "size": 1
+              },
+              {
+                "relativePath": "f83",
+                "size": 1
+              },
+              {
+                "relativePath": "f84",
+                "size": 1
+              },
+              {
+                "relativePath": "f85",
+                "size": 1
+              },
+              {
+                "relativePath": "f86",
+                "size": 1
+              },
+              {
+                "relativePath": "f87",
+                "size": 1
+              },
+              {
+                "relativePath": "f88",
+                "size": 1
+              },
+              {
+                "relativePath": "f89",
+                "size": 1
+              },
+              {
+                "relativePath": "f90",
+                "size": 1
+              },
+              {
+                "relativePath": "f91",
+                "size": 1
+              },
+              {
+                "relativePath": "f92",
+                "size": 1
+              },
+              {
+                "relativePath": "f93",
+                "size": 1
+              },
+              {
+                "relativePath": "f94",
+                "size": 1
+              },
+              {
+                "relativePath": "f95",
+                "size": 1
+              },
+              {
+                "relativePath": "f96",
+                "size": 1
+              },
+              {
+                "relativePath": "f97",
+                "size": 1
+              },
+              {
+                "relativePath": "f98",
+                "size": 1
+              },
+              {
+                "relativePath": "f99",
+                "size": 1
+              },
+              {
+                "relativePath": "f100",
+                "size": 1
+              },
+              {
+                "relativePath": "f101",
+                "size": 1
+              },
+              {
+                "relativePath": "f102",
+                "size": 1
+              },
+              {
+                "relativePath": "f103",
+                "size": 1
+              },
+              {
+                "relativePath": "f104",
+                "size": 1
+              },
+              {
+                "relativePath": "f105",
+                "size": 1
+              },
+              {
+                "relativePath": "f106",
+                "size": 1
+              },
+              {
+                "relativePath": "f107",
+                "size": 1
+              },
+              {
+                "relativePath": "f108",
+                "size": 1
+              },
+              {
+                "relativePath": "f109",
+                "size": 1
+              },
+              {
+                "relativePath": "f110",
+                "size": 1
+              },
+              {
+                "relativePath": "f111",
+                "size": 1
+              },
+              {
+                "relativePath": "f112",
+                "size": 1
+              },
+              {
+                "relativePath": "f113",
+                "size": 1
+              },
+              {
+                "relativePath": "f114",
+                "size": 1
+              },
+              {
+                "relativePath": "f115",
+                "size": 1
+              },
+              {
+                "relativePath": "f116",
+                "size": 1
+              },
+              {
+                "relativePath": "f117",
+                "size": 1
+              },
+              {
+                "relativePath": "f118",
+                "size": 1
+              },
+              {
+                "relativePath": "f119",
+                "size": 1
+              },
+              {
+                "relativePath": "f120",
+                "size": 1
+              },
+              {
+                "relativePath": "f121",
+                "size": 1
+              },
+              {
+                "relativePath": "f122",
+                "size": 1
+              },
+              {
+                "relativePath": "f123",
+                "size": 1
+              },
+              {
+                "relativePath": "f124",
+                "size": 1
+              },
+              {
+                "relativePath": "f125",
+                "size": 1
+              },
+              {
+                "relativePath": "f126",
+                "size": 1
+              },
+              {
+                "relativePath": "f127",
+                "size": 1
+              },
+              {
+                "relativePath": "f128",
+                "size": 1
+              },
+              {
+                "relativePath": "f129",
+                "size": 1
+              },
+              {
+                "relativePath": "f130",
+                "size": 1
+              },
+              {
+                "relativePath": "f131",
+                "size": 1
+              },
+              {
+                "relativePath": "f132",
+                "size": 1
+              },
+              {
+                "relativePath": "f133",
+                "size": 1
+              },
+              {
+                "relativePath": "f134",
+                "size": 1
+              },
+              {
+                "relativePath": "f135",
+                "size": 1
+              },
+              {
+                "relativePath": "f136",
+                "size": 1
+              },
+              {
+                "relativePath": "f137",
+                "size": 1
+              },
+              {
+                "relativePath": "f138",
+                "size": 1
+              },
+              {
+                "relativePath": "f139",
+                "size": 1
+              },
+              {
+                "relativePath": "f140",
+                "size": 1
+              },
+              {
+                "relativePath": "f141",
+                "size": 1
+              },
+              {
+                "relativePath": "f142",
+                "size": 1
+              },
+              {
+                "relativePath": "f143",
+                "size": 1
+              },
+              {
+                "relativePath": "f144",
+                "size": 1
+              },
+              {
+                "relativePath": "f145",
+                "size": 1
+              },
+              {
+                "relativePath": "f146",
+                "size": 1
+              },
+              {
+                "relativePath": "f147",
+                "size": 1
+              },
+              {
+                "relativePath": "f148",
+                "size": 1
+              },
+              {
+                "relativePath": "f149",
+                "size": 1
+              },
+              {
+                "relativePath": "f150",
+                "size": 1
+              },
+              {
+                "relativePath": "f151",
+                "size": 1
+              },
+              {
+                "relativePath": "f152",
+                "size": 1
+              },
+              {
+                "relativePath": "f153",
+                "size": 1
+              },
+              {
+                "relativePath": "f154",
+                "size": 1
+              },
+              {
+                "relativePath": "f155",
+                "size": 1
+              },
+              {
+                "relativePath": "f156",
+                "size": 1
+              },
+              {
+                "relativePath": "f157",
+                "size": 1
+              },
+              {
+                "relativePath": "f158",
+                "size": 1
+              },
+              {
+                "relativePath": "f159",
+                "size": 1
+              },
+              {
+                "relativePath": "f160",
+                "size": 1
+              },
+              {
+                "relativePath": "f161",
+                "size": 1
+              },
+              {
+                "relativePath": "f162",
+                "size": 1
+              },
+              {
+                "relativePath": "f163",
+                "size": 1
+              },
+              {
+                "relativePath": "f164",
+                "size": 1
+              },
+              {
+                "relativePath": "f165",
+                "size": 1
+              },
+              {
+                "relativePath": "f166",
+                "size": 1
+              },
+              {
+                "relativePath": "f167",
+                "size": 1
+              },
+              {
+                "relativePath": "f168",
+                "size": 1
+              },
+              {
+                "relativePath": "f169",
+                "size": 1
+              },
+              {
+                "relativePath": "f170",
+                "size": 1
+              },
+              {
+                "relativePath": "f171",
+                "size": 1
+              },
+              {
+                "relativePath": "f172",
+                "size": 1
+              },
+              {
+                "relativePath": "f173",
+                "size": 1
+              },
+              {
+                "relativePath": "f174",
+                "size": 1
+              },
+              {
+                "relativePath": "f175",
+                "size": 1
+              },
+              {
+                "relativePath": "f176",
+                "size": 1
+              },
+              {
+                "relativePath": "f177",
+                "size": 1
+              },
+              {
+                "relativePath": "f178",
+                "size": 1
+              },
+              {
+                "relativePath": "f179",
+                "size": 1
+              },
+              {
+                "relativePath": "f180",
+                "size": 1
+              },
+              {
+                "relativePath": "f181",
+                "size": 1
+              },
+              {
+                "relativePath": "f182",
+                "size": 1
+              },
+              {
+                "relativePath": "f183",
+                "size": 1
+              },
+              {
+                "relativePath": "f184",
+                "size": 1
+              },
+              {
+                "relativePath": "f185",
+                "size": 1
+              },
+              {
+                "relativePath": "f186",
+                "size": 1
+              },
+              {
+                "relativePath": "f187",
+                "size": 1
+              },
+              {
+                "relativePath": "f188",
+                "size": 1
+              },
+              {
+                "relativePath": "f189",
+                "size": 1
+              },
+              {
+                "relativePath": "f190",
+                "size": 1
+              },
+              {
+                "relativePath": "f191",
+                "size": 1
+              },
+              {
+                "relativePath": "f192",
+                "size": 1
+              },
+              {
+                "relativePath": "f193",
+                "size": 1
+              },
+              {
+                "relativePath": "f194",
+                "size": 1
+              },
+              {
+                "relativePath": "f195",
+                "size": 1
+              },
+              {
+                "relativePath": "f196",
+                "size": 1
+              },
+              {
+                "relativePath": "f197",
+                "size": 1
+              },
+              {
+                "relativePath": "f198",
+                "size": 1
+              },
+              {
+                "relativePath": "f199",
+                "size": 1
+              },
+              {
+                "relativePath": "f200",
+                "size": 1
+              },
+              {
+                "relativePath": "f201",
+                "size": 1
+              },
+              {
+                "relativePath": "f202",
+                "size": 1
+              },
+              {
+                "relativePath": "f203",
+                "size": 1
+              },
+              {
+                "relativePath": "f204",
+                "size": 1
+              },
+              {
+                "relativePath": "f205",
+                "size": 1
+              },
+              {
+                "relativePath": "f206",
+                "size": 1
+              },
+              {
+                "relativePath": "f207",
+                "size": 1
+              },
+              {
+                "relativePath": "f208",
+                "size": 1
+              },
+              {
+                "relativePath": "f209",
+                "size": 1
+              },
+              {
+                "relativePath": "f210",
+                "size": 1
+              },
+              {
+                "relativePath": "f211",
+                "size": 1
+              },
+              {
+                "relativePath": "f212",
+                "size": 1
+              },
+              {
+                "relativePath": "f213",
+                "size": 1
+              },
+              {
+                "relativePath": "f214",
+                "size": 1
+              },
+              {
+                "relativePath": "f215",
+                "size": 1
+              },
+              {
+                "relativePath": "f216",
+                "size": 1
+              },
+              {
+                "relativePath": "f217",
+                "size": 1
+              },
+              {
+                "relativePath": "f218",
+                "size": 1
+              },
+              {
+                "relativePath": "f219",
+                "size": 1
+              },
+              {
+                "relativePath": "f220",
+                "size": 1
+              },
+              {
+                "relativePath": "f221",
+                "size": 1
+              },
+              {
+                "relativePath": "f222",
+                "size": 1
+              },
+              {
+                "relativePath": "f223",
+                "size": 1
+              },
+              {
+                "relativePath": "f224",
+                "size": 1
+              },
+              {
+                "relativePath": "f225",
+                "size": 1
+              },
+              {
+                "relativePath": "f226",
+                "size": 1
+              },
+              {
+                "relativePath": "f227",
+                "size": 1
+              },
+              {
+                "relativePath": "f228",
+                "size": 1
+              },
+              {
+                "relativePath": "f229",
+                "size": 1
+              },
+              {
+                "relativePath": "f230",
+                "size": 1
+              },
+              {
+                "relativePath": "f231",
+                "size": 1
+              },
+              {
+                "relativePath": "f232",
+                "size": 1
+              },
+              {
+                "relativePath": "f233",
+                "size": 1
+              },
+              {
+                "relativePath": "f234",
+                "size": 1
+              },
+              {
+                "relativePath": "f235",
+                "size": 1
+              },
+              {
+                "relativePath": "f236",
+                "size": 1
+              },
+              {
+                "relativePath": "f237",
+                "size": 1
+              },
+              {
+                "relativePath": "f238",
+                "size": 1
+              },
+              {
+                "relativePath": "f239",
+                "size": 1
+              },
+              {
+                "relativePath": "f240",
+                "size": 1
+              },
+              {
+                "relativePath": "f241",
+                "size": 1
+              },
+              {
+                "relativePath": "f242",
+                "size": 1
+              },
+              {
+                "relativePath": "f243",
+                "size": 1
+              },
+              {
+                "relativePath": "f244",
+                "size": 1
+              },
+              {
+                "relativePath": "f245",
+                "size": 1
+              },
+              {
+                "relativePath": "f246",
+                "size": 1
+              },
+              {
+                "relativePath": "f247",
+                "size": 1
+              },
+              {
+                "relativePath": "f248",
+                "size": 1
+              },
+              {
+                "relativePath": "f249",
+                "size": 1
+              },
+              {
+                "relativePath": "f250",
+                "size": 1
+              },
+              {
+                "relativePath": "f251",
+                "size": 1
+              },
+              {
+                "relativePath": "f252",
+                "size": 1
+              },
+              {
+                "relativePath": "f253",
+                "size": 1
+              },
+              {
+                "relativePath": "f254",
+                "size": 1
+              },
+              {
+                "relativePath": "f255",
+                "size": 1
+              },
+              {
+                "relativePath": "f256",
+                "size": 1
+              },
+              {
+                "relativePath": "f257",
+                "size": 1
+              },
+              {
+                "relativePath": "f258",
+                "size": 1
+              },
+              {
+                "relativePath": "f259",
+                "size": 1
+              },
+              {
+                "relativePath": "f260",
+                "size": 1
+              },
+              {
+                "relativePath": "f261",
+                "size": 1
+              },
+              {
+                "relativePath": "f262",
+                "size": 1
+              },
+              {
+                "relativePath": "f263",
+                "size": 1
+              },
+              {
+                "relativePath": "f264",
+                "size": 1
+              },
+              {
+                "relativePath": "f265",
+                "size": 1
+              },
+              {
+                "relativePath": "f266",
+                "size": 1
+              },
+              {
+                "relativePath": "f267",
+                "size": 1
+              },
+              {
+                "relativePath": "f268",
+                "size": 1
+              },
+              {
+                "relativePath": "f269",
+                "size": 1
+              },
+              {
+                "relativePath": "f270",
+                "size": 1
+              },
+              {
+                "relativePath": "f271",
+                "size": 1
+              },
+              {
+                "relativePath": "f272",
+                "size": 1
+              },
+              {
+                "relativePath": "f273",
+                "size": 1
+              },
+              {
+                "relativePath": "f274",
+                "size": 1
+              },
+              {
+                "relativePath": "f275",
+                "size": 1
+              },
+              {
+                "relativePath": "f276",
+                "size": 1
+              },
+              {
+                "relativePath": "f277",
+                "size": 1
+              },
+              {
+                "relativePath": "f278",
+                "size": 1
+              },
+              {
+                "relativePath": "f279",
+                "size": 1
+              },
+              {
+                "relativePath": "f280",
+                "size": 1
+              },
+              {
+                "relativePath": "f281",
+                "size": 1
+              },
+              {
+                "relativePath": "f282",
+                "size": 1
+              },
+              {
+                "relativePath": "f283",
+                "size": 1
+              },
+              {
+                "relativePath": "f284",
+                "size": 1
+              },
+              {
+                "relativePath": "f285",
+                "size": 1
+              },
+              {
+                "relativePath": "f286",
+                "size": 1
+              },
+              {
+                "relativePath": "f287",
+                "size": 1
+              },
+              {
+                "relativePath": "f288",
+                "size": 1
+              },
+              {
+                "relativePath": "f289",
+                "size": 1
+              },
+              {
+                "relativePath": "f290",
+                "size": 1
+              },
+              {
+                "relativePath": "f291",
+                "size": 1
+              },
+              {
+                "relativePath": "f292",
+                "size": 1
+              },
+              {
+                "relativePath": "f293",
+                "size": 1
+              },
+              {
+                "relativePath": "f294",
+                "size": 1
+              },
+              {
+                "relativePath": "f295",
+                "size": 1
+              },
+              {
+                "relativePath": "f296",
+                "size": 1
+              },
+              {
+                "relativePath": "f297",
+                "size": 1
+              },
+              {
+                "relativePath": "f298",
+                "size": 1
+              },
+              {
+                "relativePath": "f299",
+                "size": 1
+              },
+              {
+                "relativePath": "f300",
+                "size": 1
+              },
+              {
+                "relativePath": "f301",
+                "size": 1
+              },
+              {
+                "relativePath": "f302",
+                "size": 1
+              },
+              {
+                "relativePath": "f303",
+                "size": 1
+              },
+              {
+                "relativePath": "f304",
+                "size": 1
+              },
+              {
+                "relativePath": "f305",
+                "size": 1
+              },
+              {
+                "relativePath": "f306",
+                "size": 1
+              },
+              {
+                "relativePath": "f307",
+                "size": 1
+              },
+              {
+                "relativePath": "f308",
+                "size": 1
+              },
+              {
+                "relativePath": "f309",
+                "size": 1
+              },
+              {
+                "relativePath": "f310",
+                "size": 1
+              },
+              {
+                "relativePath": "f311",
+                "size": 1
+              },
+              {
+                "relativePath": "f312",
+                "size": 1
+              },
+              {
+                "relativePath": "f313",
+                "size": 1
+              },
+              {
+                "relativePath": "f314",
+                "size": 1
+              },
+              {
+                "relativePath": "f315",
+                "size": 1
+              },
+              {
+                "relativePath": "f316",
+                "size": 1
+              },
+              {
+                "relativePath": "f317",
+                "size": 1
+              },
+              {
+                "relativePath": "f318",
+                "size": 1
+              },
+              {
+                "relativePath": "f319",
+                "size": 1
+              },
+              {
+                "relativePath": "f320",
+                "size": 1
+              },
+              {
+                "relativePath": "f321",
+                "size": 1
+              },
+              {
+                "relativePath": "f322",
+                "size": 1
+              },
+              {
+                "relativePath": "f323",
+                "size": 1
+              },
+              {
+                "relativePath": "f324",
+                "size": 1
+              },
+              {
+                "relativePath": "f325",
+                "size": 1
+              },
+              {
+                "relativePath": "f326",
+                "size": 1
+              },
+              {
+                "relativePath": "f327",
+                "size": 1
+              },
+              {
+                "relativePath": "f328",
+                "size": 1
+              },
+              {
+                "relativePath": "f329",
+                "size": 1
+              },
+              {
+                "relativePath": "f330",
+                "size": 1
+              },
+              {
+                "relativePath": "f331",
+                "size": 1
+              },
+              {
+                "relativePath": "f332",
+                "size": 1
+              },
+              {
+                "relativePath": "f333",
+                "size": 1
+              },
+              {
+                "relativePath": "f334",
+                "size": 1
+              },
+              {
+                "relativePath": "f335",
+                "size": 1
+              },
+              {
+                "relativePath": "f336",
+                "size": 1
+              },
+              {
+                "relativePath": "f337",
+                "size": 1
+              },
+              {
+                "relativePath": "f338",
+                "size": 1
+              },
+              {
+                "relativePath": "f339",
+                "size": 1
+              },
+              {
+                "relativePath": "f340",
+                "size": 1
+              },
+              {
+                "relativePath": "f341",
+                "size": 1
+              },
+              {
+                "relativePath": "f342",
+                "size": 1
+              },
+              {
+                "relativePath": "f343",
+                "size": 1
+              },
+              {
+                "relativePath": "f344",
+                "size": 1
+              },
+              {
+                "relativePath": "f345",
+                "size": 1
+              },
+              {
+                "relativePath": "f346",
+                "size": 1
+              },
+              {
+                "relativePath": "f347",
+                "size": 1
+              },
+              {
+                "relativePath": "f348",
+                "size": 1
+              },
+              {
+                "relativePath": "f349",
+                "size": 1
+              },
+              {
+                "relativePath": "f350",
+                "size": 1
+              },
+              {
+                "relativePath": "f351",
+                "size": 1
+              },
+              {
+                "relativePath": "f352",
+                "size": 1
+              },
+              {
+                "relativePath": "f353",
+                "size": 1
+              },
+              {
+                "relativePath": "f354",
+                "size": 1
+              },
+              {
+                "relativePath": "f355",
+                "size": 1
+              },
+              {
+                "relativePath": "f356",
+                "size": 1
+              },
+              {
+                "relativePath": "f357",
+                "size": 1
+              },
+              {
+                "relativePath": "f358",
+                "size": 1
+              },
+              {
+                "relativePath": "f359",
+                "size": 1
+              },
+              {
+                "relativePath": "f360",
+                "size": 1
+              },
+              {
+                "relativePath": "f361",
+                "size": 1
+              },
+              {
+                "relativePath": "f362",
+                "size": 1
+              },
+              {
+                "relativePath": "f363",
+                "size": 1
+              },
+              {
+                "relativePath": "f364",
+                "size": 1
+              },
+              {
+                "relativePath": "f365",
+                "size": 1
+              },
+              {
+                "relativePath": "f366",
+                "size": 1
+              },
+              {
+                "relativePath": "f367",
+                "size": 1
+              },
+              {
+                "relativePath": "f368",
+                "size": 1
+              },
+              {
+                "relativePath": "f369",
+                "size": 1
+              },
+              {
+                "relativePath": "f370",
+                "size": 1
+              },
+              {
+                "relativePath": "f371",
+                "size": 1
+              },
+              {
+                "relativePath": "f372",
+                "size": 1
+              },
+              {
+                "relativePath": "f373",
+                "size": 1
+              },
+              {
+                "relativePath": "f374",
+                "size": 1
+              },
+              {
+                "relativePath": "f375",
+                "size": 1
+              },
+              {
+                "relativePath": "f376",
+                "size": 1
+              },
+              {
+                "relativePath": "f377",
+                "size": 1
+              },
+              {
+                "relativePath": "f378",
+                "size": 1
+              },
+              {
+                "relativePath": "f379",
+                "size": 1
+              },
+              {
+                "relativePath": "f380",
+                "size": 1
+              },
+              {
+                "relativePath": "f381",
+                "size": 1
+              },
+              {
+                "relativePath": "f382",
+                "size": 1
+              },
+              {
+                "relativePath": "f383",
+                "size": 1
+              },
+              {
+                "relativePath": "f384",
+                "size": 1
+              },
+              {
+                "relativePath": "f385",
+                "size": 1
+              },
+              {
+                "relativePath": "f386",
+                "size": 1
+              },
+              {
+                "relativePath": "f387",
+                "size": 1
+              },
+              {
+                "relativePath": "f388",
+                "size": 1
+              },
+              {
+                "relativePath": "f389",
+                "size": 1
+              },
+              {
+                "relativePath": "f390",
+                "size": 1
+              },
+              {
+                "relativePath": "f391",
+                "size": 1
+              },
+              {
+                "relativePath": "f392",
+                "size": 1
+              },
+              {
+                "relativePath": "f393",
+                "size": 1
+              },
+              {
+                "relativePath": "f394",
+                "size": 1
+              },
+              {
+                "relativePath": "f395",
+                "size": 1
+              },
+              {
+                "relativePath": "f396",
+                "size": 1
+              },
+              {
+                "relativePath": "f397",
+                "size": 1
+              },
+              {
+                "relativePath": "f398",
+                "size": 1
+              },
+              {
+                "relativePath": "f399",
+                "size": 1
+              },
+              {
+                "relativePath": "f400",
+                "size": 1
+              },
+              {
+                "relativePath": "f401",
+                "size": 1
+              },
+              {
+                "relativePath": "f402",
+                "size": 1
+              },
+              {
+                "relativePath": "f403",
+                "size": 1
+              },
+              {
+                "relativePath": "f404",
+                "size": 1
+              },
+              {
+                "relativePath": "f405",
+                "size": 1
+              },
+              {
+                "relativePath": "f406",
+                "size": 1
+              },
+              {
+                "relativePath": "f407",
+                "size": 1
+              },
+              {
+                "relativePath": "f408",
+                "size": 1
+              },
+              {
+                "relativePath": "f409",
+                "size": 1
+              },
+              {
+                "relativePath": "f410",
+                "size": 1
+              },
+              {
+                "relativePath": "f411",
+                "size": 1
+              },
+              {
+                "relativePath": "f412",
+                "size": 1
+              },
+              {
+                "relativePath": "f413",
+                "size": 1
+              },
+              {
+                "relativePath": "f414",
+                "size": 1
+              },
+              {
+                "relativePath": "f415",
+                "size": 1
+              },
+              {
+                "relativePath": "f416",
+                "size": 1
+              },
+              {
+                "relativePath": "f417",
+                "size": 1
+              },
+              {
+                "relativePath": "f418",
+                "size": 1
+              },
+              {
+                "relativePath": "f419",
+                "size": 1
+              },
+              {
+                "relativePath": "f420",
+                "size": 1
+              },
+              {
+                "relativePath": "f421",
+                "size": 1
+              },
+              {
+                "relativePath": "f422",
+                "size": 1
+              },
+              {
+                "relativePath": "f423",
+                "size": 1
+              },
+              {
+                "relativePath": "f424",
+                "size": 1
+              },
+              {
+                "relativePath": "f425",
+                "size": 1
+              },
+              {
+                "relativePath": "f426",
+                "size": 1
+              },
+              {
+                "relativePath": "f427",
+                "size": 1
+              },
+              {
+                "relativePath": "f428",
+                "size": 1
+              },
+              {
+                "relativePath": "f429",
+                "size": 1
+              },
+              {
+                "relativePath": "f430",
+                "size": 1
+              },
+              {
+                "relativePath": "f431",
+                "size": 1
+              },
+              {
+                "relativePath": "f432",
+                "size": 1
+              },
+              {
+                "relativePath": "f433",
+                "size": 1
+              },
+              {
+                "relativePath": "f434",
+                "size": 1
+              },
+              {
+                "relativePath": "f435",
+                "size": 1
+              },
+              {
+                "relativePath": "f436",
+                "size": 1
+              },
+              {
+                "relativePath": "f437",
+                "size": 1
+              },
+              {
+                "relativePath": "f438",
+                "size": 1
+              },
+              {
+                "relativePath": "f439",
+                "size": 1
+              },
+              {
+                "relativePath": "f440",
+                "size": 1
+              },
+              {
+                "relativePath": "f441",
+                "size": 1
+              },
+              {
+                "relativePath": "f442",
+                "size": 1
+              },
+              {
+                "relativePath": "f443",
+                "size": 1
+              },
+              {
+                "relativePath": "f444",
+                "size": 1
+              },
+              {
+                "relativePath": "f445",
+                "size": 1
+              },
+              {
+                "relativePath": "f446",
+                "size": 1
+              },
+              {
+                "relativePath": "f447",
+                "size": 1
+              },
+              {
+                "relativePath": "f448",
+                "size": 1
+              },
+              {
+                "relativePath": "f449",
+                "size": 1
+              },
+              {
+                "relativePath": "f450",
+                "size": 1
+              },
+              {
+                "relativePath": "f451",
+                "size": 1
+              },
+              {
+                "relativePath": "f452",
+                "size": 1
+              },
+              {
+                "relativePath": "f453",
+                "size": 1
+              },
+              {
+                "relativePath": "f454",
+                "size": 1
+              },
+              {
+                "relativePath": "f455",
+                "size": 1
+              },
+              {
+                "relativePath": "f456",
+                "size": 1
+              },
+              {
+                "relativePath": "f457",
+                "size": 1
+              },
+              {
+                "relativePath": "f458",
+                "size": 1
+              },
+              {
+                "relativePath": "f459",
+                "size": 1
+              },
+              {
+                "relativePath": "f460",
+                "size": 1
+              },
+              {
+                "relativePath": "f461",
+                "size": 1
+              },
+              {
+                "relativePath": "f462",
+                "size": 1
+              },
+              {
+                "relativePath": "f463",
+                "size": 1
+              },
+              {
+                "relativePath": "f464",
+                "size": 1
+              },
+              {
+                "relativePath": "f465",
+                "size": 1
+              },
+              {
+                "relativePath": "f466",
+                "size": 1
+              },
+              {
+                "relativePath": "f467",
+                "size": 1
+              },
+              {
+                "relativePath": "f468",
+                "size": 1
+              },
+              {
+                "relativePath": "f469",
+                "size": 1
+              },
+              {
+                "relativePath": "f470",
+                "size": 1
+              },
+              {
+                "relativePath": "f471",
+                "size": 1
+              },
+              {
+                "relativePath": "f472",
+                "size": 1
+              },
+              {
+                "relativePath": "f473",
+                "size": 1
+              },
+              {
+                "relativePath": "f474",
+                "size": 1
+              },
+              {
+                "relativePath": "f475",
+                "size": 1
+              },
+              {
+                "relativePath": "f476",
+                "size": 1
+              },
+              {
+                "relativePath": "f477",
+                "size": 1
+              },
+              {
+                "relativePath": "f478",
+                "size": 1
+              },
+              {
+                "relativePath": "f479",
+                "size": 1
+              },
+              {
+                "relativePath": "f480",
+                "size": 1
+              },
+              {
+                "relativePath": "f481",
+                "size": 1
+              },
+              {
+                "relativePath": "f482",
+                "size": 1
+              },
+              {
+                "relativePath": "f483",
+                "size": 1
+              },
+              {
+                "relativePath": "f484",
+                "size": 1
+              },
+              {
+                "relativePath": "f485",
+                "size": 1
+              },
+              {
+                "relativePath": "f486",
+                "size": 1
+              },
+              {
+                "relativePath": "f487",
+                "size": 1
+              },
+              {
+                "relativePath": "f488",
+                "size": 1
+              },
+              {
+                "relativePath": "f489",
+                "size": 1
+              },
+              {
+                "relativePath": "f490",
+                "size": 1
+              },
+              {
+                "relativePath": "f491",
+                "size": 1
+              },
+              {
+                "relativePath": "f492",
+                "size": 1
+              },
+              {
+                "relativePath": "f493",
+                "size": 1
+              },
+              {
+                "relativePath": "f494",
+                "size": 1
+              },
+              {
+                "relativePath": "f495",
+                "size": 1
+              },
+              {
+                "relativePath": "f496",
+                "size": 1
+              },
+              {
+                "relativePath": "f497",
+                "size": 1
+              },
+              {
+                "relativePath": "f498",
+                "size": 1
+              },
+              {
+                "relativePath": "f499",
+                "size": 1
+              }
+            ]
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "hardFails": [],
+              "warnings": [],
+              "stats": {
+                "fileCount": 500,
+                "totalBytes": 500
+              },
+              "frontmatter": {
+                "name": "M",
+                "description": "Manifest validation with everything"
+              }
+            }
+          }
         }
       ],
       "tree": []
+    },
+    {
+      "name": "import",
+      "options": {},
+      "setup": [
+        {
+          "path": "src/good/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Good\ndescription: A complete skill imported by copy\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/good/scripts/run.sh",
+          "kind": "file",
+          "text": "echo"
+        },
+        {
+          "path": "src/good/nested/deep.txt",
+          "kind": "file",
+          "text": "deep"
+        },
+        {
+          "path": "src/good/rel-link",
+          "kind": "symlink",
+          "target": "nested"
+        },
+        {
+          "path": "src/other/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Other\ndescription: Another skill used for scoped imports\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/.hidden/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Hidden\ndescription: Basename is not a valid slug\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/dangling/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Dangling\ndescription: Imported over a dangling link\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/piped/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Piped\ndescription: Bundle that carries a FIFO pipe\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/piped/pipe",
+          "kind": "fifo"
+        },
+        {
+          "path": "src/nomd/readme.md",
+          "kind": "file",
+          "text": "x"
+        },
+        {
+          "path": "src/mddir/SKILL.md",
+          "kind": "dir"
+        },
+        {
+          "path": "src/bad/SKILL.md",
+          "kind": "file",
+          "text": "# no frontmatter\n"
+        },
+        {
+          "path": "src/afile",
+          "kind": "file",
+          "text": "x"
+        },
+        {
+          "path": "src/linkroot",
+          "kind": "symlink",
+          "target": "good"
+        },
+        {
+          "path": "home/skills/taken/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Taken\ndescription: Already installed before the import\n---\n\nBody.\n"
+        },
+        {
+          "path": "home/skills/dangling",
+          "kind": "symlink",
+          "target": "../../nowhere"
+        },
+        {
+          "path": "home/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Home\ndescription: The pilot home used as a source bundle\n---\n\nBody.\n"
+        },
+        {
+          "path": "builtin/bi/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Builtin\ndescription: Read-only\n---\n\nBody.\n"
+        }
+      ],
+      "steps": [
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/good"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "copy",
+              "scope": "user",
+              "slug": "good",
+              "sourcePath": "<dir>/src/good",
+              "skillPath": "<dir>/home/skills/good",
+              "skill": {
+                "slug": "good",
+                "name": "Good",
+                "description": "A complete skill imported by copy",
+                "version": null,
+                "skillFile": "<dir>/home/skills/good/SKILL.md",
+                "skillDir": "<dir>/home/skills/good",
+                "scope": "user",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [
+                  {
+                    "code": "contains_symlink",
+                    "message": "Bundle contains a symlink: rel-link"
+                  },
+                  {
+                    "code": "risky_extension",
+                    "message": "Executable-style file (.sh): scripts/run.sh"
+                  }
+                ],
+                "stats": {
+                  "fileCount": 3,
+                  "totalBytes": 81
+                },
+                "frontmatter": {
+                  "name": "Good",
+                  "description": "A complete skill imported by copy"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/good"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "conflict",
+              "message": "Skill already exists at <dir>/home/skills/good. Re-run with force=true to overwrite."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/good",
+            "force": true,
+            "mode": "symlink"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "symlink",
+              "scope": "user",
+              "slug": "good",
+              "sourcePath": "<dir>/src/good",
+              "skillPath": "<dir>/home/skills/good",
+              "skill": {
+                "slug": "good",
+                "name": "Good",
+                "description": "A complete skill imported by copy",
+                "version": null,
+                "skillFile": "<dir>/home/skills/good/SKILL.md",
+                "skillDir": "<dir>/home/skills/good",
+                "scope": "user",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [
+                  {
+                    "code": "contains_symlink",
+                    "message": "Bundle contains a symlink: rel-link"
+                  },
+                  {
+                    "code": "risky_extension",
+                    "message": "Executable-style file (.sh): scripts/run.sh"
+                  }
+                ],
+                "stats": {
+                  "fileCount": 3,
+                  "totalBytes": 81
+                },
+                "frontmatter": {
+                  "name": "Good",
+                  "description": "A complete skill imported by copy"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/good",
+            "slug": "  renamed  ",
+            "mode": "bogus"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "copy",
+              "scope": "user",
+              "slug": "renamed",
+              "sourcePath": "<dir>/src/good",
+              "skillPath": "<dir>/home/skills/renamed",
+              "skill": {
+                "slug": "renamed",
+                "name": "Good",
+                "description": "A complete skill imported by copy",
+                "version": null,
+                "skillFile": "<dir>/home/skills/renamed/SKILL.md",
+                "skillDir": "<dir>/home/skills/renamed",
+                "scope": "user",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [
+                  {
+                    "code": "contains_symlink",
+                    "message": "Bundle contains a symlink: rel-link"
+                  },
+                  {
+                    "code": "risky_extension",
+                    "message": "Executable-style file (.sh): scripts/run.sh"
+                  }
+                ],
+                "stats": {
+                  "fileCount": 3,
+                  "totalBytes": 81
+                },
+                "frontmatter": {
+                  "name": "Good",
+                  "description": "A complete skill imported by copy"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "project",
+            "projectKey": "<dir>/proj",
+            "sourcePath": "<dir>/src/other"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "copy",
+              "scope": "project",
+              "slug": "other",
+              "sourcePath": "<dir>/src/other",
+              "skillPath": "<dir>/proj/.pilotdeck/skills/other",
+              "skill": {
+                "slug": "other",
+                "name": "Other",
+                "description": "Another skill used for scoped imports",
+                "version": null,
+                "skillFile": "<dir>/proj/.pilotdeck/skills/other/SKILL.md",
+                "skillDir": "<dir>/proj/.pilotdeck/skills/other",
+                "scope": "project",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [],
+                "stats": {
+                  "fileCount": 1,
+                  "totalBytes": 78
+                },
+                "frontmatter": {
+                  "name": "Other",
+                  "description": "Another skill used for scoped imports"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "~/src/other",
+            "slug": "tilde"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "copy",
+              "scope": "user",
+              "slug": "tilde",
+              "sourcePath": "<dir>/src/other",
+              "skillPath": "<dir>/home/skills/tilde",
+              "skill": {
+                "slug": "tilde",
+                "name": "Other",
+                "description": "Another skill used for scoped imports",
+                "version": null,
+                "skillFile": "<dir>/home/skills/tilde/SKILL.md",
+                "skillDir": "<dir>/home/skills/tilde",
+                "scope": "user",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [],
+                "stats": {
+                  "fileCount": 1,
+                  "totalBytes": 78
+                },
+                "frontmatter": {
+                  "name": "Other",
+                  "description": "Another skill used for scoped imports"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/linkroot"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "copy",
+              "scope": "user",
+              "slug": "linkroot",
+              "sourcePath": "<dir>/src/linkroot",
+              "skillPath": "<dir>/home/skills/linkroot",
+              "skill": {
+                "slug": "linkroot",
+                "name": "Good",
+                "description": "A complete skill imported by copy",
+                "version": null,
+                "skillFile": "<dir>/home/skills/linkroot/SKILL.md",
+                "skillDir": "<dir>/home/skills/linkroot",
+                "scope": "user",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [
+                  {
+                    "code": "contains_symlink",
+                    "message": "Bundle contains a symlink: rel-link"
+                  },
+                  {
+                    "code": "risky_extension",
+                    "message": "Executable-style file (.sh): scripts/run.sh"
+                  }
+                ],
+                "stats": {
+                  "fileCount": 3,
+                  "totalBytes": 81
+                },
+                "frontmatter": {
+                  "name": "Good",
+                  "description": "A complete skill imported by copy"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/dangling"
+          },
+          "outcome": {
+            "error": {
+              "name": "SystemError",
+              "code": "ERR_FS_CP_DIR_TO_NON_DIR",
+              "message": "Cannot overwrite non-directory with directory: cp returned EISDIR (cannot overwrite non-directory <dir>/home/skills/dangling with directory <dir>/src/dangling) <dir>/home/skills/dangling"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/dangling",
+            "mode": "symlink"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "code": "EEXIST",
+              "message": "EEXIST: file already exists, symlink '<dir>/src/dangling' -> '<dir>/home/skills/dangling'"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/piped"
+          },
+          "outcome": {
+            "error": {
+              "name": "SystemError",
+              "code": "ERR_FS_CP_FIFO_PIPE",
+              "message": "Cannot copy a FIFO pipe: cp returned EINVAL (cannot copy a FIFO pipe: <dir>/home/skills/piped/pipe) <dir>/home/skills/piped/pipe"
+            }
+          }
+        },
+        {
+          "op": "delete",
+          "input": {
+            "scope": "user",
+            "slug": "piped"
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "scope": "user",
+              "slug": "piped"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/home",
+            "slug": "selfsub"
+          },
+          "outcome": {
+            "error": {
+              "name": "SystemError",
+              "code": "ERR_FS_CP_EINVAL",
+              "message": "Invalid src or dest: cp returned EINVAL (cannot copy <dir>/home to a subdirectory of self <dir>/home/skills/selfsub) <dir>/home/skills/selfsub"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/home/skills/taken"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "self_import",
+              "message": "Source and target resolve to the same path; pick a different slug or scope."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/missing"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "source_missing",
+              "message": "Source path does not exist: <dir>/src/missing"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/afile"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "source_not_directory",
+              "message": "Source path is not a directory: <dir>/src/afile"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/afile/x"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "code": "ENOTDIR",
+              "message": "ENOTDIR: not a directory, stat '<dir>/src/afile/x'"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/nomd"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "no_skill_md",
+              "message": "Source folder does not contain a SKILL.md at the root: <dir>/src/nomd"
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/mddir"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillValidationError",
+              "code": "validation_failed",
+              "message": "Validation failed.",
+              "validation": {
+                "ok": false,
+                "hardFails": [
+                  {
+                    "code": "no_skill_md",
+                    "message": "Source folder does not contain a SKILL.md at the root."
+                  }
+                ],
+                "warnings": [],
+                "stats": {
+                  "fileCount": 0,
+                  "totalBytes": 0
+                },
+                "frontmatter": null
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/bad"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillValidationError",
+              "code": "validation_failed",
+              "message": "Validation failed.",
+              "validation": {
+                "ok": false,
+                "hardFails": [
+                  {
+                    "code": "frontmatter_missing",
+                    "message": "SKILL.md does not start with a YAML frontmatter block."
+                  }
+                ],
+                "warnings": [],
+                "stats": {
+                  "fileCount": 1,
+                  "totalBytes": 17
+                },
+                "frontmatter": {}
+              }
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/good",
+            "slug": "../x"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_slug",
+              "message": "Invalid slug \"../x\". Allowed: [a-zA-Z0-9][a-zA-Z0-9._-]{0,99}, no \"..\"."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/good",
+            "slug": 5
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "code": null
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/good",
+            "slug": "   "
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "conflict",
+              "message": "Skill already exists at <dir>/home/skills/good. Re-run with force=true to overwrite."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/.hidden"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_slug",
+              "message": "Invalid slug \".hidden\". Allowed: [a-zA-Z0-9][a-zA-Z0-9._-]{0,99}, no \"..\"."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "builtin",
+            "sourcePath": "<dir>/src/good"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "read_only",
+              "message": "Built-in skills are read-only. Create a user or project override to edit this skill."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_input",
+              "message": "sourcePath is required."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "   "
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_input",
+              "message": "sourcePath is required."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": 5
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_input",
+              "message": "sourcePath is required."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "project",
+            "sourcePath": "<dir>/src/other"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "project_required",
+              "message": "Project scope requires a real project (general chat doesn't qualify)."
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": null,
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "code": null
+            }
+          }
+        },
+        {
+          "op": "import",
+          "input": {
+            "scope": "user",
+            "sourcePath": "<dir>/src/other",
+            "slug": "taken",
+            "force": true
+          },
+          "outcome": {
+            "result": {
+              "ok": true,
+              "mode": "copy",
+              "scope": "user",
+              "slug": "taken",
+              "sourcePath": "<dir>/src/other",
+              "skillPath": "<dir>/home/skills/taken",
+              "skill": {
+                "slug": "taken",
+                "name": "Other",
+                "description": "Another skill used for scoped imports",
+                "version": null,
+                "skillFile": "<dir>/home/skills/taken/SKILL.md",
+                "skillDir": "<dir>/home/skills/taken",
+                "scope": "user",
+                "readonly": false,
+                "mtime": "<mtime>"
+              },
+              "validation": {
+                "ok": true,
+                "hardFails": [],
+                "warnings": [],
+                "stats": {
+                  "fileCount": 1,
+                  "totalBytes": 78
+                },
+                "frontmatter": {
+                  "name": "Other",
+                  "description": "Another skill used for scoped imports"
+                }
+              }
+            }
+          }
+        },
+        {
+          "op": "list",
+          "input": {
+            "scope": "user",
+            "limit": 50
+          },
+          "outcome": {
+            "result": {
+              "builtin": [
+                {
+                  "slug": "bi",
+                  "name": "Builtin",
+                  "description": "Read-only",
+                  "version": null,
+                  "skillFile": "<dir>/builtin/bi/SKILL.md",
+                  "skillDir": "<dir>/builtin/bi",
+                  "scope": "builtin",
+                  "readonly": true,
+                  "mtime": "<mtime>"
+                }
+              ],
+              "user": [
+                {
+                  "slug": "good",
+                  "name": "Good",
+                  "description": "A complete skill imported by copy",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/good/SKILL.md",
+                  "skillDir": "<dir>/home/skills/good",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>"
+                },
+                {
+                  "slug": "linkroot",
+                  "name": "Good",
+                  "description": "A complete skill imported by copy",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/linkroot/SKILL.md",
+                  "skillDir": "<dir>/home/skills/linkroot",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>"
+                },
+                {
+                  "slug": "renamed",
+                  "name": "Good",
+                  "description": "A complete skill imported by copy",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/renamed/SKILL.md",
+                  "skillDir": "<dir>/home/skills/renamed",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>"
+                },
+                {
+                  "slug": "taken",
+                  "name": "Other",
+                  "description": "Another skill used for scoped imports",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/taken/SKILL.md",
+                  "skillDir": "<dir>/home/skills/taken",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>"
+                },
+                {
+                  "slug": "tilde",
+                  "name": "Other",
+                  "description": "Another skill used for scoped imports",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/tilde/SKILL.md",
+                  "skillDir": "<dir>/home/skills/tilde",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>"
+                }
+              ],
+              "project": [],
+              "projectPath": null,
+              "items": [
+                {
+                  "slug": "good",
+                  "name": "Good",
+                  "description": "A complete skill imported by copy",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/good/SKILL.md",
+                  "skillDir": "<dir>/home/skills/good",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>",
+                  "command": "/good",
+                  "matches": []
+                },
+                {
+                  "slug": "linkroot",
+                  "name": "Good",
+                  "description": "A complete skill imported by copy",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/linkroot/SKILL.md",
+                  "skillDir": "<dir>/home/skills/linkroot",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>",
+                  "command": "/linkroot",
+                  "matches": []
+                },
+                {
+                  "slug": "renamed",
+                  "name": "Good",
+                  "description": "A complete skill imported by copy",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/renamed/SKILL.md",
+                  "skillDir": "<dir>/home/skills/renamed",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>",
+                  "command": "/renamed",
+                  "matches": []
+                },
+                {
+                  "slug": "taken",
+                  "name": "Other",
+                  "description": "Another skill used for scoped imports",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/taken/SKILL.md",
+                  "skillDir": "<dir>/home/skills/taken",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>",
+                  "command": "/taken",
+                  "matches": []
+                },
+                {
+                  "slug": "tilde",
+                  "name": "Other",
+                  "description": "Another skill used for scoped imports",
+                  "version": null,
+                  "skillFile": "<dir>/home/skills/tilde/SKILL.md",
+                  "skillDir": "<dir>/home/skills/tilde",
+                  "scope": "user",
+                  "readonly": false,
+                  "mtime": "<mtime>",
+                  "command": "/tilde",
+                  "matches": []
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "tree": [
+        {
+          "path": "builtin",
+          "kind": "dir"
+        },
+        {
+          "path": "builtin/bi",
+          "kind": "dir"
+        },
+        {
+          "path": "builtin/bi/SKILL.md",
+          "kind": "file",
+          "size": 52,
+          "sha256": "3ab65220e3c2d06b2f829ac777397ea69adcb247ad118fa3c233ceca05739e16",
+          "text": "---\nname: Builtin\ndescription: Read-only\n---\n\nBody.\n"
+        },
+        {
+          "path": "home",
+          "kind": "dir"
+        },
+        {
+          "path": "home/SKILL.md",
+          "kind": "file",
+          "size": 78,
+          "sha256": "d9efab1c03763204370066c600e3bb27230ad6f13cbb876252f2ff41b23762fa",
+          "text": "---\nname: Home\ndescription: The pilot home used as a source bundle\n---\n\nBody.\n"
+        },
+        {
+          "path": "home/skills",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/dangling",
+          "kind": "symlink",
+          "target": "../../nowhere"
+        },
+        {
+          "path": "home/skills/good",
+          "kind": "symlink",
+          "target": "<dir>/src/good"
+        },
+        {
+          "path": "home/skills/linkroot",
+          "kind": "symlink",
+          "target": "<dir>/src/good"
+        },
+        {
+          "path": "home/skills/renamed",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/renamed/SKILL.md",
+          "kind": "file",
+          "size": 73,
+          "sha256": "48b032dd6c09ad083d03ca4b178d7d3425f42eafdaf46bfd5ba320389d9e09e8",
+          "text": "---\nname: Good\ndescription: A complete skill imported by copy\n---\n\nBody.\n"
+        },
+        {
+          "path": "home/skills/renamed/nested",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/renamed/nested/deep.txt",
+          "kind": "file",
+          "size": 4,
+          "sha256": "74611c1d6455b534323a21f8133a6f43dc3a8188e7b946f96dcc28dde932fcb2",
+          "text": "deep"
+        },
+        {
+          "path": "home/skills/renamed/rel-link",
+          "kind": "symlink",
+          "target": "<dir>/src/good/nested"
+        },
+        {
+          "path": "home/skills/renamed/scripts",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/renamed/scripts/run.sh",
+          "kind": "file",
+          "size": 4,
+          "sha256": "092c79e8f80e559e404bcf660c48f3522b67aba9ff1484b0367e1a4ddef7431d",
+          "text": "echo"
+        },
+        {
+          "path": "home/skills/taken",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/taken/SKILL.md",
+          "kind": "file",
+          "size": 78,
+          "sha256": "1f8d88a102388926043093ab0ca40f7c0f7e25839562fd5d7b207d2a2af9f256",
+          "text": "---\nname: Other\ndescription: Another skill used for scoped imports\n---\n\nBody.\n"
+        },
+        {
+          "path": "home/skills/tilde",
+          "kind": "dir"
+        },
+        {
+          "path": "home/skills/tilde/SKILL.md",
+          "kind": "file",
+          "size": 78,
+          "sha256": "1f8d88a102388926043093ab0ca40f7c0f7e25839562fd5d7b207d2a2af9f256",
+          "text": "---\nname: Other\ndescription: Another skill used for scoped imports\n---\n\nBody.\n"
+        },
+        {
+          "path": "proj",
+          "kind": "dir"
+        },
+        {
+          "path": "proj/.pilotdeck",
+          "kind": "dir"
+        },
+        {
+          "path": "proj/.pilotdeck/skills",
+          "kind": "dir"
+        },
+        {
+          "path": "proj/.pilotdeck/skills/other",
+          "kind": "dir"
+        },
+        {
+          "path": "proj/.pilotdeck/skills/other/SKILL.md",
+          "kind": "file",
+          "size": 78,
+          "sha256": "1f8d88a102388926043093ab0ca40f7c0f7e25839562fd5d7b207d2a2af9f256",
+          "text": "---\nname: Other\ndescription: Another skill used for scoped imports\n---\n\nBody.\n"
+        },
+        {
+          "path": "src",
+          "kind": "dir"
+        },
+        {
+          "path": "src/.hidden",
+          "kind": "dir"
+        },
+        {
+          "path": "src/.hidden/SKILL.md",
+          "kind": "file",
+          "size": 70,
+          "sha256": "4d03d9b3172a6335d1b0620ae094537b1e65ee03d72551d769341cc110646f0b",
+          "text": "---\nname: Hidden\ndescription: Basename is not a valid slug\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/afile",
+          "kind": "file",
+          "size": 1,
+          "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "text": "x"
+        },
+        {
+          "path": "src/bad",
+          "kind": "dir"
+        },
+        {
+          "path": "src/bad/SKILL.md",
+          "kind": "file",
+          "size": 17,
+          "sha256": "06253f40993cd1b0dfff49d3cf08d63d02127d4c163f7ffebc1934bd76948eb1",
+          "text": "# no frontmatter\n"
+        },
+        {
+          "path": "src/dangling",
+          "kind": "dir"
+        },
+        {
+          "path": "src/dangling/SKILL.md",
+          "kind": "file",
+          "size": 73,
+          "sha256": "8b311a3b75bdab0221455e4a56e5d1c0eff21ad29688f8ce2dc2c262fde6d992",
+          "text": "---\nname: Dangling\ndescription: Imported over a dangling link\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/good",
+          "kind": "dir"
+        },
+        {
+          "path": "src/good/SKILL.md",
+          "kind": "file",
+          "size": 73,
+          "sha256": "48b032dd6c09ad083d03ca4b178d7d3425f42eafdaf46bfd5ba320389d9e09e8",
+          "text": "---\nname: Good\ndescription: A complete skill imported by copy\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/good/nested",
+          "kind": "dir"
+        },
+        {
+          "path": "src/good/nested/deep.txt",
+          "kind": "file",
+          "size": 4,
+          "sha256": "74611c1d6455b534323a21f8133a6f43dc3a8188e7b946f96dcc28dde932fcb2",
+          "text": "deep"
+        },
+        {
+          "path": "src/good/rel-link",
+          "kind": "symlink",
+          "target": "nested"
+        },
+        {
+          "path": "src/good/scripts",
+          "kind": "dir"
+        },
+        {
+          "path": "src/good/scripts/run.sh",
+          "kind": "file",
+          "size": 4,
+          "sha256": "092c79e8f80e559e404bcf660c48f3522b67aba9ff1484b0367e1a4ddef7431d",
+          "text": "echo"
+        },
+        {
+          "path": "src/linkroot",
+          "kind": "symlink",
+          "target": "good"
+        },
+        {
+          "path": "src/mddir",
+          "kind": "dir"
+        },
+        {
+          "path": "src/mddir/SKILL.md",
+          "kind": "dir"
+        },
+        {
+          "path": "src/nomd",
+          "kind": "dir"
+        },
+        {
+          "path": "src/nomd/readme.md",
+          "kind": "file",
+          "size": 1,
+          "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "text": "x"
+        },
+        {
+          "path": "src/other",
+          "kind": "dir"
+        },
+        {
+          "path": "src/other/SKILL.md",
+          "kind": "file",
+          "size": 78,
+          "sha256": "1f8d88a102388926043093ab0ca40f7c0f7e25839562fd5d7b207d2a2af9f256",
+          "text": "---\nname: Other\ndescription: Another skill used for scoped imports\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/piped",
+          "kind": "dir"
+        },
+        {
+          "path": "src/piped/SKILL.md",
+          "kind": "file",
+          "size": 72,
+          "sha256": "a769a00afc561478bb870a3b4714ab59a3e57d4d0e3a17aae8dda5b19b07cb62",
+          "text": "---\nname: Piped\ndescription: Bundle that carries a FIFO pipe\n---\n\nBody.\n"
+        },
+        {
+          "path": "src/piped/pipe",
+          "kind": "fifo"
+        }
+      ]
+    },
+    {
+      "name": "scan",
+      "options": {},
+      "setup": [
+        {
+          "path": "lib/zeta/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Zeta\ndescription: Sorted after the others\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/Alpha/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Alpha\ndescription: Capitalised folder sorts by locale\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/beta/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Beta\ndescription: Counts nested files and followed links\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/beta/data/x.txt",
+          "kind": "file",
+          "text": "12345"
+        },
+        {
+          "path": "lib/beta/flink",
+          "kind": "symlink",
+          "target": "data/x.txt"
+        },
+        {
+          "path": "lib/beta/pipe",
+          "kind": "fifo"
+        },
+        {
+          "path": "lib/empty",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/notes/readme.md",
+          "kind": "file",
+          "text": "x"
+        },
+        {
+          "path": "lib/plain.txt",
+          "kind": "file",
+          "text": "x"
+        },
+        {
+          "path": "lib/linked",
+          "kind": "symlink",
+          "target": "../ext"
+        },
+        {
+          "path": "ext/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Ext\ndescription: Reached through a directory symlink\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/broken",
+          "kind": "symlink",
+          "target": "../nowhere"
+        },
+        {
+          "path": "lib/mddir/SKILL.md",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/loopy/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Loopy\ndescription: A folder whose link points back at itself\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/loopy/loop",
+          "kind": "symlink",
+          "target": "."
+        },
+        {
+          "path": "top/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Top\ndescription: A parent folder that is itself a skill\n---\n\nBody.\n"
+        },
+        {
+          "path": "top/child/SKILL.md",
+          "kind": "file",
+          "text": "---\nname: Child\ndescription: Listed after its parent\n---\n\nBody.\n"
+        }
+      ],
+      "steps": [
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/lib"
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/lib",
+              "folders": [
+                {
+                  "folderName": "Alpha",
+                  "hasSkillMd": true,
+                  "name": "Alpha",
+                  "description": "Capitalised folder sorts by locale",
+                  "sourcePath": "<dir>/lib/Alpha",
+                  "fileCount": 1,
+                  "totalSize": 75
+                },
+                {
+                  "folderName": "beta",
+                  "hasSkillMd": true,
+                  "name": "Beta",
+                  "description": "Counts nested files and followed links",
+                  "sourcePath": "<dir>/lib/beta",
+                  "fileCount": 3,
+                  "totalSize": 88
+                },
+                {
+                  "folderName": "linked",
+                  "hasSkillMd": true,
+                  "name": "Ext",
+                  "description": "Reached through a directory symlink",
+                  "sourcePath": "<dir>/lib/linked",
+                  "fileCount": 1,
+                  "totalSize": 74
+                },
+                {
+                  "folderName": "loopy",
+                  "hasSkillMd": true,
+                  "name": "Loopy",
+                  "description": "A folder whose link points back at itself",
+                  "sourcePath": "<dir>/lib/loopy",
+                  "fileCount": 33,
+                  "totalSize": 2706
+                },
+                {
+                  "folderName": "mddir",
+                  "hasSkillMd": true,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/mddir",
+                  "fileCount": 0,
+                  "totalSize": 0
+                },
+                {
+                  "folderName": "zeta",
+                  "hasSkillMd": true,
+                  "name": "Zeta",
+                  "description": "Sorted after the others",
+                  "sourcePath": "<dir>/lib/zeta",
+                  "fileCount": 1,
+                  "totalSize": 63
+                },
+                {
+                  "folderName": "empty",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/empty",
+                  "fileCount": 0,
+                  "totalSize": 0
+                },
+                {
+                  "folderName": "notes",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/notes",
+                  "fileCount": 0,
+                  "totalSize": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/top"
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/top",
+              "folders": [
+                {
+                  "folderName": "top",
+                  "hasSkillMd": true,
+                  "name": "Top",
+                  "description": "A parent folder that is itself a skill",
+                  "sourcePath": "<dir>/top",
+                  "fileCount": 2,
+                  "totalSize": 141
+                },
+                {
+                  "folderName": "child",
+                  "hasSkillMd": true,
+                  "name": "Child",
+                  "description": "Listed after its parent",
+                  "sourcePath": "<dir>/top/child",
+                  "fileCount": 1,
+                  "totalSize": 64
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "  <dir>/lib/  "
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/lib",
+              "folders": [
+                {
+                  "folderName": "Alpha",
+                  "hasSkillMd": true,
+                  "name": "Alpha",
+                  "description": "Capitalised folder sorts by locale",
+                  "sourcePath": "<dir>/lib/Alpha",
+                  "fileCount": 1,
+                  "totalSize": 75
+                },
+                {
+                  "folderName": "beta",
+                  "hasSkillMd": true,
+                  "name": "Beta",
+                  "description": "Counts nested files and followed links",
+                  "sourcePath": "<dir>/lib/beta",
+                  "fileCount": 3,
+                  "totalSize": 88
+                },
+                {
+                  "folderName": "linked",
+                  "hasSkillMd": true,
+                  "name": "Ext",
+                  "description": "Reached through a directory symlink",
+                  "sourcePath": "<dir>/lib/linked",
+                  "fileCount": 1,
+                  "totalSize": 74
+                },
+                {
+                  "folderName": "loopy",
+                  "hasSkillMd": true,
+                  "name": "Loopy",
+                  "description": "A folder whose link points back at itself",
+                  "sourcePath": "<dir>/lib/loopy",
+                  "fileCount": 33,
+                  "totalSize": 2706
+                },
+                {
+                  "folderName": "mddir",
+                  "hasSkillMd": true,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/mddir",
+                  "fileCount": 0,
+                  "totalSize": 0
+                },
+                {
+                  "folderName": "zeta",
+                  "hasSkillMd": true,
+                  "name": "Zeta",
+                  "description": "Sorted after the others",
+                  "sourcePath": "<dir>/lib/zeta",
+                  "fileCount": 1,
+                  "totalSize": 63
+                },
+                {
+                  "folderName": "empty",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/empty",
+                  "fileCount": 0,
+                  "totalSize": 0
+                },
+                {
+                  "folderName": "notes",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/notes",
+                  "fileCount": 0,
+                  "totalSize": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "~/lib"
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/lib",
+              "folders": [
+                {
+                  "folderName": "Alpha",
+                  "hasSkillMd": true,
+                  "name": "Alpha",
+                  "description": "Capitalised folder sorts by locale",
+                  "sourcePath": "<dir>/lib/Alpha",
+                  "fileCount": 1,
+                  "totalSize": 75
+                },
+                {
+                  "folderName": "beta",
+                  "hasSkillMd": true,
+                  "name": "Beta",
+                  "description": "Counts nested files and followed links",
+                  "sourcePath": "<dir>/lib/beta",
+                  "fileCount": 3,
+                  "totalSize": 88
+                },
+                {
+                  "folderName": "linked",
+                  "hasSkillMd": true,
+                  "name": "Ext",
+                  "description": "Reached through a directory symlink",
+                  "sourcePath": "<dir>/lib/linked",
+                  "fileCount": 1,
+                  "totalSize": 74
+                },
+                {
+                  "folderName": "loopy",
+                  "hasSkillMd": true,
+                  "name": "Loopy",
+                  "description": "A folder whose link points back at itself",
+                  "sourcePath": "<dir>/lib/loopy",
+                  "fileCount": 33,
+                  "totalSize": 2706
+                },
+                {
+                  "folderName": "mddir",
+                  "hasSkillMd": true,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/mddir",
+                  "fileCount": 0,
+                  "totalSize": 0
+                },
+                {
+                  "folderName": "zeta",
+                  "hasSkillMd": true,
+                  "name": "Zeta",
+                  "description": "Sorted after the others",
+                  "sourcePath": "<dir>/lib/zeta",
+                  "fileCount": 1,
+                  "totalSize": 63
+                },
+                {
+                  "folderName": "empty",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/empty",
+                  "fileCount": 0,
+                  "totalSize": 0
+                },
+                {
+                  "folderName": "notes",
+                  "hasSkillMd": false,
+                  "name": null,
+                  "description": null,
+                  "sourcePath": "<dir>/lib/notes",
+                  "fileCount": 0,
+                  "totalSize": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/lib/plain.txt"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "not_directory",
+              "message": "Path is not a directory: <dir>/lib/plain.txt"
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/missing"
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "not_found",
+              "message": "Directory not found: <dir>/missing"
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/lib/plain.txt/x"
+          },
+          "outcome": {
+            "error": {
+              "name": "Error",
+              "code": "ENOTDIR",
+              "message": "ENOTDIR: not a directory, stat '<dir>/lib/plain.txt/x'"
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {},
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_input",
+              "message": "parentPath is required."
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "   "
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_input",
+              "message": "parentPath is required."
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": 5
+          },
+          "outcome": {
+            "error": {
+              "name": "SkillManagerError",
+              "code": "invalid_input",
+              "message": "parentPath is required."
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": null,
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "code": null
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/lib/linked"
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/lib/linked",
+              "folders": [
+                {
+                  "folderName": "linked",
+                  "hasSkillMd": true,
+                  "name": "Ext",
+                  "description": "Reached through a directory symlink",
+                  "sourcePath": "<dir>/lib/linked",
+                  "fileCount": 1,
+                  "totalSize": 74
+                }
+              ]
+            }
+          }
+        },
+        {
+          "op": "scan",
+          "input": {
+            "parentPath": "<dir>/lib/empty"
+          },
+          "outcome": {
+            "result": {
+              "parentPath": "<dir>/lib/empty",
+              "folders": []
+            }
+          }
+        }
+      ],
+      "tree": [
+        {
+          "path": "ext",
+          "kind": "dir"
+        },
+        {
+          "path": "ext/SKILL.md",
+          "kind": "file",
+          "size": 74,
+          "sha256": "6a3b8a30d10a7e1cfaca31c7eb49c348affb04bf017174e79c9712ba2fedefa2",
+          "text": "---\nname: Ext\ndescription: Reached through a directory symlink\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/Alpha",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/Alpha/SKILL.md",
+          "kind": "file",
+          "size": 75,
+          "sha256": "67ad902dfb6984d258d4799f63f07deb1b26ed81ec3e09625ad4488cd4b81e66",
+          "text": "---\nname: Alpha\ndescription: Capitalised folder sorts by locale\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/beta",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/beta/SKILL.md",
+          "kind": "file",
+          "size": 78,
+          "sha256": "6db52ab16d58603405fb8ed12a704f132e7249dbbd5539387e349927d29159dc",
+          "text": "---\nname: Beta\ndescription: Counts nested files and followed links\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/beta/data",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/beta/data/x.txt",
+          "kind": "file",
+          "size": 5,
+          "sha256": "5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5",
+          "text": "12345"
+        },
+        {
+          "path": "lib/beta/flink",
+          "kind": "symlink",
+          "target": "data/x.txt"
+        },
+        {
+          "path": "lib/beta/pipe",
+          "kind": "fifo"
+        },
+        {
+          "path": "lib/broken",
+          "kind": "symlink",
+          "target": "../nowhere"
+        },
+        {
+          "path": "lib/empty",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/linked",
+          "kind": "symlink",
+          "target": "../ext"
+        },
+        {
+          "path": "lib/loopy",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/loopy/SKILL.md",
+          "kind": "file",
+          "size": 82,
+          "sha256": "da2c7e3d08d4d7e561e36d4bfd3ba0484e6e2983bb34eca51aa2c9da9dcb0f51",
+          "text": "---\nname: Loopy\ndescription: A folder whose link points back at itself\n---\n\nBody.\n"
+        },
+        {
+          "path": "lib/loopy/loop",
+          "kind": "symlink",
+          "target": "."
+        },
+        {
+          "path": "lib/mddir",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/mddir/SKILL.md",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/notes",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/notes/readme.md",
+          "kind": "file",
+          "size": 1,
+          "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "text": "x"
+        },
+        {
+          "path": "lib/plain.txt",
+          "kind": "file",
+          "size": 1,
+          "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+          "text": "x"
+        },
+        {
+          "path": "lib/zeta",
+          "kind": "dir"
+        },
+        {
+          "path": "lib/zeta/SKILL.md",
+          "kind": "file",
+          "size": 63,
+          "sha256": "543e995a6effbc758f09385bc81f61ee4167632958ee5721eabd3d6ca2453c2c",
+          "text": "---\nname: Zeta\ndescription: Sorted after the others\n---\n\nBody.\n"
+        },
+        {
+          "path": "top",
+          "kind": "dir"
+        },
+        {
+          "path": "top/SKILL.md",
+          "kind": "file",
+          "size": 77,
+          "sha256": "4f8b400cdf4198c71a5564f07492ee2db23b55ae1fb6de785f0351d04f4a3913",
+          "text": "---\nname: Top\ndescription: A parent folder that is itself a skill\n---\n\nBody.\n"
+        },
+        {
+          "path": "top/child",
+          "kind": "dir"
+        },
+        {
+          "path": "top/child/SKILL.md",
+          "kind": "file",
+          "size": 64,
+          "sha256": "b0ed6435b164f7a9efa8f467dfac62caaaced7738555351d9321691ef8c560e7",
+          "text": "---\nname: Child\ndescription: Listed after its parent\n---\n\nBody.\n"
+        }
+      ]
     }
-  ]
+  ],
+  "bindings": [
+    {
+      "selected": "native"
+    },
+    {
+      "binding": null,
+      "selected": {
+        "error": "TypeError"
+      }
+    },
+    {
+      "binding": {},
+      "selected": "native"
+    },
+    {
+      "binding": {
+        "enabled": true,
+        "provider": "pilotdeck"
+      },
+      "selected": "native"
+    },
+    {
+      "binding": {
+        "enabled": false
+      },
+      "selected": "disabled"
+    },
+    {
+      "binding": {
+        "enabled": false,
+        "implementationId": "x",
+        "transport": "module-http-v2"
+      },
+      "selected": "disabled"
+    },
+    {
+      "binding": {
+        "enabled": "false"
+      },
+      "selected": "native"
+    },
+    {
+      "binding": {
+        "enabled": 0
+      },
+      "selected": "native"
+    },
+    {
+      "binding": {
+        "enabled": true,
+        "implementationId": "x",
+        "contract": "skills",
+        "transport": "module-http-v2",
+        "endpoint": "http://127.0.0.1:1",
+        "methods": [
+          "list"
+        ]
+      },
+      "selected": "external"
+    },
+    {
+      "binding": {
+        "implementationId": "x",
+        "transport": "module-stdio-v2"
+      },
+      "selected": "native"
+    },
+    {
+      "binding": {
+        "transport": "module-http-v2"
+      },
+      "selected": "native"
+    },
+    {
+      "binding": {
+        "implementationId": null,
+        "transport": "module-http-v2"
+      },
+      "selected": "external"
+    },
+    {
+      "binding": [],
+      "selected": "native"
+    },
+    {
+      "binding": [
+        "implementationId"
+      ],
+      "selected": "native"
+    },
+    {
+      "binding": "module-http-v2",
+      "selected": {
+        "error": "TypeError"
+      }
+    },
+    {
+      "binding": 5,
+      "selected": {
+        "error": "TypeError"
+      }
+    },
+    {
+      "binding": true,
+      "selected": {
+        "error": "TypeError"
+      }
+    },
+    {
+      "binding": false,
+      "selected": {
+        "error": "TypeError"
+      }
+    }
+  ],
+  "disabledError": {
+    "name": "Error",
+    "code": "SKILL_MODULE_DISABLED",
+    "message": "Skill module is disabled for this profile."
+  }
 }

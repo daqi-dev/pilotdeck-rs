@@ -1,7 +1,7 @@
 //! SkillManager.ts:313–326 validate and 741–994 its helpers.
 use super::{
-    Result, SkillError, SkillManager, field, frontmatter, into_object, invalid_input, js_to_number,
-    nullish, number_string, object, resolve, trim_units,
+    Result, SkillError, SkillManager, field, frontmatter, into_object, invalid_input, nullish,
+    number_string, object, resolve, to_number, trim_units,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::fs;
@@ -125,7 +125,7 @@ impl SkillManager {
         if let Some(JsValue::String(path)) = props.and_then(|o| o.get("sourcePath")) {
             let trimmed = trim_units(path.units());
             if !trimmed.is_empty() {
-                let resolved = resolve(&self.expand_home(&String::from_utf16_lossy(trimmed)));
+                let resolved = resolve(&self.expand_home(&String::from_utf16_lossy(trimmed)))?;
                 let mut result = validate_from_disk(&resolved)?;
                 result.insert("sourcePath".into(), resolved.as_str().into());
                 return Ok(JsValue::Object(result));
@@ -144,7 +144,7 @@ impl SkillManager {
     }
 
     /// SkillManager.ts:516 expandHome (os.homedir() reads $HOME).
-    fn expand_home(&self, path: &str) -> String {
+    pub(super) fn expand_home(&self, path: &str) -> String {
         let home = || {
             self.home_dir
                 .clone()
@@ -223,7 +223,7 @@ fn required_frontmatter(
 }
 
 /// SkillManager.ts:796 validateFromDisk.
-fn validate_from_disk(source: &str) -> Result<JsObject> {
+pub(super) fn validate_from_disk(source: &str) -> Result<JsObject> {
     let mut report = Report::default();
     match fs::metadata(source) {
         Err(_) => {
@@ -312,8 +312,8 @@ fn validate_from_manifest(content: &JsValue, files: &[JsValue]) -> Result<JsObje
             report.fail("unsafe_path", cat(&[&text("File path is unsafe: "), rel]));
             continue;
         }
-        // `Number(f.size) || 0`
-        let size = js_to_number(field(file, "size")?);
+        // `Number(f.size) || 0`; a too-deep array size throws RangeError.
+        let size = to_number(field(file, "size")?)?;
         let size = if size.is_nan() || size == 0.0 {
             0.0
         } else {

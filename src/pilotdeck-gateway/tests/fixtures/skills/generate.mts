@@ -12,8 +12,12 @@ const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
 const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
-const sources = ['src/extension/skills/SkillManager.ts', 'src/extension/skills/types.ts'];
+const sources = [
+  'src/extension/skills/SkillManager.ts', 'src/extension/skills/types.ts',
+  'src/composition/types.ts', 'src/cli/createLocalGateway.ts',
+];
 const { SkillManager } = await import(pathToFileURL(join(baseline, sources[0])).href);
+const { isDisabledModuleBinding, isExternalModuleBinding } = await import(pathToFileURL(join(baseline, sources[2])).href);
 // localeCompare / toLocaleLowerCase follow the ICU default locale; Rust pins the same one.
 const locale = new Intl.Collator().resolvedOptions().locale;
 assert.equal(locale, 'en-US', 'generate with LANG=en_US.UTF-8 (see README.md)');
@@ -88,6 +92,7 @@ type Entry =
   | { path: string; kind: 'dir' }
   | { path: string; kind: 'file'; text?: string; base64?: string; size?: number }
   | { path: string; kind: 'symlink'; target: string }
+  | { path: string; kind: 'fifo' }
   | { path: string; kind: 'bulk'; count: number };
 async function setupTree(root: string, entries: Entry[]) {
   for (const e of entries) {
@@ -95,6 +100,7 @@ async function setupTree(root: string, entries: Entry[]) {
     if (e.kind === 'dir') { await mkdir(abs, { recursive: true }); continue; }
     await mkdir(dirname(abs), { recursive: true });
     if (e.kind === 'symlink') await symlink(e.target, abs);
+    else if (e.kind === 'fifo') execFileSync('mkfifo', [abs]);
     else if (e.kind === 'bulk') { await mkdir(abs, { recursive: true }); for (let i = 0; i < e.count; i++) await writeFile(join(abs, `f${String(i).padStart(3, '0')}.txt`), 'x'); }
     else if (e.size !== undefined) { await writeFile(abs, ''); await truncate(abs, e.size); }
     else await writeFile(abs, e.base64 !== undefined ? Buffer.from(e.base64, 'base64') : e.text!);
@@ -110,6 +116,7 @@ async function snapshotTree(root: string) {
       const st = await lstat(abs);
       if (st.isSymbolicLink()) out.push({ path, kind: 'symlink', target: (await readlink(abs)).split(root).join('<dir>') });
       else if (st.isDirectory()) { out.push({ path, kind: 'dir' }); await walk(path); }
+      else if (st.isFIFO()) out.push({ path, kind: 'fifo' }); // reading it would block
       else {
         const bytes = await readFile(abs);
         const entry: any = { path, kind: 'file', size: bytes.length, sha256: sha(bytes) };
@@ -246,6 +253,8 @@ const kind = (o: any, opName: string) => {
     case 'read': case 'write': case 'create': return `${opName}:${r.skill ? r.skill.name : null}`;
     case 'delete': return 'deleted';
     case 'validate': return `${r.ok ? 'ok' : 'fail'}:${r.hardFails.map((i: any) => i.code).join(',')}|${r.warnings.map((i: any) => i.code).join(',')}`;
+    case 'import': return `import:${r.mode}:${r.slug}:${r.skill ? r.skill.name : null}`;
+    case 'scan': return `scan:${r.folders.map((f: any) => `${f.folderName}${f.hasSkillMd ? '*' : ''}`).join(',')}`;
     default: throw new Error(`unknown op ${opName}`);
   }
 };
@@ -617,6 +626,7 @@ try {
   // validate { skillMdContent, files }: manifest checks and frontmatter shapes.
   const good = md('name: M\ndescription: Manifest validation with everything');
   const mdOnly = (skillMdContent: unknown) => op('validate', { skillMdContent, files: [{ relativePath: 'SKILL.md', size: 1 }] });
+  const manifest = (files: [string, number][]) => op('validate', { skillMdContent: good, files: files.map(([relativePath, size]) => ({ relativePath, size })) });
   await scenario('validate-manifest', {
     steps: [
       op('validate', {
@@ -649,6 +659,13 @@ try {
       mdOnly('---\nname: &n Shared\ndescription: *n\n---\n'),
       mdOnly('---\nname: N\ndescription: Nested values are returned as parsed\nmeta: { tags: [a, 1, true, null], n: -0, f: .nan }\n---\n'),
       op('validate', []),
+      // Boundary equals, as on disk: the caps compare with `>`.
+      manifest([['SKILL.md', 1], ['eq.bin', 10 * 1048576]]),
+      manifest([['SKILL.md', 1], ['over.bin', 10 * 1048576 + 1]]),
+      manifest([['SKILL.md', 1], ['mib.bin', 1048576]]),
+      manifest([['SKILL.md', 0], ...[0, 1, 2, 3, 4].map(i => [`t${i}.bin`, 10 * 1048576] as [string, number])]),
+      manifest([['SKILL.md', 1], ...[0, 1, 2, 3, 4].map(i => [`t${i}.bin`, 10 * 1048576] as [string, number])]),
+      manifest(Array.from({ length: 500 }, (_, i) => [i ? `f${i}` : 'SKILL.md', 1] as [string, number])),
     ],
   });
   {
@@ -658,15 +675,174 @@ try {
       `fail:total_too_large|${times(6, 'file_large').join(',')}`, 'fail:file_too_large,total_too_large|', 'TypeError', 'invalid_input',
       'fail:frontmatter_missing_name,frontmatter_missing_description|', 'ok:|description_short', 'ok:|', 'ok:|description_long', 'ok:|',
       'ok:|', 'ok:|frontmatter_compat_fallback,description_short', 'ok:|description_short', 'ok:|', 'invalid_input',
+      'ok:|file_large', 'fail:file_too_large|', 'ok:|', `ok:|${times(5, 'file_large').join(',')}`,
+      `fail:total_too_large|${times(5, 'file_large').join(',')}`, 'ok:|',
     ]);
     // Counted: SKILL.md, a.sh, big, huge, str-size, hex, bad (NaN || 0), arr, exp, bool, dir.d/file, x.SH.
     assert.deepEqual(o[0].result.stats, { fileCount: 12, totalBytes: 100 + 10 + 2 * 1048576 + 11 * 1048576 + 1024 + 16 + 0 + 5 + 1000 + 1 + 1 + 1 });
     assert.equal(o[1].result.frontmatter, null);
     assert.equal(o[7].result.stats.totalBytes, Infinity);
     assert.equal(o[16].result.frontmatter.description, 'keep\nlines');
+    assert.equal(o[23].result.stats.totalBytes, 50 * 1048576);
+    assert.equal(o[24].result.stats.totalBytes, 50 * 1048576 + 1);
+    assert.equal(o[25].result.stats.fileCount, 500);
   }
 
-  // Coverage: every error code and validation issue the six methods can raise.
+  // import: copy (fs.cp) and symlink modes, force, slug inference, every error branch.
+  const imp = (sourcePath: unknown, extra: object = {}) => op('import', { scope: 'user', sourcePath, ...extra });
+  await scenario('import', {
+    setup: [
+      skill('src/good', 'Good', 'A complete skill imported by copy'),
+      file('src/good/scripts/run.sh', 'echo'),
+      file('src/good/nested/deep.txt', 'deep'),
+      // fs.cp rewrites a relative link target to an absolute one.
+      { path: 'src/good/rel-link', kind: 'symlink', target: 'nested' },
+      skill('src/other', 'Other', 'Another skill used for scoped imports'),
+      skill('src/.hidden', 'Hidden', 'Basename is not a valid slug'),
+      skill('src/dangling', 'Dangling', 'Imported over a dangling link'),
+      skill('src/piped', 'Piped', 'Bundle that carries a FIFO pipe'),
+      { path: 'src/piped/pipe', kind: 'fifo' },
+      file('src/nomd/readme.md', 'x'),
+      { path: 'src/mddir/SKILL.md', kind: 'dir' },
+      file('src/bad/SKILL.md', '# no frontmatter\n'),
+      file('src/afile', 'x'),
+      { path: 'src/linkroot', kind: 'symlink', target: 'good' },
+      skill('home/skills/taken', 'Taken', 'Already installed before the import'),
+      { path: 'home/skills/dangling', kind: 'symlink', target: '../../nowhere' },
+      // pilotHome itself as a bundle: its own skills root lies inside it.
+      file('home/SKILL.md', md('name: Home\ndescription: The pilot home used as a source bundle')),
+      skill('builtin/bi', 'Builtin', 'Read-only'),
+    ],
+    steps: [
+      imp('<dir>/src/good'),
+      imp('<dir>/src/good'),
+      imp('<dir>/src/good', { force: true, mode: 'symlink' }),
+      imp('<dir>/src/good', { slug: '  renamed  ', mode: 'bogus' }),
+      op('import', { scope: 'project', projectKey: proj, sourcePath: '<dir>/src/other' }),
+      imp('~/src/other', { slug: 'tilde' }),
+      imp('<dir>/src/linkroot'),
+      imp('<dir>/src/dangling'),
+      imp('<dir>/src/dangling', { mode: 'symlink' }),
+      imp('<dir>/src/piped'),
+      // The failed copy leaves a partial tree in readdir order; remove it.
+      op('delete', user('piped')),
+      imp('<dir>/home', { slug: 'selfsub' }),
+      imp('<dir>/home/skills/taken'),
+      imp('<dir>/src/missing'),
+      imp('<dir>/src/afile'),
+      imp('<dir>/src/afile/x'),
+      imp('<dir>/src/nomd'),
+      imp('<dir>/src/mddir'),
+      imp('<dir>/src/bad'),
+      imp('<dir>/src/good', { slug: '../x' }),
+      imp('<dir>/src/good', { slug: 5 }),
+      imp('<dir>/src/good', { slug: '   ' }),
+      imp('<dir>/src/.hidden'),
+      op('import', { scope: 'builtin', sourcePath: '<dir>/src/good' }),
+      op('import', { scope: 'user' }),
+      imp('   '),
+      imp(5),
+      op('import', { scope: 'project', sourcePath: '<dir>/src/other' }),
+      op('import', null),
+      imp('<dir>/src/other', { slug: 'taken', force: true }),
+      op('list', { scope: 'user', limit: 50 }),
+    ],
+  });
+  {
+    const o = expectKinds([
+      'import:copy:good:Good', 'conflict', 'import:symlink:good:Good', 'import:copy:renamed:Good', 'import:copy:other:Other',
+      'import:copy:tilde:Other', 'import:copy:linkroot:Good', 'ERR_FS_CP_DIR_TO_NON_DIR', 'EEXIST', 'ERR_FS_CP_FIFO_PIPE', 'deleted',
+      'ERR_FS_CP_EINVAL', 'self_import', 'source_missing', 'source_not_directory', 'ENOTDIR', 'no_skill_md',
+      'validation_failed', 'validation_failed', 'invalid_slug', 'TypeError', 'conflict', 'invalid_slug', 'read_only',
+      'invalid_input', 'invalid_input', 'invalid_input', 'project_required', 'TypeError', 'import:copy:taken:Other', 'list:5',
+    ]);
+    assert.equal(o[0].result.validation.ok, true);
+    assert.deepEqual(o[17].error.validation.hardFails.map((i: any) => i.code), ['no_skill_md']);
+    assert.deepEqual(o[18].error.validation.hardFails.map((i: any) => i.code), ['frontmatter_missing']);
+  }
+
+  // scan: child folders, sort order, symlinks, recursive file counts, error branches.
+  await scenario('scan', {
+    setup: [
+      skill('lib/zeta', 'Zeta', 'Sorted after the others'),
+      skill('lib/Alpha', 'Alpha', 'Capitalised folder sorts by locale'),
+      skill('lib/beta', 'Beta', 'Counts nested files and followed links'),
+      file('lib/beta/data/x.txt', '12345'),
+      { path: 'lib/beta/flink', kind: 'symlink', target: 'data/x.txt' },
+      { path: 'lib/beta/pipe', kind: 'fifo' },
+      { path: 'lib/empty', kind: 'dir' },
+      file('lib/notes/readme.md', 'x'),
+      file('lib/plain.txt', 'x'),
+      { path: 'lib/linked', kind: 'symlink', target: '../ext' },
+      skill('ext', 'Ext', 'Reached through a directory symlink'),
+      { path: 'lib/broken', kind: 'symlink', target: '../nowhere' },
+      { path: 'lib/mddir/SKILL.md', kind: 'dir' },
+      // The recursive readdir follows directory links: a self loop unrolls until ELOOP.
+      skill('lib/loopy', 'Loopy', 'A folder whose link points back at itself'),
+      { path: 'lib/loopy/loop', kind: 'symlink', target: '.' },
+      skill('top', 'Top', 'A parent folder that is itself a skill'),
+      skill('top/child', 'Child', 'Listed after its parent'),
+    ],
+    steps: [
+      op('scan', { parentPath: '<dir>/lib' }),
+      op('scan', { parentPath: '<dir>/top' }),
+      op('scan', { parentPath: '  <dir>/lib/  ' }),
+      op('scan', { parentPath: '~/lib' }),
+      op('scan', { parentPath: '<dir>/lib/plain.txt' }),
+      op('scan', { parentPath: '<dir>/missing' }),
+      op('scan', { parentPath: '<dir>/lib/plain.txt/x' }),
+      op('scan', {}),
+      op('scan', { parentPath: '   ' }),
+      op('scan', { parentPath: 5 }),
+      op('scan', null),
+      op('scan', { parentPath: '<dir>/lib/linked' }),
+      op('scan', { parentPath: '<dir>/lib/empty' }),
+    ],
+  });
+  {
+    const libKind = 'scan:Alpha*,beta*,linked*,loopy*,mddir*,zeta*,empty,notes';
+    const o = expectKinds([
+      libKind, 'scan:top*,child*', libKind, libKind, 'not_directory', 'not_found', 'ENOTDIR',
+      'invalid_input', 'invalid_input', 'invalid_input', 'TypeError', 'scan:linked*', 'scan:',
+    ]);
+    const folder = (name: string) => o[0].result.folders.find((f: any) => f.folderName === name);
+    assert.deepEqual([folder('beta').fileCount, folder('beta').totalSize], [3, Buffer.byteLength(md('name: Beta\ndescription: Counts nested files and followed links')) + 10]);
+    assert.deepEqual([folder('mddir').name, folder('mddir').fileCount], [null, 0]);
+    assert.equal(folder('empty').name, null);
+    assert.ok(folder('loopy').fileCount > 1, 'the self link is followed');
+  }
+
+  // Binding selection (createLocalGateway.ts:853–860) on the real predicates.
+  const bindingCases: { binding?: unknown }[] = [
+    {}, { binding: null }, { binding: {} }, { binding: { enabled: true, provider: 'pilotdeck' } }, { binding: { enabled: false } },
+    { binding: { enabled: false, implementationId: 'x', transport: 'module-http-v2' } }, { binding: { enabled: 'false' } }, { binding: { enabled: 0 } },
+    { binding: { enabled: true, implementationId: 'x', contract: 'skills', transport: 'module-http-v2', endpoint: 'http://127.0.0.1:1', methods: ['list'] } },
+    { binding: { implementationId: 'x', transport: 'module-stdio-v2' } }, { binding: { transport: 'module-http-v2' } },
+    { binding: { implementationId: null, transport: 'module-http-v2' } }, { binding: [] }, { binding: ['implementationId'] },
+    { binding: 'module-http-v2' }, { binding: 5 }, { binding: true }, { binding: false },
+  ];
+  const bindings = bindingCases.map(c => {
+    try {
+      const b = c.binding;
+      return { ...c, selected: isDisabledModuleBinding(b) ? 'disabled' : isExternalModuleBinding(b) ? 'external' : 'native' };
+    } catch (error: any) {
+      return { ...c, selected: { error: error.name } };
+    }
+  });
+  assert.deepEqual(bindings.map(b => typeof b.selected === 'string' ? b.selected : b.selected.error), [
+    'native', 'TypeError', 'native', 'native', 'disabled', 'disabled', 'native', 'native', 'external', 'native', 'native', 'external',
+    'native', 'native', 'TypeError', 'TypeError', 'TypeError', 'TypeError',
+  ]);
+  // createDisabledSkillManagementPort is module-private: read its one error from the pinned source.
+  const gatewaySource = await readFile(join(baseline, sources[3]), 'utf8');
+  const disabledMatch = /function createDisabledSkillManagementPort\(\)[\s\S]*?new Error\("([^"]+)"\), \{\s*code: "([A-Z_]+)",/.exec(gatewaySource);
+  assert.ok(disabledMatch, 'createDisabledSkillManagementPort changed');
+  const disabledError = { name: 'Error', code: disabledMatch[2], message: disabledMatch[1] };
+  for (const name of ['list', 'read', 'write', 'create', 'delete', 'import', 'validate', 'scan']) {
+    assert.ok(gatewaySource.includes(`    ${name}: unavailable,`), `disabled port lacks ${name}`);
+  }
+
+  // Coverage: every error code and validation issue the eight methods can raise.
   const seen = new Set<string>();
   for (const s of scenarios) for (const step of s.steps) {
     const o = step.outcome;
@@ -679,11 +855,13 @@ try {
     'no_skill_md', 'frontmatter_missing', 'frontmatter_compat_fallback', 'frontmatter_missing_name', 'frontmatter_missing_description',
     'description_short', 'description_long', 'source_missing', 'source_not_directory', 'too_many_files', 'total_too_large',
     'file_too_large', 'file_large', 'risky_extension', 'contains_symlink', 'unsafe_path',
+    'self_import', 'source_missing', 'source_not_directory', 'validation_failed', 'not_directory',
+    'ERR_FS_CP_EINVAL', 'ERR_FS_CP_DIR_TO_NON_DIR', 'ERR_FS_CP_FIFO_PIPE',
   ];
   assert.deepEqual(required.filter(c => !seen.has(c)), [], 'uncovered branches');
 
   const sourceSha256 = Object.fromEntries(await Promise.all(sources.map(async s => [s, sha(await readFile(join(baseline, s)))])));
-  const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, locale, scenarios }, null, 2) + '\n';
+  const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, locale, scenarios, bindings, disabledError }, null, 2) + '\n';
   // Fixtures are machine-independent: no generation path survives in the oracle.
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
   await writeFile(join(output, 'oracle.json'), oracle);
