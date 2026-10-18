@@ -95,6 +95,24 @@ class ProvenanceControls(unittest.TestCase):
         self.manifest.write_text(self.original + current.replace('Approval-Source-', 'Approval-Archive-') + '\n')
         self.rejected()
 
+    def test_archive_duplicate_malformed_and_reverse_prefix_fail(self):
+        lines = self.original.splitlines()
+        archive = next(line for line in lines if line.startswith('Approval-Archive-SHA256:'))
+        self.manifest.write_text(self.original + archive + '\n')
+        self.rejected()
+        self.manifest.write_text(self.original.replace('Approval-Archive-SHA256: ', 'Approval-Archive-SHA256: z', 1))
+        self.rejected()
+        self.manifest.write_text(self.original + archive.replace('Approval-Archive-', 'Approval-Source-') + '\n')
+        self.rejected()
+
+    def test_symlinked_archived_original_fails(self):
+        source = self.approval / ARCHIVED[0]
+        outside = self.root / 'outside-archive'
+        outside.write_bytes(source.read_bytes())
+        source.unlink()
+        source.symlink_to(outside)
+        self.rejected()
+
     def test_basis_and_review_references_cannot_bypass_hashed_sources(self):
         lines = self.original.splitlines()
         for field in ['Approval-Basis', 'Independent-Reviews']:
