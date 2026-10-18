@@ -68,7 +68,7 @@ GitHub 在服务端生成的提交用账号主邮箱，不用本地设的 norepl
 *由 `aias-meta-init` 生成于 2026-10-13。*
 
 ### 资源上限（2026-10-14 人定，2026-10-17、10-18 人定放宽；来自旧迁移 127 GB、会话反复中断的教训，见 `docs/research/003_prior-attempt/`）
-- 同时最多 **12 个 worktree**（并行派活的上限，不是目标；READY 里有互相独立的产品单时才并行）；**同时编译/测试的 cargo 进程 ≤ 4**（`pgrep -fc "cargo (build|test|clippy)"` 先看一眼）——瓶颈是内存（32 GB，8 线并行时空闲约 8 GiB），不是 worktree 个数，多出的线在评审或等待时不占编译；**全量对拍（53 场景）同一时刻只跑 1 个**——机器负载会制造假差异（`docs/experiments/exp001-baseline-parity-run/`）。
+- 同时最多 **12 个 worktree**（并行派活的上限，不是目标；READY 里有互相独立的产品单时才并行）；**同时编译/测试的 cargo 进程 ≤ 4**（开跑前 `scripts/cargo-slots.sh`，退出 1 即已满，等一会儿再跑；它数所有 cargo 子命令）——瓶颈是内存（32 GB，8 线并行时空闲约 8 GiB），不是 worktree 个数，多出的线在评审或等待时不占编译；**全量对拍（53 场景）同一时刻只跑 1 个**——机器负载会制造假差异（`docs/experiments/exp001-baseline-parity-run/`）。
 - `_build/` + `_tmp/` 合计 ≤ **100 GiB**（`du` 的 1024 口径；单次 `du -sk _build _tmp` 的 KiB 总和除以 1,048,576）。原 46 GiB 的权源与单位消歧见 `state/decisions-20261014.md` 与 R52；10-18 放宽依据：整盘余 121 GiB、当时用量 49.6 GiB、单 worktree 带编译产物 2–5.5 GiB，到上限仍留约 70 GiB 系统余量。**例外**：冻结装置 `scripts/ui-server-parity/calibrate.py:67` 的 `CAP_BYTES` 仍为 80 GiB（冻结件，按冻结程序另改，不随本规则自动变），所以用量超过 80 GiB 时 B2 定标会自行拒跑——更严的方向，不会假通过。开新 worktree 前先 `du -sh _build _tmp` 看一眼。
 - 单个调度会话 ≤ **2 小时**；到点先将现场、证据、持有人、资源与下一就绪任务写入 `state/board.md`，再交给后续调度者自动接续。**两小时是交接点，不是停工或等待用户重新发车**（2026-10-16 人定）；没写交接或未落实接续不算完成交接。
 
