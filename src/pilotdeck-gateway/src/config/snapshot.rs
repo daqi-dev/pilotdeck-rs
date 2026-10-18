@@ -4,7 +4,12 @@
 //! The existing validators decide whether a load succeeds and which diagnostics
 //! are emitted. This module only projects the already-validated raw document
 //! into the snapshot's normalized value shape; it never changes validation.
-use super::{Env, model::Provider, sections::valid_timezone, value::*};
+use super::{
+    Env,
+    model::Provider,
+    sections::{tool_key_regex, valid_timezone},
+    value::*,
+};
 use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha2::{Digest, Sha256};
@@ -685,6 +690,8 @@ fn model(raw: &JsValue, providers: &[Provider], env: &Env) -> JsValue {
             Some(h) => {
                 let mut o = obj();
                 for (k, v) in h.entries() {
+                    // Baseline's readStringRecord builds headers by assignment,
+                    // so an own `__proto__` key never becomes an own property.
                     put_key(&mut o, k.clone(), v.clone());
                 }
                 JsValue::Object(o)
@@ -778,6 +785,8 @@ fn sanitize_body(body: &JsObject) -> JsValue {
             }
             put(&mut out, "generationConfig", JsValue::Object(g));
         } else {
+            // Baseline's object rest copies own enumerable keys as data
+            // properties, so an own `__proto__` key is preserved here.
             out.insert(k.clone(), v.clone());
         }
     }
@@ -846,8 +855,9 @@ fn provider_credential(
     (resolved, source.into())
 }
 
-/// `ENV_REFERENCE_PATTERN` from the baseline: only `${NAME}` with a JavaScript
-/// identifier name is an environment reference; everything else is a literal.
+/// `ENV_REFERENCE_PATTERN` from the baseline: only `${NAME}` where `NAME` is
+/// ASCII `[A-Za-z_][A-Za-z0-9_]*` is an environment reference. `$`, Unicode
+/// identifier characters, hyphens, digits-first and whitespace are literals.
 fn env_reference(value: &JsString) -> Option<JsString> {
     let t = trim(value);
     let units = t.units();
@@ -1709,7 +1719,7 @@ fn run_policy(raw: &JsValue) -> Option<JsValue> {
             put(&mut guard, "modelFailureLimit", num(n));
         }
         if let Some(limits) = g.get("toolFailureLimits").and_then(|v| v.as_object()) {
-            let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$").unwrap();
+            let re = tool_key_regex();
             let mut out = obj();
             for (k, v) in limits.entries() {
                 let key = String::from_utf16_lossy(k.units());
@@ -1724,7 +1734,7 @@ fn run_policy(raw: &JsValue) -> Option<JsValue> {
             put(&mut guard, "toolFailureLimits", JsValue::Object(out));
         }
         if let Some(labels) = g.get("toolLabels").and_then(|v| v.as_object()) {
-            let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$").unwrap();
+            let re = tool_key_regex();
             let mut out = obj();
             for (k, v) in labels.entries() {
                 let key = String::from_utf16_lossy(k.units());

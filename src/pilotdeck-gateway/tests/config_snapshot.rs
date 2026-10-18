@@ -23,7 +23,7 @@ fn complete_config_snapshot_replays_real_typescript_oracle() {
         oracle.get("count").and_then(JsValue::as_number),
         Some(cases.len() as f64)
     );
-    assert_eq!(cases.len(), 169, "fixture count changed");
+    assert_eq!(cases.len(), 175, "fixture count changed");
     let sources = oracle
         .get("sources")
         .and_then(JsValue::as_object)

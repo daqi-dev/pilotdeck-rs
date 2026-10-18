@@ -7,17 +7,19 @@
 
 ## 目录与条数
 
-`oracle.json` 共 **169** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **175** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言：
 
-- 94 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
+- 100 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
   合并、provider/模型目录、credential、modules、SOP、proxy 迁移；其中 28 条为
   第二轮新增（第一轮评审反例：router 冲突、API key 字面量、清扫周期、tier 键序、
   深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖），1 条为既有错误
   用例 `diag-1-empty`（输入 `{}`，`error.code` 与首条诊断的
   `diagnosticCode` 不同），第四轮新增 12 条边界探针：`memory.schedule` 嵌套/平铺
   `.inf`（嵌套报错、平铺保留 Infinity）、非串 `memory.model`、`gateway.port` 的
-  0/越界/小数/负数、多斜杠 `agent.subagents.default` 引用与含斜杠 model id；
+  0/越界/小数/负数、多斜杠 `agent.subagents.default` 引用与含斜杠 model id，
+  第五轮新增 6 条：`$`/Unicode 名 `${}` 字面量、subagents 与 provider 的
+  `(0,1)` 取整差异、`headers`/`extraBody` 的 `__proto__` 语义；
 - 18 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
 - 57 条来自既有 `tests/fixtures/config/diagnostics.json` 中 `load.ok` 的确定性
   抽样（按成功用例顺序每 18 条取 1 条）。
@@ -33,10 +35,11 @@ HEAD 和 tracked 文件干净，再 `baselineSourceHashes` 按 commit blob 复�
 被测源码的 SHA-256，并与工作区字节比对。生成过程只创建本次运行的临时
 home/project 目录，结束时只删除自己创建的目录。
 
-从仓根执行（Node 22 / 基线自带 tsx）：
+从仓根执行（Node 22 / 基线自带 tsx；`stableStringify` 的键序依赖 ICU 默认
+locale，生成器断言其为 `en-US`，与 Rust 侧一致）：
 
 ```sh
-PDRS_BASELINE=/path/to/PilotDeck \
+PDRS_BASELINE=/path/to/PilotDeck LANG=en_US.UTF-8 \
 node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/config-snapshot/generate.mts \
   src/pilotdeck-gateway/tests/fixtures/config-snapshot
