@@ -205,6 +205,28 @@ fn direct_callback_accepts_minus_one_public_entry_rejects_it() {
         "INVALID_ARCHIVE_LIMIT"
     );
 }
+#[test]
+fn deep_artifact_name_array_is_an_error_not_a_stack_overflow() {
+    let (metadata, _) = fixture();
+    let mut name = JsValue::String("a".into());
+    for _ in 0..1_000_000 {
+        name = JsValue::Array(vec![name]);
+    }
+    let request = object([
+        ("type", "request".into()),
+        ("id", "deep".into()),
+        ("method", "native_archive_artifact".into()),
+        (
+            "params",
+            object([("sessionKey", "fixture".into()), ("artifactName", name)]),
+        ),
+    ]);
+    let response = response(&request, &metadata).expect("answered locally");
+    assert_eq!(
+        String::from_utf8(response).unwrap(),
+        r#"{"type":"response","id":"deep","ok":false,"error":{"code":"gateway_request_failed","message":"Maximum call stack size exceeded"}}"#
+    );
+}
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn scratch() -> PathBuf {
     // Short, exclusively-created POSIX test roots keep Node's 128-unit invalid

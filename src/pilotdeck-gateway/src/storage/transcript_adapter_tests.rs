@@ -248,6 +248,10 @@ fn error_outcome(error: &AdapterError) -> JsValue {
             e.insert("name".into(), "TypeError".into());
             e.insert("message".into(), message.as_str().into());
         }
+        AdapterError::Range(message) => {
+            e.insert("name".into(), "RangeError".into());
+            e.insert("message".into(), message.as_str().into());
+        }
         AdapterError::NodeHostRequired(message) => {
             e.insert("name".into(), "NodeHostRequired".into());
             e.insert("message".into(), message.as_str().into());
@@ -842,6 +846,20 @@ fn unported_domain_entries_fail_closed_before_the_store() {
         Err(AdapterError::NodeHostRequired(_))
     ));
     assert_eq!(storage.transcript.snapshot_state(), WriterState::default());
+}
+#[test]
+fn deep_sequence_array_message_is_a_range_error_not_a_stack_overflow() {
+    let mut sequence = JsValue::Number(1.0);
+    for _ in 0..1_000_000 {
+        sequence = JsValue::Array(vec![sequence]);
+    }
+    let entries = [object([("sequence", sequence)])];
+    match transcript_adapter::validate_event_log(&entries) {
+        Err(AdapterError::Range(message)) => {
+            assert_eq!(message, "Maximum call stack size exceeded")
+        }
+        other => panic!("expected RangeError, got {other:?}"),
+    }
 }
 fn storage_key(storage: &SessionStorage) -> TranscriptKey {
     TranscriptKey {

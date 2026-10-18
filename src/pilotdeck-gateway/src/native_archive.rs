@@ -28,30 +28,20 @@ fn safe_integer(value: &JsValue, min: f64, max: f64) -> bool {
 fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
 }
-fn display(value: &JsValue) -> String {
-    match value {
-        JsValue::String(s) => String::from_utf16_lossy(s.units()),
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Null => "null".into(),
-        JsValue::Object(_) => "[object Object]".into(),
-        JsValue::Array(items) => items
-            .iter()
-            .map(|v| {
-                if nullish(v) {
-                    String::new()
-                } else {
-                    display(v)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        _ => stringify_json(value).ok().flatten().unwrap_or_default(),
-    }
+/// `String(value)`. A too-deep array is V8's RangeError, surfaced as a plain
+/// gateway error (TS actual error shape pending measurement).
+fn display(value: &JsValue) -> Result<String> {
+    crate::js_value::display(value).map_err(|_| {
+        error(
+            "gateway_request_failed",
+            crate::js_value::StackOverflow::MESSAGE,
+        )
+    })
 }
 fn path_type(value: &JsValue, argument: &str) -> Error {
     let received = match value {
-        JsValue::Number(_) => format!("type number ({})", display(value)),
-        JsValue::Bool(_) => format!("type boolean ({})", display(value)),
+        JsValue::Number(n) => format!("type number ({})", crate::js_value::number_string(*n)),
+        JsValue::Bool(b) => format!("type boolean ({b})"),
         JsValue::Array(_) => "an instance of Array".into(),
         JsValue::Null => "null".into(),
         JsValue::Undefined => "undefined".into(),
@@ -68,7 +58,7 @@ fn session(params: &JsValue) -> Result<&JsString> {
             "gateway_request_failed",
             &format!(
                 "Cannot read properties of {} (reading 'sessionKey')",
-                display(params)
+                display(params)?
             ),
         ));
     }
@@ -132,7 +122,7 @@ fn validate_entries(params: &JsValue, public: bool) -> Result<usize> {
 }
 fn artifact_name(params: &JsValue, public: bool) -> Result<String> {
     let value = field(params, "artifactName");
-    let name = display(value);
+    let name = display(value)?;
     let truthy = match value {
         JsValue::Undefined | JsValue::Null | JsValue::Bool(false) => false,
         JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
@@ -229,7 +219,7 @@ fn project<F: Files>(metadata: &Metadata<F>, params: &JsValue) -> Result<std::pa
             if nullish(value) {
                 metadata.cwd.to_string_lossy().into_owned()
             } else {
-                display(value)
+                display(value)?
             }
         ),
     ))
