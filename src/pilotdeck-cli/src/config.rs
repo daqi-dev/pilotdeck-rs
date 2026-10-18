@@ -1,194 +1,32 @@
-//! loadPilotConfig (src/pilot/config/loadPilotConfig.ts:63–128) up to its first
-//! throwConfigErrorIfFatal. Section parsing after that point is not ported here.
+//! Shared loadPilotConfig validation; CLI-only unsupported branches stay explicit.
 use crate::Failure;
-use crate::paths::{self, Env};
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use pilotdeck_yaml::{Options, parse_document};
-use std::path::{Path, PathBuf};
+use crate::paths::Env;
+use std::path::Path;
 
-#[derive(Default)]
-struct Diagnostics {
-    first_fatal: Option<String>,
-}
-
-impl Diagnostics {
-    fn fatal(&mut self, message: String) {
-        self.first_fatal.get_or_insert(message);
-    }
-}
-
-fn read_yaml_source(
-    path: &Path,
-    kind: &str,
-    diagnostics: &mut Diagnostics,
-) -> Result<Option<JsObject>, Failure> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let Ok(bytes) = std::fs::read(path) else {
-        diagnostics.fatal(format!("Failed to read {kind} config."));
-        return Ok(None);
-    };
-    let source = JsString::from(&*String::from_utf8_lossy(&bytes));
-    let document = parse_document(
-        &source,
-        Options {
-            pretty_errors: false,
-            ..Options::default()
-        },
-    );
-    let graph = match document.to_json() {
-        Ok(graph) if document.errors.is_empty() => graph,
-        _ => {
-            diagnostics.fatal(format!("Failed to parse {kind} config YAML."));
-            return Ok(None);
-        }
-    };
-    let value = graph
-        .to_js_value()
-        .map_err(|_| Failure::Todo("config YAML values outside plain JSON (Map/Set/cycles)"))?;
-    if has_prototype_key(&value) {
-        return Err(Failure::Todo("config keys named __proto__"));
-    }
-    // JsValue implements Drop, so the object cannot be moved out of it.
-    match &value {
-        JsValue::Null | JsValue::Undefined => Ok(Some(JsObject::new())),
-        JsValue::Object(object) => Ok(Some(object.clone())),
-        _ => {
-            diagnostics.fatal(format!("{kind} config root must be an object."));
-            Ok(None)
-        }
-    }
-}
-
-/// `{...base}` and `output[key] = value` give `__proto__` prototype semantics.
-fn has_prototype_key(value: &JsValue) -> bool {
-    match value {
-        JsValue::Object(object) => {
-            object.prototype().is_some()
-                || object
-                    .entries()
-                    .iter()
-                    .any(|(key, child)| key.equals_str("__proto__") || has_prototype_key(child))
-        }
-        JsValue::Array(items) => items.iter().any(has_prototype_key),
-        _ => false,
-    }
-}
-
-/// deepMerge from src/pilot/config/merge.ts.
-fn deep_merge(base: &JsObject, overrides: &JsObject) -> JsObject {
-    let mut output = base.clone();
-    for (key, value) in overrides.entries() {
-        let merged = match (output.get_key(key), value) {
-            (Some(JsValue::Object(previous)), JsValue::Object(next)) => {
-                JsValue::Object(deep_merge(previous, next))
-            }
-            _ => value.clone(),
-        };
-        output.insert(key.clone(), merged);
-    }
-    output
-}
-
-/// String(value) for values produced by YAML toJSON.
-fn js_to_string(value: &JsValue) -> String {
-    match value {
-        JsValue::Undefined => "undefined".into(),
-        JsValue::Null => "null".into(),
-        JsValue::Bool(value) => value.to_string(),
-        JsValue::Number(number) if number.is_nan() => "NaN".into(),
-        JsValue::Number(number) if number.is_infinite() => if *number > 0.0 {
-            "Infinity"
-        } else {
-            "-Infinity"
-        }
-        .into(),
-        JsValue::Number(number) if *number == 0.0 => "0".into(),
-        JsValue::Number(number) => ryu_js::Buffer::new().format(*number).to_owned(),
-        JsValue::String(text) => String::from_utf16_lossy(text.units()),
-        JsValue::Array(items) => items
-            .iter()
-            .map(|item| match item {
-                JsValue::Null | JsValue::Undefined => String::new(),
-                other => js_to_string(other),
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        JsValue::Object(_) => "[object Object]".into(),
-    }
-}
-
-/// Ok(()) means the config passed the first fatal check.
 pub fn check(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
-    let mut diagnostics = Diagnostics::default();
-    // resolvePilotConfigPath (loadPilotConfig.ts:57-61): the trimmed override is used
-    // as-is, so "" reaches existsSync("") (false) instead of path.resolve.
-    let default_path = match env.string("PILOTDECK_CONFIG_PATH") {
-        Some(value) => PathBuf::from(paths::js_trim(&value)),
-        None => pilot_home.join("pilotdeck.yaml"),
-    };
-    let project_root = paths::resolve(cwd, Path::new("."));
-    let mut sources = vec![
-        read_yaml_source(&default_path, "default", &mut diagnostics)?,
-        read_yaml_source(
-            &project_root.join(".pilotdeck").join("pilotdeck.yaml"),
-            "project",
-            &mut diagnostics,
-        )?,
-    ];
-    if let Some(model) = env.string("PILOT_AGENT_MODEL").filter(|v| !v.is_empty()) {
-        let mut agent = JsObject::new();
-        agent.insert("model".into(), JsValue::String(model.as_str().into()));
-        let mut overrides = JsObject::new();
-        overrides.insert("agent".into(), JsValue::Object(agent));
-        sources.push(Some(overrides));
-    }
-    let raw = sources
-        .iter()
-        .flatten()
-        .fold(JsObject::new(), |output, source| {
-            deep_merge(&output, source)
-        });
-    // TS runs applyProjectBinding on the merged config (loadPilotConfig.ts:105) before
-    // validateTopLevel (:106) and the first throwConfigErrorIfFatal (:128), and it can
-    // throw on its own (projectBinding.ts:49,51), so the TODO stays at that point.
+    // applyProjectBinding precedes the first fatal check in TS. The gateway's
+    // read-only binding support does not implement the CLI's StaffDeck flow.
     if env.get("STAFFDECK_PROJECT_BINDING_ENABLED") == Some(std::ffi::OsStr::new("true")) {
         return Err(Failure::Todo(
             "StaffDeck project binding (applyProjectBinding)",
         ));
     }
-
-    if raw.contains_key("pilot") {
-        diagnostics.fatal(
-            "YAML config must not contain a pilot section. Use PILOT_HOME for PilotHome.".into(),
-        );
-    }
-    match raw.get("schemaVersion") {
-        None | Some(JsValue::Undefined) => {}
-        Some(JsValue::Number(version)) if *version == 1.0 => {}
-        Some(other) => {
-            diagnostics.fatal(format!(
-                "Unsupported schemaVersion {}.",
-                js_to_string(other)
-            ));
-        }
-    }
-    for (name, article) in [("agent", "an"), ("model", "a")] {
-        if matches!(raw.get(name), None | Some(JsValue::Undefined)) {
-            diagnostics.fatal(format!("Config must contain {article} {name} section."));
-        }
-    }
-    match diagnostics.first_fatal {
-        Some(message) => Err(Failure::Error(message)),
-        None => Ok(()),
-    }
+    pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some("."))
+        .map(|_| ())
+        .map_err(|error| {
+            if error.requires_host {
+                Failure::Todo("config requiring JavaScript host support")
+            } else {
+                Failure::Error(String::from_utf16_lossy(error.message.units()))
+            }
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
 
     fn message(result: Result<(), Failure>) -> String {
         match result {
@@ -220,6 +58,116 @@ mod tests {
         let result = message(check(&env, &dir.join("project"), &dir));
         fs::remove_dir_all(dir).unwrap();
         result
+    }
+
+    #[test]
+    fn cli_and_gateway_report_the_same_first_fatal() {
+        // Keep this cross-entry test when removing the CLI's original parser.
+        // Each row contains multiple faults, or an override that changes which
+        // fault wins. Expected text is pinned independently of either loader.
+        for (name, global, project, model, expected) in [
+            (
+                "both-yaml",
+                "a: [\n",
+                "b: [\n",
+                None,
+                "Failed to parse default config YAML.",
+            ),
+            (
+                "project-yaml",
+                "pilot: 1\nschemaVersion: 2\n",
+                "b: [\n",
+                None,
+                "Failed to parse project config YAML.",
+            ),
+            (
+                "default-root",
+                "- 1\n",
+                "pilot: 1\n",
+                None,
+                "default config root must be an object.",
+            ),
+            (
+                "project-root",
+                "schemaVersion: 2\n",
+                "- 1\n",
+                None,
+                "project config root must be an object.",
+            ),
+            (
+                "pilot-first",
+                "pilot: null\nschemaVersion: 2\n",
+                "",
+                None,
+                "YAML config must not contain a pilot section. Use PILOT_HOME for PilotHome.",
+            ),
+            (
+                "schema-first",
+                "schemaVersion: [2, null, x]\n",
+                "",
+                None,
+                "Unsupported schemaVersion 2,,x.",
+            ),
+            (
+                "missing-agent",
+                "schemaVersion: 1\n",
+                "",
+                None,
+                "Config must contain an agent section.",
+            ),
+            (
+                "project-agent",
+                "schemaVersion: 1\n",
+                "agent: {}\n",
+                None,
+                "Config must contain a model section.",
+            ),
+            (
+                "env-agent",
+                "schemaVersion: 1\n",
+                "",
+                Some("p/m"),
+                "Config must contain a model section.",
+            ),
+            (
+                "project-override",
+                "schemaVersion: 2\nagent: {}\n",
+                "schemaVersion: 1\n",
+                None,
+                "Config must contain a model section.",
+            ),
+        ] {
+            let (dir, mut env) = fixture(&format!("cross-{name}"), global);
+            let cwd = dir.join("project");
+            fs::create_dir_all(cwd.join(".pilotdeck")).unwrap();
+            fs::write(cwd.join(".pilotdeck/pilotdeck.yaml"), project).unwrap();
+            let mut gateway_env = pilotdeck_gateway::config::Env::from([(
+                "PILOTDECK_CONFIG_PATH".into(),
+                dir.join("pilotdeck.yaml").to_string_lossy().into_owned(),
+            )]);
+            if let Some(model) = model {
+                gateway_env.insert("PILOT_AGENT_MODEL".into(), model.into());
+                env = Env::from_pairs(&[
+                    (
+                        "PILOTDECK_CONFIG_PATH",
+                        &gateway_env["PILOTDECK_CONFIG_PATH"],
+                    ),
+                    ("PILOT_AGENT_MODEL", model),
+                ]);
+            }
+            let gateway =
+                pilotdeck_gateway::config::load_project(&dir, &cwd, &gateway_env, Some("."))
+                    .err()
+                    .expect("fatal config");
+            let cli = message(check(&env, &cwd, &dir));
+            assert_eq!(
+                gateway.message.to_utf8().unwrap(),
+                expected,
+                "gateway: {name}"
+            );
+            assert_eq!(cli, expected, "cli: {name}");
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]
@@ -257,8 +205,12 @@ mod tests {
             "Failed to parse default config YAML."
         );
         assert_eq!(
-            run("valid", "schemaVersion: 1\nagent: {}\nmodel: {}\n", None),
-            "ok"
+            run(
+                "empty-providers",
+                "schemaVersion: 1\nagent: {}\nmodel: {}\n",
+                None
+            ),
+            "Model config must contain at least one provider."
         );
     }
 
@@ -303,32 +255,29 @@ mod tests {
     }
 
     #[test]
-    fn deep_merge_replaces_non_records_and_merges_records() {
-        let mut inner = JsObject::new();
-        inner.insert("a".into(), JsValue::Number(1.0));
-        let mut base = JsObject::new();
-        base.insert("x".into(), JsValue::Object(inner));
-        let mut inner2 = JsObject::new();
-        inner2.insert("b".into(), JsValue::Number(2.0));
-        let mut over = JsObject::new();
-        over.insert("x".into(), JsValue::Object(inner2));
-        let merged = deep_merge(&base, &over);
-        let x = merged.get("x").and_then(JsValue::as_object).unwrap();
-        assert_eq!(x.len(), 2);
+    fn full_loader_uses_provider_environment_and_relative_config_path() {
+        let yaml = "schemaVersion: 1\nagent: {model: test/m}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: ${D1_CONFIG_TEST_KEY}\n      models: {m: {}}\n";
+        let (dir, _) = fixture("full-loader", yaml);
+        let cwd = dir.join("project");
+        let env = Env::from_pairs(&[
+            ("PILOTDECK_CONFIG_PATH", "../pilotdeck.yaml"),
+            ("D1_CONFIG_TEST_KEY", "fixture-key"),
+        ]);
+        assert_eq!(message(check(&env, &cwd, &dir)), "ok");
+        let no_key = Env::from_pairs(&[("PILOTDECK_CONFIG_PATH", "../pilotdeck.yaml")]);
+        assert_ne!(message(check(&no_key, &cwd, &dir)), "ok");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn string_conversion_matches_js() {
-        assert_eq!(js_to_string(&JsValue::Number(1e21)), "1e+21");
-        assert_eq!(js_to_string(&JsValue::Number(2.5)), "2.5");
-        assert_eq!(js_to_string(&JsValue::Number(-0.0)), "0");
+    fn host_dependent_config_remains_an_explicit_todo() {
         assert_eq!(
-            js_to_string(&JsValue::Array(vec![
-                JsValue::Number(1.0),
-                JsValue::Null,
-                "a".into()
-            ])),
-            "1,,a"
+            run(
+                "host-required",
+                "schemaVersion: 1\nagent: {model: constructor/m}\nmodel: {}\n",
+                None
+            ),
+            "TODO config requiring JavaScript host support"
         );
     }
 }

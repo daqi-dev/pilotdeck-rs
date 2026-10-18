@@ -10,7 +10,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, digest, environment, env_summary, hashes, initial_tree, snapshot
+from common import (HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, digest_plain, read_plain,
+                    environment, env_summary, hashes, initial_tree, snapshot, staged_skills_identity)
 from policy import sandbox_profile
 
 RECORDING_ORIGIN = 'live-os-sandbox'
@@ -81,10 +82,9 @@ def load_round(path):
             errors.append(rule)
     try:
         plain(path, directory=True)
-        plain(path / 'round.json')
         plain(path / 'cases', directory=True)
         require({p.name for p in path.iterdir()} == {'round.json', 'cases'}, 'round.artifact-members')
-        run = json.loads((path / 'round.json').read_text())
+        run = json.loads(read_plain(path / 'round.json'))
         require(run['schema'] == 1 and run['status'] == 'DONE', 'round.complete')
         require(run['kind'] == 'cli-d0-recording', 'round.kind')
         require(run['origin'] == RECORDING_ORIGIN, 'round.origin')
@@ -135,11 +135,20 @@ def load_round(path):
             # Offline re-validation reads the copy's actual bytes, not only the recorded hash.
             try:
                 staged = Path(executed['path'])
-                plain(staged)
-                on_disk = digest(staged)
+                on_disk = digest_plain(staged)
             except (OSError, ValueError):
                 on_disk = None
             require(on_disk == provenance['executable']['sha256'], 'round.rust-stage-bytes')
+            skills = provenance.get('stagedSkills', {})
+            skills_path = runtime.parent / 'rust-stage/skills'
+            require(isinstance(skills, dict) and set(skills) == {'path', 'sha256'}
+                    and skills['path'] == str(skills_path) and valid_sha(skills['sha256']),
+                    'round.rust-stage-skills')
+            try:
+                on_disk_skills = staged_skills_identity(skills_path)
+            except (OSError, ValueError):
+                on_disk_skills = None
+            require(on_disk_skills is not None and on_disk_skills == skills, 'round.rust-stage-skills-bytes')
         policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'])
         require(isolation['profileText'] == policy and isolation['profileSha256'] == hashlib.sha256(policy.encode()).hexdigest(),
                 'round.profile-binding')
@@ -159,12 +168,10 @@ def load_round(path):
             plain(folder, directory=True)
             require({p.name for p in folder.iterdir()} == {'record.json', 'stdout.bin', 'stderr.bin',
                     'events.json', 'initial.json', 'final.json', 'tree'}, f'{name}.artifact-members')
-            for filename in ('record.json', 'stdout.bin', 'stderr.bin', 'events.json', 'initial.json', 'final.json'):
-                plain(folder / filename)
-            record = json.loads((folder / 'record.json').read_text())
-            stdout = (folder / 'stdout.bin').read_bytes()
-            stderr = (folder / 'stderr.bin').read_bytes()
-            events = json.loads((folder / 'events.json').read_text())
+            record = json.loads(read_plain(folder / 'record.json'))
+            stdout = read_plain(folder / 'stdout.bin')
+            stderr = read_plain(folder / 'stderr.bin')
+            events = json.loads(read_plain(folder / 'events.json'))
             streams = coalesce(events)
             require(b''.join(data for channel, data in streams if channel == 'stdout') == stdout, f'{name}.stdout.events')
             require(b''.join(data for channel, data in streams if channel == 'stderr') == stderr, f'{name}.stderr.events')
@@ -185,10 +192,10 @@ def load_round(path):
             require(type(record['pid']) is int and record['pid'] > 0 and bool(record['processTree'])
                     and all(row['pid'] == row['pgid'] == record['pid'] for row in record['processTree']), f'{name}.process-tree')
             require(type(record['exitCode']) is int, f'{name}.exit-type')
-            before = json.loads((folder / 'initial.json').read_text())
+            before = json.loads(read_plain(folder / 'initial.json'))
             after = snapshot(folder / 'tree')
             require(before == initial_tree(), f'{name}.initial')
-            require(after == json.loads((folder / 'final.json').read_text()), f'{name}.disk.manifest')
+            require(after == json.loads(read_plain(folder / 'final.json')), f'{name}.disk.manifest')
             if run['side'] == 'ts' and scenario.get('oracle') == PENDING:
                 # Registered but not yet calibrated from a real TS round: never a PASS.
                 require(False, f'{name}.oracle.pending')

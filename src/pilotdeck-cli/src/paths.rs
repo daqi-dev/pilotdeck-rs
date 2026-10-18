@@ -22,6 +22,19 @@ impl Env {
     pub fn string(&self, name: &str) -> Option<String> {
         self.get(name).map(|v| v.to_string_lossy().into_owned())
     }
+    /// Shared config loading needs the complete environment for provider keys
+    /// and module substitutions; preserve the CLI's lossy UTF-8 convention.
+    pub fn strings(&self) -> HashMap<String, String> {
+        self.0
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect()
+    }
 }
 
 /// path.resolve(cwd, p): lexical normalization, no symlink resolution.

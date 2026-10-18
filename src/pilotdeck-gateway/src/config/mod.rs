@@ -14,15 +14,15 @@ use pilotdeck_yaml::{Options, parse_document};
 use std::collections::HashMap;
 pub(crate) use value::string_coercible;
 use value::*;
-pub(crate) type Env = HashMap<String, String>;
-pub(crate) struct Config {
-    pub providers: Vec<model::Provider>,
-    pub selection: (JsString, JsString),
-    pub router_enabled: bool,
+pub type Env = HashMap<String, String>;
+pub struct Config {
+    pub(crate) providers: Vec<model::Provider>,
+    pub(crate) selection: (JsString, JsString),
+    pub(crate) router_enabled: bool,
     pub diagnostics: Vec<JsValue>,
 }
 #[derive(Debug)]
-pub(crate) struct Error {
+pub struct Error {
     pub code: String,
     pub message: JsString,
     pub diagnostics: Vec<JsValue>,
@@ -104,9 +104,27 @@ fn merge(left: &mut JsValue, right: JsValue) {
     *left = JsValue::Object(output);
 }
 pub(crate) fn load<F: Files>(metadata: &Metadata<F>, env: &Env) -> Result<Config, Error> {
-    load_project(metadata, env, None)
+    load_project_with_files(metadata, env, None)
 }
-pub(crate) fn load_project<F: Files>(
+/// Load and validate the global and optional project configuration using explicit
+/// paths and environment. This is the same loader used by gateway methods; it
+/// neither reads the process environment nor starts a gateway or a JS fallback.
+/// Callers must handle `Error::requires_host` as an unsupported native branch.
+pub fn load_project(
+    pilot_home: &std::path::Path,
+    cwd: &std::path::Path,
+    env: &Env,
+    project: Option<&str>,
+) -> Result<Config, Error> {
+    let metadata = Metadata {
+        home: pilot_home.to_path_buf(),
+        cwd: cwd.to_path_buf(),
+        files: crate::metadata::NativeFiles,
+    };
+    load_project_with_files(&metadata, env, project)
+}
+
+pub(crate) fn load_project_with_files<F: Files>(
     metadata: &Metadata<F>,
     env: &Env,
     project: Option<&str>,

@@ -18,7 +18,7 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, ROOT, SCRIPT, SCENARIOS, baseline_path, digest, environment,
-                    env_summary, fixture, hashes, output_path, parity_lock, save, snapshot)
+                    env_summary, fixture, hashes, output_path, parity_lock, save, snapshot, staged_skills_identity)
 from compare import compare
 from policy import sandbox_profile
 
@@ -445,13 +445,13 @@ def main():
                 if args.rust_bin:
                     staged = stage_rust(output, expected_rust, baseline)
                     # The Rust round reads this copy, not baseline/skills; re-checked below.
-                    staged_skills = directory_identity(output / 'rust-stage/skills', output / 'rust-stage')
+                    staged_skills = staged_skills_identity(output / 'rust-stage/skills')
                     rust_profile = output / 'rust.sb'
                     rust_profile.write_text(sandbox_profile(runtime, baseline, staged['path'], 'rust'))
                     fixture(runtime)
                     rust_probe = rust_isolation(output, runtime, rust_profile, node['path'], isolation)
                     runtime.rename(output / 'rust-preflight-tree')
-                    rust_provenance = {**expected_rust, 'stagedExecutable': staged, 'baseline': identity,
+                    rust_provenance = {**expected_rust, 'stagedExecutable': staged, 'stagedSkills': staged_skills, 'baseline': identity,
                                        'node': node, 'opensslConfig': OPENSSL_CONFIG}
                     candidate = run_round(output, runtime, rust_profile, rust_probe, 'rust', rust_provenance, args.timeout)
                     summary['rustComparison'] = compare(first, candidate, expected_rust)
@@ -464,7 +464,7 @@ def main():
                 raise Blocked('Rust executable/source HEAD changed during recording')
             if staged and executable(staged['path']) != staged:
                 raise Blocked('staged Rust binary changed during recording')
-            if staged and directory_identity(output / 'rust-stage/skills', output / 'rust-stage') != staged_skills:
+            if staged and staged_skills_identity(output / 'rust-stage/skills') != staged_skills:
                 raise Blocked('staged Rust skills changed during recording')
     except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as error:
         summary['status'] = 'BLOCKED'

@@ -70,16 +70,14 @@ pub fn migrate_legacy_bundled_skill_copies(
         const COPIES: &str = "migrating legacy bundled skill copies out of PilotHome/skills";
         // readdirSync here is outside any try (migrateLegacyBundledSkills.ts:82-83), so
         // ENOTDIR/EACCES escape createLocalGateway to main().catch.
-        let entries = fs::read_dir(&user_root).map_err(|error| {
+        let scandir_error = |error| {
             paths::node_fs_message(&error, "scandir", &user_root)
                 .map_or(Failure::Todo(COPIES), Failure::Error)
-        })?;
+        };
+        let entries = fs::read_dir(&user_root).map_err(scandir_error)?;
         for entry in entries {
-            let entry = entry.map_err(|_| Failure::Todo(COPIES))?;
-            let is_dir = entry
-                .file_type()
-                .map_err(|_| Failure::Todo(COPIES))?
-                .is_dir();
+            let entry = entry.map_err(scandir_error)?;
+            let is_dir = entry.file_type().map_err(scandir_error)?.is_dir();
             if is_dir && entry.path().join("SKILL.md").exists() {
                 return Err(Failure::Todo(COPIES));
             }

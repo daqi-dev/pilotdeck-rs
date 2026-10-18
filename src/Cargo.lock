@@ -671,9 +671,8 @@ dependencies = [
 name = "pilotdeck-cli"
 version = "0.1.0"
 dependencies = [
+ "pilotdeck-gateway",
  "pilotdeck-protocol",
- "pilotdeck-yaml",
- "ryu-js",
  "serde_json",
 ]
 
