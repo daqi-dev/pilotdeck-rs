@@ -1,9 +1,8 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real fixed-baseline oracle; private exports are exposed in memory, never copied.
 import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,22 +16,19 @@ const operations = [...new Set([
   'unknown', '', null, 3, ' ', '\ud800',
   ...Object.values(contracts).flatMap((contract: any) => contract.methods),
 ])];
-const commit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(commit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
+const commit = assertBaseline(baseline);
 const base = 'src/agent/modules/transport/';
 const files = [base + 'agentLoopSidecarClient.ts', base + 'sidecarDefaultModuleDispatcher.ts',
   'src/agent/modules/capability/hostPlanTodoModuleHandler.ts'];
-assert.equal(execFileSync('git', ['-C', baseline, 'diff', 'HEAD', '--', ...files], { encoding: 'utf8' }), '');
 const requireBaseline = createRequire(join(baseline, 'package.json'));
 const requireTsx = createRequire(requireBaseline.resolve('tsx'));
 const { transformSync } = requireTsx('esbuild');
-const sources: Record<string, string> = {};
+const sources = await baselineSourceHashes(baseline, files);
 // Appending exports changes visibility only. Compile the entire original file
 // at its original filename so imports still resolve to real baseline modules.
 async function expose(source: string, names: string[]) {
   const path = join(baseline, source);
   const text = await readFile(path, 'utf8');
-  sources[source] = createHash('sha256').update(text).digest('hex');
   for (const name of names) assert.ok(text.includes(name), `missing private export ${name}`);
   const transformed = transformSync(text + '\nexport { ' + names.join(', ') + ' };\n', {
     loader: 'ts', format: 'esm', target: 'es2022', sourcefile: path,
@@ -48,7 +44,6 @@ const { SidecarTurnProtocol } = await expose(files[0], ['SidecarTurnProtocol']);
 const helpers = await expose(files[1], ['stringField', 'optionalStringField', 'booleanField', 'positiveFinite', 'optionalNonNegativeFinite']);
 const { createSidecarDefaultModuleDispatcher } = await import(pathToFileURL(join(baseline, files[1])).href);
 const { createHostPlanTodoModuleHandler } = await import(pathToFileURL(join(baseline, files[2])).href);
-sources[files[2]] = createHash('sha256').update(await readFile(join(baseline, files[2]))).digest('hex');
 const input = { sessionId: 'session', turnId: 'turn', messages: [], execution: { runId: 'run', operationId: 'operation' } };
 const context = { permissionContext: () => ({}), toolRuntimeContext: () => ({}), executionContext: () => ({}) };
 const dispatcher = createSidecarDefaultModuleDispatcher({

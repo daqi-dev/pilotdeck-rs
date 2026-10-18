@@ -1,18 +1,17 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { access, copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory or Rust registry path');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+const sourceCommit = assertBaseline(baseline);
 const source = 'src/gateway/run/RunRegistry.ts';
+const sourceSha256 = await baselineSourceHashes(baseline, [source]);
 const { FileRunRegistry } = await import(pathToFileURL(join(baseline, source)).href);
 
 // i32::MAX is a valid pid number that no process holds (ESRCH); i32::MAX + 1
@@ -425,7 +424,6 @@ try {
   await scenario('lock-stale-garbage', { initial: lockSnapshot, lock: { contents: 'not json', ageMs: 120_000 }, steps: [accept(ref('after-lock'), 'x')] });
   await scenario('lock-stale-live', { initial: lockSnapshot, lock: { contents: '{ "pid" :\u00a01 }', ageMs: 120_000 }, steps: [] });
 
-  const sourceSha256 = { [source]: createHash('sha256').update(await readFile(join(baseline, source))).digest('hex') };
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, generatorPid: process.pid, dead: DEAD, huge: HUGE, scenarios }, null, 2) + '\n';
   // Fixtures are machine-independent: no generation path survives in the oracle.
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

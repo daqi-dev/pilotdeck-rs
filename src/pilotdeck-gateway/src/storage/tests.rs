@@ -5,11 +5,7 @@ use pilotdeck_protocol::{
     module::{ModuleBinding, ModuleOutcome},
     parse_json, stringify_json,
 };
-use std::{
-    fs, io,
-    path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{fs, io, path::PathBuf};
 
 const FIXTURES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -21,7 +17,7 @@ fn oracle() -> JsValue {
         !oracle.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    parse_json(oracle).unwrap()
+    crate::test_baseline::oracle(oracle)
 }
 fn id() -> OperationIdentity {
     OperationIdentity {
@@ -85,21 +81,15 @@ fn memory() -> SessionOperationLedger<Memory> {
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../_tmp/20261017-a62/test-scratch")
-            .join(format!(
-                "{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = std::env::temp_dir().join(format!("pdrs-ledger-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
         Self(dir)
     }
     fn path(&self) -> PathBuf {
         self.0.join("session.jsonl")
     }
     fn fixture(&self, name: &str) {
+        oracle();
         fs::write(
             self.path(),
             fs::read(format!("{FIXTURES}/{name}.jsonl")).unwrap(),

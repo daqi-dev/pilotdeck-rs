@@ -10,7 +10,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     io::{BufRead, BufReader},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -31,35 +31,13 @@ fn oracle() -> JsValue {
         !text.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    parse_json(&text).unwrap()
-}
-fn clean(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            c => out.push(c.as_os_str()),
-        }
-    }
-    out
+    crate::test_baseline::oracle(&text)
 }
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = clean(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../_tmp/20261018-a62-pr3/test-scratch")
-                .join(format!(
-                    "{}-{}",
-                    std::process::id(),
-                    NEXT.fetch_add(1, Ordering::Relaxed)
-                )),
-        );
-        fs::create_dir_all(&dir).unwrap();
+        let dir = std::env::temp_dir().join(format!("pdrs-transcript-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
         Self(dir)
     }
 }

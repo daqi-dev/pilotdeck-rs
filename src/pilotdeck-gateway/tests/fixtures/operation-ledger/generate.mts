@@ -1,17 +1,17 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from repo root with Node 22 and the fixed baseline's tsx loader; see README.md.
 import { mkdir, mkdtemp, open, readFile, writeFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 assert.ok(process.argv[2], 'provide the fixture directory or Rust JSONL path');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+const sourceCommit = assertBaseline(baseline);
+const files = ['src/agent/modules/transport/sessionOperationLedger.ts', 'src/agent/modules/transport/operationLedger.ts', 'src/session/transcript/JsonlTranscriptWriter.ts', 'src/session/transcript/TranscriptReader.ts', 'src/session/events/SessionRuntime.ts', 'src/session/events/SessionEventLogValidation.ts', 'src/session/persistence/JsonlSessionPersistence.ts', 'src/agent/modules/checkpoint/seedStateProjection.ts'];
+const sourceSha256 = await baselineSourceHashes(baseline, files);
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { SessionAgentLoopOperationLedger: Ledger } = await load('src/agent/modules/transport/sessionOperationLedger.ts');
 const { JsonlTranscriptWriter: Writer } = await load('src/session/transcript/JsonlTranscriptWriter.ts');
@@ -183,8 +183,6 @@ try {
     const read = await readTranscript(path);
     readLimits.push({ sizeBytes, entryCount: read.entries.length, diagnostics: read.diagnostics.map(({ code, severity, line }: any) => ({ code, severity, line })) });
   }
-  const files = ['src/agent/modules/transport/sessionOperationLedger.ts', 'src/agent/modules/transport/operationLedger.ts', 'src/session/transcript/JsonlTranscriptWriter.ts', 'src/session/transcript/TranscriptReader.ts', 'src/session/events/SessionRuntime.ts', 'src/session/events/SessionEventLogValidation.ts', 'src/session/persistence/JsonlSessionPersistence.ts', 'src/agent/modules/checkpoint/seedStateProjection.ts'];
-  const sourceSha256 = Object.fromEntries(await Promise.all(files.map(async path => [path, createHash('sha256').update(await readFile(join(baseline, path))).digest('hex')])));
   await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, inputs: { identity, known: { ...known, seedState: serializeSeed(known.seedState) }, unknown }, cases, readLimits, rejectedCases, seedCases, utf8Read: { file: utf8File, entries: utf8Read.entries, diagnostics: utf8Read.diagnostics, state: utf8State } }, null, 2) + '\n');
   console.log(`PASS: generated ${cases.length} real TS ledger fixtures, ${rejectedCases.length} rejected identities, ${seedCases.length} seed cases, UTF-8 case, partial continuation and ${readLimits.length} sparse read limits`);
 } finally { await rm(scratch, { recursive: true, force: true }); }

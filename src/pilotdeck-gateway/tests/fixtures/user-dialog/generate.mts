@@ -1,7 +1,6 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Executes the fixed implementation; never copies its persistence code.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,8 +9,9 @@ assert.ok(process.env.PDRS_BASELINE, 'PDRS_BASELINE is required');
 assert.ok(process.argv[2], 'output directory is required');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
+const sourceCommit = assertBaseline(baseline);
+const files = ['src/gateway/user-dialog/FileGatewayUserDialogStore.ts', 'src/gateway/user-dialog/GatewayUserDialogBus.ts', 'src/gateway/user-dialog/GatewayUserDialogStore.ts', 'src/gateway/user-dialog/GatewayUserDialogChannel.ts', 'src/gateway/client/InProcessGateway.ts', 'src/cli/ProjectRuntimeRegistry.ts'];
+const sourceSha256 = await baselineSourceHashes(baseline, files);
 const load = (path: string) => import(pathToFileURL(join(baseline, path)).href);
 const { FileGatewayUserDialogStore: Store } = await load('src/gateway/user-dialog/FileGatewayUserDialogStore.ts');
 const { GatewayUserDialogBus: Bus } = await load('src/gateway/user-dialog/GatewayUserDialogBus.ts');
@@ -189,8 +189,6 @@ try {
     catch (error) { result = { invalid: (error as Error).message.endsWith(': invalid store record') }; }
     readCases.push({ name, disk, result });
   }
-  const files = ['src/gateway/user-dialog/FileGatewayUserDialogStore.ts', 'src/gateway/user-dialog/GatewayUserDialogBus.ts', 'src/gateway/user-dialog/GatewayUserDialogStore.ts', 'src/gateway/user-dialog/GatewayUserDialogChannel.ts', 'src/gateway/client/InProcessGateway.ts', 'src/cli/ProjectRuntimeRegistry.ts'];
-  const sourceSha256 = Object.fromEntries(await Promise.all(files.map(async path => [path, createHash('sha256').update(await readFile(join(baseline, path))).digest('hex')])));
   const command = 'PDRS_BASELINE=/absolute/path/to/PilotDeck node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" src/pilotdeck-gateway/tests/fixtures/user-dialog/generate.mts src/pilotdeck-gateway/tests/fixtures/user-dialog';
   await writeFile(join(output, 'oracle.json'), JSON.stringify({ sourceCommit, sourceSha256, command, key, request, createdAt, initialMs, relativePath, steps, busSteps, responses, resolved, hostedProjection, liveProjection, recoveredProjection, readCases }, null, 2) + '\n');
   console.log(`PASS: ${steps.length} file-store steps, ${busSteps.length} bus steps, ${readCases.length} reader cases, real response validation and hosted/live/recovered projections`);

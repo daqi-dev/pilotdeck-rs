@@ -1,5 +1,4 @@
 use super::*;
-use pilotdeck_protocol::parse_json;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -31,7 +30,7 @@ fn fixture() -> JsValue {
         !oracle.contains(".generate-"),
         "oracle.json leaks a generation path"
     );
-    parse_json(oracle).unwrap()
+    crate::test_baseline::oracle(oracle)
 }
 fn field<'a>(value: &'a JsValue, name: &str) -> &'a JsValue {
     value.get(name).unwrap()

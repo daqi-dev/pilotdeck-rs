@@ -18,6 +18,9 @@ mod session_model;
 pub mod skills;
 pub mod storage;
 #[cfg(test)]
+#[path = "../tests/common/baseline.rs"]
+mod test_baseline;
+#[cfg(test)]
 mod test_process;
 pub mod upload;
 mod upstream;

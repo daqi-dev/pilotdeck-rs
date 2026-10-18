@@ -175,10 +175,9 @@ mod tests {
 
     #[test]
     fn override_churn_releases_every_historical_array() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(
+        let oracle = crate::test_baseline::oracle(include_str!(
             "../../tests/fixtures/session-overrides/oracle.json"
-        ))
-        .unwrap();
+        ));
         for operation in ["replace", "delete", "deletePrefix", "clear", "drop"] {
             let mut store = SessionConfigOverrides::new();
             let mut weak = vec![];

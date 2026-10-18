@@ -1,9 +1,8 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run with Node 22 --expose-gc --experimental-strip-types; see README.md.
 // Every expected value is produced by the real TypeScript baseline classes.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -11,23 +10,13 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline
 assert.ok(process.argv[2], 'provide the fixture directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const commit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(commit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
+const commit = assertBaseline(baseline);
 
-const sources = {
-  'src/gateway/permission/GatewaySessionPermissionRuleSetRegistry.ts': null as string | null,
-  'src/gateway/permission/GatewaySessionPermissionModeRegistry.ts': null as string | null,
-  'src/always-on/runtime/SessionConfigOverrides.ts': null as string | null,
-};
-for (const source of Object.keys(sources)) {
-  const text = await readFile(join(baseline, source), 'utf8');
-  sources[source as keyof typeof sources] = createHash('sha256').update(text).digest('hex');
-}
-assert.equal(
-  execFileSync('git', ['-C', baseline, 'diff', 'HEAD', '--', ...Object.keys(sources)], { encoding: 'utf8' }),
-  '',
-  'baseline sources must have no working-tree changes',
-);
+const sources = await baselineSourceHashes(baseline, [
+  'src/gateway/permission/GatewaySessionPermissionRuleSetRegistry.ts',
+  'src/gateway/permission/GatewaySessionPermissionModeRegistry.ts',
+  'src/always-on/runtime/SessionConfigOverrides.ts',
+]);
 
 const { GatewaySessionPermissionRuleSetRegistry } = await import(
   pathToFileURL(join(baseline, 'src/gateway/permission/GatewaySessionPermissionRuleSetRegistry.ts')).href

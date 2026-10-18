@@ -1,6 +1,6 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Real fixed-baseline provider oracle. No copied implementation or mock store.
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile, rm, realpath, symlink, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,10 +11,9 @@ assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE');
 assert.ok(process.argv[2], 'provide an output directory');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const output = resolve(process.argv[2]);
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85');
+const sourceCommit = assertBaseline(baseline);
 const sourcePaths = ['src/gateway/dialog/UploadStore.ts', 'src/gateway/dialog/errors.ts', 'src/gateway/dialog/UploadLifecyclePort.ts', 'src/gateway/dialog/UploadArtifactLeasePort.ts'];
-const sources = Object.fromEntries(await Promise.all(sourcePaths.map(async p => [p, createHash('sha256').update(await readFile(join(baseline, p))).digest('hex')])));
+const sources = await baselineSourceHashes(baseline, sourcePaths);
 const { UploadStore } = await import(pathToFileURL(join(baseline, sourcePaths[0])).href);
 const epoch = Date.parse('2026-10-18T00:00:00.000Z');
 const file = { clientFileId: 'file-1', name: '  你好.txt  ', relativePath: 'folder/你好.txt', size: 5, mimeType: 'text/plain', extra: { z: 1, a: 2 } };

@@ -1,3 +1,5 @@
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::storage::{
     TaskBudgetError, TaskBudgetScope, TaskBudgetState, TaskBudgetStore,
 };
@@ -248,7 +250,7 @@ fn replay(base: &Path, scenario: &JsValue) {
 }
 #[test]
 fn real_ts_sequences_match_results_counts_and_every_file_byte() {
-    let oracle = parse_json(ORACLE).unwrap();
+    let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
     assert_eq!(scenarios.len(), 31);
     let scratch = Scratch::new();
@@ -267,7 +269,7 @@ fn empty_project_root_helper_resolves_to_cwd() {
 }
 #[test]
 fn rust_reads_ts_ledgers_and_replayed_state() {
-    let oracle = parse_json(ORACLE).unwrap();
+    let oracle = baseline::oracle(ORACLE);
     let scratch = Scratch::new();
     for scenario in array(field(&oracle, "scenarios")) {
         // Starting bytes include real TS snapshots plus controlled corruptions.
@@ -332,7 +334,7 @@ fn rust_reads_ts_ledgers_and_replayed_state() {
 fn real_ts_reads_and_continues_rust_ledgers() {
     let baseline = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("set PDRS_BASELINE"));
     let scratch = Scratch::new();
-    let oracle = parse_json(ORACLE).unwrap();
+    let oracle = baseline::oracle(ORACLE);
     for scenario in array(field(&oracle, "scenarios")) {
         replay(&scratch.0, scenario);
     }

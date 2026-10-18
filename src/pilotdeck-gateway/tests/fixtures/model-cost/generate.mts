@@ -1,3 +1,4 @@
+import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
 // Run from the repo root with Node 22, the fixed baseline's tsx loader and
 // PDRS_BASELINE pointing at the fixed PilotDeck checkout:
 //
@@ -8,39 +9,14 @@
 // copied into the fixture beyond the assertions that re-derive components from
 // the exported helpers.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 assert.ok(process.env.PDRS_BASELINE, 'set PDRS_BASELINE to the fixed TS baseline');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
-const sourceCommit = execFileSync('git', ['-C', baseline, 'rev-parse', 'HEAD'], {
-  encoding: 'utf8',
-}).trim();
-assert.equal(sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', 'baseline must be the fixed PilotDeck commit');
-// The checkout is mutable in place; a dirty tracked file would change the
-// numbers below while `rev-parse HEAD` still reports the pinned commit.
-const trackedChanges = execFileSync(
-  'git',
-  ['-C', baseline, 'status', '--porcelain', '--untracked-files=no'],
-  { encoding: 'utf8' },
-);
-assert.equal(
-  trackedChanges,
-  '',
-  `baseline has uncommitted changes to tracked files:\n${trackedChanges}`,
-);
-
-const importBaseline = (relative: string) => import(pathToFileURL(join(baseline, 'src', relative)).href);
-const pricingModule = await importBaseline('router/utils/modelPricing.ts');
-const { PROVIDER_CATALOG } = await importBaseline('model/catalog/providers.ts');
-const { TokenAccountingRuntime } = await importBaseline('context/budget/TokenAccountingRuntime.ts');
-const { TokenStatsCollector } = await importBaseline('router/stats/TokenStatsCollector.ts');
-const { lookupModelPricing, lookupModelPricingWithSource, calculateInputCost, calculateCacheReadCost } = pricingModule;
-
+const sourceCommit = assertBaseline(baseline);
 const SOURCES = [
   'router/utils/modelPricing.ts',
   'router/stats/TokenStatsCollector.ts',
@@ -52,19 +28,14 @@ const SOURCES = [
   'agent/loop/AgentLoop.ts',
   'agent/loop/nativeAgentTurnCapabilitiesAdapter.ts',
 ];
-const sourceSha256: Record<string, string> = {};
-for (const source of SOURCES) {
-  const path = `src/${source}`;
-  const workingTreeHash = createHash('sha256').update(await readFile(join(baseline, path))).digest('hex');
-  const committed = execFileSync('git', ['-C', baseline, 'show', `${sourceCommit}:${path}`]);
-  const committedHash = createHash('sha256').update(committed).digest('hex');
-  assert.equal(
-    workingTreeHash,
-    committedHash,
-    `${path} differs from ${sourceCommit}; the baseline checkout is not clean`,
-  );
-  sourceSha256[path] = committedHash;
-}
+const sourceSha256 = await baselineSourceHashes(baseline, SOURCES.map(source => `src/${source}`));
+
+const importBaseline = (relative: string) => import(pathToFileURL(join(baseline, 'src', relative)).href);
+const pricingModule = await importBaseline('router/utils/modelPricing.ts');
+const { PROVIDER_CATALOG } = await importBaseline('model/catalog/providers.ts');
+const { TokenAccountingRuntime } = await importBaseline('context/budget/TokenAccountingRuntime.ts');
+const { TokenStatsCollector } = await importBaseline('router/stats/TokenStatsCollector.ts');
+const { lookupModelPricing, lookupModelPricingWithSource, calculateInputCost, calculateCacheReadCost } = pricingModule;
 
 // `modelPricing.ts` documents the unit as display-only; it never enters arithmetic.
 type ConfiguredPricing = Record<string, { input?: number; output?: number; cacheRead?: number; unit?: string }>;
@@ -517,11 +488,13 @@ for (const path of [baseline, fixtureDir]) assert.ok(!oracle.includes(path), `or
 // default keeps the historical "run in place" invocation working.
 const outputDir = process.argv[2] ? resolve(process.argv[2]) : fixtureDir;
 const target = join(outputDir, 'oracle.json');
-const temporary = `${target}.tmp`;
-// Write-then-rename: a killed or concurrent generator must never leave a
-// truncated oracle.json behind.
-await writeFile(temporary, oracle);
-await rename(temporary, target);
+await mkdir(outputDir, { recursive: true });
+const temporary = await mkdtemp(join(outputDir, '.generate-'));
+try {
+  const file = join(temporary, 'oracle.json');
+  await writeFile(file, oracle);
+  await rename(file, target);
+} finally { await rm(temporary, { recursive: true, force: true }); }
 console.log(
   `PASS: ${pricingLookups.length} pricing lookups, ${costs.length} cost cases, ` +
   `${usageCosts.length} usage-cost cases, ${requests.length} request shapes`,

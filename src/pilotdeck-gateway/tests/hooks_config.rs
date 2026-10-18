@@ -1,6 +1,7 @@
+#[path = "common/baseline.rs"]
+mod baseline;
 use pilotdeck_gateway::hooks::{config::*, protocol::*};
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
-use sha2::{Digest, Sha256};
 
 fn array(value: &JsValue) -> &[JsValue] {
     let JsValue::Array(items) = value else {
@@ -44,7 +45,7 @@ fn decode(value: &JsValue) -> JsValue {
     }
 }
 fn oracle() -> JsValue {
-    parse_json(include_str!("fixtures/hooks-config/oracle.json")).unwrap()
+    baseline::oracle(include_str!("fixtures/hooks-config/oracle.json"))
 }
 #[test]
 fn oracle_is_bound_to_the_fixed_ts_sources() {
@@ -66,20 +67,10 @@ fn oracle_is_bound_to_the_fixed_ts_sources() {
         "protocol/settings.ts",
     ];
     assert_eq!(sources.entries().len(), paths.len());
-    let baseline = std::env::var_os("PDRS_BASELINE").map(std::path::PathBuf::from);
     for path in paths {
         let path = format!("src/extension/hooks/{path}");
         let expected = text(sources.get(&path).expect("missing source digest"));
         assert_eq!(expected.len(), 64, "{path}");
-        if let Some(baseline) = &baseline {
-            let bytes =
-                std::fs::read(baseline.join(&path)).unwrap_or_else(|e| panic!("{path}: {e}"));
-            assert_eq!(
-                format!("{:x}", Sha256::digest(bytes)),
-                expected,
-                "TS source changed: {path}"
-            );
-        }
     }
 }
 fn assert_json(actual: &JsValue, case: &JsValue, field: &str) {
