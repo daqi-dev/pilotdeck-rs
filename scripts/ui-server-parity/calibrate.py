@@ -62,7 +62,9 @@ from common import ROOT, apparatus_hashes, source_hashes, node_modules_hash, val
 from multimodal import capture_identity
 
 NAMES = [f'ref{i}' for i in range(1, 21)] + [f'ts{i}' for i in range(1, 6)] + ['proxy']
-CAP_BYTES = 30_000_000_000  # 30 GB, conservatively below the legacy 30 GiB check.
+# CLAUDE.md resource cap for _build + _tmp (human rule 2026-10-17: 80 GiB, du 1024 units);
+# the 2026-10-14 freeze used a conservative 30 GB under the then 46 GiB rule.
+CAP_BYTES = 80 * 1024 ** 3
 BUILD_RESERVE_BYTES = 1_000_000_000
 REPORT_RESERVE_BYTES = 1_000_000_000
 
