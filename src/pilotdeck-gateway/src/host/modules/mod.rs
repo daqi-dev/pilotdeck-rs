@@ -8,6 +8,7 @@ pub mod event;
 pub mod lifecycle;
 pub mod model;
 pub mod permission;
+pub mod tool_context;
 pub mod turn;
 pub mod wire;
 
