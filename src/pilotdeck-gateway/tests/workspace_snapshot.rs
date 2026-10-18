@@ -18,7 +18,7 @@ use pilotdeck_gateway::storage::{
     WorkspaceSnapshotDescriptor, WorkspaceSnapshotError, WorkspaceSnapshotInput,
     WorkspaceSnapshotResult, create_workspace_snapshot_provider, resolve_workspace_snapshot_config,
 };
-use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -327,7 +327,34 @@ fn tick() {
 
 // ------------------------------------------------------------ outcome shapes
 
-fn result_json(result: &WorkspaceSnapshotResult, mask: &dyn Fn(&str) -> String) -> JsValue {
+/// Replace the scenario directory inside a raw UTF-16 string without decoding
+/// it: a marker error may carry lone surrogates that `to_utf8()` rejects.
+fn mask_js_string(value: &JsString, dir: &str) -> JsString {
+    let needle: Vec<u16> = dir.encode_utf16().collect();
+    let replacement: Vec<u16> = "<dir>".encode_utf16().collect();
+    let units = value.units();
+    if needle.is_empty() {
+        return value.clone();
+    }
+    let mut out = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if units[index..].starts_with(&needle) {
+            out.extend_from_slice(&replacement);
+            index += needle.len();
+        } else {
+            out.push(units[index]);
+            index += 1;
+        }
+    }
+    JsString::from_utf16(out)
+}
+
+fn result_json(
+    result: &WorkspaceSnapshotResult,
+    mask: &dyn Fn(&str) -> String,
+    dir: &str,
+) -> JsValue {
     let mut out = JsObject::new();
     out.insert("snapshotId".into(), result.snapshot_id.as_str().into());
     out.insert("phase".into(), result.phase.as_str().into());
@@ -339,7 +366,7 @@ fn result_json(result: &WorkspaceSnapshotResult, mask: &dyn Fn(&str) -> String) 
         out.insert("failureMarkerPath".into(), mask(path).as_str().into());
     }
     if let Some(error) = &result.error {
-        out.insert("error".into(), mask(error).as_str().into());
+        out.insert("error".into(), JsValue::String(mask_js_string(error, dir)));
     }
     JsValue::Object(out)
 }
@@ -347,6 +374,7 @@ fn thrown_json(error: &WorkspaceSnapshotError, mask: &dyn Fn(&str) -> String) ->
     let message = mask(&error.to_string());
     let name = match error {
         WorkspaceSnapshotError::Syntax(_) => "SyntaxError",
+        WorkspaceSnapshotError::TypeError(_) => "TypeError",
         WorkspaceSnapshotError::Invalid(message)
             if message.starts_with("Cannot read properties of null") =>
         {
@@ -366,14 +394,20 @@ fn thrown_json(error: &WorkspaceSnapshotError, mask: &dyn Fn(&str) -> String) ->
 /// snapshot root (generate.mts does the same relative() mapping).
 fn descriptor_json(descriptor: &WorkspaceSnapshotDescriptor, root: &Path) -> JsValue {
     let mut out = JsObject::new();
-    out.insert("snapshotId".into(), descriptor.snapshot_id.as_str().into());
+    out.insert(
+        "snapshotId".into(),
+        JsValue::String(descriptor.snapshot_id.clone()),
+    );
     out.insert(
         "workspaceId".into(),
-        descriptor.workspace_id.as_str().into(),
+        JsValue::String(descriptor.workspace_id.clone()),
     );
-    out.insert("sessionId".into(), descriptor.session_id.as_str().into());
-    out.insert("turnId".into(), descriptor.turn_id.as_str().into());
-    out.insert("runId".into(), descriptor.run_id.as_str().into());
+    out.insert(
+        "sessionId".into(),
+        JsValue::String(descriptor.session_id.clone()),
+    );
+    out.insert("turnId".into(), JsValue::String(descriptor.turn_id.clone()));
+    out.insert("runId".into(), JsValue::String(descriptor.run_id.clone()));
     out.insert("phase".into(), descriptor.phase.as_str().into());
     out.insert("state".into(), SnapshotState::Committed.as_str().into());
     if let Some(created) = &descriptor.created_at {
@@ -448,6 +482,68 @@ fn scenarios_match_ts_outcomes_and_trees() {
     for scenario in arr(field(&oracle, "scenarios")) {
         replay_scenario(scenario);
     }
+}
+
+/// R19 host boundary for R9's first P1: Node keeps distinct weights for
+/// unpaired surrogates (the recorded TS list is the review's B,A case), while
+/// ICU4X folds them to U+FFFD. The port must refuse the comparison instead of
+/// silently returning a different order.
+#[test]
+fn unpaired_surrogate_collation_requires_host() {
+    let oracle = oracle();
+    let case = field(
+        field(&oracle, "hostBoundaryCases"),
+        "unpairedSurrogateCollation",
+    );
+    let scratch = Scratch::new();
+    let root = scratch.0.join("surrogate-sort-root");
+    for manifest in arr(field(case, "manifests")) {
+        let path = root.join(s(field(manifest, "path")));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, s(field(manifest, "text"))).unwrap();
+    }
+    let ts_order: Vec<String> = arr(field(case, "tsList"))
+        .iter()
+        .map(|descriptor| s(field(descriptor, "snapshotId")))
+        .collect();
+    assert_eq!(
+        ts_order,
+        ["b-replacement", "c-pua", "a-lone-high", "d-supplementary"],
+        "real TS keeps the lone-surrogate weight (review's B before A)"
+    );
+    let root_text = root.to_string_lossy().into_owned();
+    let error = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root_text.clone(),
+        snapshot_root: root_text,
+    })
+    .list()
+    .expect_err("an unpaired surrogate sorting key must be a host boundary");
+    assert!(error.requires_host(), "callers must be able to forward it");
+    assert_eq!(
+        error.to_string(),
+        "Snapshot createdAt collation requires the Node host for unpaired surrogates."
+    );
+
+    // Positive control: a single descriptor never calls the comparator, so its
+    // lone-surrogate createdAt still lists (the boundary is exact, not a ban).
+    let single = scratch.0.join("single-surrogate");
+    let first = &arr(field(case, "manifests"))[0];
+    let path = single.join(s(field(first, "path")));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, s(field(first, "text"))).unwrap();
+    let single_text = single.to_string_lossy().into_owned();
+    let listed = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: single_text.clone(),
+        snapshot_root: single_text,
+    })
+    .list()
+    .expect("one descriptor never compares sorting keys");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        listed[0].created_at.as_ref().unwrap().units(),
+        [0xd800],
+        "the lone surrogate survives the list read-back"
+    );
 }
 
 fn replay_scenario(scenario: &JsValue) {
@@ -572,12 +668,25 @@ fn replay_scenario(scenario: &JsValue) {
             "capture" => {
                 let input = input_of(field(step, "input"), &dir);
                 // generate.mts defaults to the latest recorder: 'recorder'
-                // steps opt the next capture into fresh state.
+                // steps opt the next capture into fresh state. A step-level
+                // snapshotRoot rebuilds a recorder with that (NUL) config.
                 let current = field(step, "recorder")
                     .as_number()
                     .map(|number| number as usize)
                     .unwrap_or(recorders.len() - 1);
-                let captured = if s(field(step, "phase")) == "pre_user" {
+                let captured = if field(step, "snapshotRoot").as_string().is_some() {
+                    let root = s(field(step, "snapshotRoot"));
+                    let config = WorkspaceSnapshotConfig {
+                        root: root.clone(),
+                        snapshot_root: root,
+                    };
+                    let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(config);
+                    if s(field(step, "phase")) == "pre_user" {
+                        recorder.capture_pre_user(&input)
+                    } else {
+                        recorder.capture_post_agent(&input)
+                    }
+                } else if s(field(step, "phase")) == "pre_user" {
                     recorders[current].capture_pre_user(&input)
                 } else {
                     recorders[current].capture_post_agent(&input)
@@ -595,7 +704,7 @@ fn replay_scenario(scenario: &JsValue) {
                                 );
                             }
                         }
-                        result_json(&result, &mask)
+                        result_json(&result, &mask, &dir_text)
                     }
                     Err(error) => thrown_json(&error, &mask),
                 });
@@ -625,7 +734,7 @@ fn replay_scenario(scenario: &JsValue) {
             }
             "restore" => {
                 let snapshot_id = aliased_id(step, &ids, &context);
-                let target = dir.join(s(field(step, "target")));
+                let target = resolve_step_path(&s(field(step, "target")));
                 outcome = Some(
                     match create_workspace_snapshot_provider(config.clone())
                         .restore(&snapshot_id, &target.to_string_lossy())

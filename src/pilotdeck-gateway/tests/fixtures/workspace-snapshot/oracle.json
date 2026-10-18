@@ -2970,8 +2970,628 @@
           "sha256": "8ebe729eb7b633cb24fcb536b417dc46bac7a612c45fc824f6f5e9a1324cf6a9"
         }
       ]
+    },
+    {
+      "name": "surrogate-readback",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [
+          {
+            "path": "x.txt",
+            "b64": "eAo="
+          }
+        ],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "tick"
+        },
+        {
+          "op": "capture",
+          "phase": "pre_user",
+          "input": {
+            "workspaceId": "ws-sur",
+            "sessionId": "s-sur",
+            "turnId": "t-sur",
+            "runId": "r-sur",
+            "workspaceDir": "<dir>/workspace",
+            "workspaceStable": false
+          },
+          "outcome": {
+            "snapshotId": "83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8",
+            "phase": "pre_user",
+            "state": "failed",
+            "failureMarkerPath": "<dir>/snapshots/workspaces/ws-sur/sessions/s-sur/snapshots/83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8/_FAILED.json",
+            "error": "Workspace did not become quiescent before snapshot capture."
+          }
+        },
+        {
+          "op": "writeSnapshot",
+          "text": "{\n  \"snapshotId\": \"overwritten-marker\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"state\": \"failed\",\n  \"error\": \"err\\ud800\",\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}",
+          "path": "workspaces/ws-sur/sessions/s-sur/snapshots/83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8/_FAILED.json"
+        },
+        {
+          "op": "recorder"
+        },
+        {
+          "op": "capture",
+          "phase": "pre_user",
+          "input": {
+            "workspaceId": "ws-sur",
+            "sessionId": "s-sur",
+            "turnId": "t-sur",
+            "runId": "r-sur",
+            "workspaceDir": "<dir>/workspace",
+            "workspaceStable": false
+          },
+          "outcome": {
+            "snapshotId": "83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8",
+            "phase": "pre_user",
+            "state": "failed",
+            "failureMarkerPath": "<dir>/snapshots/workspaces/ws-sur/sessions/s-sur/snapshots/83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8/_FAILED.json",
+            "error": "err\ud800"
+          }
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/surrogate-identity/manifest.json",
+          "text": "{\n  \"snapshotId\": \"id\\ud800\",\n  \"workspaceId\": \"ws\\ud800\",\n  \"sessionId\": \"sess\\ud801\",\n  \"turnId\": \"turn\\ud802\",\n  \"runId\": \"run\\ud803\",\n  \"phase\": \"pre_user\",\n  \"entries\": [],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "list",
+          "outcome": [
+            {
+              "snapshotId": "id\ud800",
+              "workspaceId": "ws\ud800",
+              "sessionId": "sess\ud801",
+              "turnId": "turn\ud802",
+              "runId": "run\ud803",
+              "phase": "pre_user",
+              "state": "committed",
+              "createdAt": "2020-01-01T00:00:00.000Z",
+              "manifestPath": "workspaces/quirk/sessions/quirk/snapshots/surrogate-identity/manifest.json"
+            }
+          ]
+        }
+      ],
+      "dynamicIds": [
+        "83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8"
+      ],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/surrogate-identity",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/surrogate-identity/manifest.json",
+          "kind": "file",
+          "size": 221,
+          "sha256": "ba538cbdba33a1c00033f750bf7b9752470874b2a39fdd2273977f39fe1515ab"
+        },
+        {
+          "path": "workspaces/ws-sur",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/ws-sur/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/ws-sur/sessions/s-sur",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/ws-sur/sessions/s-sur/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/ws-sur/sessions/s-sur/snapshots/83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/ws-sur/sessions/s-sur/snapshots/83f7d20d452b6712a1f4f4643a33f4ee4770791b9b449acd8d6f858f7c0814b8/_FAILED.json",
+          "kind": "file",
+          "size": 206,
+          "sha256": "32ebaecf51ae73f073b379665d6e4b9bf8bd6d098ec5fc0254d253e7a8fb8a2c"
+        }
+      ]
+    },
+    {
+      "name": "nul-restore-target",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [
+          {
+            "path": "x.txt",
+            "b64": "eAo="
+          }
+        ],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "tick"
+        },
+        {
+          "op": "capture",
+          "phase": "pre_user",
+          "input": {
+            "workspaceId": "w",
+            "sessionId": "s-nul-target",
+            "turnId": "t",
+            "runId": "r",
+            "workspaceDir": "<dir>/workspace"
+          },
+          "outcome": {
+            "snapshotId": "2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4",
+            "phase": "pre_user",
+            "state": "committed",
+            "manifestPath": "<dir>/snapshots/workspaces/w/sessions/s-nul-target/snapshots/2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4/manifest.json"
+          }
+        },
+        {
+          "op": "restore",
+          "snapshotId": "2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4",
+          "target": "/tmp/pdrs-r9-target\u0000root",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-target\\x00root'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [
+        "2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4"
+      ],
+      "tree": [
+        {
+          "path": "objects",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/73",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/73/cb",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/73/cb/73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac",
+          "kind": "file",
+          "size": 2,
+          "sha256": "73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac"
+        },
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s-nul-target",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s-nul-target/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s-nul-target/snapshots/2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/w/sessions/s-nul-target/snapshots/2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4/_COMMITTED",
+          "kind": "file",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "workspaces/w/sessions/s-nul-target/snapshots/2a730f87f238d18e926beb12b756a20a1edaab8cf9da324004f72fd06f0e37d4/manifest.json",
+          "kind": "file",
+          "size": 529,
+          "sha256": "b7dd40898073630195401826229f3187abd4f9edeca9d786a8e3a2296b31fc9d"
+        }
+      ]
+    },
+    {
+      "name": "nul-restore-object",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-object\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"out.txt\",\n      \"entryType\": \"file\",\n      \"objectKey\": \"/nul\\u0000object\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-object",
+          "target": "restore-object",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/nul\\x00object'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-object/manifest.json",
+          "kind": "file",
+          "size": 295,
+          "sha256": "388a6501570c70f17137907d6f62fd068a4a30fb7be65f0c661296af41ca6f82"
+        }
+      ]
+    },
+    {
+      "name": "nul-restore-link",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-link\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"link\",\n      \"entryType\": \"symlink\",\n      \"linkTarget\": \"tar\\u0000get\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-link",
+          "target": "restore-link",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'target' must be a string, Uint8Array, or URL without null bytes. Received 'tar\\x00get'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link/manifest.json",
+          "kind": "file",
+          "size": 290,
+          "sha256": "021e041db46078a9e384e391107e55832ed1e020e01b5b6d922a9ddc12d2f042"
+        }
+      ]
+    },
+    {
+      "name": "nul-restore-link-output",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-out/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-link-out\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"a\\u0000b\",\n      \"entryType\": \"symlink\",\n      \"linkTarget\": \"ok-target\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-link-out",
+          "target": "/tmp/pdrs-r9-linkout",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-linkout/a\\x00b'"
+            }
+          }
+        },
+        {
+          "op": "remove",
+          "path": "/tmp/pdrs-r9-linkout",
+          "recursive": true
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-out",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-link-out/manifest.json",
+          "kind": "file",
+          "size": 295,
+          "sha256": "dbeb9d101bbb1939621e2540e7637da3497a9b8348df6a0bbb72e09ce8fec30f"
+        }
+      ]
+    },
+    {
+      "name": "nul-restore-path",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "writeSnapshot",
+          "path": "objects/sha256/00/00/nul-path-object",
+          "text": "ok\n"
+        },
+        {
+          "op": "writeSnapshot",
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-path/manifest.json",
+          "text": "{\n  \"snapshotId\": \"nul-path\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [\n    {\n      \"path\": \"a\\u0000b.txt\",\n      \"entryType\": \"file\",\n      \"objectKey\": \"objects/sha256/00/00/nul-path-object\"\n    }\n  ],\n  \"createdAt\": \"2020-01-01T00:00:00.000Z\"\n}"
+        },
+        {
+          "op": "restore",
+          "snapshotId": "nul-path",
+          "target": "/tmp/pdrs-r9-path",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-path/a\\x00b.txt'"
+            }
+          }
+        },
+        {
+          "op": "remove",
+          "path": "/tmp/pdrs-r9-path",
+          "recursive": true
+        }
+      ],
+      "dynamicIds": [],
+      "tree": [
+        {
+          "path": "objects",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/00",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/00/00",
+          "kind": "dir"
+        },
+        {
+          "path": "objects/sha256/00/00/nul-path-object",
+          "kind": "file",
+          "size": 3,
+          "sha256": "dc51b8c96c2d745df3bd5590d990230a482fd247123599548e0632fdbf97fc22"
+        },
+        {
+          "path": "workspaces",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-path",
+          "kind": "dir"
+        },
+        {
+          "path": "workspaces/quirk/sessions/quirk/snapshots/nul-path/manifest.json",
+          "kind": "file",
+          "size": 318,
+          "sha256": "edef21ef4f9714dc0df43ea38dd0d0cec4448f93a97f34de675106e0e40f59ae"
+        }
+      ]
+    },
+    {
+      "name": "nul-capture-root",
+      "snapshotRoot": "<dir>/snapshots",
+      "workspace": {
+        "files": [
+          {
+            "path": "x.txt",
+            "b64": "eAo="
+          }
+        ],
+        "symlinks": [],
+        "emptyDirs": [],
+        "rawFiles": []
+      },
+      "steps": [
+        {
+          "op": "tick"
+        },
+        {
+          "op": "capture",
+          "snapshotRoot": "/nul\u0000root",
+          "phase": "pre_user",
+          "input": {
+            "workspaceId": "w",
+            "sessionId": "s-nul-root",
+            "turnId": "t-nul-root",
+            "runId": "r",
+            "workspaceDir": "<dir>/workspace"
+          },
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/nul\\x00root/workspaces/w/sessions/s-nul-root/snapshots/3b6a8040ed344f95614a8833b151240b05f59320437a0132557ccdf659c7a26d'"
+            }
+          }
+        }
+      ],
+      "dynamicIds": [],
+      "tree": []
     }
   ],
+  "hostBoundaryCases": {
+    "unpairedSurrogateCollation": {
+      "manifests": [
+        {
+          "path": "workspaces/w/sessions/s/snapshots/a-lone-high/manifest.json",
+          "text": "{\n  \"snapshotId\": \"a-lone-high\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [],\n  \"createdAt\": \"\\ud800\"\n}"
+        },
+        {
+          "path": "workspaces/w/sessions/s/snapshots/b-replacement/manifest.json",
+          "text": "{\n  \"snapshotId\": \"b-replacement\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [],\n  \"createdAt\": \"�\"\n}"
+        },
+        {
+          "path": "workspaces/w/sessions/s/snapshots/c-pua/manifest.json",
+          "text": "{\n  \"snapshotId\": \"c-pua\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [],\n  \"createdAt\": \"\"\n}"
+        },
+        {
+          "path": "workspaces/w/sessions/s/snapshots/d-supplementary/manifest.json",
+          "text": "{\n  \"snapshotId\": \"d-supplementary\",\n  \"workspaceId\": \"w\",\n  \"sessionId\": \"s\",\n  \"turnId\": \"t\",\n  \"runId\": \"r\",\n  \"phase\": \"pre_user\",\n  \"entries\": [],\n  \"createdAt\": \"𐀀\"\n}"
+        }
+      ],
+      "tsList": [
+        {
+          "snapshotId": "b-replacement",
+          "createdAt": "�"
+        },
+        {
+          "snapshotId": "c-pua",
+          "createdAt": ""
+        },
+        {
+          "snapshotId": "a-lone-high",
+          "createdAt": "\ud800"
+        },
+        {
+          "snapshotId": "d-supplementary",
+          "createdAt": "𐀀"
+        }
+      ]
+    }
+  },
   "cross": {
     "files": [
       {
