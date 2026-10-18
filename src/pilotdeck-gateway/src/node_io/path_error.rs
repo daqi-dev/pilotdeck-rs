@@ -50,6 +50,13 @@ fn quoted(units: &[u16]) -> Vec<u16> {
     out
 }
 pub(crate) fn nul_message(path: &JsString) -> JsString {
+    nul_message_for(path, "path")
+}
+
+/// Same `ERR_INVALID_ARG_VALUE` text with the syscall's own argument name
+/// (`path` for mkdir/readFile/writeFile, `target` for symlink's first
+/// parameter, `oldPath` for readlink).
+pub(crate) fn nul_message_for(path: &JsString, argument: &str) -> JsString {
     let units = path.units();
     let displayed = &units[..units.len().min(10_000)];
     let mut inspected = vec![];
@@ -73,10 +80,11 @@ pub(crate) fn nul_message(path: &JsString) -> JsString {
         inspected.truncate(128);
         inspected.extend("...".encode_utf16());
     }
-    let mut message: Vec<_> =
-        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received "
-            .encode_utf16()
-            .collect();
+    let mut message: Vec<_> = format!(
+        "The argument '{argument}' must be a string, Uint8Array, or URL without null bytes. Received "
+    )
+    .encode_utf16()
+    .collect();
     message.extend(inspected);
     JsString::from_utf16(message)
 }

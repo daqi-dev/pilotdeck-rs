@@ -20,11 +20,14 @@
 //!   hard failure of the round is delivered to every caller already waiting
 //!   on that key, and is not cached for callers that arrive after the round
 //!   settled (they retry, like the TS `finally` deletes `inFlight`).
-//! - Identity fields are Rust `String`s, so lone-surrogate ids cannot occur
-//!   (Node hashes their U+FFFD replacement bytes; that case is unreachable
-//!   here). `createdAt` keeps its raw UTF-16 units for collation; ICU4X
-//!   replaces lone surrogates with U+FFFD where Node would retain a distinct
-//!   weight (same host boundary as `project_files::node_collator`).
+//! - Strings read back from disk keep their raw UTF-16 units (`JsString`), so
+//!   a hand-planted manifest or marker with lone surrogates lists and reads
+//!   back exactly as TS does.
+//! - `localeCompare` over an unpaired surrogate in a sorting key is an
+//!   explicit host boundary (R19): ICU4X folds every unpaired surrogate to
+//!   U+FFFD while Node keeps distinct weights, so `list()` returns an error
+//!   instead of a silently different order when such a key actually has to be
+//!   compared. All valid Unicode and U+FFFD still sort natively.
 use super::{
     ledger::field,
     transcript::{timestamp, uuid},
@@ -32,7 +35,7 @@ use super::{
 use crate::{
     js_value::number_string,
     metadata::{js_trim, resolve as lexical_resolve},
-    project_files::{node_collator, node_locale},
+    project_files::{has_unpaired_surrogate, node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use sha2::{Digest, Sha256};
@@ -137,7 +140,8 @@ pub struct WorkspaceSnapshotResult {
     pub state: SnapshotState,
     pub manifest_path: Option<String>,
     pub failure_marker_path: Option<String>,
-    pub error: Option<String>,
+    /// Raw UTF-16: a marker written by someone else may carry lone surrogates.
+    pub error: Option<JsString>,
 }
 impl WorkspaceSnapshotResult {
     pub fn as_json(&self) -> JsValue {
@@ -152,7 +156,7 @@ impl WorkspaceSnapshotResult {
             out.insert("failureMarkerPath".into(), path.as_str().into());
         }
         if let Some(error) = &self.error {
-            out.insert("error".into(), error.as_str().into());
+            out.insert("error".into(), JsValue::String(error.clone()));
         }
         JsValue::Object(out)
     }
@@ -174,6 +178,21 @@ pub enum WorkspaceSnapshotError {
     UnsafePath,
     /// workspaceSnapshot.ts:123.
     Escape,
+    /// Node `ERR_INVALID_ARG_VALUE` from `fs.validatePath` (a NUL byte in a
+    /// path argument). Only raised outside the capture try block, where TS
+    /// rejects instead of writing a failed marker.
+    TypeError(String),
+    /// R19 host boundary: the comparison needs Node's collator for unpaired
+    /// surrogates. Callers wire this to the host instead of accepting a
+    /// silently different order.
+    HostRequired(String),
+}
+impl WorkspaceSnapshotError {
+    /// True for errors that the host must answer because the native port
+    /// cannot represent the input (R19 unpaired-surrogate collation).
+    pub fn requires_host(&self) -> bool {
+        matches!(self, Self::HostRequired(_))
+    }
 }
 impl fmt::Display for WorkspaceSnapshotError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -181,7 +200,9 @@ impl fmt::Display for WorkspaceSnapshotError {
             Self::Invalid(message)
             | Self::Syntax(message)
             | Self::Io(message)
-            | Self::NotFound(message) => f.write_str(message),
+            | Self::NotFound(message)
+            | Self::TypeError(message)
+            | Self::HostRequired(message) => f.write_str(message),
             Self::UnsafePath => f.write_str("Snapshot contains an unsafe relative path."),
             Self::Escape => f.write_str("Snapshot path escapes target workspace."),
         }
@@ -193,11 +214,11 @@ impl std::error::Error for WorkspaceSnapshotError {}
 // only committed snapshots leave a manifest on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkspaceSnapshotDescriptor {
-    pub snapshot_id: String,
-    pub workspace_id: String,
-    pub session_id: String,
-    pub turn_id: String,
-    pub run_id: String,
+    pub snapshot_id: JsString,
+    pub workspace_id: JsString,
+    pub session_id: JsString,
+    pub turn_id: JsString,
+    pub run_id: JsString,
     pub phase: SnapshotPhase,
     /// Raw UTF-16 units: `localeCompare` sees the same string TS does,
     /// including any lone surrogate a hand-planted manifest may carry.
@@ -207,11 +228,17 @@ pub struct WorkspaceSnapshotDescriptor {
 impl WorkspaceSnapshotDescriptor {
     pub fn as_json(&self) -> JsValue {
         let mut out = JsObject::new();
-        out.insert("snapshotId".into(), self.snapshot_id.as_str().into());
-        out.insert("workspaceId".into(), self.workspace_id.as_str().into());
-        out.insert("sessionId".into(), self.session_id.as_str().into());
-        out.insert("turnId".into(), self.turn_id.as_str().into());
-        out.insert("runId".into(), self.run_id.as_str().into());
+        out.insert(
+            "snapshotId".into(),
+            JsValue::String(self.snapshot_id.clone()),
+        );
+        out.insert(
+            "workspaceId".into(),
+            JsValue::String(self.workspace_id.clone()),
+        );
+        out.insert("sessionId".into(), JsValue::String(self.session_id.clone()));
+        out.insert("turnId".into(), JsValue::String(self.turn_id.clone()));
+        out.insert("runId".into(), JsValue::String(self.run_id.clone()));
         out.insert("phase".into(), self.phase.as_str().into());
         out.insert("state".into(), SnapshotState::Committed.as_str().into());
         if let Some(created) = &self.created_at {
@@ -259,6 +286,36 @@ impl WorkspaceSnapshotProvider {
         let locale = node_locale(|key| std::env::var(key).ok());
         let collator = node_collator(&locale)
             .map_err(|(_, message)| WorkspaceSnapshotError::Invalid(message))?;
+        let keys: Vec<&[u16]> = descriptors
+            .iter()
+            .map(|descriptor| {
+                descriptor
+                    .created_at
+                    .as_ref()
+                    .map_or(&[][..], JsString::units)
+            })
+            .collect();
+        // ICU4X folds every unpaired surrogate to U+FFFD, so it cannot tell
+        // Node's distinct weights apart. Reject only when such a key really
+        // takes part in a comparison: one descriptor (or one distinct key
+        // everywhere) never calls Array#sort's comparator.
+        let has_distinct_keys = keys
+            .first()
+            .is_some_and(|first| keys.iter().any(|key| key != first));
+        let requires_host = has_distinct_keys
+            && descriptors.iter().any(|descriptor| {
+                descriptor
+                    .created_at
+                    .as_ref()
+                    .is_some_and(has_unpaired_surrogate)
+            });
+        drop(keys);
+        if requires_host {
+            return Err(WorkspaceSnapshotError::HostRequired(
+                "Snapshot createdAt collation requires the Node host for unpaired surrogates."
+                    .into(),
+            ));
+        }
         descriptors.sort_by(|left, right| {
             collator.compare_utf16(
                 right.created_at.as_ref().map_or(&[][..], JsString::units),
@@ -289,6 +346,9 @@ impl WorkspaceSnapshotProvider {
         };
         let snapshot_root = self.root()?;
         let destination = resolve(target_root)?;
+        // Node path.resolve keeps NUL bytes; fs.validatePath rejects them at
+        // the first syscall, so mkdir(destination) is where it surfaces.
+        validate_nul_path(&destination, "path")?;
         fs::create_dir_all(&destination).map_err(|e| {
             WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(Path::new(&destination))))
         })?;
@@ -315,6 +375,7 @@ impl WorkspaceSnapshotProvider {
             }
             let output_path = PathBuf::from(&output);
             if let Some(parent) = output_path.parent() {
+                validate_nul_path(&parent.to_string_lossy(), "path")?;
                 fs::create_dir_all(parent)
                     .map_err(|e| WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(parent))))?;
             }
@@ -325,6 +386,10 @@ impl WorkspaceSnapshotProvider {
                 && let Some(target) = field(entry, "linkTarget").as_string()
             {
                 let target = String::from_utf16_lossy(target.units());
+                // Node symlink validates `target` before `path`; rm(output)
+                // first swallows its own NUL rejection.
+                validate_nul_path(&target, "target")?;
+                validate_nul_path(&output, "path")?;
                 let _ = fs::remove_file(&output_path);
                 symlink(&target, &output_path).map_err(|e| {
                     WorkspaceSnapshotError::Io(two_path_message(
@@ -340,6 +405,7 @@ impl WorkspaceSnapshotProvider {
                 let object_key = String::from_utf16_lossy(object_key.units());
                 let source = lexical_resolve(Path::new(&snapshot_root), &object_key);
                 let source_text = source.to_string_lossy();
+                validate_nul_path(&source_text, "path")?;
                 let contents = fs::read(&source).map_err(|error| {
                     crate::node_io::read_file(&error, &source_text)
                         .map(|(_, message)| WorkspaceSnapshotError::Io(message))
@@ -351,6 +417,9 @@ impl WorkspaceSnapshotProvider {
                             ))
                         })
                 })?;
+                // writeFile(output) validates after readFile has succeeded,
+                // exactly the order of the TS expression.
+                validate_nul_path(&output, "path")?;
                 fs::write(&output_path, contents).map_err(|e| {
                     WorkspaceSnapshotError::Io(io_error(&e, "open", Some(Path::new(&output))))
                 })?;
@@ -432,14 +501,12 @@ fn walk_manifests(root: &Path, manifests: &mut Vec<(String, JsValue)>) -> Result
     Ok(())
 }
 
-/// workspaceSnapshot.ts:91-104 descriptor validation. `createdAt` keeps its
-/// JsString units; only its presence (typeof string) matters here.
+/// workspaceSnapshot.ts:91-104 descriptor validation. Every string field keeps
+/// its raw UTF-16 units: a hand-planted manifest may carry lone surrogates, and
+/// `JSON.stringify` on the descriptor must reproduce them. Only their presence
+/// (typeof string) and `createdAt` collation matter here.
 fn describe(manifest: &JsValue, manifest_path: &str) -> Option<WorkspaceSnapshotDescriptor> {
-    let text = |key: &str| {
-        field(manifest, key)
-            .as_string()
-            .map(|value| String::from_utf16_lossy(value.units()))
-    };
+    let text = |key: &str| field(manifest, key).as_string().cloned();
     Some(WorkspaceSnapshotDescriptor {
         snapshot_id: text("snapshotId")?,
         workspace_id: text("workspaceId")?,
@@ -479,6 +546,28 @@ enum CaptureEntry {
     Follower(Arc<InFlight>),
 }
 
+/// Publishes a hard failure if the leader unwinds before `capture_once`
+/// returns, so waiters never block on a round that cannot settle.
+struct CaptureGuard<'a> {
+    recorder: &'a ContentAddressedWorkspaceSnapshotRecorder,
+    key: &'a str,
+    pending: &'a Arc<InFlight>,
+    settled: bool,
+}
+impl Drop for CaptureGuard<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.recorder.publish(
+                self.key,
+                self.pending,
+                &Err(WorkspaceSnapshotError::Invalid(
+                    "Snapshot capture panicked before publishing a result.".into(),
+                )),
+            );
+        }
+    }
+}
+
 impl ContentAddressedWorkspaceSnapshotRecorder {
     pub fn new(config: WorkspaceSnapshotConfig) -> Self {
         Self {
@@ -514,8 +603,18 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
             CaptureEntry::Done(done) => Ok(done),
             CaptureEntry::Follower(pending) => Self::wait_in_flight(&pending),
             CaptureEntry::Leader(pending) => {
+                // TS's `finally` deletes the in-flight entry on every exit,
+                // panic included. Without this guard a panicking leader would
+                // leave the entry (and every waiter) stuck forever.
+                let mut guard = CaptureGuard {
+                    recorder: self,
+                    key: &key,
+                    pending: &pending,
+                    settled: false,
+                };
                 let outcome = self.capture_once(input, phase);
                 self.publish(&key, &pending, &outcome);
+                guard.settled = true;
                 outcome
             }
         }
@@ -643,6 +742,9 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                 let _ = fs::remove_file(&paths.manifest_path);
                 let _ = fs::remove_file(&paths.committed_path);
                 let _ = fs::remove_dir_all(&temporary_dir);
+                // This mkdir sits outside the TS catch: a NUL partition path
+                // rejects the capture promise instead of writing a marker.
+                validate_nul_path(&path_string(&paths.partition), "path")?;
                 fs::create_dir_all(&paths.partition).map_err(|e| {
                     WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(&paths.partition)))
                 })?;
@@ -656,7 +758,7 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                     state: SnapshotState::Failed,
                     manifest_path: None,
                     failure_marker_path: Some(path_string(&paths.failure_marker_path)),
-                    error: Some(message),
+                    error: Some(JsString::from(message)),
                 })
             }
         }
@@ -687,6 +789,9 @@ fn commit(
 ) -> std::result::Result<(), String> {
     if input.workspace_stable == Some(false) {
         return Err("Workspace did not become quiescent before snapshot capture.".into());
+    }
+    if let Some(message) = nul_path_message(&temporary_dir.to_string_lossy(), "path") {
+        return Err(message);
     }
     fs::create_dir_all(temporary_dir).map_err(|e| io_error(&e, "mkdir", Some(temporary_dir)))?;
     let workspace_dir = resolve(&input.workspace_dir).map_err(|e| e.to_string())?;
@@ -955,13 +1060,12 @@ fn atomic_marker(path: &Path, content: &str) -> std::result::Result<(), String> 
 }
 
 /// workspaceSnapshot.ts:366-373: any read or parse failure yields no error,
-/// and only a string `error` field is returned.
-fn read_failure_message(path: &Path) -> Option<String> {
+/// and only a string `error` field is returned. The value keeps its raw UTF-16
+/// units (a marker can carry lone surrogates).
+fn read_failure_message(path: &Path) -> Option<JsString> {
     let bytes = fs::read(path).ok()?;
     let value = parse_json(&String::from_utf8_lossy(&bytes)).ok()?;
-    field(&value, "error")
-        .as_string()
-        .map(|error| String::from_utf16_lossy(error.units()))
+    field(&value, "error").as_string().cloned()
 }
 
 /// workspaceSnapshot.ts:375-376 (`access` follows symlinks).
@@ -1044,6 +1148,26 @@ fn resolve(value: &str) -> Result<String> {
 
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// Node `fs.validatePath`: a NUL byte rejects before any syscall with
+/// `ERR_INVALID_ARG_VALUE`, naming the fs call's own parameter (`path` for
+/// mkdir/readFile/writeFile, `target` for symlink's first argument).
+fn nul_path_message(path: &str, argument: &str) -> Option<String> {
+    if !path.contains('\0') {
+        return None;
+    }
+    let message = crate::node_io::nul_message_for(&JsString::from(path), argument);
+    Some(String::from_utf16_lossy(message.units()))
+}
+
+/// The rejection form of [`nul_path_message`] for call sites that must throw
+/// (restore's public shape) rather than turn the message into a failed marker.
+fn validate_nul_path(path: &str, argument: &str) -> Result<()> {
+    match nul_path_message(path, argument) {
+        Some(message) => Err(WorkspaceSnapshotError::TypeError(message)),
+        None => Ok(()),
+    }
 }
 
 /// `relative(workspaceDir, snapshotRoot)` is neither "" nor ".."-prefixed
@@ -1210,6 +1334,7 @@ fn quoted(value: &JsString, out: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
 
@@ -1247,6 +1372,53 @@ mod tests {
             ));
             recorder.publish(key, &pending, &failure);
             assert_eq!(follower.join().unwrap(), failure);
+        });
+        assert!(matches!(recorder.begin(key), CaptureEntry::Leader(_)));
+    }
+
+    /// A panicking leader never reaches `publish`; the drop guard must still
+    /// settle the round so waiters do not block forever (review r2 P2).
+    #[test]
+    fn panicking_leader_publishes_failure_to_waiters() {
+        let recorder = ContentAddressedWorkspaceSnapshotRecorder::new(WorkspaceSnapshotConfig {
+            root: "/tmp/ws-snapshot-test-root".into(),
+            snapshot_root: "/tmp/ws-snapshot-test-snapshots".into(),
+        });
+        let key = "s\0t\0pre_user";
+        let CaptureEntry::Leader(pending) = recorder.begin(key) else {
+            panic!("first caller must lead");
+        };
+        let entered = Arc::new(AtomicBool::new(false));
+        thread::scope(|scope| {
+            let follower = {
+                let recorder = &recorder;
+                let entered = entered.clone();
+                scope.spawn(move || match recorder.begin(key) {
+                    CaptureEntry::Follower(pending) => {
+                        entered.store(true, Ordering::SeqCst);
+                        ContentAddressedWorkspaceSnapshotRecorder::wait_in_flight(&pending)
+                    }
+                    _ => panic!("second caller must join the in-flight round"),
+                })
+            };
+            while !entered.load(Ordering::SeqCst) {
+                thread::yield_now();
+            }
+            let panicked = catch_unwind(AssertUnwindSafe(|| {
+                let _guard = CaptureGuard {
+                    recorder: &recorder,
+                    key,
+                    pending: &pending,
+                    settled: false,
+                };
+                panic!("simulated capture panic");
+            }));
+            assert!(panicked.is_err());
+            let error = follower.join().unwrap().expect_err("waiter must be woken");
+            assert_eq!(
+                error.to_string(),
+                "Snapshot capture panicked before publishing a result."
+            );
         });
         assert!(matches!(recorder.begin(key), CaptureEntry::Leader(_)));
     }

@@ -222,14 +222,22 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
       }
       case 'capture': {
         const input = { ...step.input, workspaceDir: resolvePath(step.input.workspaceDir) };
+        // A step-level snapshotRoot pins a config whose root carries a NUL
+        // (capture then rejects in the marker-path mkdir, outside the try).
+        const currentConfig = step.snapshotRoot
+          ? { root: step.snapshotRoot, snapshotRoot: step.snapshotRoot }
+          : config;
         try {
           // The latest recorder by default: 'recorder' steps opt the next
           // capture into fresh state (the completed map also caches failures,
           // so a stale recorder could never observe marker changes on disk).
           const current = step.recorder ?? recorders.length - 1;
+          const recorder = step.snapshotRoot
+            ? new ContentAddressedWorkspaceSnapshotRecorder(currentConfig)
+            : recorders[current];
           const result = step.phase === 'pre_user'
-            ? await recorders[current].capturePreUser(input)
-            : await recorders[current].capturePostAgent(input);
+            ? await recorder.capturePreUser(input)
+            : await recorder.capturePostAgent(input);
           dynamicIds.add(result.snapshotId);
           done.outcome = {
             snapshotId: result.snapshotId,
@@ -273,11 +281,15 @@ async function scenario(name: string, options: { workspace?: WorkspaceSpec; snap
         const snapshotId = step.snapshotId.startsWith('$') ? ids.get(step.snapshotId.slice(1)) : step.snapshotId;
         assert.ok(snapshotId, `unknown id alias ${step.snapshotId}`);
         done.snapshotId = snapshotId;
+        // resolvePath keeps absolute targets absolute; join(dir, absolute)
+        // would concatenate them (path.join does not reset on an absolute
+        // segment). NUL-target cases rely on the absolute short path.
+        const target = resolvePath(step.target);
         try {
-          const value = await provider().restore(snapshotId, join(dir, step.target));
+          const value = await provider().restore(snapshotId, target);
           done.outcome = { restored: value.restored, workspaceKey: maskDir(value.workspaceKey) };
           // Restore targets are user content: never project timestamps there.
-          done.targetTree = await recordTree(join(dir, step.target), dir, new Set());
+          done.targetTree = await recordTree(target, dir, new Set());
         } catch (error: any) {
           done.outcome = { error: { name: error.name, message: maskDir(error.message) } };
         }
@@ -897,6 +909,310 @@ try {
     );
   }
 
+  // Lone surrogates written by someone else on disk: list descriptors keep
+  // the raw UTF-16 units, and a marker's `error` reads back unchanged.
+  const surrogateReadback = await scenario('surrogate-readback', {
+    workspace: { files: [{ path: 'x.txt', bytes: Buffer.from('x\n') }] },
+    steps: [
+      { op: 'tick' },
+      {
+        op: 'capture',
+        as: 'fail',
+        phase: 'pre_user',
+        input: { workspaceId: 'ws-sur', sessionId: 's-sur', turnId: 't-sur', runId: 'r-sur', workspaceDir: '<dir>/workspace', workspaceStable: false },
+      },
+      {
+        op: 'writeSnapshot',
+        markerOf: 'fail',
+        name: '_FAILED.json',
+        text: JSON.stringify(
+          {
+            snapshotId: 'overwritten-marker',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            state: 'failed',
+            error: 'err\ud800',
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      // The first recorder cached the failed result; a fresh one reads the
+      // marker back through readFailureMessage.
+      { op: 'recorder' },
+      {
+        op: 'capture',
+        phase: 'pre_user',
+        input: { workspaceId: 'ws-sur', sessionId: 's-sur', turnId: 't-sur', runId: 'r-sur', workspaceDir: '<dir>/workspace', workspaceStable: false },
+      },
+      {
+        op: 'writeSnapshot',
+        path: `${quirkBase}/surrogate-identity/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'id\ud800',
+            workspaceId: 'ws\ud800',
+            sessionId: 'sess\ud801',
+            turnId: 'turn\ud802',
+            runId: 'run\ud803',
+            phase: 'pre_user',
+            entries: [],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'list' },
+    ],
+  });
+  {
+    const captures = surrogateReadback.steps.filter((s: any) => s.op === 'capture');
+    assert.equal(captures[0].outcome.state, 'failed');
+    assert.equal(captures[1].outcome.error, 'err\ud800', 'marker error keeps its lone surrogate');
+    assert.equal(JSON.stringify(captures[1].outcome.error), '"err\\ud800"');
+    const list = surrogateReadback.steps.find((s: any) => s.op === 'list')!.outcome;
+    const descriptor = list.find((d: any) => d.snapshotId === 'id\ud800');
+    assert.ok(descriptor, 'lone-surrogate identity lists');
+    for (const [field, expected] of [
+      ['workspaceId', 'ws\ud800'],
+      ['sessionId', 'sess\ud801'],
+      ['turnId', 'turn\ud802'],
+      ['runId', 'run\ud803'],
+    ] as const) {
+      assert.equal(descriptor[field], expected, `${field} keeps its lone surrogate`);
+      assert.equal(JSON.stringify(descriptor[field]), JSON.stringify(expected));
+    }
+  }
+
+  // NUL paths outside workspaceDir: Node fs.validatePath rejects the first
+  // syscall with a TypeError naming that call's parameter. These are the
+  // restore/capture entries the first review's error-text fix missed.
+  const nulPathBase = `${quirkBase}`;
+  const nulRestoreTarget = await scenario('nul-restore-target', {
+    workspace: { files: [{ path: 'x.txt', bytes: Buffer.from('x\n') }] },
+    steps: [
+      { op: 'tick' },
+      { op: 'capture', as: 'pre', phase: 'pre_user', input: { workspaceId: 'w', sessionId: 's-nul-target', turnId: 't', runId: 'r', workspaceDir: '<dir>/workspace' } },
+      { op: 'restore', snapshotId: '$pre', target: '/tmp/pdrs-r9-target\u0000root' },
+    ],
+  });
+  {
+    const outcome = nulRestoreTarget.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-target\\x00root'",
+    });
+  }
+
+  const nulRestoreObject = await scenario('nul-restore-object', {
+    workspace: {},
+    steps: [
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-object/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-object',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'out.txt', entryType: 'file', objectKey: '/nul\u0000object' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-object', target: 'restore-object' },
+    ],
+  });
+  {
+    const outcome = nulRestoreObject.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/nul\\x00object'",
+    });
+  }
+
+  const nulRestoreLink = await scenario('nul-restore-link', {
+    workspace: {},
+    steps: [
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-link/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-link',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'link', entryType: 'symlink', linkTarget: 'tar\u0000get' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-link', target: 'restore-link' },
+    ],
+  });
+  {
+    const outcome = nulRestoreLink.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'target' must be a string, Uint8Array, or URL without null bytes. Received 'tar\\x00get'",
+    });
+  }
+
+  const nulRestoreLinkOutput = await scenario('nul-restore-link-output', {
+    workspace: {},
+    steps: [
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-link-out/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-link-out',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'a\u0000b', entryType: 'symlink', linkTarget: 'ok-target' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-link-out', target: '/tmp/pdrs-r9-linkout' },
+      { op: 'remove', path: '/tmp/pdrs-r9-linkout', recursive: true },
+    ],
+  });
+  {
+    const outcome = nulRestoreLinkOutput.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-linkout/a\\x00b'",
+    });
+  }
+
+  const nulRestorePath = await scenario('nul-restore-path', {
+    workspace: {},
+    steps: [
+      { op: 'writeSnapshot', path: 'objects/sha256/00/00/nul-path-object', text: 'ok\n' },
+      {
+        op: 'writeSnapshot',
+        path: `${nulPathBase}/nul-path/manifest.json`,
+        text: JSON.stringify(
+          {
+            snapshotId: 'nul-path',
+            workspaceId: 'w',
+            sessionId: 's',
+            turnId: 't',
+            runId: 'r',
+            phase: 'pre_user',
+            entries: [{ path: 'a\u0000b.txt', entryType: 'file', objectKey: 'objects/sha256/00/00/nul-path-object' }],
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+          null,
+          2,
+        ),
+      },
+      { op: 'restore', snapshotId: 'nul-path', target: '/tmp/pdrs-r9-path' },
+      { op: 'remove', path: '/tmp/pdrs-r9-path', recursive: true },
+    ],
+  });
+  {
+    const outcome = nulRestorePath.steps.find((s: any) => s.op === 'restore')!.outcome;
+    assert.deepEqual(outcome.error, {
+      name: 'TypeError',
+      message: "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '/tmp/pdrs-r9-path/a\\x00b.txt'",
+    });
+  }
+
+  const nulCaptureRoot = await scenario('nul-capture-root', {
+    workspace: { files: [{ path: 'x.txt', bytes: Buffer.from('x\n') }] },
+    steps: [
+      { op: 'tick' },
+      {
+        op: 'capture',
+        snapshotRoot: '/nul\u0000root',
+        phase: 'pre_user',
+        input: { workspaceId: 'w', sessionId: 's-nul-root', turnId: 't-nul-root', runId: 'r', workspaceDir: '<dir>/workspace' },
+      },
+    ],
+  });
+  {
+    const outcome = nulCaptureRoot.steps.find((s: any) => s.op === 'capture')!.outcome;
+    assert.equal(outcome.error.name, 'TypeError');
+    assert.match(
+      outcome.error.message,
+      /^The argument 'path' must be a string, Uint8Array, or URL without null bytes\. Received '\/nul\\x00root\/workspaces\/w\/sessions\/s-nul-root\/snapshots\/[0-9a-f]{64}'$/,
+    );
+  }
+
+  // R19 host boundary: ICU4X folds every unpaired surrogate to U+FFFD, while
+  // Node keeps distinct weights. Record the real TS order so the Rust test can
+  // prove it rejects the comparison instead of silently ordering it another
+  // way (the review's A="\ud800", B="\ufffd" case is the first pair).
+  const surrogateSortRoot = join(scratch, 'surrogate-sort-root');
+  const surrogateSortBase = join(surrogateSortRoot, 'workspaces/w/sessions/s/snapshots');
+  const surrogateSortValues = [
+    ['a-lone-high', '\ud800'],
+    ['b-replacement', '\ufffd'],
+    ['c-pua', '\ue000'],
+    ['d-supplementary', '\u{10000}'],
+  ] as const;
+  const surrogateSortManifests: { path: string; text: string }[] = [];
+  for (const [dir, createdAt] of surrogateSortValues) {
+    const text = JSON.stringify(
+      {
+        snapshotId: dir,
+        workspaceId: 'w',
+        sessionId: 's',
+        turnId: 't',
+        runId: 'r',
+        phase: 'pre_user',
+        entries: [],
+        createdAt,
+      },
+      null,
+      2,
+    );
+    await mkdir(join(surrogateSortBase, dir), { recursive: true });
+    await writeFile(join(surrogateSortBase, dir, 'manifest.json'), text);
+    surrogateSortManifests.push({
+      path: `workspaces/w/sessions/s/snapshots/${dir}/manifest.json`,
+      text,
+    });
+  }
+  const surrogateSortProvider = createWorkspaceSnapshotProvider({ root: surrogateSortRoot, snapshotRoot: surrogateSortRoot });
+  const surrogateSortList = (await surrogateSortProvider.list()).map((d: any) => ({
+    snapshotId: d.snapshotId,
+    createdAt: d.createdAt,
+  }));
+  assert.deepEqual(
+    surrogateSortList.map((d: any) => d.snapshotId),
+    ['b-replacement', 'c-pua', 'a-lone-high', 'd-supplementary'],
+    'Node collation keeps distinct weights for lone surrogates',
+  );
+  const hostBoundaryCases = {
+    unpairedSurrogateCollation: {
+      manifests: surrogateSortManifests,
+      tsList: surrogateSortList,
+    },
+  };
+
   // Cross fixture: the exact bytes TS wrote for the normal scenario, for the
   // Rust provider to read back and early-exit on.
   const crossFiles: any[] = [];
@@ -926,7 +1242,7 @@ try {
   };
   assert.ok(cross.preId && cross.postId);
 
-  const oracle = { sourceCommit, sourceSha256, configCases, scenarios, cross };
+  const oracle = { sourceCommit, sourceSha256, configCases, scenarios, hostBoundaryCases, cross };
   const json = JSON.stringify(oracle, null, 2);
   for (const leak of [scratch, output, baseline, process.cwd()]) assert.ok(!json.includes(leak), 'oracle.json leaks a generation path');
   await writeFile(join(output, 'oracle.json'), `${json}\n`);

@@ -2,7 +2,7 @@
 //! an explicit host boundary, never a Rust Display string on the wire.
 mod generated;
 mod path_error;
-pub(crate) use path_error::nul_message;
+pub(crate) use path_error::{nul_message, nul_message_for};
 use std::io;
 
 // Method admission is separate from the complete libuv formatting table.
