@@ -82,7 +82,7 @@ fixture 把 Composer 和 hook 单独挂载（`fixtures/model-selection.jsx:23-66
 
 | # | 文件:行 | 标题 | 处置 | 依据 |
 |---|---|---|---|---|
-| 23 | model-selection:37 | general and project defaults match configuration and sending is blocked while loading | 改写黑盒 | L39 Send 按钮 disabled 可见。L41、L43、L47 的默认选择改为读选择器标签。L45-46 改为 WS 帧里的 `options.modelSelection`。L18 卡住 catalog 的做法在 mock 路由里照搬 |
+| 23 | model-selection:37 | general and project defaults match configuration and sending is blocked while loading | 改写黑盒 | L39 Send 按钮 disabled 可见。L41、L43、L47 的默认选择改为读选择器标签。L45-46 改为 WS 帧里的 `options.modelSelection`。L18 卡住 catalog 的做法在 mock 路由里照搬 另承接 #32/#33 残留的「Escape 关闭模型菜单」断言（菜单项计数为 0），见 #32。 |
 | 24 | model-selection:50 | manual selection survives sending, completion and reload | 改写黑盒 | L57 的请求序列是网络观察，原样保留。L60 改为 WS 帧。L63-64 的 reload 改为真实路由 `/session/<id>` 重载 |
 | 25 | model-selection:67 | explicit Auto stays selected without a composer execution banner | 改写黑盒 | L74 改为 WS 帧，L75 的横幅不存在是可见断言 |
 | 26 | model-selection:79 | unavailable configured models block sending and the picker still allows recovery | 改写黑盒 | L82、L84、L86 分别是 disabled、`role=alert` 文案、enabled，全部可见 |
@@ -92,7 +92,7 @@ fixture 把 Composer 和 hook 单独挂载（`fixtures/model-selection.jsx:23-66
 | 30 | model-selection:145 | accepted model choices synchronize across tabs while existing sessions retain their model | 改写黑盒 | 同一个 context 开两个页面属于测试侧。L161 的 localStorage 键 `composer-model-last-sent` 是双壳共享存储契约，保留断言；其余改为读选择器标签 |
 | 31 | model-selection:169 | response model appears before time only with the response hover actions | 改写黑盒 | 回答帧携带 model，由 mock 推送。L177、L183-184 是文案，L179、L181 的 opacity 是计算样式，L182 是 DOM 顺序。依赖定位契约 `assistant-message-actions`/`assistant-message-model`（第二节），不需要钩子 |
 | 32 | model-selection:194 | the mint model menu keeps white surfaces and follows the active accent | **放弃** | L197-201 直接 `import('/src/lib/appearanceRuntime.ts')` 来驱动。L204 断言固定 `rgb(255, 255, 255)`，L205-216 拿内部 CSS 变量名 `--pd-accent-*` 换算颜色，L218-220 断言的图标只是 fixture 拼进来的（`model-selection.jsx:55-58`）。这些都是视觉令牌层面的实现，pixel-perfect 已在范围外（004:145）。主题切换的功能面如果要对拍，由 F3 设置页另写黑盒，不从本例承接。本例另有两条产品可观察的行为：L202 点开模型菜单、L222-223 按 Escape 关闭菜单（菜单项计数为 0）。前者已由 #23-31 的驱动覆盖，后者在 A/B/D 现有身份里都没有断言，所以**并入 #23 的改写，补一条 Escape 关闭断言**，不随本例放弃。**人复核重点** |
-| 33 | model-selection:194 | the blue model menu keeps white surfaces and follows the active accent | **放弃** | 同 #32 |
+| 33 | model-selection:194 | the blue model menu keeps white surfaces and follows the active accent | **放弃** | 同 #32（视觉令牌部分放弃；Escape 关闭菜单的行为并入 #23） |
 
 ### composition.spec.mjs（1）
 
