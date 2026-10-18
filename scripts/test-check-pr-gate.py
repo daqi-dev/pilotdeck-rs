@@ -41,21 +41,24 @@ CASES = [
     ("缺 reviewers 标记", BASE, "deepseek/x", False, "reviewers"),
     ("两个 reviewers 标记", BASE + "<!-- reviewers: codex,glm -->\n<!-- reviewers: deepseek,glm -->", "claude/x", False, "恰好一个"),
     ("无前缀且无 author", BASE + "<!-- reviewers: codex,glm -->", "chore/x", False, "无法确定作者"),
-    ("未知 author", BASE + "<!-- author: gemini -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "未知谱系"),
-    ("两个 author 标记", BASE + "<!-- author: codex -->\n<!-- author: glm -->\n<!-- reviewers: deepseek,claude -->", "chore/x", False, "只许一个"),
+    ("chore 前缀 + 只有未知 author", BASE + "<!-- author: gemini -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "无法确定作者"),
+    ("两个 author 标记取并集：都不得评审", BASE + "<!-- author: codex -->\n<!-- author: glm -->\n<!-- reviewers: glm,claude -->", "chore/x", False, "谁写谁不审"),
+    ("两个 author 标记取并集：其余两家放行", BASE + "<!-- author: codex -->\n<!-- author: glm -->\n<!-- reviewers: deepseek,claude -->", "chore/x", True, ""),
     ("GLM 写、四角色也用 GLM（zai）", GLM_BLOCK + "<!-- reviewers: codex,deepseek -->", "glm/a66-pr3", False, "runner=zai"),
-    ("author 声明丢掉前缀谱系（#234 式改写自述）", GLM_BLOCK + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "glm/a68-p2", False, "只能加不能减"),
+    ("author 声明丢掉前缀谱系也去不掉前缀（#234 式改写自述）", GLM_BLOCK + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "glm/a68-p2", False, "runner=zai"),
     ("codex/ 分支 Claude 也改过：claude 不得评审", BASE + "<!-- author: codex,claude -->\n<!-- reviewers: claude,deepseek -->", "codex/a64-pr11", False, "谁写谁不审"),
     ("codex/ 分支 Claude 也改过：DeepSeek+GLM 放行", BASE + "<!-- author: codex,claude -->\n<!-- reviewers: deepseek,glm -->", "codex/a64-pr11", True, ""),
     ("author 与前缀一致：放行", BASE + "<!-- author: DeepSeek -->\n<!-- reviewers: codex,glm -->", "deepseek/x", True, ""),
     ("chore 前缀 + author 标记：放行", BASE + "<!-- author: claude -->\n<!-- reviewers: codex,deepseek -->", "chore/gate", True, ""),
     ("reviewers 正文含 > 不得被忽略（重复）", BASE + "<!-- reviewers: codex,deepseek -->\n<!-- reviewers: claude,glm > -->", "claude/x", False, "恰好一个"),
-    ("author 正文含 > 不得被忽略（未知谱系）", BASE + "<!-- author: gemini > -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "未知谱系"),
-    ("空 author 标记", BASE + "<!-- author: -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "空的"),
-    ("只有逗号的 author 标记", BASE + "<!-- author: , , -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "空的"),
-    ("行内代码里引用标记写法不算标记", BASE + "<!-- author: claude -->\n说明：写法是 `<!-- author: A,B -->`\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
+    ("author 正文含 > 不得被忽略", BASE + "<!-- author: claude > -->\n<!-- reviewers: claude,glm -->", "chore/x", False, "谁写谁不审"),
+    ("空 author 标记", BASE + "<!-- author: -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "无法确定作者"),
+    ("只有逗号的 author 标记", BASE + "<!-- author: , , -->\n<!-- reviewers: codex,glm -->", "chore/x", False, "无法确定作者"),
+    ("一个反引号开、三个反引号收也吞不掉作者", BASE + "`x\n<!-- author: codex,claude -->\ny```\n<!-- reviewers: claude,glm -->", "codex/r", False, "谁写谁不审"),
+    ("代码里引用的 author 写法也算作者（只会更严）", BASE + "<!-- author: claude -->\n写法 `<!-- author: glm -->`\n<!-- reviewers: glm,deepseek -->", "chore/x", False, "谁写谁不审"),
+    ("代码里引用的占位写法 A,B 不影响", BASE + "<!-- author: claude -->\n说明：写法是 `<!-- author: A,B -->`\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
     ("代码块里的 reviewers 不算标记", BASE + "```\n<!-- reviewers: claude,glm -->\n```\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
-    ("注释里的 ``` 不能吞掉后面的真 author", BASE + "<!-- explanation: ``` -->\n<!-- author: codex,claude -->\n<!-- end explanation: ``` -->\n<!-- reviewers: claude,glm -->", "codex/repro", False, "谁写谁不审"),
+    ("注释里的 ``` 吞不掉后面的真 author", BASE + "<!-- explanation: ``` -->\n<!-- author: codex,claude -->\n<!-- end explanation: ``` -->\n<!-- reviewers: claude,glm -->", "codex/repro", False, "谁写谁不审"),
     ("~~~ 围栏里的标记不算", BASE + "~~~\n<!-- reviewers: claude,glm -->\n~~~\n<!-- reviewers: codex,deepseek -->", "claude/x", True, ""),
     ("双反引号行内代码里的标记不算", BASE + "<!-- author: claude -->\n写法 `` <!-- author: A,B --> ``\n<!-- reviewers: codex,deepseek -->", "chore/x", True, ""),
     ("前缀大小写与空白", BASE + "<!-- reviewers: codex,glm -->", " DeepSeek/x", True, ""),
@@ -153,6 +156,34 @@ def main() -> int:
         good = (not e) if want is None else any(want in x for x in e)
         print(f"{'PASS' if good else 'FAIL'} {name} {e if not good else ''}")
         fails += not good
+    with tempfile.TemporaryDirectory() as td:
+        g = ["git", "-C", td, "-c", "user.email=t@t", "-c", "user.name=t"]
+        r = lambda *x: subprocess.run([*g, *x], check=True, capture_output=True, text=True).stdout.strip()
+        r("init", "-q", "-b", "main"); r("commit", "-q", "--allow-empty", "-m", "root")
+        old_base = r("rev-parse", "HEAD")  # PR 创建时的 base.sha
+        r("commit", "-q", "--allow-empty", "-m", "main later\n\nCo-Authored-By: GLM-5.3 <noreply@zhipu.com>")
+        r("switch", "-q", "-c", "codex/x")  # 相当于 PR 已 rebase 到更新的 main
+        r("commit", "-q", "--allow-empty", "-m", "pr\n\nCo-Authored-By: Codex <noreply@openai.com>")
+        r("update-ref", "refs/remotes/origin/main", "main")
+        cwd = os.getcwd(); os.chdir(td)
+        try:
+            stale = gate.trailer_families(old_base, "codex/x")
+            tip = gate.trailer_families("origin/main", "codex/x")
+        finally:
+            os.chdir(cwd)
+        good = stale == {"codex", "glm"} and tip == {"codex"}
+        print(f"{'PASS' if good else 'FAIL'} 冻结 base 会多算 {sorted(stale)}；按目标分支 tip 只算 PR 自己的 {sorted(tip)}")
+        fails += not good
+    env = dict(os.environ, PR_BASE_REF="main", PR_HEAD="HEAD", PR_HEAD_REF="codex/x")
+    env.pop("PR_BASE_SHA", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(BASE + "<!-- reviewers: deepseek,glm -->")
+    cp = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "check-pr-gate.py"), "--body-file", f.name],
+                        capture_output=True, text=True, env=env, cwd=ROOT)
+    os.unlink(f.name)
+    good = "提交署名谱系" in cp.stdout
+    print(f"{'PASS' if good else 'FAIL'} 设了 PR_BASE_REF 时按 origin/<ref> 扫（rc={cp.returncode}）")
+    fails += not good
     # 署名误识别负例：普通人的邮箱/缩写不算模型
     for line, want in [("David Smith <ds@example.org>", set()), ("Alex <alex@gpt.example.org>", set()),
                        ("Claude Opus 5.5 <noreply@anthropic.com>", {"claude"}), ("Bot <ci@openai.com>", {"codex"}),
@@ -209,7 +240,7 @@ def main() -> int:
     good = any("谁写谁不审" in x for x in whole)
     print(f"{'PASS' if good else 'FAIL'} check() 整体包含评审方规则")
     fails += not good
-    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 25} 例）")
+    print(f"test-check-pr-gate: {'全部通过' if not fails else f'{fails} 项失败'}（{len(CASES) + 27} 例）")
     return 1 if fails else 0
 
 

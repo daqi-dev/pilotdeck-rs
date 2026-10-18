@@ -10,9 +10,10 @@
   2. 有 issue 关联：`Closes|Fixes|Resolves #N`（合并即关单，GitHub 定顺序）或 `Refs #N`（一单多 PR，单保持开），
      或 `<!-- no-issue <理由> -->`。
   3. 谁写谁不审（CLAUDE.md「当前协作与持续推进」）：PR 描述有 `<!-- reviewers: A,B -->`，列出双谱系评审的两家；
-     作者谱系（可以多家）＝ 分支前缀谱系 ∪ `<!-- author: A,B -->` 声明 ∪ 提交 Co-Authored-By 署名（CI 给了 PR_BASE_SHA 时扫描）：
-       - 前缀是 codex/ glm/ deepseek/ claude/ 时，author 声明必须包含它（只能加不能减，防改写自述）；
-       - 其它前缀（docs/ chore/ fix/ dev/）必须写 author，否则 FAIL；
+     作者谱系（可以多家）＝ 分支前缀谱系 ∪ 所有 author 标记里的已知谱系 ∪ 提交 Co-Authored-By / Agent: / Model: 署名：
+       - 只做加法：多个 author 标记取并集，author 标记读原文（不剥代码），所以任何写法都只会多算作者、不会少算；
+       - 前缀不是 codex/ glm/ deepseek/ claude/（docs/ chore/ fix/ dev/）且标记里没有已知谱系 → FAIL；
+       - 署名范围是「目标分支当前最新 tip..head」（PR_BASE_REF / --pr 的 baseRefName），不用 PR 创建时冻结的 base.sha；
        - 署名扫描是非自述信号：协调者用 Claude 提交 codex 的产物也会带 Claude 署名，此时 Claude 同样不得评审。
      评审至少两家不同谱系、都不是作者；角色审计结果块的 runner 谱系（zai→GLM、anthropic→Claude）也不得是作者。
      谱系名不区分大小写，dsh/ds→deepseek，gpt→codex，opus/sonnet→claude，zai→glm。
@@ -142,23 +143,15 @@ def strip_code(body: str) -> str:
 
 def check_reviewers(body: str, head_ref: str, trailers: set[str] | None = None) -> list[str]:
     errs: list[str] = []
-    body = strip_code(body)
-    am = [x.strip() for x in AUTHOR.findall(body)]
-    if len(am) > 1:
-        return [f"有 {len(am)} 个 author 标记；只许一个（多家写成 author: A,B）"]
-    branch = BRANCH_FAMILY.get(head_ref.strip().split("/", 1)[0].lower()) if "/" in head_ref else None
-    names = [x for x in re.split(r"[,\s]+", am[0]) if x] if am else []
-    unknown = [x for x in names if family(x) is None]
-    if am and not names:
-        errs.append("author 标记是空的；写出至少一个谱系（codex/GLM/DeepSeek/Claude），或删掉标记")
-    if unknown:
-        errs.append(f"author 里有未知谱系 {unknown}（可选 codex/GLM/DeepSeek/Claude）")
+    # author 只做加法、读原文：剥代码只可能让作者变少（=放宽），所以作者声明一律不剥
+    names = [x for m in AUTHOR.findall(body) for x in re.split(r"[,\s]+", m.strip()) if x]
     declared = {family(x) for x in names if family(x)}
-    if branch and am and branch not in declared:
-        errs.append(f"author 声明 {sorted(declared)} 没包含分支前缀谱系（{branch}）；只能加不能减")
+    body = strip_code(body)  # reviewers 等其余标记去掉代码引用再看（剥掉只会让它们变少=更严）
+    branch = BRANCH_FAMILY.get(head_ref.strip().split("/", 1)[0].lower()) if "/" in head_ref else None
     authors = declared | ({branch} if branch else set()) | (trailers or set())
-    if not branch and not am:
-        errs.append(f"无法确定作者谱系：分支「{head_ref or '未知'}」前缀不是 codex/glm/deepseek/claude，须写 <!-- author: X -->")
+    if not branch and not declared:
+        errs.append(f"无法确定作者谱系：分支「{head_ref or '未知'}」前缀不是 codex/glm/deepseek/claude，"
+                    "且 author 标记里没有已知谱系（codex/GLM/DeepSeek/Claude）")
     rm = REVIEWERS.findall(body)
     if len(rm) != 1:
         errs.append(f"须恰好一个 <!-- reviewers: A,B --> 标记（现 {len(rm)} 个），列出双谱系评审的两家")
@@ -261,7 +254,7 @@ def main() -> int:
     if a.body_file:
         body = open(a.body_file, encoding="utf-8").read()
     elif a.pr:
-        cp = subprocess.run(["gh", "pr", "view", a.pr, "--json", "body,headRefName,headRefOid,baseRefOid"], capture_output=True, text=True)
+        cp = subprocess.run(["gh", "pr", "view", a.pr, "--json", "body,headRefName,headRefOid,baseRefName"], capture_output=True, text=True)
         if cp.returncode != 0:
             print(f"check-pr-gate: gh 失败：{cp.stderr.strip()}", file=sys.stderr)
             return 2
@@ -276,8 +269,12 @@ def main() -> int:
             print(f"check-pr-gate: FAIL --head={a.head!r} 与目标 PR 的 head {target[:12]} 不一致；--pr 模式一律按目标 PR 扫署名")
             return 1
         a.head = target or (a.head or "")
-        base = pr.get("baseRefOid", "")
-        subprocess.run(["git", "fetch", "-q", "origin", base, a.head], capture_output=True)
+        name = pr.get("baseRefName", "")
+        if name:
+            # 目标分支的当前 tip，不是 PR 创建时冻结的 baseRefOid（PR rebase 过 main 时后者会把 main 的提交算进来）
+            subprocess.run(["git", "fetch", "-q", "origin", f"+refs/heads/{name}:refs/remotes/origin/{name}", a.head],
+                           capture_output=True)
+            base = f"origin/{name}"
     elif "PR_BODY" in os.environ:
         body = os.environ["PR_BODY"]
     else:
@@ -288,9 +285,10 @@ def main() -> int:
     if a.head is None:
         a.head = os.environ.get("PR_HEAD", "")
     if base is None:
-        base = os.environ.get("PR_BASE_SHA", "")
+        ref = os.environ.get("PR_BASE_REF", "")
+        base = f"origin/{ref}" if ref else os.environ.get("PR_BASE_SHA", "")
     if os.environ.get("GITHUB_ACTIONS") == "true" and not (base and a.head):
-        print("check-pr-gate: CI 缺 PR_BASE_SHA / PR_HEAD，无法扫提交署名（fail-closed）", file=sys.stderr)
+        print("check-pr-gate: CI 缺 PR_BASE_REF / PR_HEAD，无法扫提交署名（fail-closed）", file=sys.stderr)
         return 2
     try:
         trailers = trailer_families(base, a.head)
