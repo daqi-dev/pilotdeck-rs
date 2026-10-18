@@ -384,6 +384,10 @@ export async function selfCheck({ assets = true, frontends = ['old', 'new'] } = 
       await pkg('@xterm+extra@1.0.0', '@xterm/extra'); await link('@xterm/extra', '@xterm+extra@1.0.0');
       await assert.rejects(() => verifyBaseline(ui, head), /undeclared @xterm packages: @xterm\/extra/);
       await rm(resolve(ui, 'node_modules', '@xterm', 'extra'));
+      // A Finder .DS_Store in the scope is not a package and must not fail the gate.
+      await writeFile(resolve(ui, 'node_modules', '@xterm', '.DS_Store'), '');
+      assert.equal((await verifyBaseline(ui, head)).status, 'PASS');
+      await rm(resolve(ui, 'node_modules', '@xterm', '.DS_Store'));
       // An @xterm link outside the store is rejected, not skipped.
       const strayXterm = resolve(fixture, 'stray-xterm', 'node_modules', '@xterm', 'xterm');
       await mkdir(strayXterm, { recursive: true });
