@@ -1,0 +1,53 @@
+{
+ "project": {
+  "id": "PVT_kwDOFIQWaM4BnkNk",
+  "number": 1,
+  "owner": "daqi-dev"
+ },
+ "Status": {
+  "id": "PVTSSF_lADOFIQWaM4BnkNkzhmIOVA",
+  "options": {
+   "Todo": "74aba59d",
+   "In Progress": "18deabff",
+   "In Review": "d1af33a4",
+   "Blocked": "dd8a5051",
+   "Done": "f77e16e2"
+  }
+ },
+ "阶段组": {
+  "id": "PVTSSF_lADOFIQWaM4BnkNkzhmIOrI",
+  "options": {
+   "A": "746cd7f6",
+   "B": "464aa0bd",
+   "C": "0ee8cb73",
+   "D": "fd645883",
+   "F": "4f5d5e5a",
+   "工具": "ff41230e"
+  }
+ },
+ "实现方": {
+  "id": "PVTSSF_lADOFIQWaM4BnkNkzhmIOr4",
+  "options": {
+   "codex": "6449adf3",
+   "GLM": "56792f54",
+   "DeepSeek": "af588468",
+   "Claude": "8461bd24",
+   "人": "8adb2dae"
+  }
+ },
+ "阻塞原因": {
+  "id": "PVTSSF_lADOFIQWaM4BnkNkzhmIOr8",
+  "options": {
+   "等人批": "b0508850",
+   "等前置": "c4b10df9",
+   "通道不可用": "5499b210",
+   "CI": "fd016197"
+  }
+ },
+ "评审轮数": {
+  "id": "PVTF_lADOFIQWaM4BnkNkzhmIOuI"
+ },
+ "重派次数": {
+  "id": "PVTF_lADOFIQWaM4BnkNkzhmIO3I"
+ }
+}
