@@ -21,12 +21,19 @@ export function createMock({ streamClock = {} } = {}) {
       if (req.method === 'GET') return json({ ...stream.state, watchers: [...watched].filter(socket => socket.readyState === 1).length });
       if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
       const action = url.searchParams.get('action');
-      if (action === 'reset') { stream.reset(); return json({ status: 'idle' }); }
+      if (action === 'reset') {
+        try { stream.reset(url.searchParams.get('script') || undefined); return json(stream.state); }
+        catch (error) { return json({ error: error.message }, 400); }
+      }
       if (action === 'stop') { stream.stop(); return json(stream.state); }
-      if (action !== 'start') return json({ error: 'Unknown stream action' }, 400);
+      if (!['start', 'step'].includes(action)) return json({ error: 'Unknown stream action' }, 400);
       if (![...watched].some(socket => socket.readyState === 1)) return json({ error: 'No watched browser session' }, 409);
-      try { return json(stream.start(url.searchParams.get('scenario'), url.searchParams.get('protocol') || 'legacy'), 202); }
-      catch (error) { return json({ error: error.message }, 400); }
+      try {
+        if (action === 'start') return json(stream.start(url.searchParams.get('scenario'), url.searchParams.get('protocol') || 'legacy'), 202);
+        const index = url.searchParams.get('step') ?? '';
+        if (!/^\d+$/.test(index)) throw new Error('Invalid A script step');
+        return json(stream.step(url.searchParams.get('script'), Number(index)), 202);
+      } catch (error) { return json({ error: error.message }, 400); }
     }
     if (url.pathname === '/api/auth/status') return json({ needsSetup: false, authDisabled: false });
     if (url.pathname === '/api/auth/login') {

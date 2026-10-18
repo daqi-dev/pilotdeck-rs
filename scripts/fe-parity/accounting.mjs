@@ -25,6 +25,29 @@ if (pendingCatalog.baselineCommit !== BASELINE_COMMIT || pendingById.size !== 28
   || PENDING_ORCHESTRATION.length !== 28 || [...pendingById.keys()].some(id => allowedSkipIds.has(id))) {
   throw new Error('Invalid D orchestration catalog (commit, identities or B overlap)');
 }
+// A rewrites are new owned identities keyed by the frozen (file, title), never
+// by line (loop-expanded tests share one). They have their own account and
+// never enter the baseline 72 reconciliation or the current 37 ruler.
+const aCatalog = JSON.parse(await readFile(new URL('./a-identities.json', import.meta.url), 'utf8'));
+export const A_IDENTITIES = Object.freeze(aCatalog.tests.map(row => Object.freeze({ ...row })));
+export const aTitle = row => `[A:${row.file}:${row.title}]`;
+const aIds = new Set(A_IDENTITIES.map(caseId));
+if (aCatalog.baselineCommit !== BASELINE_COMMIT || aIds.size !== A_IDENTITIES.length || A_IDENTITIES.length !== 3
+  || [...aIds].some(id => allowedSkipIds.has(id) || pendingById.has(id))) {
+  throw new Error('Invalid A identity catalog (commit, duplicate (file, title), count or B/D overlap)');
+}
+export function checkAIdentities(rows, historical) {
+  const errors = [], prior = new Set(historical.tests.map(caseId));
+  for (const entry of A_IDENTITIES) if (!prior.has(caseId(entry))) errors.push(`A identity not in frozen inventory ${caseId(entry)}`);
+  if (new Set(rows.map(row => row.title)).size !== rows.length) errors.push('duplicate A rewrite registrations');
+  for (const entry of A_IDENTITIES) {
+    const matches = rows.filter(row => row.title === aTitle(entry));
+    if (matches.length !== 1) errors.push(`A identity ${caseId(entry)} registered ${matches.length} times`);
+    else if (matches[0].file !== entry.spec) errors.push(`A identity ${caseId(entry)} registered in ${matches[0].file}, expected ${entry.spec}`);
+  }
+  for (const row of rows) if (!A_IDENTITIES.some(entry => aTitle(entry) === row.title)) errors.push(`unknown A rewrite ${caseId(row)}`);
+  return errors;
+}
 // JSON reporter carries loop-expanded tests, unlike a source regex count.
 export function reportCases(report, testDir) {
   const rows = [];

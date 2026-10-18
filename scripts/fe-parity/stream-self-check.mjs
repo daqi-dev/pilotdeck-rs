@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { STREAM_PROTOCOLS, createStream, frame, marker, history, streamErrors, textErrors, readingErrors, followErrors } from './stream.mjs';
 import { executionEnv, PROFILES } from './execution-env.mjs';
 import { root, baseline, requireUI, origin, historicalInventory } from './env.mjs';
-import { reportCases, checkInventory } from './accounting.mjs';
+import { reportCases, checkInventory, checkAIdentities } from './accounting.mjs';
 import { createMock, TOKEN } from './mock.mjs';
 import { streamContractSelfCheck } from './stream-contract-self-check.mjs';
 const exec = promisify(execFile);
@@ -302,11 +302,11 @@ export async function streamSelfCheck(check) {
       assert(env.TMPDIR.startsWith(root)); assert.equal(env.REAL_COMPOSITION_PROFILE, profile);
     }
   });
-  await check('repository configs discover full 72 in all six side/profile combinations; blackbox 8 (4 per protocol), skeleton 3', async () => {
+  await check('repository configs discover full 72 in all six side/profile combinations; blackbox 8 (4 per protocol), skeleton 3, A rewrites 3', async () => {
     const output = await mkdtemp(resolve(root, '_tmp/fe-parity/config-control-'));
     const historical = JSON.parse(await readFile(historicalInventory, 'utf8'));
     try {
-      for (const frontend of ['old', 'new']) for (const suite of ['baseline', 'streaming-scroll', 'skeleton']) {
+      for (const frontend of ['old', 'new']) for (const suite of ['baseline', 'streaming-scroll', 'skeleton', 'a-class']) {
         for (const profile of suite === 'baseline' ? PROFILES : [undefined]) {
           const config = resolve(root, `scripts/fe-parity/${suite === 'baseline' ? 'baseline' : 'browser'}.config.mjs`);
           const env = executionEnv(process.env, { frontend, output, profile, suite });
@@ -318,6 +318,7 @@ export async function streamSelfCheck(check) {
           assert.equal(report.config.projects.length, 1); assert.equal(report.config.projects[0].repeatEach, 1); assert.equal(report.config.projects[0].retries, 0);
           const rows = reportCases(report, suite === 'baseline' ? resolve(baseline, 'e2e') : resolve(root, 'scripts/fe-parity/tests'));
           if (suite === 'baseline') assert.deepEqual(checkInventory(rows, historical), []);
+          else if (suite === 'a-class') assert.deepEqual(checkAIdentities(rows, historical), []);
           else {
             assert.equal(rows.length, suite === 'skeleton' ? 3 : 8);
             if (suite === 'streaming-scroll') for (const protocol of STREAM_PROTOCOLS) {
