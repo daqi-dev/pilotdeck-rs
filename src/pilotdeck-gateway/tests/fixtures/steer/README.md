@@ -12,6 +12,8 @@ cargo test --locked --offline -p pilotdeck-gateway --test steer
 
 生成器与 Rust 回放均精确断言：15 组 mailbox / 192 个操作，18 组 dispatcher / 35 个操作，3 组真实 TurnRunner 场景。`oracle.json` 包含全部输入、逐步结果、持久化调用、授权快照、方法列表与 runner 回调顺序。存储故障和挂起通过注入端口制造，具体结果由真实 TS 产生；不依赖时间等待。
 
+Rust 将实际值和 TS 金样分别序列化后逐字节比较，保留 JSON 的 undefined 省略规则，同时锁定所有层级的键序，包括 insert/discard/cancel/claim 记录和两个 drain 的模块响应。
+
 - Mailbox：身份不符、无活动轮、去重不替换、取消 tombstone、pending/offered/claimed、重复 claim/ack、close 后 enqueue/cancel、finish/restart、空串/孤立 UTF-16；另含 insert 与 close/drainOrClose/finish/restart、cancel 与 drain、claim 与 ack/restart 交错，以及 insert/cancel/claim/discard 写入失败后的队列恢复。
 - Dispatcher：两个 drain 独立可选、缺省/错误 operation、异步端口失败、完整响应原样回传、忽略远端冒充 turn 和授权字段、字符串授权过滤、同 ID 后写覆盖及空列表保留、unknown/repeated apply、close callback 结果扩展字段。
 - TurnRunner：用真实 `run()` + 假 loop / transcript 捕获 tracking、claim → durable、applied 后追加与 ack、重复 applied、不带 queueItemId 的 durable 消息；claim/durable 失败不 ack，未应用项保留。Rust 回放比较本次移植的回调和 tracking，不宣称实现了完整 TurnRunner。
