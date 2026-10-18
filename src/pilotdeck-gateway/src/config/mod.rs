@@ -11,6 +11,7 @@ mod router;
 mod sections;
 pub mod session_overrides;
 pub mod session_value;
+pub mod snapshot;
 mod value;
 use crate::metadata::{Files, Metadata, object};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -24,6 +25,7 @@ pub struct Config {
     pub(crate) selection: (JsString, JsString),
     pub(crate) router_enabled: bool,
     pub diagnostics: Vec<JsValue>,
+    pub(crate) snapshot: Option<JsValue>,
 }
 #[derive(Debug)]
 pub struct Error {
@@ -110,6 +112,32 @@ fn merge(left: &mut JsValue, right: JsValue) {
 pub(crate) fn load<F: Files>(metadata: &Metadata<F>, env: &Env) -> Result<Config, Error> {
     load_project_with_files(metadata, env, None)
 }
+
+/// Load the complete executable configuration snapshot described by the fixed
+/// TypeScript baseline's `loadPilotConfig`. `loaded_at` is passed explicitly so
+/// callers and fixtures can make the otherwise wall-clock field deterministic.
+pub fn load_snapshot(
+    pilot_home: &std::path::Path,
+    cwd: &std::path::Path,
+    env: &Env,
+    project: Option<&str>,
+    version: f64,
+    loaded_at: &str,
+) -> Result<JsValue, Error> {
+    let metadata = Metadata {
+        home: pilot_home.to_path_buf(),
+        cwd: cwd.to_path_buf(),
+        files: crate::metadata::NativeFiles,
+    };
+    Ok(load_project_with_files_inner(
+        &metadata,
+        env,
+        project,
+        Some((version, JsString::from(loaded_at))),
+    )?
+    .snapshot
+    .expect("snapshot loader always records a snapshot"))
+}
 /// Load and validate the global and optional project configuration using explicit
 /// paths and environment. This is the same loader used by gateway methods; it
 /// neither reads the process environment nor starts a gateway or a JS fallback.
@@ -133,6 +161,15 @@ pub(crate) fn load_project_with_files<F: Files>(
     env: &Env,
     project: Option<&str>,
 ) -> Result<Config, Error> {
+    load_project_with_files_inner(metadata, env, project, None)
+}
+
+fn load_project_with_files_inner<F: Files>(
+    metadata: &Metadata<F>,
+    env: &Env,
+    project: Option<&str>,
+    snapshot_context: Option<(f64, JsString)>,
+) -> Result<Config, Error> {
     let path = env
         .get("PILOTDECK_CONFIG_PATH")
         .map(|s| crate::metadata::js_trim(s).to_owned())
@@ -146,13 +183,21 @@ pub(crate) fn load_project_with_files<F: Files>(
     let mut d = Diagnostics(vec![]);
     let mut raw = object([]);
     let mut source_graphs = vec![];
+    let full_values = snapshot_context.is_some();
+    let mut sources = vec![];
+    if env.get("PILOT_HOME").is_some_and(|v| !v.is_empty()) {
+        sources.push(snapshot::SourceRecord::bootstrap_env());
+    }
     read_source(
         metadata,
         &path,
         "default",
+        10.0,
         &mut raw,
         &mut d,
         &mut source_graphs,
+        &mut sources,
+        full_values,
     )?;
     if let Some(project) = project.filter(|p| !p.is_empty()) {
         let path =
@@ -161,9 +206,12 @@ pub(crate) fn load_project_with_files<F: Files>(
             metadata,
             &path.to_string_lossy(),
             "project",
+            20.0,
             &mut raw,
             &mut d,
             &mut source_graphs,
+            &mut sources,
+            full_values,
         )?;
     }
     if source_graphs.iter().any(graph::merge_cycle) {
@@ -172,11 +220,14 @@ pub(crate) fn load_project_with_files<F: Files>(
         return Err(e);
     }
     let merged_graph = graph::merged_sources(&source_graphs)?;
+    let mut env_config = JsValue::Undefined;
     if let Some(v) = env.get("PILOT_AGENT_MODEL").filter(|v| !v.is_empty()) {
-        merge(
-            &mut raw,
-            object([("agent", object([("model", v.as_str().into())]))]),
-        );
+        let override_value = object([("agent", object([("model", v.as_str().into())]))]);
+        env_config = override_value.clone();
+        merge(&mut raw, override_value);
+    }
+    if !env_config.is_undefined() {
+        sources.push(snapshot::SourceRecord::merge_env(&env_config));
     }
     raw = binding::apply(metadata, raw, project, env)?;
     if !field(&raw, "pilot").is_undefined() {
@@ -272,20 +323,30 @@ pub(crate) fn load_project_with_files<F: Files>(
         error.name = "RangeError";
         return Err(error);
     }
+    let snapshot = snapshot_context.map(|(version, loaded_at)| {
+        snapshot::build(
+            metadata, env, &raw, &providers, &selection, sources, version, &loaded_at, &d.0,
+        )
+    });
     Ok(Config {
         providers,
         selection,
         router_enabled,
         diagnostics: d.0,
+        snapshot,
     })
 }
+#[allow(clippy::too_many_arguments)]
 fn read_source<F: Files>(
     metadata: &Metadata<F>,
     path: &str,
     kind: &str,
+    priority: f64,
     raw: &mut JsValue,
     d: &mut Diagnostics,
     source_graphs: &mut Vec<pilotdeck_yaml::value::ValueGraph>,
+    sources: &mut Vec<snapshot::SourceRecord>,
+    full_values: bool,
 ) -> Result<(), Error> {
     // existsSync('') is false, whereas path.resolve('') denotes cwd.
     if !path.is_empty() {
@@ -294,6 +355,7 @@ fn read_source<F: Files>(
             match metadata.files.read(&absolute) {
                 Ok(bytes) => {
                     let content = JsString::from(String::from_utf8_lossy(&bytes).into_owned());
+                    sources.push(snapshot::SourceRecord::file(kind, priority, path, &content));
                     let document = parse_document(
                         &content,
                         Options {
@@ -322,7 +384,11 @@ fn read_source<F: Files>(
                         );
                     } else {
                         match document.to_json().map(|g| {
-                            let value = graph::inspect(&g);
+                            let value = if full_values {
+                                graph::inspect_full(&g)
+                            } else {
+                                graph::inspect(&g)
+                            };
                             source_graphs.push(g);
                             value
                         }) {

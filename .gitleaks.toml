@@ -17,3 +17,11 @@ regexes = [
   '''539e7a0473b88138321f27979ecc21a6410dc4b7f0ff382f06e81ee4a2d0777d''',
   '''2497f0dd388c88452c98091e6a9f29260fb620d66b599c9207d2d163be5d74fa''',
 ]
+
+[[allowlists]]
+description = "A6.3-pr2 config-snapshot 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件 resolveCredentials.ts / providerCredentialScope.ts 的 SHA-256（文件名含 Credential 触发 generic-api-key），可用 git show cc7c4e6:<path> | shasum -a 256 复算，不是凭据"
+regexTarget = "match"
+regexes = [
+  '''bc02317428c4ab6959a8addfbc62ae966d42db83ab1c6a3736c620a637d4359b''',
+  '''cf9b1f894a7fc3b1e52cb4dde6514555bde96cfa9b4d64f68ae85940f76e17ae''',
+]
