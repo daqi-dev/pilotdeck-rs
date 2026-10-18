@@ -117,3 +117,12 @@ native_archive_manifest / native_archive_entries / native_archive_artifact 三 m
 - **复核**：按此分工跑约 10 单后，看看板「按实现方」和「评审 ≥4 轮」：DeepSeek 实现的单评审轮数明显更高，或 codex 作第二家频繁抓到 P0/P1 → 把难度门槛往回调。
 - 通道与命令：`_tmp/20261018-dsh-impl/README.md`；记忆 `state/memory/20261018-dsh-channel.md`。本卡取代上面「模型分工」卡中的评审默认（GLM + DeepSeek）与实现轮换条款，其余条款不变。
 - **原则**：**量大的规格单给最便宜、有工具的通道；把抓 P0 最多的评审固定在第二家**。
+
+## 卡 · V8 资源耗尽边界怎么对齐（2026-10-18，自决 · 待复核，AI 代批）
+- **卡在哪**：A6.7-pr3 的两家评审各报出同一类 P1。① hooks matcher 正则：`/^(a?){5000000}b$/` 一类病态式在 V8 上栈溢出（RangeError，matchHook 捕获后返回 false），Rust 用显式栈求值得 true。V8 的阈值随调用栈深度变化，实测约在 2×10⁶ 到 5×10⁶ 之间。② matchHookCondition 的 `JSON.stringify(toolInput)` 遇约 1 万层嵌套时 V8 抛 RangeError，没有 catch，整个 run 被 reject；Rust 能完成。
+- **谁受影响**：只涉及病态输入（超深嵌套、天文数字级重复量词），产品正常路径碰不到。**能否撤回**：能。**动不动尺子**：不动。
+- **先例**：A6.8-pr4 的 js_value 已经用固定上限 MAX_ARRAY_DEPTH=2000 模拟 V8 的「Maximum call stack size exceeded」。
+- **选项**：A 不模拟，按完整求值处理，把差异登记为已接受；B 取 V8 实测**确定成功区**的上界作为 Rust 硬上限，超过时给出与 TS 同结果的失败（正则 → false，stringify → 同文 RangeError 向上传播），只有 [上界, V8 实际阈值) 这段不可判定带登记为已接受差异；C 精确模拟 V8 栈，做不到。
+- **建议 / 执行**：B，与 js_value 先例一致。上界由实测定：在确定成功区内取保守值，写明测量命令、Node 版本和调用深度。不看 Rust 结果定标准。
+- **原则**：**V8 资源耗尽（栈溢出）边界：在 V8 确定成功的区间内逐例对齐；超过实测保守上界时给出 TS 同结果的失败；只把两者之间的不可判定带登记为已接受差异。** 断言：每个上界一条夹具在上界内（成功）、一条在远超上界处（TS 同失败）。
+- **落地**：A6.7-pr3（#278，已合入）按选项 B 实施；A6.8-pr4 的 js_value MAX_ARRAY_DEPTH 是先例，#251 那条未对齐的子项按同一原则处理。
