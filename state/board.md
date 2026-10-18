@@ -1,17 +1,22 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-10-18 12:05 · by 协调者(Claude Code 交互·opus-5.5·/loop 两小时交接)
-- glm-226 | gate | ready | #226 夹具三条（GLM 实现试点，wt-a68-skills，分支 glm/a68-p2-fixtures）：codex+DeepSeek 确认轮 0/0，闸门在跑；过后开 PR 合并
-- flake-230 | gate | ready | #230 host resume 用例 CI 不稳定（wt-a62-run，分支 codex/host-race-230，含 claude/flake-230）：根因为夹具小响应未触发 EPIPE，8×6 压测 48/48；两家 0/0；排在 glm-226 之后合并
-- p2-sweep-2 | impl | ready | P2-跟进开着 22 个（>10 触发定期清账）：派 1 个 worker（codex）集中清理，优先 #222/#226/#231 以外前置节点已近的；仍需两家评审
-- A6.8-pr4 | impl | ready | SkillManager import/scan/binding 选择 + gateway 接线；前置清 #226（glm-226 合并后剩余项）
+updated: 2026-10-18 13:02 · by 协调者(Claude Code 交互·opus-5.5·/loop)
+- A6.8-pr4 | review | ready | SkillManager import/scan + binding 选择 + 清 #226 剩余项（wt-a68-skills，claude/a68-pr4）：本地 310/0、TS 227 步；DeepSeek 0/0，GLM 评审中
+- B2-94 | review | ready | #94.1/#94.2 冻结装置变更（wt-a62-run，claude/b2-94）：单测全过、FROZEN 置待定标；DeepSeek 0/0，GLM 评审中；收敛后跑同日 20/5/1 真实定标（拿锁，串行）再重冻结
+- F2-61b | review | ready | #61.2 node_modules 完整性（wt-f61，deepseek/f2-61b；DeepSeek 试点三轮挂起，持有人收尾）：codex P1×2 已修（版本绑定锁文件、必查集合取自 manifest），确认轮 codex+GLM 中
+- F2-A34-pr1 | review | ready | A 类 34 例处置清单（wt-f58a，claude/f2-a34）：两家 0/0（DeepSeek P1 经身份正本实测驳回），增量确认轮中；**分母 68 待人复核**
+- F2-A34-pr2 | impl | ready | 样板改写 #15、#5、#1（pr1 合并后）
+- p2-sweep-3 | impl | ready | P2-跟进仍 21 个（>10）：下一批清账，codex
 - #19 | coord | human | 人定暂缓（10-17，阻塞节点：关 #19／阶段 C 53/53 标完成）· deadline 差异登记：state/decisions-20261017-deadline-diff.md
 - D4 | impl | blocked | 已人批（10-15 D4→B，不是待批项）；剩余是实施：A5.4 登记 A19-HOST 逐格期望（帧/durable/registry），两家评审后冻结，修复在 A7；待 A5.4 定标时排期
 - #150 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· Draft 处置
 - #144-triage | coord | human | 人定暂缓（10-17，未发现硬依赖，里程碑复查）·「P0 候选」降级、关闭或下一步
 - 167-ruler-a4 | coord | human | 人定暂缓（10-17，未发现依赖，里程碑复查）· check_ruler 是否升级为 A4 本地化语义（state/decisions-20261017-167-ruler.md 卡 2，暂不执行）
 <!-- READY:END -->
+
+> ## 2026-10-18 13:02 · /loop
+> 合并：#234（GLM 试点 #226 夹具）、#233（交接）、#236（#230 host resume CI 不稳定：codex 定位根因为夹具小响应不触发 EPIPE）、#238（p2-sweep-2：#55/#119 关单，其余 5 单核销已修项并注明前置节点）。人定提速（经守护会话）：B/F 装置提前做、并行增至 5–6 条；triage `_tmp/20261018-bf-triage/triage.md`（#47 的 S3/S4、#53/#59/#80/#76、B 类部署矩阵已完成，真正剩 B2-94、F2-61b、F2-A34）。DeepSeek 实现试点（F2-61b）：hunk 头行数写错、无工具时上下文靠猜，三轮未能完整应用，按规则挂起由持有人收尾；结论待记入决策卡。新 P2-跟进 #235、#237。worktree 6/8；磁盘 44.8/80 GiB。**下一步**：四单评审收敛→闸门→串行合并；B2-94 收敛后拿锁做定标复算。
 
 > ## 2026-10-18 08:30 · /loop 两小时交接（自 06:32 起）
 > 合并：#212（board）、#217（A6.2-pr2 RunRegistry，真实 TS 夹具 25 场景）、#220（D1-pr1 CLI 首批，D0 Rust 轮 10/10）。D1 首轮两家判「内置技能 Packaged 恒真」P0，改为真实探测 + D0 rust-stage 布局；A6.2 生成器默认参数让 quirk 场景没打到目标（GLM P1），加命中断言后重生成。新 P2-跟进：#213 #214 #215 #218 #219（D1）、#216（RunRegistry 抢陈旧锁竞态，与 TS 一致，前置于 A7）。worktree：主仓 + wt-a62-run（已合并，证据在其 _tmp，待清）+ wt-d1-cli（复用为 D1-pr2）+ wt-a68-skills；磁盘 38.6/80 GiB。后台：Claude 实现 A6.8-pr3 与 D1-pr2（各自 claude.status 写 exit= 即结束）。**下一步**：两路实现回来后协调者跑测试/定标→两家评审→闸门→串行合并；空档 triage A6.2-pr3。
