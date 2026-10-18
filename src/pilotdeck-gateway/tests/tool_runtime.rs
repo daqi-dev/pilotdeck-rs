@@ -2,7 +2,7 @@
 mod baseline;
 use pilotdeck_gateway::{
     host::{
-        HostError, HostFuture, ModuleError,
+        Cancellation, HostError, HostFuture, ModuleError,
         modules::{
             capability::{
                 RuntimeContext, ToolCall, ToolDefinition, ToolExecution, ToolInvocationContext,
@@ -183,7 +183,7 @@ impl ExecutableTool for FakeTool {
                 }
             };
             let result = tokio::select! { biased;
-                () = async { if ignore_abort { std::future::pending().await } else { context.cancellation().unwrap().cancelled().await } } => Err(ToolError::aborted()),
+                () = async { if ignore_abort { std::future::pending().await } else { context.cancelled().await } } => Err(ToolError::aborted()),
                 () = timer => {
                     if budget.is_some_and(|v| v < delay) { Err(ToolError::new("tool_timeout", "Budget expired.")) }
                     else if field(&input, "fail").as_string().is_some() {
@@ -201,10 +201,13 @@ impl ExecutableTool for FakeTool {
             }
             probe.event("end", &id);
             Ok(ToolOutput {
-                content: vec![JsValue::Object(obj([
-                    ("type", "text".into()),
-                    ("text", input.get("value").cloned().unwrap_or(id)),
-                ]))],
+                content: match input.get("content") {
+                    Some(content) => array(content).to_vec(),
+                    None => vec![JsValue::Object(obj([
+                        ("type", "text".into()),
+                        ("text", input.get("value").cloned().unwrap_or(id)),
+                    ]))],
+                },
                 data: input.get("data").cloned(),
                 metadata: input.get("metadata").and_then(JsValue::as_object).cloned(),
                 supplemental_messages: input.get("supplementalMessages").map(|v| array(v).to_vec()),
@@ -266,9 +269,36 @@ impl PermissionDecision for Permission {
         })
     }
 }
+/// Tools must observe either signal type the host may store.
+#[derive(Clone)]
+enum Signal {
+    Tool(ToolCancellation),
+    Host(Cancellation),
+}
+impl Signal {
+    fn cancel(&self) {
+        match self {
+            Signal::Tool(s) => s.cancel(),
+            Signal::Host(s) => s.cancel(None),
+        }
+    }
+    fn runtime(&self) -> RuntimeContext {
+        match self {
+            Signal::Tool(s) => Arc::new(s.clone()),
+            Signal::Host(s) => Arc::new(s.clone()),
+        }
+    }
+}
 fn context(
     probe: &Probe,
     cancel: &ToolCancellation,
+    patch: Option<&JsObject>,
+) -> Arc<ToolRuntimeContext> {
+    context_with(probe, &Signal::Tool(cancel.clone()), patch)
+}
+fn context_with(
+    probe: &Probe,
+    signal: &Signal,
     patch: Option<&JsObject>,
 ) -> Arc<ToolRuntimeContext> {
     let clock = probe.clone();
@@ -294,7 +324,7 @@ fn context(
     Arc::new(ToolRuntimeContext {
         fields,
         files: HostToolCheckpoint::default().tool_context_state(),
-        abort_signal: Some(Arc::new(cancel.clone())),
+        abort_signal: Some(signal.runtime()),
         model: None,
         elicitation: None,
         user_dialog: None,
@@ -310,18 +340,25 @@ fn context(
     })
 }
 fn register(registry: &ToolRegistry, spec: &JsValue, probe: &Probe) {
-    let fields = obj([
+    let mut fields = obj([
         ("name", field(spec, "name").clone()),
         ("description", field(spec, "name").clone()),
         ("aliases", field(spec, "aliases").clone()),
         ("kind", "builtin".into()),
         (
             "inputSchema",
-            spec.get("schema")
-                .cloned()
-                .unwrap_or_else(|| JsValue::Object(obj([("type", "object".into())]))),
+            match spec.get("schemaJson") {
+                Some(json) => parse_json(&text(json)).unwrap(),
+                None => spec
+                    .get("schema")
+                    .cloned()
+                    .unwrap_or_else(|| JsValue::Object(obj([("type", "object".into())]))),
+            },
         ),
     ]);
+    if let Some(limit) = spec.get("maxResultBytes") {
+        fields.insert("maxResultBytes".into(), limit.clone());
+    }
     registry
         .register(Arc::new(FakeTool {
             fields,
@@ -336,7 +373,11 @@ fn calls(values: &JsValue) -> Vec<ToolCall> {
         .map(|v| ToolCall {
             id: field(v, "id").as_string().unwrap().clone(),
             name: field(v, "name").as_string().unwrap().clone(),
-            input: field(v, "input").clone(),
+            // Raw JSON keeps own `__proto__` keys and non-sorted integer keys.
+            input: match v.get("inputJson") {
+                Some(json) => parse_json(&text(json)).unwrap(),
+                None => field(v, "input").clone(),
+            },
         })
         .collect()
 }
@@ -345,11 +386,23 @@ fn calls(values: &JsValue) -> Vec<ToolCall> {
 async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 36);
-    for spec in scenarios {
-        let label = text(field(spec, "name"));
+    assert_eq!(scenarios.len(), 60);
+    for (spec, signal) in scenarios.iter().flat_map(|spec| {
+        [
+            (spec, Signal::Tool(ToolCancellation::default())),
+            (spec, Signal::Host(Cancellation::default())),
+        ]
+    }) {
+        let label = format!(
+            "{} ({})",
+            text(field(spec, "name")),
+            match signal {
+                Signal::Tool(_) => "ToolCancellation",
+                Signal::Host(_) => "host Cancellation",
+            }
+        );
         let probe = Probe::new();
-        let cancel = ToolCancellation::default();
+        let cancel = signal;
         if field(spec, "preCancel") == &JsValue::Bool(true) {
             cancel.cancel();
         }
@@ -411,7 +464,7 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
             .execute_all(
                 calls(field(spec, "calls")),
                 ToolInvocationContext {
-                    runtime: context(&probe, &cancel, field(spec, "context").as_object()),
+                    runtime: context_with(&probe, &cancel, field(spec, "context").as_object()),
                     execution: Arc::new(ExecutionContext {
                         fields: execution,
                         abort_signal: None,
@@ -419,7 +472,12 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
                 },
             )
             .await;
+        let settled_at = probe.ms();
         match result {
+            Ok(_) if !field(spec, "error").is_undefined() => panic!(
+                "{label}: TS rejected with {:?}, Rust resolved",
+                text(field(spec, "error"))
+            ),
             Ok(results) => equal(
                 &JsValue::Array(results.into_iter().map(JsValue::Object).collect()),
                 field(spec, "results"),
@@ -432,6 +490,17 @@ async fn real_ts_runtime_schedules_results_errors_and_deadline_budgets() {
             field(spec, "events"),
             &format!("{label} events"),
         );
+        if field(spec, "drain") == &JsValue::Bool(true) {
+            // Documented deviation: TS rejects at settledAt while detached
+            // siblings keep running; the batch owns them, so it reports the
+            // error once the last started sibling settles.
+            let last = array(field(spec, "events"))
+                .iter()
+                .map(|e| array(e)[2].as_number().unwrap())
+                .fold(0.0, f64::max);
+            assert!(settled_at >= field(spec, "settledAt").as_number().unwrap());
+            assert_eq!(settled_at, last, "{label}: settles after the last sibling");
+        }
         assert_eq!(
             probe.live.load(Ordering::SeqCst),
             0,

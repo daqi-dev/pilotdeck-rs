@@ -3930,6 +3930,1483 @@
           "completedAt": "2026-01-01T00:00:00.000Z"
         }
       ]
+    },
+    {
+      "name": "schema-proto-property-reads-object-prototype",
+      "definitions": [
+        {
+          "name": "read_file",
+          "safe": true,
+          "schemaJson": "{\"type\":\"object\",\"properties\":{\"__proto__\":{\"type\":\"object\",\"required\":[\"missing\",\"toString\"]}}}"
+        },
+        {
+          "name": "fast",
+          "safe": true,
+          "schemaJson": "{\"type\":\"object\",\"properties\":{\"__proto__\":{\"additionalProperties\":false,\"properties\":{\"__proto__\":{\"type\":\"object\"},\"toString\":{\"enum\":[1]},\"valueOf\":{\"type\":\"object\"}}}}}"
+        },
+        {
+          "name": "slow",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"properties\":{\"__proto__\":{\"type\":\"object\"}}}"
+        },
+        {
+          "name": "write_file",
+          "safe": false,
+          "schemaJson": "{\"properties\":{\"__proto__\":{\"type\":\"number\"}}}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "input": {}
+        },
+        {
+          "id": "b",
+          "name": "fast",
+          "input": {}
+        },
+        {
+          "id": "c",
+          "name": "slow",
+          "input": {}
+        },
+        {
+          "id": "d",
+          "name": "slow",
+          "inputJson": "{\"__proto__\":5}"
+        },
+        {
+          "id": "e",
+          "name": "write_file",
+          "input": {}
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "c",
+          0
+        ],
+        [
+          "end",
+          "c",
+          0
+        ]
+      ],
+      "results": [
+        {
+          "type": "error",
+          "toolCallId": "a",
+          "toolName": "read_file",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "read_file failed due to the following issue:\nThe required parameter `__proto__.missing` is missing",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.__proto__.missing",
+                  "code": "required",
+                  "message": "$.__proto__.missing is required."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][read_file][fix_input]\nSummary: $.__proto__.missing is required.\nEvidence:\n- __proto__.missing: $.__proto__.missing is required.\n- read_file failed due to the following issue:\nOriginal error:\nread_file failed due to the following issue:\nThe required parameter `__proto__.missing` is missing\nNext actions:\n1. Include the required parameter `__proto__.missing` in the next read_file call."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.__proto__.missing is required.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Include the required parameter `__proto__.missing` in the next read_file call."
+              ],
+              "salientEvidence": [
+                "__proto__.missing: $.__proto__.missing is required.",
+                "read_file failed due to the following issue:"
+              ],
+              "originalError": "read_file failed due to the following issue:\nThe required parameter `__proto__.missing` is missing"
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "b",
+          "toolName": "fast",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "fast failed due to the following issues:\nThe parameter `__proto__.__proto__` has an invalid type: $.__proto__.__proto__ must be object.\nThe parameter `__proto__.toString` has an invalid value: $.__proto__.toString must be one of 1.\nThe parameter `__proto__.valueOf` has an invalid type: $.__proto__.valueOf must be object.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.__proto__.__proto__",
+                  "code": "invalid_type",
+                  "message": "$.__proto__.__proto__ must be object."
+                },
+                {
+                  "path": "$.__proto__.toString",
+                  "code": "invalid_enum",
+                  "message": "$.__proto__.toString must be one of 1."
+                },
+                {
+                  "path": "$.__proto__.valueOf",
+                  "code": "invalid_type",
+                  "message": "$.__proto__.valueOf must be object."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][fast][fix_input]\nSummary: $.__proto__.__proto__ must be object.\nEvidence:\n- __proto__.__proto__: $.__proto__.__proto__ must be object.\n- __proto__.toString: $.__proto__.toString must be one of 1.\nOriginal error:\nfast failed due to the following issues:\nThe parameter `__proto__.__proto__` has an invalid type: $.__proto__.__proto__ must be object.\nThe parameter `__proto__.toString` has an invalid value: $.__proto__.toString must be one of 1.\nThe parameter `__proto__.valueOf` has an invalid type: $.__proto__.valueOf must be object.\nNext actions:\n1. Change `__proto__.__proto__` to the expected type before retrying: $.__proto__.__proto__ must be object.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.__proto__.__proto__ must be object.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `__proto__.__proto__` to the expected type before retrying: $.__proto__.__proto__ must be object.."
+              ],
+              "salientEvidence": [
+                "__proto__.__proto__: $.__proto__.__proto__ must be object.",
+                "__proto__.toString: $.__proto__.toString must be one of 1."
+              ],
+              "originalError": "fast failed due to the following issues:\nThe parameter `__proto__.__proto__` has an invalid type: $.__proto__.__proto__ must be object.\nThe parameter `__proto__.toString` has an invalid value: $.__proto__.toString must be one of 1.\nThe parameter `__proto__.valueOf` has an invalid type: $.__proto__.valueOf must be object."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "c",
+          "toolName": "slow",
+          "content": [
+            {
+              "type": "text",
+              "text": "c"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "d",
+          "toolName": "slow",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "slow failed due to the following issue:\nThe parameter `__proto__` has an invalid type: $.__proto__ must be object.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.__proto__",
+                  "code": "invalid_type",
+                  "message": "$.__proto__ must be object."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][slow][fix_input]\nSummary: $.__proto__ must be object.\nEvidence:\n- __proto__: $.__proto__ must be object.\n- slow failed due to the following issue:\nOriginal error:\nslow failed due to the following issue:\nThe parameter `__proto__` has an invalid type: $.__proto__ must be object.\nNext actions:\n1. Change `__proto__` to the expected type before retrying: $.__proto__ must be object.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.__proto__ must be object.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `__proto__` to the expected type before retrying: $.__proto__ must be object.."
+              ],
+              "salientEvidence": [
+                "__proto__: $.__proto__ must be object.",
+                "slow failed due to the following issue:"
+              ],
+              "originalError": "slow failed due to the following issue:\nThe parameter `__proto__` has an invalid type: $.__proto__ must be object."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "e",
+          "toolName": "write_file",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "write_file failed due to the following issue:\nThe parameter `__proto__` has an invalid type: $.__proto__ must be number.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.__proto__",
+                  "code": "invalid_type",
+                  "message": "$.__proto__ must be number."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][write_file][fix_input]\nSummary: $.__proto__ must be number.\nEvidence:\n- __proto__: $.__proto__ must be number.\n- write_file failed due to the following issue:\nOriginal error:\nwrite_file failed due to the following issue:\nThe parameter `__proto__` has an invalid type: $.__proto__ must be number.\nNext actions:\n1. Change `__proto__` to the expected type before retrying: $.__proto__ must be number.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.__proto__ must be number.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `__proto__` to the expected type before retrying: $.__proto__ must be number.."
+              ],
+              "salientEvidence": [
+                "__proto__: $.__proto__ must be number.",
+                "write_file failed due to the following issue:"
+              ],
+              "originalError": "write_file failed due to the following issue:\nThe parameter `__proto__` has an invalid type: $.__proto__ must be number."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "schema-integer-keys-ordered-like-object-keys",
+      "definitions": [
+        {
+          "name": "read_file",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"b\":{\"type\":\"string\"},\"10\":{\"type\":\"string\"},\"2\":{\"type\":\"string\"}}}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "inputJson": "{\"z\":1,\"b\":0,\"7\":1,\"10\":1,\"2\":2,\"01\":3}"
+        }
+      ],
+      "events": [],
+      "results": [
+        {
+          "type": "error",
+          "toolCallId": "a",
+          "toolName": "read_file",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "read_file failed due to the following issues:\nAn unexpected parameter `7` was provided\nAn unexpected parameter `z` was provided\nAn unexpected parameter `01` was provided\nThe parameter `2` has an invalid type: $.2 must be string.\nThe parameter `10` has an invalid type: $.10 must be string.\nThe parameter `b` has an invalid type: $.b must be string.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.7",
+                  "code": "unknown_property",
+                  "message": "$.7 is not allowed."
+                },
+                {
+                  "path": "$.z",
+                  "code": "unknown_property",
+                  "message": "$.z is not allowed."
+                },
+                {
+                  "path": "$.01",
+                  "code": "unknown_property",
+                  "message": "$.01 is not allowed."
+                },
+                {
+                  "path": "$.2",
+                  "code": "invalid_type",
+                  "message": "$.2 must be string."
+                },
+                {
+                  "path": "$.10",
+                  "code": "invalid_type",
+                  "message": "$.10 must be string."
+                },
+                {
+                  "path": "$.b",
+                  "code": "invalid_type",
+                  "message": "$.b must be string."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][read_file][fix_input]\nSummary: $.7 is not allowed.\nEvidence:\n- 7: $.7 is not allowed.\n- z: $.z is not allowed.\nOriginal error:\nread_file failed due to the following issues:\nAn unexpected parameter `7` was provided\nAn unexpected parameter `z` was provided\nAn unexpected parameter `01` was provided\nThe parameter `2` has an invalid type: $.2 must be string.\nThe parameter `10` has an invalid type: $.10 must be string.\nThe parameter `b` has an invalid type: $.b must be string.\nNext actions:\n1. Change `2` to the expected type before retrying: $.2 must be string.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.7 is not allowed.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `2` to the expected type before retrying: $.2 must be string.."
+              ],
+              "salientEvidence": [
+                "7: $.7 is not allowed.",
+                "z: $.z is not allowed."
+              ],
+              "originalError": "read_file failed due to the following issues:\nAn unexpected parameter `7` was provided\nAn unexpected parameter `z` was provided\nAn unexpected parameter `01` was provided\nThe parameter `2` has an invalid type: $.2 must be string.\nThe parameter `10` has an invalid type: $.10 must be string.\nThe parameter `b` has an invalid type: $.b must be string."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "schema-abnormal-shapes-without-throw",
+      "definitions": [
+        {
+          "name": "p1",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"required\":\"ab\\ud83d\\ude00\",\"properties\":{\"a\":{}}}"
+        },
+        {
+          "name": "p2",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":[\"s\",{\"type\":\"number\"}]}"
+        },
+        {
+          "name": "p3",
+          "safe": false,
+          "schemaJson": "{\"type\":[\"string\",null,[\"a\",null]]}"
+        },
+        {
+          "name": "p4",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"required\":[5,null,true,{\"a\":1},[\"x\",null]],\"properties\":{\"items\":{\"type\":\"array\",\"items\":null},\"e\":{\"enum\":0,\"type\":\"string\"},\"s\":\"str\",\"n\":{\"enum\":null}}}"
+        },
+        {
+          "name": "p5",
+          "safe": false,
+          "schemaJson": "\"plain\""
+        },
+        {
+          "name": "p6",
+          "safe": false,
+          "schemaJson": "{\"properties\":\"ab\",\"required\":null}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p1",
+          "input": {
+            "a": 1
+          }
+        },
+        {
+          "id": "b",
+          "name": "p2",
+          "inputJson": "{\"x\":4,\"0\":1,\"1\":\"x\",\"length\":2,\"map\":3}"
+        },
+        {
+          "id": "c",
+          "name": "p3",
+          "input": 1
+        },
+        {
+          "id": "d",
+          "name": "p4",
+          "inputJson": "{\"5\":1,\"items\":[1],\"e\":\"v\",\"s\":1,\"n\":2}"
+        },
+        {
+          "id": "e",
+          "name": "p5",
+          "input": {
+            "x": 1
+          }
+        },
+        {
+          "id": "f",
+          "name": "p6",
+          "inputJson": "{\"1\":2,\"0\":{}}"
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "e",
+          0
+        ],
+        [
+          "end",
+          "e",
+          0
+        ],
+        [
+          "start",
+          "f",
+          0
+        ],
+        [
+          "end",
+          "f",
+          0
+        ]
+      ],
+      "results": [
+        {
+          "type": "error",
+          "toolCallId": "a",
+          "toolName": "p1",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "p1 failed due to the following issues:\nThe required parameter `b` is missing\nThe required parameter `😀` is missing",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.b",
+                  "code": "required",
+                  "message": "$.b is required."
+                },
+                {
+                  "path": "$.😀",
+                  "code": "required",
+                  "message": "$.😀 is required."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][p1][fix_input]\nSummary: $.b is required.\nEvidence:\n- b: $.b is required.\n- 😀: $.😀 is required.\nOriginal error:\np1 failed due to the following issues:\nThe required parameter `b` is missing\nThe required parameter `😀` is missing\nNext actions:\n1. Include the required parameter `b` in the next p1 call."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.b is required.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Include the required parameter `b` in the next p1 call."
+              ],
+              "salientEvidence": [
+                "b: $.b is required.",
+                "😀: $.😀 is required."
+              ],
+              "originalError": "p1 failed due to the following issues:\nThe required parameter `b` is missing\nThe required parameter `😀` is missing"
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "b",
+          "toolName": "p2",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "p2 failed due to the following issues:\nAn unexpected parameter `x` was provided\nThe parameter `1` has an invalid type: $.1 must be number.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.x",
+                  "code": "unknown_property",
+                  "message": "$.x is not allowed."
+                },
+                {
+                  "path": "$.1",
+                  "code": "invalid_type",
+                  "message": "$.1 must be number."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][p2][fix_input]\nSummary: $.x is not allowed.\nEvidence:\n- x: $.x is not allowed.\n- 1: $.1 must be number.\nOriginal error:\np2 failed due to the following issues:\nAn unexpected parameter `x` was provided\nThe parameter `1` has an invalid type: $.1 must be number.\nNext actions:\n1. Change `1` to the expected type before retrying: $.1 must be number.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.x is not allowed.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `1` to the expected type before retrying: $.1 must be number.."
+              ],
+              "salientEvidence": [
+                "x: $.x is not allowed.",
+                "1: $.1 must be number."
+              ],
+              "originalError": "p2 failed due to the following issues:\nAn unexpected parameter `x` was provided\nThe parameter `1` has an invalid type: $.1 must be number."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "c",
+          "toolName": "p3",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "p3 failed due to the following issue:\nThe parameter `` has an invalid type: $ must be string or  or a,.",
+            "details": {
+              "issues": [
+                {
+                  "path": "$",
+                  "code": "invalid_type",
+                  "message": "$ must be string or  or a,."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][p3][fix_input]\nSummary: $ must be string or or a,.\nEvidence:\n- input: $ must be string or or a,.\n- p3 failed due to the following issue:\nOriginal error:\np3 failed due to the following issue:\nThe parameter `` has an invalid type: $ must be string or  or a,.\nNext actions:\n1. Change `input` to the expected type before retrying: $ must be string or or a,.."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$ must be string or or a,.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Change `input` to the expected type before retrying: $ must be string or or a,.."
+              ],
+              "salientEvidence": [
+                "input: $ must be string or or a,.",
+                "p3 failed due to the following issue:"
+              ],
+              "originalError": "p3 failed due to the following issue:\nThe parameter `` has an invalid type: $ must be string or  or a,."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "d",
+          "toolName": "p4",
+          "error": {
+            "code": "invalid_tool_input",
+            "message": "p4 failed due to the following issues:\nThe required parameter `null` is missing\nThe required parameter `true` is missing\nThe required parameter `[object Object]` is missing\nThe required parameter `x,` is missing",
+            "details": {
+              "issues": [
+                {
+                  "path": "$.null",
+                  "code": "required",
+                  "message": "$.null is required."
+                },
+                {
+                  "path": "$.true",
+                  "code": "required",
+                  "message": "$.true is required."
+                },
+                {
+                  "path": "$.[object Object]",
+                  "code": "required",
+                  "message": "$.[object Object] is required."
+                },
+                {
+                  "path": "$.x,",
+                  "code": "required",
+                  "message": "$.x, is required."
+                }
+              ]
+            }
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[invalid_tool_input][p4][fix_input]\nSummary: $.null is required.\nEvidence:\n- null: $.null is required.\n- true: $.true is required.\nOriginal error:\np4 failed due to the following issues:\nThe required parameter `null` is missing\nThe required parameter `true` is missing\nThe required parameter `[object Object]` is missing\nThe required parameter `x,` is missing\nNext actions:\n1. Include the required parameter `null` in the next p4 call."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "$.null is required.",
+              "failureClass": "fix_input",
+              "nextActions": [
+                "Include the required parameter `null` in the next p4 call."
+              ],
+              "salientEvidence": [
+                "null: $.null is required.",
+                "true: $.true is required."
+              ],
+              "originalError": "p4 failed due to the following issues:\nThe required parameter `null` is missing\nThe required parameter `true` is missing\nThe required parameter `[object Object]` is missing\nThe required parameter `x,` is missing"
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "e",
+          "toolName": "p5",
+          "content": [
+            {
+              "type": "text",
+              "text": "e"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "f",
+          "toolName": "p6",
+          "content": [
+            {
+              "type": "text",
+              "text": "f"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "schema-abnormal-shape-0",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "null"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{}"
+        }
+      ],
+      "events": [],
+      "error": "Cannot read properties of null (reading 'enum')"
+    },
+    {
+      "name": "schema-abnormal-shape-1",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"properties\":{\"a\":null}}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{\"a\":1}"
+        }
+      ],
+      "events": [],
+      "error": "Cannot read properties of null (reading 'enum')"
+    },
+    {
+      "name": "schema-abnormal-shape-2",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"enum\":\"abc\"}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "1"
+        }
+      ],
+      "events": [],
+      "error": "schema.enum.some is not a function"
+    },
+    {
+      "name": "schema-abnormal-shape-3",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"enum\":{\"a\":1}}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "1"
+        }
+      ],
+      "events": [],
+      "error": "schema.enum.some is not a function"
+    },
+    {
+      "name": "schema-abnormal-shape-4",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"type\":\"object\",\"required\":5}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{}"
+        }
+      ],
+      "events": [],
+      "error": "number 5 is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    {
+      "name": "schema-abnormal-shape-5",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"required\":{}}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{}"
+        }
+      ],
+      "events": [],
+      "error": "object is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    {
+      "name": "schema-abnormal-shape-6",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"required\":true}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{}"
+        }
+      ],
+      "events": [],
+      "error": "boolean true is not iterable (cannot read property Symbol(Symbol.iterator))"
+    },
+    {
+      "name": "schema-abnormal-shape-7",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"properties\":\"ab\",\"additionalProperties\":false}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{\"x\":1}"
+        }
+      ],
+      "events": [],
+      "error": "Cannot use 'in' operator to search for 'x' in ab"
+    },
+    {
+      "name": "schema-abnormal-shape-8",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"properties\":5,\"additionalProperties\":false}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{\"x\":1}"
+        }
+      ],
+      "events": [],
+      "error": "Cannot use 'in' operator to search for 'x' in 5"
+    },
+    {
+      "name": "schema-abnormal-shape-9",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"properties\":false,\"additionalProperties\":false}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "{\"x\":1}"
+        }
+      ],
+      "events": [],
+      "error": "Cannot use 'in' operator to search for 'x' in false"
+    },
+    {
+      "name": "schema-abnormal-shape-10",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"type\":\"array\",\"items\":{\"items\":null,\"type\":\"array\"},\"enum\":null}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "[[1]]"
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "end",
+          "a",
+          0
+        ]
+      ],
+      "results": [
+        {
+          "type": "success",
+          "toolCallId": "a",
+          "toolName": "p",
+          "content": [
+            {
+              "type": "text",
+              "text": "a"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "schema-abnormal-shape-11",
+      "definitions": [
+        {
+          "name": "p",
+          "safe": false,
+          "schemaJson": "{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"k\":null}}}"
+        }
+      ],
+      "calls": [
+        {
+          "id": "a",
+          "name": "p",
+          "inputJson": "[{\"k\":1}]"
+        }
+      ],
+      "events": [],
+      "error": "Cannot read properties of null (reading 'enum')"
+    },
+    {
+      "name": "configured-alias-string-entries",
+      "definitions": [
+        {
+          "name": "r",
+          "safe": false
+        },
+        {
+          "name": "fast",
+          "safe": true
+        }
+      ],
+      "context": {
+        "toolAliases": "xr"
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "1",
+          "input": {}
+        },
+        {
+          "id": "b",
+          "name": "0",
+          "input": {}
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "end",
+          "a",
+          0
+        ]
+      ],
+      "results": [
+        {
+          "type": "success",
+          "toolCallId": "a",
+          "toolName": "r",
+          "content": [
+            {
+              "type": "text",
+              "text": "a"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "error",
+          "toolCallId": "b",
+          "toolName": "0",
+          "error": {
+            "code": "tool_not_found",
+            "message": "Tool 0 does not exist."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[tool_not_found][0][switch_tool]\nSummary: The model emitted a tool name that is not registered: 0.\nEvidence:\n- Tool 0 does not exist.\nOriginal error:\nTool 0 does not exist.\nNext actions:\n1. Use a registered canonical tool name from the current tool list."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "The model emitted a tool name that is not registered: 0.",
+              "failureClass": "switch_tool",
+              "nextActions": [
+                "Use a registered canonical tool name from the current tool list."
+              ],
+              "salientEvidence": [
+                "Tool 0 does not exist."
+              ],
+              "originalError": "Tool 0 does not exist."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "configured-alias-array-entries",
+      "context": {
+        "toolAliases": [
+          "fast",
+          "read"
+        ]
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "0",
+          "input": {
+            "delay": 1
+          }
+        },
+        {
+          "id": "b",
+          "name": "1",
+          "input": {
+            "delay": 2
+          }
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "end",
+          "a",
+          1
+        ],
+        [
+          "start",
+          "b",
+          1
+        ],
+        [
+          "end",
+          "b",
+          3
+        ]
+      ],
+      "results": [
+        {
+          "type": "success",
+          "toolCallId": "a",
+          "toolName": "fast",
+          "content": [
+            {
+              "type": "text",
+              "text": "a"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.001Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "b",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": "b"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.001Z",
+          "completedAt": "2026-01-01T00:00:00.003Z"
+        }
+      ]
+    },
+    {
+      "name": "configured-alias-truthy-primitive-has-no-entries",
+      "context": {
+        "toolAliases": true
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "0",
+          "input": {}
+        }
+      ],
+      "events": [],
+      "results": [
+        {
+          "type": "error",
+          "toolCallId": "a",
+          "toolName": "0",
+          "error": {
+            "code": "tool_not_found",
+            "message": "Tool 0 does not exist."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[tool_not_found][0][switch_tool]\nSummary: The model emitted a tool name that is not registered: 0.\nEvidence:\n- Tool 0 does not exist.\nOriginal error:\nTool 0 does not exist.\nNext actions:\n1. Use a registered canonical tool name from the current tool list."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "The model emitted a tool name that is not registered: 0.",
+              "failureClass": "switch_tool",
+              "nextActions": [
+                "Use a registered canonical tool name from the current tool list."
+              ],
+              "salientEvidence": [
+                "Tool 0 does not exist."
+              ],
+              "originalError": "Tool 0 does not exist."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "configured-alias-number-has-no-entries",
+      "context": {
+        "toolAliases": 7
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "0",
+          "input": {}
+        }
+      ],
+      "events": [],
+      "results": [
+        {
+          "type": "error",
+          "toolCallId": "a",
+          "toolName": "0",
+          "error": {
+            "code": "tool_not_found",
+            "message": "Tool 0 does not exist."
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "TOOL_ERROR[tool_not_found][0][switch_tool]\nSummary: The model emitted a tool name that is not registered: 0.\nEvidence:\n- Tool 0 does not exist.\nOriginal error:\nTool 0 does not exist.\nNext actions:\n1. Use a registered canonical tool name from the current tool list."
+            }
+          ],
+          "metadata": {
+            "recovery": {
+              "summary": "The model emitted a tool name that is not registered: 0.",
+              "failureClass": "switch_tool",
+              "nextActions": [
+                "Use a registered canonical tool name from the current tool list."
+              ],
+              "salientEvidence": [
+                "Tool 0 does not exist."
+              ],
+              "originalError": "Tool 0 does not exist."
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "configured-alias-array-null-target-throws",
+      "context": {
+        "toolAliases": [
+          null
+        ]
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "0",
+          "input": {}
+        }
+      ],
+      "events": [],
+      "error": "Cannot read properties of null (reading 'trim')"
+    },
+    {
+      "name": "concurrent-error-lets-started-siblings-finish",
+      "drain": true,
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "input": {
+            "decision": "throw"
+          }
+        },
+        {
+          "id": "b",
+          "name": "fast",
+          "input": {
+            "delay": 5
+          }
+        },
+        {
+          "id": "c",
+          "name": "slow",
+          "input": {
+            "delay": 1
+          }
+        },
+        {
+          "id": "d",
+          "name": "read_file",
+          "input": {
+            "delay": 2
+          }
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "b",
+          0
+        ],
+        [
+          "start",
+          "d",
+          0
+        ],
+        [
+          "end",
+          "d",
+          2
+        ],
+        [
+          "end",
+          "b",
+          5
+        ]
+      ],
+      "error": "permission failed",
+      "settledAt": 0
+    },
+    {
+      "name": "preview-binary-content-reports-original-bytes",
+      "context": {
+        "maxResultBytes": 1
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "input": {
+            "content": [
+              {
+                "type": "image",
+                "data": "AAAA",
+                "mimeType": "image/png"
+              },
+              {
+                "type": "text",
+                "text": "中文"
+              },
+              {
+                "type": "pdf",
+                "data": "QUJD",
+                "mimeType": "application/pdf",
+                "pages": 2
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "end",
+          "a",
+          0
+        ]
+      ],
+      "results": [
+        {
+          "type": "success",
+          "toolCallId": "a",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "image",
+              "data": "AAAA",
+              "mimeType": "image/png"
+            },
+            {
+              "type": "text",
+              "text": "中文"
+            },
+            {
+              "type": "pdf",
+              "data": "QUJD",
+              "mimeType": "application/pdf",
+              "pages": 2
+            }
+          ],
+          "metadata": {
+            "previewLimit": {
+              "originalBytes": 14
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "preview-head-tail-separator",
+      "context": {
+        "maxResultBytes": 122
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "input": {
+            "content": [
+              {
+                "type": "text",
+                "text": "ééééééééééééééééééééééééééééééxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx中中中中中中中中中中中中中中中中中中中中"
+              },
+              {
+                "type": "json",
+                "value": {
+                  "a": [
+                    1,
+                    "ü"
+                  ]
+                }
+              },
+              {
+                "type": "file",
+                "path": "/w/a.txt",
+                "mimeType": "text/plain",
+                "description": "notes"
+              },
+              {
+                "type": "file",
+                "path": "/w/b"
+              }
+            ]
+          }
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "end",
+          "a",
+          0
+        ]
+      ],
+      "results": [
+        {
+          "type": "success",
+          "toolCallId": "a",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": "ééééééééééééééééééééééééééééééxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx中中中中中中中中中中中中中中中中中中中中"
+            },
+            {
+              "type": "json",
+              "value": {
+                "a": [
+                  1,
+                  "ü"
+                ]
+              }
+            },
+            {
+              "type": "file",
+              "path": "/w/a.txt",
+              "mimeType": "text/plain",
+              "description": "notes"
+            },
+            {
+              "type": "file",
+              "path": "/w/b"
+            }
+          ],
+          "metadata": {
+            "previewLimit": {
+              "truncated": true,
+              "originalBytes": 222,
+              "returnedBytes": 121
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "preview-tool-level-limit-overrides-context",
+      "definitions": [
+        {
+          "name": "read_file",
+          "safe": true,
+          "maxResultBytes": 4
+        },
+        {
+          "name": "fast",
+          "safe": true,
+          "maxResultBytes": null
+        }
+      ],
+      "context": {
+        "maxResultBytes": 1000
+      },
+      "calls": [
+        {
+          "id": "a",
+          "name": "read_file",
+          "input": {
+            "value": "abcdefgh"
+          }
+        },
+        {
+          "id": "b",
+          "name": "fast",
+          "input": {
+            "value": "abcdefgh"
+          }
+        }
+      ],
+      "events": [
+        [
+          "start",
+          "a",
+          0
+        ],
+        [
+          "start",
+          "b",
+          0
+        ],
+        [
+          "end",
+          "a",
+          0
+        ],
+        [
+          "end",
+          "b",
+          0
+        ]
+      ],
+      "results": [
+        {
+          "type": "success",
+          "toolCallId": "a",
+          "toolName": "read_file",
+          "content": [
+            {
+              "type": "text",
+              "text": "abcdefgh"
+            }
+          ],
+          "metadata": {
+            "previewLimit": {
+              "truncated": true,
+              "originalBytes": 8,
+              "returnedBytes": 46
+            }
+          },
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "type": "success",
+          "toolCallId": "b",
+          "toolName": "fast",
+          "content": [
+            {
+              "type": "text",
+              "text": "abcdefgh"
+            }
+          ],
+          "startedAt": "2026-01-01T00:00:00.000Z",
+          "completedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
     }
   ]
 }

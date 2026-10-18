@@ -117,18 +117,32 @@ impl ToolRunContext {
             host,
         }
     }
+    /// The signal only when it is a [`ToolCancellation`]; prefer
+    /// [`Self::cancelled`], which also accepts the host `Cancellation`.
     pub fn cancellation(&self) -> Option<&ToolCancellation> {
+        self.host.abort_signal.as_ref()?.downcast_ref()
+    }
+    fn host_cancellation(&self) -> Option<&crate::host::Cancellation> {
         self.host.abort_signal.as_ref()?.downcast_ref()
     }
     pub fn is_aborted(&self) -> bool {
         self.cancellation()
             .is_some_and(ToolCancellation::is_cancelled)
             || self
-                .host
-                .abort_signal
-                .as_ref()
-                .and_then(|s| s.downcast_ref::<crate::host::Cancellation>())
+                .host_cancellation()
                 .is_some_and(crate::host::Cancellation::is_cancelled)
+    }
+    /// Resolves once the abort signal fires, whichever of the two signal types
+    /// the host stored. Without a recognised signal it never resolves, like an
+    /// AbortSignal that is never aborted.
+    pub async fn cancelled(&self) {
+        if let Some(signal) = self.cancellation() {
+            signal.cancelled().await;
+        } else if let Some(signal) = self.host_cancellation() {
+            signal.cancelled().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
     }
     pub fn now_ms(&self) -> Result<f64, HostError> {
         let Some(now) = &self.host.now else {
@@ -172,13 +186,16 @@ pub fn with_operation_deadline_budget(
         return Ok(());
     };
     let now = context.now_ms()?;
-    let configured = context
-        .fields
-        .get("subagentTimeoutMs")
-        .and_then(JsValue::as_number);
-    if !now.is_finite() || configured.is_some_and(|n| !n.is_finite()) {
+    if !now.is_finite() {
         return Ok(());
     }
+    // `configured !== undefined && !Number.isFinite(configured)`: any present
+    // non-number (string, null, boolean, object) keeps the context unchanged.
+    let configured = match context.fields.get("subagentTimeoutMs") {
+        None | Some(JsValue::Undefined) => None,
+        Some(JsValue::Number(n)) if n.is_finite() => Some(*n),
+        Some(_) => return Ok(()),
+    };
     let timeout = configured
         .unwrap_or(3_600_000.0)
         .min((deadline - now).max(0.0));

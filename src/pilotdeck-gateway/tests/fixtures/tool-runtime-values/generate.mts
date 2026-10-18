@@ -112,11 +112,17 @@ const deadlineInputs = [
   {id:'zero-configured',deadline:'2026-09-11T00:00:02.000Z',configured:0},
   {id:'offset',deadline:'2026-09-11T08:00:02.000+08:00',configured:10000},
   {id:'fractional',deadline:'2026-09-11T00:00:00.001Z',configured:0.5},
+  // `configuredRaw` is stored as-is (no NaN/Infinity decoding).
+  {id:'string-configured',deadline:'2026-09-11T00:00:02.000Z',configuredRaw:'5000'},
+  {id:'null-configured',deadline:'2026-09-11T00:00:02.000Z',configuredRaw:null},
+  {id:'boolean-configured',deadline:'2026-09-11T00:00:02.000Z',configuredRaw:true},
+  {id:'object-configured',deadline:'2026-09-11T00:00:02.000Z',configuredRaw:{ms:1}},
 ];
 const encodeNumber = (value: any) => typeof value === 'number' && !Number.isFinite(value) ? String(value) : value;
 const deadlines = deadlineInputs.map((input: any) => {
   const context: any = { now: () => new Date(input.now ?? instant) };
   if ('configured' in input) context.subagentTimeoutMs = typeof input.configured === 'string' ? Number(input.configured) : input.configured;
+  if ('configuredRaw' in input) context.subagentTimeoutMs = input.configuredRaw;
   const result = withOperationDeadlineBudget(context, { operationDeadline: input.deadline });
   return {input,output:{hasTimeout:'subagentTimeoutMs' in result,...('subagentTimeoutMs' in result ? {timeout:encodeNumber(result.subagentTimeoutMs)} : {})}};
 });
@@ -196,7 +202,7 @@ const registry = steps.map(input => {
 });
 assert.equal(new Set(recovery.map((row:any)=>row.input.id)).size,recovery.length);
 assert.equal(new Set(names.map((row:any)=>row.input.id)).size,names.length);
-assert.equal(deadlines.length,16);
+assert.equal(deadlines.length,20);
 await mkdir(outputParent,{recursive:true});
 const output=await mkdtemp(join(outputParent,'tool-runtime-values-'));
 await writeFile(join(output,'oracle.json'),JSON.stringify({sourceCommit,sourceSha256,recovery,names,deadlines,registry},null,2)+'\n',{flag:'wx'});

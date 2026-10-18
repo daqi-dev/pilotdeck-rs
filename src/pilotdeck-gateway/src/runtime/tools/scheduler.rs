@@ -65,8 +65,8 @@ impl ToolRuntime {
             }
         }
         let mut slots = vec![None; calls.len()];
-        // Owned futures, not JoinHandles: early error, host abort, timeout and
-        // Drop synchronously destroy every unfinished sibling future.
+        // Owned futures, not JoinHandles: host abort, timeout and Drop
+        // synchronously destroy every unfinished sibling future.
         let mut pending: Vec<_> = concurrent
             .into_iter()
             .map(|index| {
@@ -78,6 +78,11 @@ impl ToolRuntime {
                 )
             })
             .collect();
+        // TS Promise.all rejects on the first error while the already-started
+        // siblings keep running to completion. Without detaching them, the
+        // batch keeps polling those siblings and reports the first error once
+        // they settle; the sequential phase never starts, as in TS.
+        let mut first_error = None;
         poll_fn(|cx| {
             let mut unfinished = false;
             for (index, slot) in &mut pending {
@@ -85,21 +90,28 @@ impl ToolRuntime {
                     continue;
                 };
                 match future.as_mut().poll(cx) {
-                    Poll::Ready(Ok(result)) => {
-                        slots[*index] = Some(result);
+                    Poll::Ready(result) => {
                         *slot = None;
+                        match result {
+                            Ok(result) => slots[*index] = Some(result),
+                            Err(error) => {
+                                first_error.get_or_insert(error);
+                            }
+                        }
                     }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Pending => unfinished = true,
                 }
             }
             if unfinished {
                 Poll::Pending
             } else {
-                Poll::Ready(Ok(()))
+                Poll::Ready(())
             }
         })
-        .await?;
+        .await;
+        if let Some(error) = first_error {
+            return Err(error);
+        }
         for index in sequential {
             slots[index] = Some(self.execute(calls[index].clone(), context.clone()).await?);
         }
@@ -129,15 +141,9 @@ impl ToolRuntime {
                     .into_iter()
                     .map(|e| (e.diagnostic.name, e.aliases)),
             );
-            repaired = registry::repair_tool_name(
-                &call.name,
-                &targets,
-                context
-                    .fields
-                    .get("toolAliases")
-                    .and_then(JsValue::as_object),
-            )?
-            .map(|r| r.name);
+            let aliases = configured_aliases(context.fields.get("toolAliases"));
+            repaired =
+                registry::repair_tool_name(&call.name, &targets, aliases.as_ref())?.map(|r| r.name);
             tool = repaired.as_ref().and_then(|name| self.registry.get(name));
         }
         let name = tool
@@ -196,7 +202,7 @@ impl ToolRuntime {
                 tool.fields()
                     .get("inputSchema")
                     .unwrap_or(&JsValue::Undefined),
-            );
+            )?;
             if !issues.is_empty() {
                 return fail(&name, validation_error(&name, issues, &context));
             }
@@ -386,7 +392,116 @@ impl ToolExecution for ToolRuntime {
     }
 }
 
-fn validate_input(value: &JsValue, schema: &JsValue) -> Vec<JsObject> {
+/// repairToolName.ts: a falsy `toolAliases` is ignored; otherwise it is read
+/// with `Object.entries`, which yields index keys for strings (UTF-16 code
+/// units) and arrays, and nothing for other primitives.
+fn configured_aliases(value: Option<&JsValue>) -> Option<JsObject> {
+    let value = value.filter(|v| truthy(v))?;
+    let mut aliases = JsObject::new();
+    match value {
+        JsValue::Object(o) => return Some(o.clone()),
+        JsValue::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                aliases.insert(i.to_string().into(), item.clone());
+            }
+        }
+        JsValue::String(s) => {
+            for (i, unit) in s.units().iter().enumerate() {
+                aliases.insert(
+                    i.to_string().into(),
+                    JsValue::String(JsString::from_utf16(vec![*unit])),
+                );
+            }
+        }
+        _ => {}
+    }
+    Some(aliases)
+}
+
+/// A value as validateToolInput.ts sees it after a JS property read.
+#[derive(Clone, Copy)]
+enum Seen<'a> {
+    Value(&'a JsValue),
+    /// An inherited Object.prototype method: equals no enum member, matches no
+    /// JSON type and is not a plain object or array.
+    Method,
+    /// `value.__proto__` of a plain object: a plain object with no own
+    /// enumerable keys whose own `__proto__` is null.
+    ObjectPrototype,
+}
+/// A plain object reached by validateObject.
+#[derive(Clone, Copy)]
+enum Plain<'a> {
+    Own(&'a JsObject),
+    ObjectPrototype,
+}
+static NULL: JsValue = JsValue::Null;
+impl<'a> Plain<'a> {
+    /// `key in object`: own keys, explicit prototypes, then Object.prototype.
+    fn has(self, key: &JsString) -> bool {
+        match self {
+            Plain::Own(o) => {
+                o.get_key(key).is_some()
+                    || o.get_property(&text(key)).is_some()
+                    || crate::config::builtin_property(key)
+            }
+            Plain::ObjectPrototype => crate::config::builtin_property(key),
+        }
+    }
+    fn get(self, key: &JsString) -> Seen<'a> {
+        match self {
+            Plain::Own(o) => {
+                if let Some(v) = o.get_key(key).or_else(|| o.get_property(&text(key))) {
+                    Seen::Value(v)
+                } else if key.equals_str("__proto__") {
+                    o.prototype().map_or(Seen::ObjectPrototype, Seen::Value)
+                } else {
+                    Seen::Method
+                }
+            }
+            Plain::ObjectPrototype if key.equals_str("__proto__") => Seen::Value(&NULL),
+            Plain::ObjectPrototype => Seen::Method,
+        }
+    }
+    /// `Object.keys`: integer keys ascending, then insertion order.
+    fn keys(self) -> Vec<&'a JsString> {
+        match self {
+            Plain::Own(o) => js_entries(o).into_iter().map(|(k, _)| k).collect(),
+            Plain::ObjectPrototype => vec![],
+        }
+    }
+}
+/// Own enumerable entries in JS `Object.keys`/`Object.entries` order.
+fn js_entries(object: &JsObject) -> Vec<&(JsString, JsValue)> {
+    let mut entries: Vec<_> = object.entries().iter().collect();
+    entries.sort_by_key(|(key, _)| registry::array_index(key).map_or((1, 0), |n| (0, n)));
+    entries
+}
+/// String(value) for a JSON value, as template literals and `in` errors print it.
+fn js_string(value: &JsValue) -> JsString {
+    match value {
+        JsValue::String(s) => s.clone(),
+        v => js_display(v).into(),
+    }
+}
+fn type_error(message: String) -> HostError {
+    ModuleError::new(message).into()
+}
+fn not_iterable(value: &JsValue) -> HostError {
+    let kind = match value {
+        JsValue::Number(_) => format!("number {}", js_display(value)),
+        JsValue::Bool(_) => format!("boolean {}", js_display(value)),
+        _ => "object".into(),
+    };
+    type_error(format!(
+        "{kind} is not iterable (cannot read property Symbol(Symbol.iterator))"
+    ))
+}
+
+/// validateToolInput.ts, including the TypeErrors it throws for schema shapes
+/// that are not JSON Schema (null schema, non-array enum, non-iterable
+/// `required`, primitive `properties`).
+fn validate_input(value: &JsValue, schema: &JsValue) -> Result<Vec<JsObject>, HostError> {
     fn issue(out: &mut Vec<JsObject>, path: &str, code: &str, message: String) {
         out.push(object([
             ("path", path.into()),
@@ -394,10 +509,17 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Vec<JsObject> {
             ("message", string(message)),
         ]));
     }
-    fn matches(value: &JsValue, kind: &JsValue) -> bool {
+    fn matches(value: Seen, kind: &JsValue) -> bool {
         if let JsValue::Array(kinds) = kind {
             return kinds.iter().any(|k| matches(value, k));
         }
+        let value = match value {
+            Seen::Value(v) => v,
+            Seen::Method => return false,
+            Seen::ObjectPrototype => {
+                return kind.as_string().is_some_and(|s| s.equals_str("object"));
+            }
+        };
         match kind.as_string().map(text).as_deref() {
             Some("null") => matches!(value, JsValue::Null),
             Some("object") => matches!(value, JsValue::Object(_)),
@@ -411,55 +533,142 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Vec<JsObject> {
             _ => false,
         }
     }
-    /// `key in object` for a JSON-shaped object whose chain ends at
-    /// Object.prototype: own keys, explicit prototypes, then the 12 built-ins.
-    fn has(object: &JsObject, key: &JsString) -> bool {
-        object.get_key(key).is_some()
-            || object.get_property(&text(key)).is_some()
-            || crate::config::builtin_property(key)
+    /// `schema.properties ?? {}` as validateObject uses it.
+    enum Properties<'a> {
+        Object(&'a JsObject),
+        Array(&'a [JsValue]),
+        Primitive(&'a JsValue),
     }
-    /// A key found only on Object.prototype reads as a built-in function.
-    fn property<'a>(object: &'a JsObject, key: &JsString) -> Option<&'a JsValue> {
-        object
-            .get_key(key)
-            .or_else(|| object.get_property(&text(key)))
-    }
-    /// `None` is an inherited Object.prototype method: it equals no enum
-    /// member, matches no JSON type and is not a plain object or array.
-    fn walk(value: Option<&JsValue>, schema: &JsValue, path: &str, out: &mut Vec<JsObject>) {
-        if let Some(JsValue::Array(enumeration)) = schema.get("enum") {
-            let equal = |v: &JsValue| match (value, v) {
-                (Some(JsValue::Number(a)), JsValue::Number(b)) => {
-                    a.to_bits() == b.to_bits() || a.is_nan() && b.is_nan()
-                }
-                (None | Some(JsValue::Object(_) | JsValue::Array(_)), _) => false,
-                (Some(value), _) => v == value,
-            };
-            if !enumeration.iter().any(equal) {
-                issue(
-                    out,
-                    path,
-                    "invalid_enum",
-                    format!(
-                        "{path} must be one of {}.",
-                        enumeration
-                            .iter()
-                            .map(js_display)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                );
-                return;
+    impl Properties<'_> {
+        fn has(&self, key: &JsString) -> Result<bool, HostError> {
+            match self {
+                Properties::Object(o) => Ok(Plain::Own(o).has(key)),
+                Properties::Array(a) => Ok(registry::array_index(key)
+                    .is_some_and(|n| (n as usize) < a.len())
+                    || key.equals_str("length")
+                    || crate::config::changes::is_array_prototype_method(key)
+                    || crate::config::builtin_property(key)),
+                Properties::Primitive(v) => Err(type_error(format!(
+                    "Cannot use 'in' operator to search for '{}' in {}",
+                    text(key),
+                    text(&js_string(v))
+                ))),
             }
+        }
+        fn entries(&self) -> Vec<(JsString, JsValue)> {
+            match self {
+                Properties::Object(o) => js_entries(o).into_iter().cloned().collect(),
+                Properties::Array(a) => a
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (i.to_string().into(), v.clone()))
+                    .collect(),
+                Properties::Primitive(JsValue::String(s)) => s
+                    .units()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, u)| {
+                        (
+                            i.to_string().into(),
+                            JsValue::String(JsString::from_utf16(vec![*u])),
+                        )
+                    })
+                    .collect(),
+                Properties::Primitive(_) => vec![],
+            }
+        }
+    }
+    /// `for (const key of schema.required ?? [])`, keys coerced by `in`.
+    fn required(schema: &JsValue) -> Result<Vec<JsString>, HostError> {
+        match schema.get("required") {
+            None | Some(JsValue::Null | JsValue::Undefined) => Ok(vec![]),
+            Some(JsValue::Array(keys)) => Ok(keys.iter().map(js_string).collect()),
+            Some(JsValue::String(s)) => {
+                // String iteration yields code points; lone surrogates stand alone.
+                let units = s.units();
+                let mut keys = vec![];
+                let mut i = 0;
+                while i < units.len() {
+                    let pair = (0xD800..0xDC00).contains(&units[i])
+                        && units
+                            .get(i + 1)
+                            .is_some_and(|u| (0xDC00..0xE000).contains(u));
+                    let width = if pair { 2 } else { 1 };
+                    keys.push(JsString::from_utf16(units[i..i + width].to_vec()));
+                    i += width;
+                }
+                Ok(keys)
+            }
+            Some(other) => Err(not_iterable(other)),
+        }
+    }
+    fn walk(
+        value: Seen,
+        schema: &JsValue,
+        path: &str,
+        out: &mut Vec<JsObject>,
+    ) -> Result<(), HostError> {
+        match schema {
+            JsValue::Null => {
+                return Err(type_error(
+                    "Cannot read properties of null (reading 'enum')".into(),
+                ));
+            }
+            JsValue::Undefined => {
+                return Err(type_error(
+                    "Cannot read properties of undefined (reading 'enum')".into(),
+                ));
+            }
+            _ => {}
+        }
+        match schema.get("enum") {
+            Some(JsValue::Array(enumeration)) => {
+                let equal = |v: &JsValue| match (value, v) {
+                    (Seen::Value(JsValue::Number(a)), JsValue::Number(b)) => {
+                        a.to_bits() == b.to_bits() || a.is_nan() && b.is_nan()
+                    }
+                    (
+                        Seen::Method
+                        | Seen::ObjectPrototype
+                        | Seen::Value(JsValue::Object(_) | JsValue::Array(_)),
+                        _,
+                    ) => false,
+                    (Seen::Value(value), _) => v == value,
+                };
+                if !enumeration.iter().any(equal) {
+                    issue(
+                        out,
+                        path,
+                        "invalid_enum",
+                        format!(
+                            "{path} must be one of {}.",
+                            enumeration
+                                .iter()
+                                .map(js_display)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    );
+                    return Ok(());
+                }
+            }
+            Some(enumeration) if truthy(enumeration) => {
+                return Err(type_error("schema.enum.some is not a function".into()));
+            }
+            _ => {}
         }
         let kind = schema.get("type");
         if let Some(kind) = kind
-            && !value.is_some_and(|value| matches(value, kind))
+            && !matches(value, kind)
         {
             let description = match kind {
+                // Array#join prints null and undefined members as "".
                 JsValue::Array(kinds) => kinds
                     .iter()
-                    .map(js_display)
+                    .map(|k| match k {
+                        JsValue::Null | JsValue::Undefined => String::new(),
+                        k => js_display(k),
+                    })
                     .collect::<Vec<_>>()
                     .join(" or "),
                 kind => js_display(kind),
@@ -470,39 +679,41 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Vec<JsObject> {
                 "invalid_type",
                 format!("{path} must be {description}."),
             );
-            return;
+            return Ok(());
         }
-        let Some(value) = value else {
-            return;
-        };
         let effective = match kind {
             Some(JsValue::Array(kinds)) => kinds
                 .iter()
                 .find(|k| k.as_string().is_none_or(|s| !s.equals_str("null"))),
             kind => kind,
         };
+        let plain = match value {
+            Seen::Value(JsValue::Object(o)) => Some(Plain::Own(o)),
+            Seen::ObjectPrototype => Some(Plain::ObjectPrototype),
+            _ => None,
+        };
         if (effective.is_none()
             || effective
                 .and_then(JsValue::as_string)
                 .is_some_and(|s| s.equals_str("object")))
-            && let Some(value) = value.as_object()
+            && let Some(value) = plain
         {
             let empty = JsObject::new();
-            let properties = schema
-                .get("properties")
-                .and_then(JsValue::as_object)
-                .unwrap_or(&empty);
-            if let Some(JsValue::Array(required)) = schema.get("required") {
-                for key in required.iter().filter_map(JsValue::as_string) {
-                    if !has(value, key) {
-                        let path = format!("{path}.{}", text(key));
-                        issue(out, &path, "required", format!("{path} is required."));
-                    }
+            let properties = match schema.get("properties") {
+                None | Some(JsValue::Null | JsValue::Undefined) => Properties::Object(&empty),
+                Some(JsValue::Object(o)) => Properties::Object(o),
+                Some(JsValue::Array(a)) => Properties::Array(a),
+                Some(other) => Properties::Primitive(other),
+            };
+            for key in required(schema)? {
+                if !value.has(&key) {
+                    let path = format!("{path}.{}", text(&key));
+                    issue(out, &path, "required", format!("{path} is required."));
                 }
             }
             if schema.get("additionalProperties") == Some(&JsValue::Bool(false)) {
-                for (key, _) in value.entries() {
-                    if !has(properties, key) {
+                for key in value.keys() {
+                    if !properties.has(key)? {
                         let path = format!("{path}.{}", text(key));
                         issue(
                             out,
@@ -514,29 +725,31 @@ fn validate_input(value: &JsValue, schema: &JsValue) -> Vec<JsObject> {
                 }
             }
             for (key, schema) in properties.entries() {
-                if has(value, key) {
+                if value.has(&key) {
                     walk(
-                        property(value, key),
-                        schema,
-                        &format!("{path}.{}", text(key)),
+                        value.get(&key),
+                        &schema,
+                        &format!("{path}.{}", text(&key)),
                         out,
-                    );
+                    )?;
                 }
             }
         }
         if effective
             .and_then(JsValue::as_string)
             .is_some_and(|s| s.equals_str("array"))
-            && let (JsValue::Array(values), Some(schema)) = (value, schema.get("items"))
+            && let (Seen::Value(JsValue::Array(values)), Some(schema)) =
+                (value, schema.get("items").filter(|s| truthy(s)))
         {
             for (i, value) in values.iter().enumerate() {
-                walk(Some(value), schema, &format!("{path}[{i}]"), out);
+                walk(Seen::Value(value), schema, &format!("{path}[{i}]"), out)?;
             }
         }
+        Ok(())
     }
     let mut issues = vec![];
-    walk(Some(value), schema, "$", &mut issues);
-    issues
+    walk(Seen::Value(value), schema, "$", &mut issues)?;
+    Ok(issues)
 }
 fn validation_error(name: &JsString, issues: Vec<JsObject>, context: &ToolRunContext) -> ToolError {
     let tool = text(name);

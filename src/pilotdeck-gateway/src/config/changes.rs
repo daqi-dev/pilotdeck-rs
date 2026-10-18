@@ -361,7 +361,7 @@ fn is_object_prototype_function(key: &JsString) -> bool {
     !key.equals_str("__proto__") && super::value::builtin_property(key)
 }
 
-fn is_array_prototype_method(key: &JsString) -> bool {
+pub(crate) fn is_array_prototype_method(key: &JsString) -> bool {
     ARRAY_PROTOTYPE_METHODS
         .iter()
         .any(|name| key.equals_str(name))

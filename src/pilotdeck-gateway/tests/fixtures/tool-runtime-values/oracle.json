@@ -6589,6 +6589,54 @@
         "hasTimeout": true,
         "timeout": 0.5
       }
+    },
+    {
+      "input": {
+        "id": "string-configured",
+        "deadline": "2026-09-11T00:00:02.000Z",
+        "configuredRaw": "5000"
+      },
+      "output": {
+        "hasTimeout": true,
+        "timeout": "5000"
+      }
+    },
+    {
+      "input": {
+        "id": "null-configured",
+        "deadline": "2026-09-11T00:00:02.000Z",
+        "configuredRaw": null
+      },
+      "output": {
+        "hasTimeout": true,
+        "timeout": null
+      }
+    },
+    {
+      "input": {
+        "id": "boolean-configured",
+        "deadline": "2026-09-11T00:00:02.000Z",
+        "configuredRaw": true
+      },
+      "output": {
+        "hasTimeout": true,
+        "timeout": true
+      }
+    },
+    {
+      "input": {
+        "id": "object-configured",
+        "deadline": "2026-09-11T00:00:02.000Z",
+        "configuredRaw": {
+          "ms": 1
+        }
+      },
+      "output": {
+        "hasTimeout": true,
+        "timeout": {
+          "ms": 1
+        }
+      }
     }
   ],
   "registry": [

@@ -183,7 +183,7 @@ fn encoded_number(value: &JsValue) -> JsValue {
 fn operation_deadline_only_narrows_the_child_budget() {
     let oracle = baseline::oracle(ORACLE);
     let rows = array(field(&oracle, "deadlines"));
-    assert_eq!(rows.len(), 16);
+    assert_eq!(rows.len(), 20);
     for row in rows {
         let input = field(row, "input");
         let mut fields = JsObject::new();
@@ -192,6 +192,9 @@ fn operation_deadline_only_narrows_the_child_budget() {
                 "subagentTimeoutMs".into(),
                 fixture_number(field(input, "configured")),
             );
+        }
+        if let Some(raw) = input.get("configuredRaw") {
+            fields.insert("subagentTimeoutMs".into(), raw.clone());
         }
         let now = if field(input, "now").is_undefined() {
             INSTANT.into()

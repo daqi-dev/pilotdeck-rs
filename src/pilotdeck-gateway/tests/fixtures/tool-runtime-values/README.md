@@ -1,6 +1,6 @@
 # 工具运行值夹具
 
-`oracle.json` 来自固定 TS 基线真实运行：71 条错误恢复及完整错误结果、126 条工具名修复、16 条 deadline 预算和 66 步注册表状态序列。64 个 builtin alias 的键全部覆盖，另覆盖备用目标。
+`oracle.json` 来自固定 TS 基线真实运行：71 条错误恢复及完整错误结果、126 条工具名修复、20 条 deadline 预算和 66 步注册表状态序列。64 个 builtin alias 的键全部覆盖，另覆盖备用目标。
 
 ```sh
 PDRS_BASELINE=/absolute/fixed/PilotDeck node --import /absolute/fixed/PilotDeck/node_modules/tsx/dist/loader.mjs src/pilotdeck-gateway/tests/fixtures/tool-runtime-values/generate.mts /absolute/output-parent

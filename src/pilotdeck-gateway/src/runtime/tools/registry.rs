@@ -617,7 +617,7 @@ pub fn repair_tool_name(
         reason: "fuzzy_match",
     }))
 }
-fn array_index(key: &JsString) -> Option<u32> {
+pub(super) fn array_index(key: &JsString) -> Option<u32> {
     let text = key.to_utf8().ok()?;
     let n = text.parse::<u32>().ok()?;
     (n != u32::MAX && n.to_string() == text).then_some(n)
