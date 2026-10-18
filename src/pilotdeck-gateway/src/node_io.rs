@@ -37,6 +37,11 @@ const SKILL_READ: &[&str] = &["ENOTDIR", "EISDIR"];
 const SKILL_WRITE: &[&str] = &["ENOTDIR", "EEXIST", "EISDIR"];
 const SKILL_PATH: &[&str] = &["ENOTDIR"];
 const SKILL_IMPORT: &[&str] = &["ENOTDIR", "EEXIST"];
+// snapshot-projection/oracle.json, per projection method (createLocalGateway.ts:
+// 1271-1313). The real TS gateway recorded ENOENT only for snapshotRestore
+// (mkdtemp target and object-file open); list/get surfaced no fs errno in the
+// corpus, so their sets stay empty like skill_validate.
+const SNAPSHOT_TRANSCRIPT: &[&str] = &["ENOENT"];
 pub(crate) const LOCAL_ERRNOS: &[(&str, &[&str])] = &[
     ("project_files_list", PROJECT_FILES),
     ("project_file_read", PROJECT_FILES),
@@ -52,6 +57,9 @@ pub(crate) const LOCAL_ERRNOS: &[(&str, &[&str])] = &[
     ("skill_import", SKILL_IMPORT),
     ("skill_validate", &[]),
     ("skill_scan", SKILL_PATH),
+    ("snapshot_list", &[]),
+    ("snapshot_get", &[]),
+    ("snapshot_restore", SNAPSHOT_TRANSCRIPT),
 ];
 pub(crate) fn lookup_for(method: &str, error: &io::Error) -> Option<(&'static str, &'static str)> {
     let found = lookup(error)?;
@@ -61,6 +69,15 @@ pub(crate) fn lookup_for(method: &str, error: &io::Error) -> Option<(&'static st
         .1
         .contains(&found.0)
         .then_some(found)
+}
+/// Code-based admission for a caller that already holds the measured errno code
+/// (`WorkspaceSnapshotError::Io`). `lookup_for` remains the entry point when the
+/// original `io::Error` is available.
+pub(crate) fn admits(method: &str, code: &str) -> bool {
+    LOCAL_ERRNOS
+        .iter()
+        .find(|(name, _)| *name == method)
+        .is_some_and(|(_, allowed)| allowed.contains(&code))
 }
 // Both config consumers have the same measured errno set; changing one requires
 // splitting this gate rather than silently inheriting the global format table.
@@ -191,6 +208,38 @@ mod tests {
                 .collect();
             assert_eq!(allowed, measured, "{method}");
         }
+        let snapshots: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/snapshot-projection/oracle.json"
+        ))
+        .unwrap();
+        for (operation, method) in [
+            ("snapshotList", "snapshot_list"),
+            ("snapshotGet", "snapshot_get"),
+            ("snapshotRestore", "snapshot_restore"),
+        ] {
+            let measured: BTreeSet<_> = snapshots["scenarios"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|scenario| scenario["operations"].as_array().unwrap())
+                .filter(|row| row["op"] == operation)
+                .filter_map(|row| row["outcome"]["error"].as_object())
+                .filter(|error| error.get("name").and_then(|name| name.as_str()) == Some("Error"))
+                .filter_map(|error| error.get("code").and_then(|code| code.as_str()))
+                .collect();
+            let allowed: BTreeSet<_> = LOCAL_ERRNOS
+                .iter()
+                .find(|(m, _)| *m == method)
+                .unwrap()
+                .1
+                .iter()
+                .copied()
+                .collect();
+            assert_eq!(allowed, measured, "{method}");
+        }
+        assert!(admits("snapshot_restore", "ENOENT"));
+        assert!(!admits("snapshot_list", "ENOENT"));
+        assert!(!admits("snapshot_restore", "EDQUOT"));
         assert!(
             lookup_for(
                 "unregistered_method",

@@ -287,18 +287,15 @@ struct TestResolver {
     projects: Vec<(String, String)>,
 }
 impl SnapshotProjectResolver for TestResolver {
-    fn resolve_project_key(&self, project_key: &str) -> Result<String, SnapshotProjectionError> {
-        let normalized = normalize(project_key);
+    fn resolve_project_key(&self, project_key: &[u16]) -> Result<String, SnapshotProjectionError> {
+        // JS `===`, i.e. code-unit equality: a lone surrogate must not be
+        // replacement-decoded before matching a registry path.
+        let normalized = normalize_units(project_key);
         self.projects
             .iter()
-            .find(|(key, _)| normalize(key) == normalized)
+            .find(|(key, _)| normalize_units(&key.encode_utf16().collect::<Vec<_>>()) == normalized)
             .map(|(key, _)| key.clone())
-            .ok_or_else(|| {
-                SnapshotProjectionError::gateway(
-                    "PROJECT_NOT_FOUND",
-                    format!("Unknown projectKey: {project_key}"),
-                )
-            })
+            .ok_or_else(|| SnapshotProjectionError::unknown_project_key(project_key))
     }
     fn workspace_id(&self, project_key: &str) -> String {
         let normalized = normalize(project_key);
@@ -315,6 +312,18 @@ fn normalize(path: &str) -> String {
         "/".into()
     } else {
         trimmed.into()
+    }
+}
+/// The registry comparison on raw units: trim trailing `/` without decoding.
+fn normalize_units(path: &[u16]) -> Vec<u16> {
+    let mut end = path.len();
+    while end > 0 && path[end - 1] == u16::from(b'/') {
+        end -= 1;
+    }
+    if end == 0 {
+        vec![u16::from(b'/')]
+    } else {
+        path[..end].to_vec()
     }
 }
 
@@ -617,7 +626,7 @@ fn fallback_and_empty_session_filter_cover_unreachable_entry_branches() {
 fn capability_unavailable_precedes_project_resolution() {
     struct PanicResolver;
     impl SnapshotProjectResolver for PanicResolver {
-        fn resolve_project_key(&self, _: &str) -> Result<String, SnapshotProjectionError> {
+        fn resolve_project_key(&self, _: &[u16]) -> Result<String, SnapshotProjectionError> {
             panic!("project resolution must not run when the provider is absent");
         }
         fn workspace_id(&self, _: &str) -> String {
@@ -708,6 +717,131 @@ fn snapshot_ids_keep_lone_surrogates_instead_of_matching_replacement() {
         record_tree(&target.join(&dirs[0])).is_empty(),
         "the surrogate manifest has no entries"
     );
+}
+
+#[test]
+fn project_keys_keep_lone_surrogates_instead_of_matching_replacement_paths() {
+    let scratch = Scratch::new();
+    let root = scratch.0.join("snapshots");
+    write_manifest(
+        &root.join("workspaces/w/sessions/s/snapshots/id"),
+        br#"{"snapshotId":"id","workspaceId":"w","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","entries":[]}"#,
+    );
+    write_manifest(
+        &root.join("workspaces/fffd/sessions/s/snapshots/replacement"),
+        br#"{"snapshotId":"replacement","workspaceId":"fffd","sessionId":"s","turnId":"t","runId":"r","phase":"pre_user","entries":[]}"#,
+    );
+    let provider = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+        root: root.to_string_lossy().into_owned(),
+        snapshot_root: root.to_string_lossy().into_owned(),
+    });
+    let source = scratch.0.join("project");
+    // Literal U+FFFD is a legal filename on macOS and a distinct JS string
+    // from the lone surrogate `"\ud800"`.
+    let replacement = scratch.0.join("project-\u{FFFD}");
+    let target_replacement = scratch.0.join("target-\u{FFFD}");
+    for directory in [&source, &replacement, &target_replacement] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    let projection = SnapshotProjection::new(
+        Some(provider),
+        TestResolver {
+            projects: vec![
+                (source.to_string_lossy().into_owned(), "w".into()),
+                (replacement.to_string_lossy().into_owned(), "fffd".into()),
+                (
+                    target_replacement.to_string_lossy().into_owned(),
+                    "fffd-target".into(),
+                ),
+            ],
+        },
+        source.to_string_lossy().into_owned(),
+    );
+
+    let replacement_text = replacement.to_string_lossy().into_owned();
+    // Same path with U+FFFD replaced by a lone surrogate: the lossy conversion
+    // is byte-identical to the registered U+FFFD project, which is exactly the
+    // cross-project alias this test forbids.
+    let surrogate_key = with_lone_surrogate(scratch.0.join("project-").to_string_lossy().as_ref());
+    assert_eq!(
+        String::from_utf16_lossy(surrogate_key.units()),
+        replacement_text,
+        "the lossy view of the surrogate key aliases the U+FFFD project"
+    );
+
+    // Negative control: the surrogate key must not alias the literal U+FFFD
+    // project (the old `from_utf16_lossy` compared both as U+FFFD), and the
+    // rejection text keeps the original units.
+    let mut list = JsObject::new();
+    list.insert("projectKey".into(), JsValue::String(surrogate_key.clone()));
+    let error = projection
+        .list(&JsValue::Object(list))
+        .expect_err("a surrogate projectKey is not the U+FFFD project");
+    assert_eq!(error.code(), Some("PROJECT_NOT_FOUND"));
+    assert_eq!(error.name(), "DialogGatewayError");
+    let mut expected = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
+    expected.extend(surrogate_key.units());
+    assert_eq!(error.message().units(), expected.as_slice());
+    assert_eq!(error.message().units().last(), Some(&0xD800));
+
+    // Positive control: the literal U+FFFD project resolves and lists only its
+    // own snapshot, so the two names remain distinct.
+    let mut list = JsObject::new();
+    list.insert("projectKey".into(), replacement_text.as_str().into());
+    let listed = projection
+        .list(&JsValue::Object(list))
+        .expect("the literal U+FFFD project resolves");
+    let rows = items(field(&listed, "items"));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(text(field(&rows[0], "snapshotId")), "replacement");
+    assert_eq!(text(field(&rows[0], "workspaceId")), "fffd");
+
+    // Negative control on restore's targetProjectKey: a surrogate target must
+    // be rejected before mkdtemp instead of creating a directory inside the
+    // U+FFFD target project.
+    let mut restore = JsObject::new();
+    restore.insert(
+        "projectKey".into(),
+        source.to_string_lossy().as_ref().into(),
+    );
+    restore.insert("snapshotId".into(), "id".into());
+    restore.insert(
+        "targetProjectKey".into(),
+        JsValue::String(with_lone_surrogate(
+            scratch.0.join("target-").to_string_lossy().as_ref(),
+        )),
+    );
+    let error = projection
+        .restore(&JsValue::Object(restore))
+        .expect_err("a surrogate targetProjectKey is not the U+FFFD target");
+    assert_eq!(error.code(), Some("PROJECT_NOT_FOUND"));
+    assert_eq!(error.message().units().last(), Some(&0xD800));
+    assert!(
+        restore_dirs(&target_replacement).is_empty(),
+        "no mkdtemp in the aliased target project"
+    );
+
+    // Positive control: the literal U+FFFD target restores normally.
+    let mut restore = JsObject::new();
+    restore.insert(
+        "projectKey".into(),
+        source.to_string_lossy().as_ref().into(),
+    );
+    restore.insert("snapshotId".into(), "id".into());
+    restore.insert(
+        "targetProjectKey".into(),
+        target_replacement.to_string_lossy().as_ref().into(),
+    );
+    projection
+        .restore(&JsValue::Object(restore))
+        .expect("the literal U+FFFD target restores");
+    assert_eq!(restore_dirs(&target_replacement).len(), 1);
+}
+
+fn with_lone_surrogate(base: &str) -> JsString {
+    let mut units = base.encode_utf16().collect::<Vec<_>>();
+    units.push(0xD800);
+    JsString::from_utf16(units)
 }
 
 #[test]

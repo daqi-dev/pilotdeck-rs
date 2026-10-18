@@ -169,9 +169,16 @@ pub enum WorkspaceSnapshotError {
     Invalid(String),
     /// Manifest JSON parse failure: V8 `SyntaxError` wording.
     Syntax(String),
-    /// Node-formatted filesystem diagnostics; the fallback for errnos
-    /// outside the measured libuv table is the Rust `io::Error` Display.
-    Io(String),
+    /// Node-formatted filesystem diagnostic. `code` is the measured libuv
+    /// errno code when [`crate::node_io::lookup`] recognized it; the fallback
+    /// for an errno outside that table is `None` with the Rust `io::Error`
+    /// Display in `message`. Gateway methods must admit `code` through
+    /// `node_io::lookup_for` before putting it on the wire; keeping the code
+    /// here avoids re-parsing the message prefix.
+    Io {
+        code: Option<&'static str>,
+        message: String,
+    },
     /// `Snapshot <id> was not found.` (workspaceSnapshot.ts:114).
     NotFound(String),
     /// workspaceSnapshot.ts:120.
@@ -201,9 +208,9 @@ impl fmt::Display for WorkspaceSnapshotError {
         match self {
             Self::Invalid(message)
             | Self::Syntax(message)
-            | Self::Io(message)
             | Self::NotFound(message)
-            | Self::HostRequired(message) => f.write_str(message),
+            | Self::HostRequired(message)
+            | Self::Io { message, .. } => f.write_str(message),
             // Display cannot carry a lone surrogate; callers that serialize an
             // error to JSON use `TypeError`'s raw `JsString` instead.
             Self::TypeError(message) => f.write_str(&String::from_utf16_lossy(message.units())),
@@ -374,9 +381,8 @@ impl WorkspaceSnapshotProvider {
         // Node path.resolve keeps NUL bytes; fs.validatePath rejects them at
         // the first syscall, so mkdir(destination) is where it surfaces.
         validate_nul_path(&JsString::from(destination.as_str()), "path")?;
-        fs::create_dir_all(&destination).map_err(|e| {
-            WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(Path::new(&destination))))
-        })?;
+        fs::create_dir_all(&destination)
+            .map_err(|e| io_error(&e, "mkdir", Some(Path::new(&destination))))?;
         for entry in &entries {
             // Property access on a null entry throws before the path checks.
             if matches!(entry, JsValue::Null) {
@@ -410,9 +416,7 @@ impl WorkspaceSnapshotProvider {
                 let parent = JsString::from_utf16(parent_units.to_vec());
                 validate_nul_path(&parent, "path")?;
                 let parent = PathBuf::from(String::from_utf16_lossy(parent.units()));
-                fs::create_dir_all(&parent).map_err(|e| {
-                    WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(&parent)))
-                })?;
+                fs::create_dir_all(&parent).map_err(|e| io_error(&e, "mkdir", Some(&parent)))?;
             }
             // workspaceSnapshot.ts:125/128 makes the type-specific field part of
             // the same guard: an entry whose entryType matches but whose
@@ -435,12 +439,7 @@ impl WorkspaceSnapshotProvider {
                 validate_nul_path(&output_units, "path")?;
                 let target = String::from_utf16_lossy(target.units());
                 symlink(&target, &output_path).map_err(|e| {
-                    WorkspaceSnapshotError::Io(two_path_message(
-                        &e,
-                        "symlink",
-                        Path::new(&target),
-                        Path::new(&output),
-                    ))
+                    two_path_message(&e, "symlink", Path::new(&target), Path::new(&output))
                 })?;
             } else if entry_type.as_string().is_some_and(|t| t.equals_str("file"))
                 && let Some(object_key) = field(entry, "objectKey").as_string()
@@ -451,21 +450,17 @@ impl WorkspaceSnapshotProvider {
                 let source = PathBuf::from(&source_text);
                 let contents = fs::read(&source).map_err(|error| {
                     crate::node_io::read_file(&error, &source_text)
-                        .map(|(_, message)| WorkspaceSnapshotError::Io(message))
-                        .unwrap_or_else(|| {
-                            WorkspaceSnapshotError::Io(io_error(
-                                &error,
-                                "open",
-                                Some(source.as_path()),
-                            ))
+                        .map(|(code, message)| WorkspaceSnapshotError::Io {
+                            code: Some(code),
+                            message,
                         })
+                        .unwrap_or_else(|| io_error(&error, "open", Some(source.as_path())))
                 })?;
                 // writeFile(output) validates after readFile has succeeded,
                 // exactly the order of the TS expression.
                 validate_nul_path(&output_units, "path")?;
-                fs::write(&output_path, contents).map_err(|e| {
-                    WorkspaceSnapshotError::Io(io_error(&e, "open", Some(Path::new(&output))))
-                })?;
+                fs::write(&output_path, contents)
+                    .map_err(|e| io_error(&e, "open", Some(Path::new(&output))))?;
             }
         }
         Ok(RestoredSnapshot {
@@ -520,10 +515,11 @@ fn walk_manifests(root: &Path, manifests: &mut Vec<(String, JsValue)>) -> Result
             let path_text = path.to_string_lossy().into_owned();
             let bytes = fs::read(&path).map_err(|error| {
                 crate::node_io::read_file(&error, &path_text)
-                    .map(|(_, message)| WorkspaceSnapshotError::Io(message))
-                    .unwrap_or_else(|| {
-                        WorkspaceSnapshotError::Io(io_error(&error, "open", Some(&path)))
+                    .map(|(code, message)| WorkspaceSnapshotError::Io {
+                        code: Some(code),
+                        message,
                     })
+                    .unwrap_or_else(|| io_error(&error, "open", Some(&path)))
             })?;
             let text = String::from_utf8_lossy(&bytes);
             let manifest = parse_json(&text).map_err(|error| {
@@ -768,7 +764,10 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
         // preempt them.
         let temporary_dir = paths.partition.join(format!(
             ".tmp-{}",
-            random_uuid().map_err(|e| WorkspaceSnapshotError::Io(e.to_string()))?
+            random_uuid().map_err(|e| WorkspaceSnapshotError::Io {
+                code: None,
+                message: e.to_string(),
+            })?
         ));
         let committed = commit(input, phase, &snapshot_id, &paths, &temporary_dir);
         match committed {
@@ -788,13 +787,11 @@ impl ContentAddressedWorkspaceSnapshotRecorder {
                 // This mkdir sits outside the TS catch: a NUL partition path
                 // rejects the capture promise instead of writing a marker.
                 validate_nul_path(&JsString::from(path_string(&paths.partition)), "path")?;
-                fs::create_dir_all(&paths.partition).map_err(|e| {
-                    WorkspaceSnapshotError::Io(io_error(&e, "mkdir", Some(&paths.partition)))
-                })?;
+                fs::create_dir_all(&paths.partition)
+                    .map_err(|e| io_error(&e, "mkdir", Some(&paths.partition)))?;
                 let marker = marker_json(input, phase, &snapshot_id, &message);
                 let text = stringify_pretty(&marker);
-                atomic_marker(&paths.failure_marker_path, &text)
-                    .map_err(WorkspaceSnapshotError::Io)?;
+                atomic_marker(&paths.failure_marker_path, &text)?;
                 Ok(WorkspaceSnapshotResult {
                     snapshot_id,
                     phase,
@@ -839,24 +836,25 @@ fn commit(
     ) {
         return Err(String::from_utf16_lossy(message.units()));
     }
-    fs::create_dir_all(temporary_dir).map_err(|e| io_error(&e, "mkdir", Some(temporary_dir)))?;
+    fs::create_dir_all(temporary_dir).map_err(|e| io_message(&e, "mkdir", Some(temporary_dir)))?;
     let workspace_dir = resolve(&input.workspace_dir).map_err(|e| e.to_string())?;
     let entries = scan_workspace(&workspace_dir, &paths.snapshot_root)?;
     let manifest = manifest_json(input, phase, snapshot_id, entries)?;
     let text = stringify_pretty(&manifest);
     let temporary_manifest = temporary_dir.join("manifest.json");
     fs::write(&temporary_manifest, text)
-        .map_err(|e| io_error(&e, "open", Some(temporary_manifest.as_path())))?;
+        .map_err(|e| io_message(&e, "open", Some(temporary_manifest.as_path())))?;
     fs::create_dir_all(&paths.partition)
-        .map_err(|e| io_error(&e, "mkdir", Some(&paths.partition)))?;
-    fs::rename(&temporary_manifest, &paths.manifest_path)
-        .map_err(|e| two_path_message(&e, "rename", &temporary_manifest, &paths.manifest_path))?;
-    atomic_marker(&paths.committed_path, "")?;
+        .map_err(|e| io_message(&e, "mkdir", Some(&paths.partition)))?;
+    fs::rename(&temporary_manifest, &paths.manifest_path).map_err(|e| {
+        two_path_message(&e, "rename", &temporary_manifest, &paths.manifest_path).to_string()
+    })?;
+    atomic_marker(&paths.committed_path, "").map_err(|error| error.to_string())?;
     // workspaceSnapshot.ts:258: rm(force) ignores a missing directory.
     match fs::remove_dir_all(temporary_dir) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(io_error(&e, "rm", Some(temporary_dir))),
+        Err(e) => return Err(io_message(&e, "rm", Some(temporary_dir))),
     }
     Ok(())
 }
@@ -901,7 +899,7 @@ fn scan_visit(
     inside: bool,
     entries: &mut Vec<JsValue>,
 ) -> std::result::Result<(), String> {
-    let listed = fs::read_dir(directory).map_err(|e| io_error(&e, "scandir", Some(directory)))?;
+    let listed = fs::read_dir(directory).map_err(|e| io_message(&e, "scandir", Some(directory)))?;
     let mut names: Vec<String> = listed
         .flatten()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
@@ -918,11 +916,11 @@ fn scan_visit(
             format!("{relative}/{name}")
         };
         let info = fs::symlink_metadata(&absolute)
-            .map_err(|e| io_error(&e, "lstat", Some(absolute.as_path())))?;
+            .map_err(|e| io_message(&e, "lstat", Some(absolute.as_path())))?;
         let kind = info.file_type();
         if kind.is_symlink() {
             let target = fs::read_link(&absolute)
-                .map_err(|e| io_error(&e, "readlink", Some(absolute.as_path())))?;
+                .map_err(|e| io_message(&e, "readlink", Some(absolute.as_path())))?;
             let mut entry = JsObject::new();
             entry.insert("path".into(), path.as_str().into());
             entry.insert("entryType".into(), "symlink".into());
@@ -962,25 +960,25 @@ struct StoredObject {
 fn store_file(source: &Path, snapshot_root: &Path) -> std::result::Result<StoredObject, String> {
     let object_root = snapshot_root.join("objects").join("sha256");
     fs::create_dir_all(&object_root)
-        .map_err(|e| io_error(&e, "mkdir", Some(object_root.as_path())))?;
+        .map_err(|e| io_message(&e, "mkdir", Some(object_root.as_path())))?;
     let temporary = object_root.join(format!(
         ".tmp-{}",
         random_uuid().map_err(|e| e.to_string())?
     ));
     let attempt = || -> std::result::Result<StoredObject, String> {
-        let mut input = File::open(source).map_err(|e| io_error(&e, "open", Some(source)))?;
+        let mut input = File::open(source).map_err(|e| io_message(&e, "open", Some(source)))?;
         let mut output = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary)
-            .map_err(|e| io_error(&e, "open", Some(temporary.as_path())))?;
+            .map_err(|e| io_message(&e, "open", Some(temporary.as_path())))?;
         let mut hasher = Sha256::new();
         let mut size: u64 = 0;
         let mut buffer = vec![0u8; 64 * 1024];
         loop {
             let read = input
                 .read(&mut buffer)
-                .map_err(|e| io_error(&e, "read", None))?;
+                .map_err(|e| io_message(&e, "read", None))?;
             if read == 0 {
                 break;
             }
@@ -988,17 +986,17 @@ fn store_file(source: &Path, snapshot_root: &Path) -> std::result::Result<Stored
             size += read as u64;
             output
                 .write_all(&buffer[..read])
-                .map_err(|e| io_error(&e, "write", None))?;
+                .map_err(|e| io_message(&e, "write", None))?;
         }
         let digest = hex_lower(&hasher.finalize());
         let object_key = format!("objects/sha256/{}/{}/{digest}", &digest[..2], &digest[2..4]);
         let object_path = snapshot_root.join(&object_key);
         if let Some(parent) = object_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| io_error(&e, "mkdir", Some(parent)))?;
+            fs::create_dir_all(parent).map_err(|e| io_message(&e, "mkdir", Some(parent)))?;
         }
         if exists(&object_path) {
             fs::remove_file(&temporary)
-                .map_err(|e| io_error(&e, "unlink", Some(temporary.as_path())))?;
+                .map_err(|e| io_message(&e, "unlink", Some(temporary.as_path())))?;
             return Ok(StoredObject {
                 digest,
                 size: size as f64,
@@ -1011,7 +1009,9 @@ fn store_file(source: &Path, snapshot_root: &Path) -> std::result::Result<Stored
             // object the winner already wrote.
             Err(error) => {
                 if !exists(&object_path) {
-                    return Err(two_path_message(&error, "rename", &temporary, &object_path));
+                    return Err(
+                        two_path_message(&error, "rename", &temporary, &object_path).to_string()
+                    );
                 }
                 let _ = fs::remove_file(&temporary);
             }
@@ -1091,14 +1091,17 @@ fn marker_json(
 
 /// workspaceSnapshot.ts:360-364. The message names the failing stage; uuid
 /// randomness never fails in TS.
-fn atomic_marker(path: &Path, content: &str) -> std::result::Result<(), String> {
+fn atomic_marker(path: &Path, content: &str) -> Result<()> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let temporary = path.with_file_name(format!(
         "{name}.tmp-{}",
-        random_uuid().map_err(|e| e.to_string())?
+        random_uuid().map_err(|e| WorkspaceSnapshotError::Io {
+            code: None,
+            message: e.to_string(),
+        })?
     ));
     fs::write(&temporary, content).map_err(|e| io_error(&e, "open", Some(temporary.as_path())))?;
     fs::rename(&temporary, path).map_err(|e| two_path_message(&e, "rename", &temporary, path))?;
@@ -1183,7 +1186,7 @@ fn resolve(value: &str) -> Result<String> {
         "/".to_owned()
     } else {
         std::env::current_dir()
-            .map_err(|e| WorkspaceSnapshotError::Io(io_error(&e, "uv_cwd", None)))?
+            .map_err(|e| io_error(&e, "uv_cwd", None))?
             .to_string_lossy()
             .into_owned()
     };
@@ -1278,27 +1281,53 @@ fn utf16_cmp(left: &str, right: &str) -> std::cmp::Ordering {
 }
 
 /// Node-formatted IO diagnostic from the measured libuv table, with the Rust
-/// Display as the documented fallback for unmeasured errnos.
-fn io_error(error: &io::Error, syscall: &str, path: Option<&Path>) -> String {
+/// Display as the documented fallback for unmeasured errnos. The measured code
+/// travels alongside the message so gateway method admission never has to parse
+/// the text prefix again.
+fn io_error(error: &io::Error, syscall: &str, path: Option<&Path>) -> WorkspaceSnapshotError {
     let text = path.map(|path| path.to_string_lossy().into_owned());
-    crate::node_io::diagnostic(error, syscall, text.as_deref())
-        .map(|(_, message)| message)
-        .unwrap_or_else(|| error.to_string())
+    match crate::node_io::diagnostic(error, syscall, text.as_deref()) {
+        Some((code, message)) => WorkspaceSnapshotError::Io {
+            code: Some(code),
+            message,
+        },
+        None => WorkspaceSnapshotError::Io {
+            code: None,
+            message: error.to_string(),
+        },
+    }
+}
+
+/// Capture-path helper: the failure marker stores only the message, so the
+/// structured code is not needed there.
+fn io_message(error: &io::Error, syscall: &str, path: Option<&Path>) -> String {
+    io_error(error, syscall, path).to_string()
 }
 
 /// Node two-path syscall message (`rename 'a' -> 'b'`, `symlink 'a' -> 'b'`).
-fn two_path_message(error: &io::Error, syscall: &str, from: &Path, to: &Path) -> String {
+fn two_path_message(
+    error: &io::Error,
+    syscall: &str,
+    from: &Path,
+    to: &Path,
+) -> WorkspaceSnapshotError {
     match crate::node_io::lookup(error) {
-        Some((code, description)) => format!(
-            "{code}: {description}, {syscall} '{}' -> '{}'",
-            from.display(),
-            to.display()
-        ),
-        None => format!(
-            "{error}: {syscall} '{}' -> '{}'",
-            from.display(),
-            to.display()
-        ),
+        Some((code, description)) => WorkspaceSnapshotError::Io {
+            code: Some(code),
+            message: format!(
+                "{code}: {description}, {syscall} '{}' -> '{}'",
+                from.display(),
+                to.display()
+            ),
+        },
+        None => WorkspaceSnapshotError::Io {
+            code: None,
+            message: format!(
+                "{error}: {syscall} '{}' -> '{}'",
+                from.display(),
+                to.display()
+            ),
+        },
     }
 }
 
