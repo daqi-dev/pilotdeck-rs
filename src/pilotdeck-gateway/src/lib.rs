@@ -12,6 +12,7 @@ mod node_io;
 mod pairing;
 mod project_files;
 mod session_model;
+pub mod skills;
 pub mod storage;
 #[cfg(test)]
 mod test_process;
