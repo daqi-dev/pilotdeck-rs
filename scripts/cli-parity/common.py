@@ -46,6 +46,38 @@ def digest(path):
     return h.hexdigest()
 
 
+@contextmanager
+def open_plain(path):
+    """Pin a plain evidence file before reading; never follow a swapped leaf."""
+    if path.absolute() != path.resolve():
+        raise ValueError(f'evidence path contains symlink or traversal: {path}')
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise ValueError(f'not a plain, single-link evidence file: {path}')
+    # NONBLOCK also prevents a FIFO swapped in before open from hanging the
+    # verifier; the descriptor type is checked before any bytes are read.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        current = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino)):
+            raise ValueError(f'evidence file changed before open: {path}')
+        yield stream
+
+
+def digest_plain(path):
+    h = hashlib.sha256()
+    with open_plain(path) as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def read_plain(path):
+    with open_plain(path) as stream:
+        return stream.read()
+
+
 def hashes():
     paths = [p for p in SCRIPT.iterdir() if p.is_file() and p.suffix in ('.py', '.mjs', '.c', '.txt', '.md', '.json')]
     paths += list((ROOT / 'specs/cli-parity').glob('*.md'))
@@ -81,7 +113,7 @@ def fixture(path):
 
 
 def snapshot(root):
-    """lstat only; neither follow symlinks nor open special files."""
+    """Inventory links without following them; hash regular files through a pinned fd."""
     if root.is_symlink() or not root.is_dir():
         raise ValueError('runtime root missing or symlink')
     result = {'.': {'type': 'directory', 'mode': stat.S_IMODE(root.stat().st_mode)}}
@@ -100,12 +132,23 @@ def snapshot(root):
             elif stat.S_ISREG(info.st_mode):
                 if info.st_nlink != 1:
                     raise ValueError(f'hardlink: {path.relative_to(root)}')
-                row.update(type='file', size=info.st_size, sha256=digest(path))
+                row.update(type='file', size=info.st_size, sha256=digest_plain(path))
             else:
                 raise ValueError(f'special node: {path.relative_to(root)}')
             result[path.relative_to(root).as_posix()] = row
     visit(root)
     return dict(sorted(result.items()))
+
+
+def staged_skills_identity(folder):
+    """The staged copy is self-contained: no links or external dependencies."""
+    if folder.absolute() != folder.resolve():
+        raise ValueError(f'staged skills path contains symlink or traversal: {folder}')
+    manifest = snapshot(folder)
+    if any(row['type'] == 'symlink' for row in manifest.values()):
+        raise ValueError(f'staged skills contains a symlink: {folder}')
+    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return {'path': str(folder), 'sha256': digest}
 
 
 def initial_tree():

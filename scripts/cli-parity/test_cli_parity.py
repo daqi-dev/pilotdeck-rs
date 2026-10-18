@@ -17,7 +17,7 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (LIVE_GROUPS, Blocked, CleanupBlocked, HEAD, OPENSSL_CONFIG, SCRIPT, SCENARIOS, baseline_path, environment, env_summary, fixture,
-                    hashes, initial_tree, output_path, parity_lock, save, snapshot)
+                    digest_plain, read_plain, hashes, initial_tree, output_path, parity_lock, save, snapshot, staged_skills_identity)
 from compare import coalesce, compare, comparison_view, PROBE_CHECKS
 from controls import run_controls
 from run_round import baseline_identity, capture, check_budget, main, rust_isolation, sandbox_profile, stage_rust
@@ -50,6 +50,10 @@ def as_rust(path):
     run['side'] = 'rust'
     run['provenance'].update(expected)
     run['provenance']['stagedExecutable'] = {'path': staged, 'sha256': expected['executable']['sha256']}
+    skills = Path(staged).parent.parent / 'skills'
+    (skills / 'docx').mkdir(parents=True, exist_ok=True)
+    (skills / 'docx/SKILL.md').write_text('synthetic skill\n')
+    run['provenance']['stagedSkills'] = staged_skills_identity(skills)
     run['isolation']['nodeExec'] = {'denied': True, 'status': 'DONE', 'timedOut': False, 'exitCode': 71, 'stdoutHex': '',
         'stderrHex': b'sandbox-exec: execvp(): Operation not permitted'.hex(),
         'audit': {'allStopped': True, 'remaining': [], 'errors': []}}
@@ -384,6 +388,141 @@ class ContractTests(unittest.TestCase):
                     staged.symlink_to(elsewhere)  # Same bytes behind a link still fail.
                 rules = [r['rule'] for r in compare(source, target, expected)['failures']]
                 self.assertIn('round.rust-stage-bytes', rules)
+
+    def test_plain_fd_reads_reject_leaf_replacement_and_hardlinks(self):
+        target = self.root / 'target'
+        other = self.root / 'other'
+        other.write_bytes(b'same bytes')
+        real_open = os.open
+        for reader in (digest_plain, read_plain):
+            for mutation in ('symlink', 'regular', 'hardlink', 'added-link', 'fifo'):
+                with self.subTest(reader=reader.__name__, mutation=mutation):
+                    target.unlink(missing_ok=True)
+                    target.write_bytes(b'same bytes')
+                    saved = self.root / 'saved'
+                    saved.unlink(missing_ok=True)
+                    def swap(path, flags, *args, **kwargs):
+                        self.assertEqual(Path(path), target)
+                        # Keep the old inode alive so the replacement cannot
+                        # accidentally reuse it on filesystems with fast reuse.
+                        if mutation == 'added-link':
+                            os.link(target, saved)
+                            return real_open(path, flags, *args, **kwargs)
+                        target.rename(saved)
+                        if mutation == 'symlink':
+                            target.symlink_to(other)
+                        elif mutation == 'regular':
+                            target.write_bytes(b'same bytes')
+                        elif mutation == 'hardlink':
+                            os.link(other, target)
+                        else:
+                            os.mkfifo(target)
+                        return real_open(path, flags, *args, **kwargs)
+                    with patch('common.os.open', side_effect=swap) as opened:
+                        with self.assertRaises((OSError, ValueError)):
+                            reader(target)
+                        self.assertEqual(opened.call_count, 1)
+        target.unlink()
+        target.write_bytes(b'plain file')
+        self.assertEqual(read_plain(target), b'plain file')
+        self.assertEqual(digest_plain(target), hashlib.sha256(b'plain file').hexdigest())
+
+    def test_snapshot_rejects_symlink_swapped_between_lstat_and_open(self):
+        tree = self.root / 'tree'
+        tree.mkdir()
+        target = tree / 'file'
+        target.write_bytes(b'identical')
+        elsewhere = self.root / 'elsewhere'
+        elsewhere.write_bytes(b'identical')
+        real_open = os.open
+        def swap(path, flags, *args, **kwargs):
+            if Path(path) == target:
+                target.unlink()
+                target.symlink_to(elsewhere)
+            return real_open(path, flags, *args, **kwargs)
+        with patch('common.os.open', side_effect=swap) as opened:
+            with self.assertRaises((OSError, ValueError)):
+                snapshot(tree)
+            self.assertEqual(opened.call_count, 1)
+
+    def test_compare_rejects_symlink_swapped_during_each_evidence_read(self):
+        source = self.source()
+        target = self.root / 'rust'
+        shutil.copytree(source, target)
+        expected = as_rust(target)
+        case = target / 'cases/help-long'
+        paths = [target / 'round.json', self.root / 'rust-stage/bin/pilotdeck']
+        paths += [case / name for name in ('record.json', 'stdout.bin', 'stderr.bin',
+                                           'events.json', 'initial.json', 'final.json')]
+        paths += [self.root / 'rust-stage/skills/docx/SKILL.md']
+        real_open = os.open
+        for victim in paths:
+            with self.subTest(victim=victim):
+                original = victim.read_bytes()
+                elsewhere = self.root / 'same-bytes'
+                elsewhere.write_bytes(original)
+                swapped = False
+                def swap(path, flags, *args, **kwargs):
+                    nonlocal swapped
+                    if Path(path) == victim and not swapped:
+                        victim.unlink()
+                        victim.symlink_to(elsewhere)
+                        swapped = True
+                    return real_open(path, flags, *args, **kwargs)
+                with patch('common.os.open', side_effect=swap):
+                    result = compare(source, target, expected)
+                self.assertTrue(swapped)
+                self.assertEqual(result['status'], 'FAIL', result)
+                victim.unlink()
+                victim.write_bytes(original)
+
+    def test_offline_compare_revalidates_staged_skills_manifest_and_disk(self):
+        source = self.source()
+        target = self.root / 'rust'
+        shutil.copytree(source, target)
+        expected = as_rust(target)
+        manifest = target / 'round.json'
+        original = json.loads(manifest.read_text())
+        skills = self.root / 'rust-stage/skills'
+        pristine = self.root / 'pristine-skills'
+        shutil.copytree(skills, pristine)
+        self.assertEqual(compare(source, target, expected)['status'], 'PASS')
+        for mutation in ('content', 'addition', 'missing-file', 'mode', 'hardlink', 'symlink',
+                         'missing-root', 'root-symlink', 'missing-provenance', 'wrong-path', 'wrong-sha'):
+            with self.subTest(mutation=mutation):
+                if skills.is_symlink():
+                    skills.unlink()
+                elif skills.exists():
+                    shutil.rmtree(skills)
+                shutil.copytree(pristine, skills)
+                run = json.loads(json.dumps(original))
+                skill = skills / 'docx/SKILL.md'
+                if mutation == 'content':
+                    skill.write_text('changed skill')
+                elif mutation == 'addition':
+                    (skills / '.hidden').write_text('extra')
+                elif mutation == 'missing-file':
+                    skill.unlink()
+                elif mutation == 'mode':
+                    skill.chmod(0o700)
+                elif mutation == 'hardlink':
+                    os.link(skill, skills / 'linked')
+                elif mutation == 'symlink':
+                    skill.unlink()
+                    skill.symlink_to(pristine / 'docx/SKILL.md')
+                elif mutation in ('missing-root', 'root-symlink'):
+                    shutil.rmtree(skills)
+                    if mutation == 'root-symlink':
+                        skills.symlink_to(pristine, target_is_directory=True)
+                elif mutation == 'missing-provenance':
+                    del run['provenance']['stagedSkills']
+                elif mutation == 'wrong-path':
+                    run['provenance']['stagedSkills']['path'] = str(pristine)
+                else:
+                    run['provenance']['stagedSkills']['sha256'] = 'f' * 64
+                save(manifest, run)
+                rules = [r['rule'] for r in compare(source, target, expected)['failures']]
+                self.assertIn('round.rust-stage-skills-bytes', rules)
 
     def test_pending_oracle_cannot_pass(self):
         import compare as compare_module

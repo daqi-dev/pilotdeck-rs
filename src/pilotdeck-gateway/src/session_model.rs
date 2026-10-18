@@ -230,7 +230,7 @@ fn execute<F: Files>(
             ("speed", field(&saved, "speed").clone()),
         ])
     } else {
-        let c = config::load_project(metadata, env, Some(&project))?;
+        let c = config::load_project_with_files(metadata, env, Some(&project))?;
         object([
             ("provider", JsValue::String(c.selection.0)),
             ("model", JsValue::String(c.selection.1)),

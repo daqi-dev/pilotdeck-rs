@@ -208,7 +208,7 @@ fn verify_diagnostics(source: &str) {
         let project = field(field(&request, "params"), "projectKey")
             .as_string()
             .map(|s| String::from_utf16_lossy(s.units()));
-        let loaded = config::load_project(&m, &env(row), project.as_deref());
+        let loaded = config::load_project_with_files(&m, &env(row), project.as_deref());
         let expected_calls: Vec<i32> = row["process"]["loadKillCalls"]
             .as_array()
             .unwrap()
@@ -327,10 +327,14 @@ fn unknown_errno_forwards_entire_session_and_catalog_requests_at_every_fs_bounda
                 );
                 if target != "transcript" {
                     assert!(
-                        config::load_project(&m, &env(row), Some(m.home.to_str().unwrap()))
-                            .err()
-                            .unwrap()
-                            .requires_host,
+                        config::load_project_with_files(
+                            &m,
+                            &env(row),
+                            Some(m.home.to_str().unwrap())
+                        )
+                        .err()
+                        .unwrap()
+                        .requires_host,
                         "{target} stat={stat}"
                     );
                 }

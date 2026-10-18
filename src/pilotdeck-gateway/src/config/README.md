@@ -27,7 +27,10 @@ credential env 保持各 provider 的解析与可用性判断。
 返回类型是 catalog 所需投影与完整诊断，不是可供执行器使用的完整配置快照。
 没有增加配置写入、热加载或版本/hash API。
 
-`load_project(metadata, env, Some(projectRoot))` 为 `session_model_get` 补齐
+公共 `load_project(pilot_home, cwd, env, project)` 接收显式路径与环境，供 CLI
+复用同一加载器；不会从进程环境推导 PilotHome，也不会启动宿主回退。
+`Error.requires_host` 由 CLI 映射为未实现分支，StaffDeck 绑定也保留 CLI 的 Todo。
+内部 `load_project_with_files(metadata, env, Some(projectRoot))` 为 `session_model_get` 补齐
 项目路径：读取 `<projectRoot>/.pilotdeck/pilotdeck.yaml`，以默认→项目→env
 顺序合并，再执行 `binding.rs` 的只读 `applyProjectBinding` 转换。
 有效 binding 注入知识模块和 SOP runtime；pending/failed、连接 identity 不符、
