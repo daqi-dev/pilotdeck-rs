@@ -135,11 +135,16 @@ fn limits() -> Limits {
 struct Receipt(std::path::PathBuf);
 impl Receipt {
     fn assert_pass(&self, mode: &str) {
-        assert_eq!(
-            std::fs::read_to_string(&self.0).unwrap(),
-            format!("PASS {mode}\n"),
-            "peer protocol assertions did not finish"
-        );
+        // The peer writes this after the host closes its stdin, so it may still be
+        // in flight when the result arrives (#230); wait briefly before judging.
+        let expected = format!("PASS {mode}\n");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut text = std::fs::read_to_string(&self.0).unwrap_or_default();
+        while text != expected && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+            text = std::fs::read_to_string(&self.0).unwrap_or_default();
+        }
+        assert_eq!(text, expected, "peer protocol assertions did not finish");
     }
 }
 impl Drop for Receipt {

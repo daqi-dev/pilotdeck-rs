@@ -302,9 +302,10 @@ async fn rejected_resume_or_replacement_handshake_observes_failure_exactly_once(
             Limits {
                 // The timeout mode never answers; the others must not lose to a
                 // loaded host's scheduling (#230).
-                // Must stay below limits().execution_timeout (2s), or that fires first.
+                // Must stay well below execution_timeout, or that fires first.
                 handshake_timeout: Duration::from_secs(1),
                 close_timeout: Duration::from_millis(500),
+                execution_timeout: Duration::from_secs(10),
                 ..limits()
             },
         )
