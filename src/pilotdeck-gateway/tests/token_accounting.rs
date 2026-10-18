@@ -188,15 +188,15 @@ async fn replay(http: bool) {
         panic!("cases")
     };
     // Exact population is deliberately fixed: truncation cannot pass a replay.
-    assert_eq!(cases.len(), 52);
+    assert_eq!(cases.len(), 53);
     assert_eq!(
         cases
             .iter()
             .map(|case| case["steps"].as_array().unwrap().len())
             .collect::<Vec<_>>(),
         [
-            6, 51, 141, 18, 2, 7, 3, 1, 1, 1, 1, 2, 6, 7, 2, 8, 3, 3, 3, 3, 3, 3, 7, 2, 8, 3, 3, 3,
-            3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+            6, 51, 141, 18, 2, 7, 3, 1, 2, 2, 2, 2, 11, 7, 2, 8, 3, 3, 3, 3, 3, 3, 7, 2, 8, 3, 3,
+            3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 4
         ]
     );
     let mut steps = 0;
@@ -282,7 +282,7 @@ async fn replay(http: bool) {
             );
         }
     }
-    assert_eq!(steps, 349);
+    assert_eq!(steps, 361);
 }
 #[tokio::test]
 async fn real_ts_accounting_and_provider_projection() {
@@ -529,6 +529,49 @@ async fn disabled_provider_ignores_deep_cache_only_fields() {
     // the native worker stack. V8's precise cutoff depends on its call stack.
     let error = runtime
         .evaluate_request_budget(request, options(&json!({"maxContextTokens":100})))
+        .await
+        .unwrap_err();
+    assert_eq!(error.message, "Maximum call stack size exceeded");
+}
+
+fn request_with_deep_schema(depth: usize) -> JsObject {
+    let deep = format!(
+        "{{\"name\":\"x\",\"schema\":{}{}{}}}",
+        "{\"a\":".repeat(depth),
+        "{\"leaf\":true}",
+        "}".repeat(depth)
+    );
+    let mut request = request();
+    request.insert("outputSchema".into(), parse_json(&deep).unwrap());
+    request
+}
+
+#[tokio::test]
+async fn cache_key_depth_matches_measured_v8_sort_boundary() {
+    // Real TS (Node v22.22.0) through the public evaluator with the default
+    // cacheSize: V8's recursive `sortValue` cache key succeeded at schema
+    // depth 1890 (transform depth 1892) and threw "Maximum call stack size
+    // exceeded" at schema depth 1895 (transform depth 1897), 5/5 runs each.
+    // The project's V8 resource rule keeps the guaranteed-success side exact
+    // and returns the same failure once past the measured failure point;
+    // 1801..=1897 is the accepted undecidable band. CACHE_KEY_MAX_DEPTH
+    // (transform depth 1800) is the conservative lower bound, so schema depth
+    // 1700 must still succeed locally while 1900 is already past V8's
+    // measured failure point and must fail.
+    let runtime = TokenAccountingRuntime::default();
+    let snapshot = runtime
+        .evaluate_request_budget(
+            request_with_deep_schema(1700),
+            options(&json!({"maxContextTokens":100})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(json_value(&snapshot)["source"], "local");
+    let error = runtime
+        .evaluate_request_budget(
+            request_with_deep_schema(1900),
+            options(&json!({"maxContextTokens":100})),
+        )
         .await
         .unwrap_err();
     assert_eq!(error.message, "Maximum call stack size exceeded");

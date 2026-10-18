@@ -69,7 +69,7 @@ const rich = { ...baseRequest, messages: [{ role: 'assistant', content: allBlock
 add('anthropic-content', [step(baseRequest), step(rich), ...['auto', 'none', 'required'].map(toolChoice => step({ ...baseRequest, toolChoice })), ...[true, false].map(strict => step({ ...rich, outputSchema: { name: 'answer', schema: { type: 'object' }, strict } }))], providerConfig);
 add('anthropic-cache-markers', [step({ ...rich, messages: [0, 1, 2, 3].map(n => ({ role: 'user', content: n === 3 ? [{ type: 'thinking', text: 'only thinking' }] : [{ type: 'text', text: `msg${n}` }, { type: 'thinking', text: 'last' }] })), cachePlan: { tools: true, system: true, messages: [0, 1, 2, 3] } }), step({ ...rich, cacheBreakpoints: [0] }), step({ ...rich, cachePlan: {}, cacheBreakpoints: [0] })], providerConfig);
 add('headers-and-path', [step()], { providers: { p: { ...provider, url: '$MOCK/v1/', headers: { 'x-api-key': 'overridden', 'anthropic-version': 'fixture-version', 'x-fixture': 'yes', 'content-type': 'application/custom' } } } });
-for (const protocol of ['openai', 'google', 'openai-responses']) add(`unsupported-${protocol}`, [step()], { providers: { p: { ...provider, protocol } } });
+for (const protocol of ['openai', 'google', 'openai-responses']) add(`unsupported-${protocol}`, [step(), step({ ...baseRequest, model: 'toString' })], { providers: { p: { ...provider, protocol } } });
 add('unknown-provider-model', [step({ ...baseRequest, provider: 'unknown' }), step({ ...baseRequest, model: 'unknown' })], providerConfig);
 // The baseline indexes the plain provider/model records, so inherited
 // `Object.prototype` members are truthy finds rather than misses. Keep the
@@ -78,6 +78,11 @@ add('unknown-provider-model', [step({ ...baseRequest, provider: 'unknown' }), st
 add('prototype-lookup', [
   ...['__proto__', 'constructor', 'toString'].map(key => step({ ...baseRequest, provider: key })),
   ...['__proto__', 'constructor', 'toString'].map(key => step({ ...baseRequest, model: key })),
+  // `speed` is read as `model.capabilities.supportsSpeed` after max_tokens.
+  ...['__proto__', 'constructor', 'toString'].map(key => step({ ...baseRequest, model: key, maxOutputTokens: 10, speed: 'fast' })),
+  // `request.tools?.map` is evaluated before max_tokens/speed.
+  step({ ...baseRequest, model: 'toString', tools: 'x' }),
+  step({ ...baseRequest, model: 'toString', maxOutputTokens: 10, speed: 'fast', tools: 'x' }),
 ], providerConfig);
 for (const protocol of ['anthropic', 'openai-responses']) {
   const p = { ...provider, protocol, url: protocol === 'anthropic' ? '$MOCK' : 'https://api.openai.com/v1/' };
@@ -112,6 +117,12 @@ for (const protocol of ['anthropic', 'openai-responses']) {
         models: { m: { ...model, thinking: { state: 'enabled', format: 'provider', efforts } } } } } });
   }
 }
+add('prototype-responses', [
+  step({ ...baseRequest, model: 'toString' }),
+  step({ ...baseRequest, model: 'toString', maxOutputTokens: 10, speed: 'fast' }),
+  step({ ...baseRequest, model: 'toString', maxOutputTokens: 10, speed: 'fast', tools: 'x' }),
+  step({ ...baseRequest, tools: 'x' }),
+], { providers: { p: { ...provider, protocol: 'openai-responses', url: 'https://api.openai.com/v1' } } });
 const cases: any[] = [];
 try {
   for (const sequence of sequences) {

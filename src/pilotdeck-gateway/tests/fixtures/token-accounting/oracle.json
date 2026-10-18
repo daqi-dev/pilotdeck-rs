@@ -13718,6 +13718,56 @@
           },
           "requests": [],
           "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0
+            }
+          },
+          "requests": [],
+          "urls": []
         }
       ]
     },
@@ -13794,6 +13844,56 @@
           },
           "requests": [],
           "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0
+            }
+          },
+          "requests": [],
+          "urls": []
         }
       ]
     },
@@ -13825,6 +13925,56 @@
           "request": {
             "provider": "p",
             "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
             "messages": [
               {
                 "role": "user",
@@ -14324,6 +14474,271 @@
               "exact": false,
               "reservedOutputTokens": 0,
               "estimatorError": "Cannot read properties of undefined (reading 'maxOutputTokens')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "__proto__",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 10,
+            "speed": "fast"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'supportsSpeed')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "constructor",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 10,
+            "speed": "fast"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'supportsSpeed')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 10,
+            "speed": "fast"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'supportsSpeed')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "tools": "x"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 7,
+              "localEstimateTokens": 7,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 7,
+                "system": 0,
+                "tools": 1,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.07,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "request.tools?.map is not a function"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 10,
+            "speed": "fast",
+            "tools": "x"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 7,
+              "localEstimateTokens": 7,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 7,
+                "system": 0,
+                "tools": 1,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.07,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "request.tools?.map is not a function"
             }
           },
           "requests": [],
@@ -25239,6 +25654,242 @@
               "exact": false,
               "reservedOutputTokens": 0,
               "estimatorError": "settings?.efforts.includes is not a function"
+            }
+          },
+          "requests": [],
+          "urls": []
+        }
+      ]
+    },
+    {
+      "name": "prototype-responses",
+      "config": {
+        "providers": {
+          "p": {
+            "id": "p",
+            "protocol": "openai-responses",
+            "url": "https://api.openai.com/v1",
+            "apiKey": " fixture-key ",
+            "headers": {},
+            "models": {
+              "m": {
+                "id": "claude-sonnet-4-6",
+                "capabilities": {
+                  "maxOutputTokens": 4096,
+                  "contextWindow": 200000
+                }
+              }
+            }
+          }
+        }
+      },
+      "settings": {},
+      "steps": [
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'maxOutputTokens')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 10,
+            "speed": "fast"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 6,
+              "localEstimateTokens": 6,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 6,
+                "system": 0,
+                "tools": 0,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.06,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "Cannot read properties of undefined (reading 'supportsSpeed')"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "toString",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "maxOutputTokens": 10,
+            "speed": "fast",
+            "tools": "x"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 7,
+              "localEstimateTokens": 7,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 7,
+                "system": 0,
+                "tools": 1,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.07,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "request.tools?.map is not a function"
+            }
+          },
+          "requests": [],
+          "urls": []
+        },
+        {
+          "request": {
+            "provider": "p",
+            "model": "m",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Hello 世界"
+                  }
+                ]
+              }
+            ],
+            "tools": "x"
+          },
+          "options": {
+            "maxContextTokens": 100
+          },
+          "result": {
+            "ok": true,
+            "snapshot": {
+              "tokens": 7,
+              "localEstimateTokens": 7,
+              "estimateSource": "estimator",
+              "breakdown": {
+                "source": "local_estimate",
+                "total": 7,
+                "system": 0,
+                "tools": 1,
+                "messages": 6,
+                "mcp": 0,
+                "memory": 0
+              },
+              "totalContextTokens": 100,
+              "maxContextTokens": 100,
+              "effectiveContextTokens": 100,
+              "maxOutputTokens": 0,
+              "warningRatio": 0.8,
+              "blockingRatio": 0.9,
+              "state": "ok",
+              "ratio": 0.07,
+              "source": "local",
+              "exact": false,
+              "reservedOutputTokens": 0,
+              "estimatorError": "request.tools?.map is not a function"
             }
           },
           "requests": [],

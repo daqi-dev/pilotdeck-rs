@@ -2,9 +2,32 @@
 use crate::host::{HostError, ModuleError};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
+/// Conservative lower bound of the depth where V8's recursive `sortValue`
+/// (the baseline cache key) always succeeds. Measured on Node v22.22.0 with
+/// the same projected cache-key object: transform depth 1892 (schema depth
+/// 1890) succeeded and transform depth 1897 (schema depth 1895) failed 5/5
+/// times. 1800 keeps the guaranteed-success side exact, fails identically
+/// above the measured failure point, and treats 1801..=1897 as the accepted
+/// undecidable band.
+pub(super) const CACHE_KEY_MAX_DEPTH: usize = 1800;
+
 pub(super) fn transform(
     value: &JsValue,
     sort_keys: bool,
+    finish_object: fn(JsObject) -> JsObject,
+) -> Result<JsValue, HostError> {
+    transform_with_limit(
+        value,
+        sort_keys,
+        crate::js_value::MAX_ARRAY_DEPTH,
+        finish_object,
+    )
+}
+
+pub(super) fn transform_with_limit(
+    value: &JsValue,
+    sort_keys: bool,
+    max_depth: usize,
     finish_object: fn(JsObject) -> JsObject,
 ) -> Result<JsValue, HostError> {
     enum Frame<'a> {
@@ -17,7 +40,7 @@ pub(super) fn transform(
     while let Some(frame) = frames.pop() {
         match frame {
             Frame::Visit(value, depth) => {
-                if depth > crate::js_value::MAX_ARRAY_DEPTH {
+                if depth > max_depth {
                     return Err(ModuleError::new(crate::js_value::StackOverflow::MESSAGE).into());
                 }
                 match value {
