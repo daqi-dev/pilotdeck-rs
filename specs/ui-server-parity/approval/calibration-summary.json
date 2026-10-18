@@ -1,8 +1,8 @@
 {
   "verdict": "PENDING_REVIEW",
   "error": null,
-  "batch": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb",
-  "utc_day": "2026-10-14",
+  "batch": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c",
+  "utc_day": "2026-10-18",
   "ts_pairs_pass": 10,
   "ts_pairs_expected": 10,
   "proxy": "PASS",
@@ -37,19 +37,19 @@
   "all_26_clocks_pass": true,
   "independent_review": null,
   "frozen": false,
-  "head": "eb2f2c7fd2595339fe02eda0e74c9632ca7c0f6d",
+  "head": "ce7714962a7f2fb191ec69eff533deae4272e650",
   "build": {
-    "target_dir": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-target",
-    "binary": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-target/debug/pdrs-exp008-proxy",
-    "cargo_home": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/cargo-home",
+    "target_dir": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target",
+    "binary": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-target/debug/pdrs-exp008-proxy",
+    "cargo_home": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/cargo-home",
     "toolchain": {
       "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1",
       "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
     },
-    "sha256": "fe2fff6434dcdccf8c8f675f5b02ce1b48378f52c028b4a4fe3626f8bb7345ed"
+    "sha256": "ddf42642a1ccb52cd7a4684ec5fc75be358f7f987328813a6d3debde848b7a6c"
   },
   "reports": {
-    "ts_ruler": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/ts-ruler-f32ed7c9-dbe1-4859-bc6e-a7f18809ccba.json",
-    "final_ruler": "/Users/da/ws/pdrs-calib-b2/_tmp/b2-calibration-2026-10-14-d3879d24-a200-45b0-afb5-331be9a29ffb/final-ruler-72ccd4e0-a2bc-4adb-98f9-05919887e396.json"
+    "ts_ruler": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/ts-ruler-55036e36-ee90-4304-a5ca-60ef5aeead02.json",
+    "final_ruler": "/Users/da/ws/pdrs-b2cal-20261018/_tmp/b2-calibration-2026-10-18-a025aa97-20b7-468a-974f-5c23196cd62c/final-ruler-333fbde2-b5d9-4b01-b29b-c2952ac87357.json"
   }
 }

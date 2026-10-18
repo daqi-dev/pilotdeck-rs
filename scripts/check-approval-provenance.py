@@ -17,7 +17,7 @@ import re
 
 EXPECTED = frozenset(
     'specs/ui-server-parity/approval/' + name
-    for name in ('calibration-summary.json', 'review-glm.md', 'review-claude.md', 'driver.log')
+    for name in ('calibration-summary.json', 'review-glm.md', 'review-deepseek.md', 'driver.log')
 )
 PREFIX = 'Approval-Source-SHA256:'
 
