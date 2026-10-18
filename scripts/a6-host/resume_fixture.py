@@ -22,7 +22,10 @@ generation = state['spawns']
 
 
 def save():
-    state_path.write_text(json.dumps(state))
+    # Atomic: the Rust test may read .state while this process is still running.
+    temporary = state_path.with_suffix('.state.tmp')
+    temporary.write_text(json.dumps(state))
+    os.replace(temporary, state_path)
 
 
 def read():
