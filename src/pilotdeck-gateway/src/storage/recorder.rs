@@ -1,15 +1,19 @@
-//! Durable model/tool transcript recording, ported from TS
-//! `AgentSessionEventRecorder.recordModelRequest/recordModelEvent` and
-//! `recordToolCalls/recordToolResults` (B/src/agent/session/
-//! AgentSessionEventRecorder.ts:187-315), including the private step
-//! lifecycle those methods use (`startTurn`/`openNextStep`/`completeStep`).
+//! Durable model/tool and compaction transcript recording, ported from TS
+//! `AgentSessionEventRecorder` (`recordModelRequest`/`recordModelEvent`/
+//! `recordToolCalls`/`recordToolResults` at B/src/agent/session/
+//! AgentSessionEventRecorder.ts:187-315, plus `recordCompactionStarted/
+//! Completed/Failed` at :316-355) and the writer's atomic control-boundary
+//! methods (`JsonlTranscriptWriter.ts:166-191`).
 //!
-//! The durable ports that call these methods are thin wrappers in TS
+//! The durable ports that call the model/tool methods are thin wrappers in TS
 //! (`durableModelInvokerPort.ts:4-22`, `durableToolPort.ts`): a model request is
 //! appended before the stream starts and every stream event is appended before
 //! it is yielded; tool calls are appended before execution and results after it
 //! (an aborted turn skips the result record). Those wrappers never own
-//! transcript state, so this module ports the recorder surface they call.
+//! transcript state, so this module ports the recorder surface they call. The
+//! compaction bracket is driven by `durableContextRuntime.ts` (started, then a
+//! deferred or immediate terminal) and `TurnRunner.ts:338-374` (atomic
+//! replacement, commit, or failure).
 //!
 //! Entries are appended through the A6.2 [`TranscriptWriter`] with the exact TS
 //! JSONL shape: one `JSON.stringify(entry) + "\n"` per record, sequence starts
@@ -20,12 +24,13 @@
 //! recursively stripped from stream events, tool calls and tool results (never
 //! from a model request), matching `stripRawFields`.
 //!
-//! Not ported (unreachable through the two durable ports, and they stay closed
-//! rather than guessed): compaction/question/permission/inbox lifecycle,
-//! instruction-layer snapshots, context materialization and `completeTurn`
-//! (`turn_result`). `restore` only re-seeds the writer sequence/parent chain
-//! and the domain-validation state; a restored turn is not an active recorder
-//! turn, exactly like constructing a fresh TS recorder from restored entries.
+//! Not ported (unreachable through the durable ports, and they stay closed
+//! rather than guessed): question/permission/inbox lifecycle, instruction-layer
+//! snapshots, context materialization and `completeTurn` (`turn_result`).
+//! `restore` only re-seeds the writer sequence/parent chain and the
+//! domain-validation state; a restored turn is not an active recorder turn and
+//! its pending compaction brackets are empty, exactly like constructing a fresh
+//! TS recorder from restored entries.
 //!
 //! The port is synchronous: calls serialize on one recorder mutex. Sequential
 //! calls match TS; no interleaving order is claimed for unsynchronized
@@ -130,14 +135,25 @@ impl Turn {
         }
     }
 }
+/// One `compaction_started` bracket. The operation id is kept as the raw JS
+/// value: TS compares it with `===` (and stores it in a `Set` while replaying
+/// the log), so two structurally equal objects must not match.
+struct PendingCompaction {
+    operation_id: JsValue,
+    completion: Option<JsValue>,
+}
 struct Inner {
     turns: HashMap<JsString, Turn>,
+    compactions: HashMap<JsString, Vec<PendingCompaction>>,
 }
 
 /// Durable recorder over a session's shared transcript writer.
 pub struct Recorder {
     writer: Arc<TranscriptWriter>,
     sources: Option<(RecorderClock, RecorderUuid)>,
+    /// TS `AgentSessionEventRecorderOptions.uuid`; separate from the writer's
+    /// entry-id source because a recorder can be rebuilt over a live writer.
+    operation_ids: Option<RecorderUuid>,
     inner: Mutex<Inner>,
 }
 
@@ -182,10 +198,19 @@ impl Recorder {
         Self {
             writer,
             sources: None,
+            operation_ids: None,
             inner: Mutex::new(Inner {
                 turns: HashMap::new(),
+                compactions: HashMap::new(),
             }),
         }
+    }
+    /// Inject the recorder's own compaction operation-id source
+    /// (`AgentSessionEventRecorderOptions.uuid`). Entry ids stay on the writer's
+    /// source, like TS.
+    pub fn with_operation_ids(mut self, operation_ids: RecorderUuid) -> Self {
+        self.operation_ids = Some(operation_ids);
+        self
     }
     /// Access the authoritative writer, for other session transcript producers.
     pub fn writer(&self) -> &Arc<TranscriptWriter> {
@@ -283,6 +308,174 @@ impl Recorder {
         }
         self.complete_step(&mut inner, session_id, turn_id, "completed")
     }
+    /// TS `nextCompactionOperationId`: the recorder's UUID source, not the
+    /// writer's. It consumes one id even when nothing is recorded afterwards.
+    pub fn next_compaction_operation_id(&self) -> RecorderResult<JsString> {
+        let id = match &self.operation_ids {
+            Some(operation_ids) => operation_ids()?,
+            None => match &self.sources {
+                Some((_, uuid)) => uuid()?,
+                None => uuid().map_err(|error| RecorderError::Store(error.into()))?,
+            },
+        };
+        Ok(JsString::from(id))
+    }
+    /// TS `recordCompactionStarted` (AgentSessionEventRecorder:316-331): append
+    /// the bracket first, then register the pending operation. A failed append
+    /// leaves no pending state, exactly like TS.
+    pub fn record_compaction_started(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: &JsValue,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        self.append(session_id, turn_id, spread("compaction_started", draft))?;
+        inner
+            .compactions
+            .entry(compaction_key(session_id, turn_id))
+            .or_default()
+            .push(PendingCompaction {
+                operation_id: operation_id(draft),
+                completion: None,
+            });
+        Ok(())
+    }
+    /// TS `recordCompactionCompleted` (AgentSessionEventRecorder:333-344).
+    pub fn record_compaction_completed(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: &JsValue,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        self.append(session_id, turn_id, spread("compaction_completed", draft))?;
+        remove_pending(&mut inner, session_id, turn_id, &operation_id(draft));
+        Ok(())
+    }
+    /// TS `recordCompactionFailed` (AgentSessionEventRecorder:346-355).
+    pub fn record_compaction_failed(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: &JsValue,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        self.append(session_id, turn_id, spread("compaction_failed", draft))?;
+        remove_pending(&mut inner, session_id, turn_id, &operation_id(draft));
+        Ok(())
+    }
+    /// TS `deferCompactionCompletion` (AgentSessionEventRecorder:358-367):
+    /// hold the terminal fact until the replacement surface is durable.
+    pub fn defer_compaction_completion(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: &JsValue,
+    ) -> RecorderResult<()> {
+        let operation_id = operation_id(draft);
+        let mut inner = self.lock();
+        let pending = inner
+            .compactions
+            .get_mut(&compaction_key(session_id, turn_id))
+            .and_then(|pending| {
+                pending
+                    .iter_mut()
+                    .find(|candidate| same_id(&candidate.operation_id, &operation_id))
+            });
+        let Some(pending) = pending else {
+            return Err(state(format!(
+                "Compaction {} has no pending durable lifecycle.",
+                display(&operation_id)?
+            )));
+        };
+        pending.completion = Some(draft.clone());
+        Ok(())
+    }
+    /// TS `commitDeferredCompaction` (AgentSessionEventRecorder:369-373): write
+    /// the first deferred completion and close its bracket. No deferred entry
+    /// is a no-op.
+    pub fn commit_deferred_compaction(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+    ) -> RecorderResult<()> {
+        let completion = {
+            let inner = self.lock();
+            inner
+                .compactions
+                .get(&compaction_key(session_id, turn_id))
+                .and_then(|pending| {
+                    pending
+                        .iter()
+                        .find_map(|candidate| candidate.completion.clone())
+                })
+        };
+        if let Some(completion) = completion {
+            self.record_compaction_completed(session_id, turn_id, &completion)?;
+        }
+        Ok(())
+    }
+    /// TS `failDeferredCompaction` (AgentSessionEventRecorder:375-385). The
+    /// caller has already resolved `Error#message` vs `String(error)`.
+    pub fn fail_deferred_compaction(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        error: &str,
+    ) -> RecorderResult<()> {
+        let operation_id = {
+            let inner = self.lock();
+            inner
+                .compactions
+                .get(&compaction_key(session_id, turn_id))
+                .and_then(|pending| {
+                    pending
+                        .iter()
+                        .find(|candidate| candidate.completion.is_some())
+                        .map(|candidate| candidate.operation_id.clone())
+                })
+        };
+        let Some(operation_id) = operation_id else {
+            return Ok(());
+        };
+        let mut draft = JsObject::new();
+        draft.insert("operationId".into(), operation_id);
+        draft.insert("error".into(), JsValue::String(error.into()));
+        self.record_compaction_failed(session_id, turn_id, &JsValue::Object(draft))
+    }
+    /// TS `JsonlTranscriptWriter.recordControlBoundary`
+    /// (JsonlTranscriptWriter.ts:166-175): one raw control boundary.
+    pub fn record_control_boundary(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        boundary: &JsValue,
+    ) -> RecorderResult<()> {
+        let mut draft = draft("control_boundary");
+        draft.insert("boundary".into(), boundary.clone());
+        self.append(session_id, turn_id, draft)
+    }
+    /// TS `JsonlTranscriptWriter.recordCompactionReplacement`
+    /// (JsonlTranscriptWriter.ts:177-191): commit the complete replacement
+    /// context in the same durable record.
+    pub fn record_compaction_replacement(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        boundary_value: &JsValue,
+        messages: &[JsValue],
+    ) -> RecorderResult<()> {
+        let mut boundary = JsObject::new();
+        spread_into(&mut boundary, boundary_value);
+        let mut snapshot = JsObject::new();
+        snapshot.insert("version".into(), JsValue::Number(1.0));
+        snapshot.insert("messages".into(), JsValue::Array(messages.to_vec()));
+        boundary.insert("snapshot".into(), JsValue::Object(snapshot));
+        let mut draft = draft("control_boundary");
+        draft.insert("boundary".into(), JsValue::Object(boundary));
+        self.append(session_id, turn_id, draft)
+    }
     /// Re-seed sequence, parent chain and domain state from a persisted log.
     /// The recorder's active turn set stays empty, like a fresh TS recorder.
     /// Unlike bare `writer.restoreState`, this also replays the turn/step
@@ -292,6 +485,7 @@ impl Recorder {
         let mut inner = self.lock();
         self.writer.restore_recorder_entries(entries)?;
         inner.turns.clear();
+        inner.compactions.clear();
         Ok(())
     }
     /// TS snapshotState, shared with every caller of the injected writer.
@@ -377,6 +571,79 @@ fn draft(kind: &str) -> JsObject {
     draft.insert("type".into(), kind.into());
     draft
 }
+/// `{type, ...draft}`. Typed drafts are objects; arrays spread by index and a
+/// string by code point, mirroring JS own-property enumeration. Other values
+/// spread nothing.
+fn spread(kind: &str, value: &JsValue) -> JsObject {
+    let mut out = draft(kind);
+    spread_into(&mut out, value);
+    out
+}
+fn spread_into(out: &mut JsObject, value: &JsValue) {
+    match value {
+        JsValue::Object(object) => {
+            for (key, child) in object.entries() {
+                out.insert(key.clone(), child.clone());
+            }
+        }
+        JsValue::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                out.insert(index.to_string().into(), child.clone());
+            }
+        }
+        JsValue::String(string) => {
+            let units = string.units();
+            let mut index = 0usize;
+            let mut at = 0usize;
+            while at < units.len() {
+                let len = if (0xd800..0xdc00).contains(&units[at])
+                    && at + 1 < units.len()
+                    && (0xdc00..0xe000).contains(&units[at + 1])
+                {
+                    2
+                } else {
+                    1
+                };
+                out.insert(
+                    index.to_string().into(),
+                    JsValue::String(JsString::from_utf16(units[at..at + len].to_vec())),
+                );
+                index += 1;
+                at += len;
+            }
+        }
+        JsValue::Undefined | JsValue::Null | JsValue::Bool(_) | JsValue::Number(_) => {}
+    }
+}
+/// `draft.operationId`; missing is `undefined`, like the JS property read.
+fn operation_id(draft: &JsValue) -> JsValue {
+    draft
+        .get("operationId")
+        .cloned()
+        .unwrap_or(JsValue::Undefined)
+}
+/// TS `compactionKey`: `${sessionId}\0${turnId}`.
+fn compaction_key(session_id: &JsString, turn_id: &JsString) -> JsString {
+    let mut units = session_id.units().to_vec();
+    units.push(0);
+    units.extend_from_slice(turn_id.units());
+    JsString::from_utf16(units)
+}
+fn remove_pending(
+    inner: &mut Inner,
+    session_id: &JsString,
+    turn_id: &JsString,
+    operation_id: &JsValue,
+) {
+    let key = compaction_key(session_id, turn_id);
+    let Some(pending) = inner.compactions.get_mut(&key) else {
+        return;
+    };
+    pending.retain(|candidate| !same_id(&candidate.operation_id, operation_id));
+    if pending.is_empty() {
+        inner.compactions.remove(&key);
+    }
+}
 fn lossy(value: &JsString) -> String {
     String::from_utf16_lossy(value.units())
 }
@@ -418,6 +685,114 @@ fn display(value: &JsValue) -> RecorderResult<String> {
 fn same_id(left: &JsValue, right: &JsValue) -> bool {
     !matches!(left, JsValue::Object(_) | JsValue::Array(_)) && left == right
 }
+/// JS truthiness for the raw `operationId`; the draft is typed but the domain
+/// log is validated exactly as TS reads it.
+fn truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Array(_) | JsValue::Object(_) => true,
+    }
+}
+fn safe_integer(value: Option<f64>) -> bool {
+    value.is_some_and(|value| {
+        value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0
+    })
+}
+/// `String(entry.operationId || "(unknown)")` from the TS error templates.
+fn compaction_subject(operation: &JsValue) -> RecorderResult<String> {
+    if truthy(operation) {
+        display(operation)
+    } else {
+        Ok("(unknown)".into())
+    }
+}
+/// SessionDomainValidation.ts:359-367.
+fn validate_compaction_started(entry: &JsValue) -> RecorderResult<()> {
+    let operation = field(entry, "operationId");
+    let count = field(entry, "messageCount").as_number();
+    if !truthy(operation) || !safe_integer(count) || count.is_some_and(|value| value < 0.0) {
+        return Err(domain(
+            "invalid_compaction",
+            format!(
+                "Compaction {} has invalid start metadata.",
+                compaction_subject(operation)?
+            ),
+        ));
+    }
+    let max = field(entry, "maxContextTokens");
+    if !max.is_undefined()
+        && !max
+            .as_number()
+            .is_some_and(|value| safe_integer(Some(value)) && value > 0.0)
+    {
+        return Err(domain(
+            "invalid_compaction",
+            format!(
+                "Compaction {} has invalid maxContextTokens.",
+                display(operation)?
+            ),
+        ));
+    }
+    Ok(())
+}
+/// SessionDomainValidation.ts:371-377.
+fn validate_compaction_completed(entry: &JsValue) -> RecorderResult<()> {
+    let operation = field(entry, "operationId");
+    let count = field(entry, "messageCount").as_number();
+    if !truthy(operation) || !safe_integer(count) || count.is_some_and(|value| value < 0.0) {
+        return Err(domain(
+            "invalid_compaction",
+            format!(
+                "Compaction {} has invalid completion metadata.",
+                compaction_subject(operation)?
+            ),
+        ));
+    }
+    Ok(())
+}
+/// SessionDomainValidation.ts:379-384. `entry.error.length` throws for
+/// null/undefined and reads as zero only for an empty string or array.
+fn validate_compaction_failed(entry: &JsValue) -> RecorderResult<()> {
+    let operation = field(entry, "operationId");
+    if !truthy(operation) {
+        return Err(domain(
+            "invalid_compaction",
+            format!(
+                "Compaction {} has invalid failure metadata.",
+                compaction_subject(operation)?
+            ),
+        ));
+    }
+    let error = field(entry, "error");
+    let empty = match error {
+        JsValue::Undefined => {
+            return Err(RecorderError::Type(
+                "Cannot read properties of undefined (reading 'length')".into(),
+            ));
+        }
+        JsValue::Null => {
+            return Err(RecorderError::Type(
+                "Cannot read properties of null (reading 'length')".into(),
+            ));
+        }
+        JsValue::String(value) => value.is_empty(),
+        JsValue::Array(values) => values.is_empty(),
+        _ => false,
+    };
+    if empty {
+        return Err(domain(
+            "invalid_compaction",
+            format!(
+                "Compaction {} has invalid failure metadata.",
+                display(operation)?
+            ),
+        ));
+    }
+    Ok(())
+}
 /// `stripRawFields` (AgentSessionEventRecorder.ts:568-577).
 fn strip_raw_fields(value: &JsValue) -> JsValue {
     match value {
@@ -435,8 +810,9 @@ fn strip_raw_fields(value: &JsValue) -> JsValue {
     }
 }
 
-/// SessionDomainValidation subset used by the durable model/tool ports.
-/// Owned by TranscriptWriter so two recorders also share validation state.
+/// SessionDomainValidation subset used by the durable model/tool and
+/// compaction ports. Owned by TranscriptWriter so two recorders also share
+/// validation state.
 #[derive(Clone, Default)]
 pub(super) struct DomainState {
     turns: HashMap<JsString, DomainTurn>,
@@ -447,6 +823,7 @@ struct DomainTurn {
     open_step: Option<u64>,
     model_requested: bool,
     open_tool_calls: Vec<JsValue>,
+    compactions: Vec<JsValue>,
 }
 impl DomainState {
     /// The old adapter's domain-free entries remain available. Once a durable
@@ -489,6 +866,9 @@ impl DomainState {
                 | "model_stream_event"
                 | "tool_call"
                 | "tool_result"
+                | "compaction_started"
+                | "compaction_completed"
+                | "compaction_failed"
         ) {
             // Other domain lifecycles are not part of this recorder port.
             self.validate_adapter_entry(entry)?;
@@ -525,6 +905,43 @@ impl DomainState {
                 format!("{kind} requires an active turn {}.", lossy(turn_id)),
             )
         })?;
+        if matches!(
+            kind.as_str(),
+            "compaction_started" | "compaction_completed" | "compaction_failed"
+        ) {
+            let operation = field(entry, "operationId");
+            if kind == "compaction_started" {
+                validate_compaction_started(entry)?;
+                if turn.compactions.iter().any(|open| same_id(open, operation)) {
+                    return Err(domain(
+                        "invalid_compaction",
+                        format!("Compaction {} already started.", display(operation)?),
+                    ));
+                }
+                turn.compactions.push(operation.clone());
+            } else {
+                if kind == "compaction_completed" {
+                    validate_compaction_completed(entry)?;
+                } else {
+                    validate_compaction_failed(entry)?;
+                }
+                let position = turn
+                    .compactions
+                    .iter()
+                    .position(|open| same_id(open, operation));
+                let Some(position) = position else {
+                    return Err(domain(
+                        "invalid_compaction",
+                        format!(
+                            "Compaction {} has no open lifecycle bracket.",
+                            display(operation)?
+                        ),
+                    ));
+                };
+                turn.compactions.remove(position);
+            }
+            return Ok(next);
+        }
         let step_value = field(entry, "step");
         let step = step_value.as_number();
         if kind == "step_started" {

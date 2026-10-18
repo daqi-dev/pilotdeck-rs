@@ -1,19 +1,24 @@
-//! Turn drain callbacks and deferred attachment authority (TS dispatcher:269-306).
+//! Turn drain callbacks and atomic compaction persistence (TS dispatcher:269-306).
 use super::{tool_context::SteerAuthorizations, wire};
 use crate::{
     host::{HostError, HostFuture, JsObject, JsValue, ModuleError},
     runtime::steer::TurnSteers,
+    storage::recorder::Recorder,
 };
 use pilotdeck_protocol::JsString;
 use std::sync::Arc;
 
 pub type DrainSteer = Arc<dyn Fn() -> HostFuture<Vec<JsObject>> + Send + Sync>;
 pub type DrainOrCloseSteer = Arc<dyn Fn() -> HostFuture<JsObject> + Send + Sync>;
+/// TS `AgentLoopInput.onCompactPersisted`: the dispatcher has already validated
+/// `payload.boundary` as a record and `payload.messages` as an array.
+pub type PersistCompaction = Arc<dyn Fn(JsObject, Vec<JsValue>) -> HostFuture<()> + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct Ports {
     pub drain_steer: Option<DrainSteer>,
     pub drain_or_close_steer: Option<DrainOrCloseSteer>,
+    pub persist_compaction: Option<PersistCompaction>,
 }
 impl Ports {
     /// Both callbacks share the runner's tracking state and host turn binding.
@@ -32,7 +37,12 @@ impl Ports {
                 result.insert("closed".into(), JsValue::Bool(drained.closed));
                 Box::pin(async move { Ok(result) })
             })),
+            persist_compaction: None,
         }
+    }
+    pub fn with_persist_compaction(mut self, port: PersistCompaction) -> Self {
+        self.persist_compaction = Some(port);
+        self
     }
 }
 #[derive(Clone, Default)]
@@ -55,6 +65,9 @@ impl Handler {
         }
         if self.ports.drain_or_close_steer.is_some() {
             methods.push("drain_or_close_steer");
+        }
+        if self.ports.persist_compaction.is_some() {
+            methods.push("persist_compaction");
         }
         (!methods.is_empty()).then_some(methods)
     }
@@ -84,6 +97,32 @@ impl Handler {
                         .ok_or_else(|| ModuleError::new("Invalid host steer message."))?;
                     remember(message, handler.authorizations.as_ref())?;
                 }
+                return Ok(result);
+            } else if operation.equals_str("persist_compaction")
+                && let Some(persist) = handler.ports.persist_compaction
+            {
+                // dispatcher:285-293 `asRecord` + Array.isArray guard. A record
+                // is an object but not an array; both fields are required.
+                let boundary = payload
+                    .and_then(|payload| payload.get("boundary"))
+                    .filter(|value| matches!(value, JsValue::Object(_)))
+                    .and_then(JsValue::as_object)
+                    .cloned();
+                let messages = payload
+                    .and_then(|payload| payload.get("messages"))
+                    .and_then(|value| match value {
+                        JsValue::Array(items) => Some(items.clone()),
+                        _ => None,
+                    });
+                let (Some(boundary), Some(messages)) = (boundary, messages) else {
+                    return Err(ModuleError::new(
+                        "Compaction persistence requires boundary and messages.",
+                    )
+                    .into());
+                };
+                persist(boundary, messages).await?;
+                let mut result = JsObject::new();
+                result.insert("persisted".into(), JsValue::Bool(true));
                 return Ok(result);
             }
             Err(wire::named_error(
@@ -119,6 +158,54 @@ impl Handler {
         // The session owns mailbox close/finish; dispatcher disposal does not.
         Box::pin(async { Ok(()) })
     }
+}
+/// TS `TurnRunner`'s `onCompactPersisted` durable branch (TurnRunner.ts:338-374):
+/// a compact boundary is written as one atomic replacement record, then the
+/// deferred `compaction_completed` is committed. A failed write closes the
+/// bracket as `compaction_failed`; the TS loop additionally aborts, which this
+/// host adapter expresses by returning the error instead of `{persisted:true}`.
+pub fn persist_compaction_to_recorder(
+    recorder: Arc<Recorder>,
+    session_id: JsString,
+    turn_id: JsString,
+) -> PersistCompaction {
+    Arc::new(move |boundary, messages| {
+        let recorder = recorder.clone();
+        let session_id = session_id.clone();
+        let turn_id = turn_id.clone();
+        Box::pin(async move {
+            let compact = boundary
+                .get("kind")
+                .and_then(JsValue::as_string)
+                .is_some_and(|kind| kind.equals_str("compact"))
+                && boundary
+                    .get("subtype")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|subtype| subtype.equals_str("compact_boundary"));
+            let result = if compact {
+                recorder
+                    .record_compaction_replacement(
+                        &session_id,
+                        &turn_id,
+                        &JsValue::Object(boundary),
+                        &messages,
+                    )
+                    .and_then(|()| recorder.commit_deferred_compaction(&session_id, &turn_id))
+            } else {
+                Err(crate::storage::recorder::RecorderError::State(
+                    "Transcript writer does not support atomic compaction replacement.".into(),
+                ))
+            };
+            match result {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = recorder.fail_deferred_compaction(&session_id, &turn_id, &message);
+                    Err(ModuleError::new(message).into())
+                }
+            }
+        })
+    })
 }
 fn response_messages(messages: Vec<JsObject>) -> JsObject {
     let mut result = JsObject::new();
